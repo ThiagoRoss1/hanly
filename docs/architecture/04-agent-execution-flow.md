@@ -1,0 +1,205 @@
+# Hanly Agent Execution Flow
+
+Textual companion to the approved [Hanly Agent Execution Flow](visual/Hanly%20Agent%20Execution%20Flow.html) diagram.
+
+## Purpose
+
+This view defines how approved `READY` work becomes executed, reviewed, human-approved, integrated work. It consumes implementation dependencies from the Implementation DAG and Linear; it does not redefine application architecture or implementation blockers.
+
+## Inputs and sources of truth
+
+Agents read the prepared project execution context before work starts:
+
+- product and V1 scope;
+- architecture documentation, including Runtime Flow, Component Architecture, and Implementation DAG;
+- approved ADRs when they exist;
+- repository instructions and relevant skills / configuration;
+- the repository and tests as the executable state of the project;
+- the Linear project and tasks.
+
+The source-of-truth responsibilities are distinct:
+
+- Architecture documentation defines approved runtime behavior, module seams, dependencies, and invariants.
+- The Implementation DAG structurally defines capabilities, dependencies, blockers, waves, convergence points, and milestones.
+- Linear materializes the DAG as operational tasks, status, priorities, blockers, and `READY` work.
+- The repository and tests contain the implemented and verifiable state.
+- The human is the authority for ecosystem selection, acceptance, approved architecture changes, and—by default—final commit and merge.
+
+Only work whose dependencies are satisfied is `READY`. Agent Execution Flow determines how that work is executed; it does not change why work is ready or blocked.
+
+## Ecosystem selection
+
+The human manually selects one active execution ecosystem for the unit of work, considering availability, limits / tokens, preference, and where relevant context already exists.
+
+GPT and Claude are independent, equivalent entry paths. There is:
+
+- no meta-orchestrator above Sol and Opus 5;
+- no automatic routing engine;
+- no Sol dispatch of Claude agents;
+- no Opus dispatch of GPT agents;
+- no mandatory cross-provider review, although the human may request one;
+- no fixed number of workers or subagents.
+
+The ecosystem choice is made again for each next unit or wave of `READY` work.
+
+## GPT execution ecosystem
+
+The approved semantic topology is:
+
+```text
+Sol
+↓
+Terra
+↓
+Luna xhigh workers
+↓
+internal review / verification
+↓
+Terra consolidation and validation
+↓
+Sol general review
+```
+
+### Sol — Orchestrator
+
+Sol is the top-level GPT orchestrator. Sol reads project context, interprets the Implementation DAG, reads `READY` Linear work, selects work with satisfied dependencies, organizes execution waves, distributes units of work, tracks results, and returns failed work for correction. Sol does not need to implement tasks directly.
+
+### Terra — Tech Lead
+
+Terra receives work already planned by Sol and leads the execution team. Terra understands the objective and technical context, may decompose already-planned work further when useful, distributes subtasks, coordinates local execution, and consolidates results. Terra is not primarily a worker expected to write all code alone.
+
+### Luna xhigh workers
+
+Luna xhigh agents implement bounded subtasks such as implementation, tests, investigation, refactoring, and related documentation. Their count varies with task complexity and independence. Subtasks may run in parallel when the DAG and local dependencies permit it.
+
+### Internal review and consolidation
+
+Internal review may inspect implementation details, find bugs, validate tests, detect inconsistencies, and request corrections before consolidation. Terra then gathers results, resolves internal inconsistencies, verifies integration, and confirms readiness for top-level review.
+
+Sol performs general review against the original task, architecture, acceptance criteria, tests, regressions, dependencies, and repository integration. Sol reviews the consolidated result rather than necessarily every worker action or line.
+
+If review fails, work returns to Terra and the team for another execution / correction cycle. If it passes, it proceeds to the Human Review Gate.
+
+## Claude execution ecosystem
+
+The approved semantic topology is:
+
+```text
+Opus 5
+├── direct execution
+└── optional Sonnet subagents
+```
+
+### Opus 5 — Orchestrator and default executor
+
+Opus 5 is both the top-level Claude orchestrator and the default direct executor. It reads project context, interprets the Implementation DAG, reads `READY` Linear work, selects ready work, plans execution, implements directly when appropriate, reviews results, and coordinates optional subagents.
+
+`Opus 5 → direct execution → review` is a valid default path. Delegation is not mandatory.
+
+### Optional Sonnet subagents
+
+Opus 5 may use a variable number of Sonnet subagents for parallel subtasks, investigation, isolated implementation, tests, review, or context / resource economy. Their results return to Opus 5. Team size and topology remain flexible according to the work.
+
+### Internal review and consolidation
+
+Before final review, Opus 5 may review the work directly or use a subagent, run tests, consolidate delegated results, and request corrections. Opus 5 then performs general review against architecture, task requirements, acceptance criteria, tests, regressions, and repository state.
+
+If review fails, another execution / correction cycle begins. If it passes, the result proceeds to the Human Review Gate. This deliberately flatter flow is the intended default, not an incomplete hierarchy.
+
+## Human review gate
+
+The GPT and Claude paths converge at the same human gate. The human:
+
+- reads the changes;
+- understands the code and decisions;
+- runs or tests the work when appropriate;
+- checks behavior;
+- may reject it and return it to the active ecosystem;
+- decides whether the work enters the project.
+
+A rejection starts another execution / correction cycle in the already active ecosystem. Approval permits integration to proceed.
+
+## Architecture change authority
+
+> **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
+
+Agents may identify architecture problems and propose architecture changes. When asked, they may draft an ADR or an architecture-documentation patch for human review. They must not silently redefine approved architecture.
+
+A change to the approved architecture source of truth becomes authoritative only after human approval. This architecture-governance gate is separate from commit and merge authority: human approval of a proposed architecture decision does not itself authorize an agent to commit or merge it.
+
+## Commit and merge authority
+
+> By default, final commit and merge authority remains human. Agents only commit or merge when explicitly instructed by the human.
+
+Without that explicit instruction, agents may still:
+
+- edit files;
+- write code;
+- run tests;
+- inspect and analyze the repository;
+- review;
+- correct;
+- prepare changes.
+
+Automatic commit or merge is not part of the approved flow.
+
+## Linear execution loop
+
+After approved integration, Linear is updated: the task is updated, completed work is marked when applicable, dependent work is unblocked, and newly ready tasks are identified.
+
+```text
+READY work
+→ execution in the human-selected ecosystem
+→ internal review and consolidation
+→ top-level ecosystem review
+→ human review and approval
+→ human commit / merge by default
+→ integration
+→ Linear state update
+→ newly unblocked READY work
+→ next execution wave
+```
+
+Failed internal, top-level, or human review loops back to execution / correction before Linear completion. Linear remains the operational source for task status and dependencies.
+
+## Workflow vs technical agent configuration
+
+This document defines semantic roles, authority, and execution responsibilities. It does not define how agents are technically instantiated.
+
+The following belong to a later agent configuration and infrastructure layer and are deliberately not hardcoded here:
+
+- `AGENTS.md`;
+- `.agents`;
+- `.codex`;
+- `config.toml`;
+- Claude subagent configuration;
+- spawning commands;
+- model-selection files;
+- skills.
+
+That later configuration must ensure that a worker assigned the `Luna xhigh` semantic role is actually instantiated with the intended model and configuration. This requirement does not select the technical mechanism now.
+
+## Flexibility and execution invariants
+
+- **AEF-INV-01 (diagram principle 1):** The active ecosystem determines the top-level orchestrator.
+- **AEF-INV-02 (diagram principle 2):** The GPT ecosystem uses Sol as orchestrator.
+- **AEF-INV-03 (diagram principle 3):** Terra acts as Tech Lead of the GPT execution team.
+- **AEF-INV-04 (diagram principle 4):** Luna xhigh agents are the GPT workers.
+- **AEF-INV-05 (diagram principle 5):** Terra may further decompose already-planned work when useful.
+- **AEF-INV-06 (diagram principle 6):** GPT teams may use internal review agents before consolidation.
+- **AEF-INV-07 (diagram principle 7):** The Claude ecosystem uses Opus 5 as orchestrator and default executor.
+- **AEF-INV-08 (diagram principle 8):** Opus 5 may execute directly without delegation.
+- **AEF-INV-09 (diagram principle 9):** Sonnet subagents are optional.
+- **AEF-INV-10 (diagram principle 10):** Team size and decomposition may vary according to the task.
+- **AEF-INV-11 (diagram principle 11):** Parallel execution is encouraged when dependencies permit it.
+- **AEF-INV-12 (diagram principle 12):** Top-level orchestrators review consolidated results rather than necessarily every worker action.
+- **AEF-INV-13 (diagram principle 13):** Failed review may trigger another execution or correction cycle.
+- **AEF-INV-14 (diagram principle 14):** Agents may edit code, inspect repositories, run tests, and propose corrections.
+- **AEF-INV-15 (diagram principle 15):** The human retains final approval and commit / merge authority.
+- **AEF-INV-16 (diagram principle 16):** Linear remains the operational source for task status and dependencies.
+- **AEF-INV-17 (diagram principle 17):** The workflow describes roles and responsibilities, not a fixed technical spawning mechanism.
+
+> **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
+
+- **AEF-INV-18:** Wording such as “may,” “when useful,” and “when appropriate” is intentional and must not be converted into mandatory delegation or team-size rules.
+- **AEF-INV-19:** Agents may propose architecture changes, but approved architecture changes require human approval before becoming authoritative.
