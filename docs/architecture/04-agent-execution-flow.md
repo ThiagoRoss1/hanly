@@ -23,7 +23,7 @@ The source-of-truth responsibilities are distinct:
 - The Implementation DAG structurally defines capabilities, dependencies, blockers, waves, convergence points, and milestones.
 - Linear materializes the DAG as operational tasks, status, priorities, blockers, and `READY` work.
 - The repository and tests contain the implemented and verifiable state.
-- The human is the authority for ecosystem selection, acceptance, approved architecture changes, and—by default—final commit and merge.
+- The human is the authority for ecosystem selection, acceptance, approved architecture changes, and—by default—final commit, push, and merge.
 
 Only work whose dependencies are satisfied is `READY`. Agent Execution Flow determines how that work is executed; it does not change why work is ready or blocked.
 
@@ -59,6 +59,16 @@ Terra consolidation and validation
 ↓
 Sol general review
 ```
+
+### GPT worker model policy
+
+When the GPT execution path delegates implementation work to Luna workers, the required worker configuration is the Luna model family with `xhigh` reasoning effort. Sol remains the top-level orchestrator, and Terra remains the tech-lead / decomposition layer where applicable; implementation workers intended as Luna must actually be instantiated as Luna with `xhigh` reasoning.
+
+Do not substitute Sol workers merely because the top-level orchestrator is Sol. If the current Codex environment cannot instantiate Luna with `xhigh` reasoning, that delegation step must stop and the limitation must be reported explicitly to the human. The system must not silently fall back to Sol `xhigh`, Terra, or another worker configuration. The human may explicitly authorize a different worker configuration for a specific run.
+
+If Luna `xhigh` is requested and no fallback is detected, but runtime metadata cannot independently verify the actual model or reasoning, report the result as `UNVERIFIED`. This is neither verified success nor evidence of fallback: do not claim verification or silently convert it to `PASS`. Execution may proceed only when the current human-approved policy permits it; if verified model identity is required for that run, stop and request human authorization.
+
+This is an execution-policy requirement, not an architecture dependency.
 
 ### Sol — Orchestrator
 
@@ -125,11 +135,13 @@ A rejection starts another execution / correction cycle in the already active ec
 
 Agents may identify architecture problems and propose architecture changes. When asked, they may draft an ADR or an architecture-documentation patch for human review. They must not silently redefine approved architecture.
 
-A change to the approved architecture source of truth becomes authoritative only after human approval. This architecture-governance gate is separate from commit and merge authority: human approval of a proposed architecture decision does not itself authorize an agent to commit or merge it.
+A change to the approved architecture source of truth becomes authoritative only after human approval. This architecture-governance gate is separate from commit, push, and merge authority: human approval of a proposed architecture decision does not itself authorize an agent to commit, push, or merge it.
 
-## Commit and merge authority
+## Commit, push, and merge authority
 
-> By default, final commit and merge authority remains human. Agents only commit or merge when explicitly instructed by the human.
+> By default, final commit, push, and merge authority remains human. Agents only commit, push, or merge when explicitly instructed by the human.
+
+Human approval of completed work establishes acceptance; it does not itself authorize an agent to commit, push, or merge.
 
 Without that explicit instruction, agents may still:
 
@@ -141,11 +153,11 @@ Without that explicit instruction, agents may still:
 - correct;
 - prepare changes.
 
-Automatic commit or merge is not part of the approved flow.
+Automatic commit, push, or merge is not part of the approved flow.
 
 ## Linear execution loop
 
-After approved integration, Linear is updated: the task is updated, completed work is marked when applicable, dependent work is unblocked, and newly ready tasks are identified.
+After human approval, Linear is updated according to the approved lifecycle: the task is updated, completed work is marked when applicable, dependent work is unblocked, and newly ready tasks are identified. Any commit, push, or merge remains a separate human-controlled action unless explicitly delegated.
 
 ```text
 READY work
@@ -153,8 +165,7 @@ READY work
 → internal review and consolidation
 → top-level ecosystem review
 → human review and approval
-→ human commit / merge by default
-→ integration
+→ acceptance / completion decision
 → Linear state update
 → newly unblocked READY work
 → next execution wave
@@ -195,7 +206,7 @@ That later configuration must ensure that a worker assigned the `Luna xhigh` sem
 - **AEF-INV-12 (diagram principle 12):** Top-level orchestrators review consolidated results rather than necessarily every worker action.
 - **AEF-INV-13 (diagram principle 13):** Failed review may trigger another execution or correction cycle.
 - **AEF-INV-14 (diagram principle 14):** Agents may edit code, inspect repositories, run tests, and propose corrections.
-- **AEF-INV-15 (diagram principle 15):** The human retains final approval and commit / merge authority.
+- **AEF-INV-15 (diagram principle 15):** The human retains final approval and commit / push / merge authority.
 - **AEF-INV-16 (diagram principle 16):** Linear remains the operational source for task status and dependencies.
 - **AEF-INV-17 (diagram principle 17):** The workflow describes roles and responsibilities, not a fixed technical spawning mechanism.
 

@@ -15,9 +15,17 @@ hanly-app → hanly
 hanly → NEVER depends on hanly-app
 ```
 
-`hanly` is the reusable engine. It contains OCR orchestration, Korean linguistic analysis, dictionary lookup, local resource understanding, and UI-independent contracts. It contains no windows, mouse hooks, hotkeys, tray behavior, PyQt6, pywebview, or desktop lifecycle logic.
+`hanly` is the reusable, client-independent engine. It contains OCR orchestration, Korean linguistic analysis, dictionary lookup, local resource understanding, and UI-independent contracts. It contains no windows, mouse hooks, hotkeys, tray behavior, PyQt6, pywebview, or desktop lifecycle logic.
 
-`hanly-app` is the desktop client. It owns OS integration, capture, desktop lifecycle, asynchronous job execution, UI, settings, and remote resource delivery. Future browser, CLI, or service clients may depend on the engine without pulling in desktop implementation.
+`hanly-app` is the desktop client. It owns OS integration, capture, desktop lifecycle, asynchronous job execution, UI, settings, and remote resource delivery. Hanly Desktop V1 is the engine's first client, not the definition of the engine itself. The end-user desktop product may still be presented as Hanly while the internal dependency direction remains `hanly-app → hanly`.
+
+### Engine reuse and distribution
+
+The `hanly` engine is expected to be independently distributable as the Python package `hanly`, including through PyPI (`pip install hanly`), so developers can consume it without Hanly Desktop. This is a concrete initial distribution and consumption model, not Hanly's entire architectural identity, and the exact public Python API is not designed here.
+
+Direct Python library users, other Hanly applications, developer tools, CLI-style clients, backend services, future HTTP/API wrappers, browser-related backends or integrations, and other projects may consume the engine where appropriate. These are possible consumers, not promised integrations or new V1 deliverables. Client- and transport-specific concerns such as routes, request / response transport, authentication, server lifecycle, OpenAPI, and web frameworks remain outside the engine core.
+
+Reusable does not mean generic for every possible use case and does not require a plugin framework or abstractions for hypothetical universality. Python is the initial implementation and distribution environment, not a permanent architectural constraint. Performance-critical internals may later use native implementations or extensions behind clear public contracts when justified, without selecting a native language or speculative native seams now.
 
 ## Hanly engine
 

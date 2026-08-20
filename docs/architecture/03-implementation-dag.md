@@ -298,16 +298,16 @@ This wave may run in parallel with Wave 7 once its own inputs exist.
 ### GitHub Actions Build Matrix
 
 - **Goal:** Build Windows, macOS, and Linux artifacts in CI.
-- **Dependencies:** `Desktop V1 Integration` and the packaging definition.
+- **Dependencies:** `Desktop V1 Integration`. The packaging definition and shared artifact conventions are alignment inputs, not a requirement for the Packaging capability to be complete.
 - **Blocks:** Cross-platform artifact validation and the release candidate.
-- **Parallelism:** May be developed alongside release infrastructure after packaging inputs are known.
+- **Parallelism:** May proceed alongside Packaging and Release Infrastructure as shared artifact conventions become available.
 - **Convergence:** V1 release artifacts.
 - **Acceptance criteria:** The matrix produces testable artifacts for Windows, macOS, and Linux.
 
 ### Release Infrastructure
 
 - **Goal:** Support GitHub Releases, application artifacts, resource artifacts, and update metadata.
-- **Dependencies:** `Desktop V1 Integration`; consumes packaging / artifact conventions where required.
+- **Dependencies:** `Desktop V1 Integration`; consumes shared packaging / artifact conventions where required without waiting for Packaging to complete.
 - **Blocks:** End-to-end update/release validation and the release candidate.
 - **Parallelism:** May proceed alongside build-matrix work when shared artifact conventions are available.
 - **Convergence:** V1 release artifacts and update delivery.
