@@ -16,6 +16,7 @@ from .contracts import (
     TokenAnalysis,
 )
 from .errors import HanlyError, ProviderError
+from .lookup_pipeline import LookupPipeline
 from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "DictionaryProvider",
     "HanlyError",
     "LookupContext",
+    "LookupPipeline",
     "LookupResult",
     "LookupStatus",
     "MorphologyProvider",

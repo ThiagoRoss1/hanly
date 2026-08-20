@@ -393,6 +393,7 @@ def test_public_export_surface_is_explicit() -> None:
         "DictionaryProvider",
         "HanlyError",
         "LookupContext",
+        "LookupPipeline",
         "LookupResult",
         "LookupStatus",
         "MorphologyProvider",
