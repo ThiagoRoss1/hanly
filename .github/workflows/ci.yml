@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: quality (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group dev
+      - name: Install packages
+        run: |
+          python -m pip install --editable packages/hanly
+          python -m pip install --editable packages/hanly-app
+      - name: Run tests
+        run: python -m pytest
+      - name: Run lint
+        run: python -m ruff check packages tests
+      - name: Run type checks
+        run: python -m mypy packages tests

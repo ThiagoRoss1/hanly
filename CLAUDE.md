@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Hanly is a Korean OCR popup-dictionary desktop app (hover over Korean text anywhere on screen → dictionary popup). **The repository is pre-implementation.** There is no `pyproject.toml`, no `hanly`/`hanly-app` packages, and no test suite yet — creating them is Wave 0 of the plan in `docs/architecture/03-implementation-dag.md`.
+Hanly is a Korean OCR popup-dictionary desktop app (hover over Korean text anywhere on screen → dictionary popup). The repository contains the minimal Wave 0 Python foundation: root tooling configuration, independently installable `hanly` and `hanly-app` packages, baseline tests, and CI.
 
 Architecture V1 lives in `docs/architecture/`, and `docs/execution/05-execution-plan.md` is the operational execution manual; read both before executing Hanly V1 work. Linear is the live operational source for issue status, blockers, priorities, milestones / waves, and `READY` work, while the repository and tests remain the implemented and verifiable state.
 
 ## Commands
 
-There is no build, lint, or test tooling yet. Wave 0 introduces pyproject, `tests/`, lint, type checking, and minimal CI; until then:
+The Wave 0 quality gates are:
 
 ```bash
-.venv/Scripts/python test_kiwi.py                        # Kiwi morphology sanity check
-.venv/Scripts/python test_hover_simulation.py img.png    # warm-model OCR latency on a small ROI
-.venv/Scripts/python test_hover_simulation.py img.png x1 y1 x2 y2
+python -m pytest
+python -m ruff check packages tests
+python -m mypy packages tests
 ```
 
 The root `test_*.py` files are **exploratory spikes, not pytest tests** — they are `__main__` scripts with Portuguese comments and no assertions. Don't wire them into a future `tests/` suite; the DAG's `Korean Test Fixtures` capability covers real test inputs.

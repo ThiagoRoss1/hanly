@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hanly-app"
+version = "0.0.0"
+description = "Hanly desktop application"
+readme = {text = "Hanly desktop application package.", content-type = "text/plain"}
+requires-python = ">=3.10"
+dependencies = ["hanly==0.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

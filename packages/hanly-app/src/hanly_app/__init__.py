@@ -1,0 +1,1 @@
+"""Hanly desktop application package."""
