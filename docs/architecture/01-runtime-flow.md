@@ -63,7 +63,7 @@ Hover lookup begins from `READY` while capture mode is active:
    - If it is valid, Hanly reads the current cursor position.
 4. `CaptureService` captures a small region of interest (ROI) around the cursor. It does not continuously capture and OCR the full screen.
 5. The lookup job is submitted to a worker. Everything from OCR through construction of the result runs off the UI thread.
-6. `OCRProvider` receives the image / ROI and returns `OCRResult[]`. Each result contains recognized text, confidence, and a bounding box / coordinates.
+6. `OCRProvider` receives a normalized `ROIImage` and returns `OCRResult[]` in reading order as best determined by the adapter. Each result contains recognized text, confidence, and a `Quad` holding the four detected corner points; an axis-aligned `BoundingBox` is derived from it when a rectangle is enough.
 7. `WordResolver` combines the OCR results, their bounding boxes, and cursor context to choose the text segment relevant to the hover.
 8. `MorphologyProvider` analyzes that Korean segment and produces relevant tokens, lemma / dictionary form, morphology, and part of speech where available.
 9. `DictionaryProvider` looks up the lemma. The initial adapter is KRDICT backed by read-only SQLite; the V1 target is Korean-to-English data plus the metadata needed by the popup.

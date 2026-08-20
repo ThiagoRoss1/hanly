@@ -1,0 +1,9 @@
+{
+  "fixture_id": "korean_reading_roi",
+  "expected_text": "책을 읽습니다.",
+  "purpose": "test-only Korean OCR ROI; non-benchmark fixture",
+  "benchmark": false,
+  "format": "PNG",
+  "width": 192,
+  "height": 48
+}

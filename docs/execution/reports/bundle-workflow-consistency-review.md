@@ -1,5 +1,13 @@
 # Bundle Workflow Consistency Review
 
+> **Superseded (2026-08-20).** This document describes the earlier execution
+> model, in which every issue passed through a Sol -> Terra -> Luna hierarchy with
+> per-issue review and a deep consolidated review inside the implementation run.
+> The current workflow is defined in `docs/execution/05-execution-plan.md` and
+> `docs/architecture/04-agent-execution-flow.md`: Sol dispatches Luna directly,
+> Terra is optional, implementation-side checks are lightweight, and deep review
+> is a separate human-triggered phase. Kept as historical context only.
+
 Review date: 2026-08-20. Scope: the uncommitted bundle-workflow changes to
 `docs/execution/05-execution-plan.md`, `docs/architecture/04-agent-execution-flow.md`,
 `docs/architecture/visual/Hanly Agent Execution Flow.html`, and `CLAUDE.md`, plus the live

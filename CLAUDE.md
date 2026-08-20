@@ -8,6 +8,16 @@ Hanly is a Korean OCR popup-dictionary desktop app (hover over Korean text anywh
 
 Architecture V1 lives in `docs/architecture/`, and `docs/execution/05-execution-plan.md` is the operational execution manual; read both before executing Hanly V1 work. Linear is the live operational source for issue status, blockers, priorities, milestones / waves, and `READY` work, while the repository and tests remain the implemented and verifiable state. Execution may use one issue or a dynamically derived, human-authorized bundle as defined in `05`; Linear issues and acceptance criteria remain granular.
 
+## Execution workflow precedence
+
+`docs/execution/05-execution-plan.md` is **authoritative for Hanly V1 execution** and takes precedence over generic plan-execution skill ceremony. Skills may assist execution; they must not redefine its orchestration or review lifecycle.
+
+Do not invoke `executing-plans`, `subagent-driven-development`, or generic JIT-planning/review/TDD skill chains for Hanly work when they would add a second execution plan on top of the bundle plan, another decomposition layer, mandatory per-task reviewers, mandatory re-review loops, duplicate progress reports, duplicate checkpoints, or duplicate validation. Invoke them only when the human explicitly asks, or when the specific work genuinely needs what they provide.
+
+Execution runs in two separate phases. **Phase A (implementation)** ends at a Review Handoff in `docs/execution/review-handoffs/` and stops; implementation-side checks exist to enable safe forward progress, not to prove correctness exhaustively. **Phase B (deep review)** is a separate run that begins only on explicit human authorization, with the human choosing the reviewer and ecosystem. Never let an implementation run turn itself into a deep review session. A reviewer may apply cheap defensive hardening at a public boundary; every other finding is recorded in the handoff as Fixed now, Deferred (with a revisit trigger), or Dismissed.
+
+`04`, `05`, `docs/execution/CONTEXT.md`, `checkpoints/`, and `review-handoffs/` are V1 execution scaffolding and may be archived or removed after V1. `01`-`03` are product architecture and are not.
+
 ## Commands
 
 The Wave 0 quality gates are:

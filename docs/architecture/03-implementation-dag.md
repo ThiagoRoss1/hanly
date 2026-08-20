@@ -47,7 +47,7 @@ The deliberate gate that validates the engine independently before desktop work 
 
 ### Core Contracts
 
-- **Goal:** Define `BoundingBox`, `OCRResult`, `TokenAnalysis`, `DictionaryEntry`, `LookupResult`, `ResourceMetadata`, the `OCRProvider`, `MorphologyProvider`, and `DictionaryProvider` interfaces, plus base errors / status.
+- **Goal:** Define `ROIImage` / `PixelFormat`, `Point` / `Quad` / `BoundingBox`, `OCRResult`, `TokenAnalysis`, `DictionaryEntry`, `LookupResult`, `ResourceMetadata`, the `OCRProvider`, `MorphologyProvider`, and `DictionaryProvider` interfaces, plus base errors / status.
 - **Dependencies:** `Repository Foundation`.
 - **Blocks:** All parallel engine capabilities in Wave 2.
 - **Parallelism:** This capability is the shared prerequisite that unlocks Wave 2 parallelism.
@@ -73,7 +73,7 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 
 ### A — PaddleOCR Provider
 
-- **Goal:** Implement the primary V1 OCR adapter from image / ROI input to normalized `OCRResult[]`.
+- **Goal:** Implement the primary V1 OCR adapter from `ROIImage` input to normalized `OCRResult[]` in reading order.
 - **Dependencies:** `Core Contracts`.
 - **Blocks:** `LookupPipeline`.
 - **Parallelism:** May run in parallel with B–E.
@@ -111,7 +111,7 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 
 ### D — Word Resolver
 
-- **Goal:** Resolve the relevant text / segment from `OCRResult`, `BoundingBox`, and target / cursor context.
+- **Goal:** Resolve the relevant text / segment from `OCRResult`, its `Quad` geometry, and target / cursor context.
 - **Dependencies:** `Core Contracts`.
 - **Blocks:** `LookupPipeline`.
 - **Parallelism:** May run in parallel with A–C and E.

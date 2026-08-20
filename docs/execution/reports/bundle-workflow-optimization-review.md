@@ -1,5 +1,13 @@
 # Bundle Workflow Optimization Review
 
+> **Superseded (2026-08-20).** This document describes the earlier execution
+> model, in which every issue passed through a Sol -> Terra -> Luna hierarchy with
+> per-issue review and a deep consolidated review inside the implementation run.
+> The current workflow is defined in `docs/execution/05-execution-plan.md` and
+> `docs/architecture/04-agent-execution-flow.md`: Sol dispatches Luna directly,
+> Terra is optional, implementation-side checks are lightweight, and deep review
+> is a separate human-triggered phase. Kept as historical context only.
+
 ## Previous workflow problem
 
 The previous default repeated a complete selection, Sol → Terra → Luna execution, broad validation, consolidated review, and human checkpoint for every Linear issue. That was safe but disproportionately expensive for small setup/configuration work, risk spikes, tightly related branches, and direct dependency chains. It also repeated context loading and broad checks that are more informative at a natural convergence boundary.

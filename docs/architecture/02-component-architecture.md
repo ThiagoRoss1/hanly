@@ -33,8 +33,10 @@ Reusable does not mean generic for every possible use case and does not require 
 
 The engine owns shared conceptual models. They contain no UI logic and no external-library objects:
 
-- `BoundingBox`: OCR geometry / coordinates.
-- `OCRResult`: normalized recognized text, confidence, and bounding box.
+- `ROIImage` / `PixelFormat`: normalized, library-independent OCR input. Raw bytes plus an explicit format, so no PIL, NumPy, Qt, or Paddle object crosses the seam.
+- `Point` / `Quad`: OCR geometry as four float corner points, preserving tilted and rotated text.
+- `BoundingBox`: axis-aligned rectangle derived from a `Quad` when a rectangle suffices.
+- `OCRResult`: normalized recognized text, confidence, and quadrilateral geometry.
 - `TokenAnalysis`: normalized token, lemma / dictionary form, morphology, and part-of-speech analysis.
 - `DictionaryEntry`: normalized dictionary result.
 - `LookupResult`: UI-independent result containing what a client needs to handle a successful lookup, a normal empty / not-found / unusable outcome, or a processing error when appropriate. It may carry useful partial or diagnostic information. A status/result discriminator is required conceptually, but its exact Python representation is not fixed here.
@@ -48,7 +50,7 @@ Each provider interface is an engine seam. Concrete adapters satisfy those inter
 
 | Provider interface | Contract | Initial adapter(s) | External dependency |
 | --- | --- | --- | --- |
-| `OCRProvider` | Image / ROI in; normalized `OCRResult[]` out | `PaddleOCRProvider` (V1) | PaddleOCR |
+| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `PaddleOCRProvider` (V1) | PaddleOCR |
 | `MorphologyProvider` | Korean text in; `TokenAnalysis` out | `KiwiProvider` | Kiwi / kiwipiepy |
 | `DictionaryProvider` | Dictionary-form lookup in; normalized `DictionaryEntry` data out | `KRDICTProvider` | Processed KRDICT in local, read-only SQLite |
 
@@ -58,7 +60,7 @@ Provider selection remains configurable as an architectural concept for possible
 
 ### WordResolver
 
-`WordResolver` chooses the relevant Korean text or segment from normalized `OCRResult` values, their `BoundingBox` data, and target / cursor context. Its inputs remain conceptual engine data: it has no PyQt6, global mouse-hook, or popup responsibilities.
+`WordResolver` chooses the relevant Korean text or segment from normalized `OCRResult` values, their `Quad` geometry, and target / cursor context. It hit tests against the four detected corners rather than an inflated rectangle, so tilted text resolves correctly; the derived `BoundingBox` remains available for coarse checks. Its inputs remain conceptual engine data: it has no PyQt6, global mouse-hook, or popup responsibilities.
 
 ### LookupPipeline
 

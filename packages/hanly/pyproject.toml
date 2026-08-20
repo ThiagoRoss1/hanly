@@ -5,10 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hanly"
 version = "0.0.0"
-description = "Reusable Hanly engine"
+description = "Korean text analysis and dictionary engine for OCR and language-learning applications"
 readme = {text = "Hanly engine package.", content-type = "text/plain"}
 requires-python = ">=3.10"
 dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+hanly = ["py.typed"]
