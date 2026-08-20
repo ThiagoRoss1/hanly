@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hanly is a Korean OCR popup-dictionary desktop app (hover over Korean text anywhere on screen → dictionary popup). The repository contains the minimal Wave 0 Python foundation: root tooling configuration, independently installable `hanly` and `hanly-app` packages, baseline tests, and CI.
 
-Architecture V1 lives in `docs/architecture/`, and `docs/execution/05-execution-plan.md` is the operational execution manual; read both before executing Hanly V1 work. Linear is the live operational source for issue status, blockers, priorities, milestones / waves, and `READY` work, while the repository and tests remain the implemented and verifiable state.
+Architecture V1 lives in `docs/architecture/`, and `docs/execution/05-execution-plan.md` is the operational execution manual; read both before executing Hanly V1 work. Linear is the live operational source for issue status, blockers, priorities, milestones / waves, and `READY` work, while the repository and tests remain the implemented and verifiable state. Execution may use one issue or a dynamically derived, human-authorized bundle as defined in `05`; Linear issues and acceptance criteria remain granular.
 
 ## Commands
 

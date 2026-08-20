@@ -4,7 +4,7 @@ Textual companion to the approved [Hanly Agent Execution Flow](visual/Hanly%20Ag
 
 ## Purpose
 
-This view defines how approved `READY` work becomes executed, reviewed, human-approved, integrated work. It consumes implementation dependencies from the Implementation DAG and Linear; it does not redefine application architecture or implementation blockers.
+This view defines how an authorized `READY` issue or execution bundle becomes executed, reviewed, human-approved, integrated work. An execution bundle is a temporary orchestration and review grouping of related Linear issues; it does not replace those issues, their acceptance criteria, or their blocker relationships. This flow consumes implementation dependencies from the Implementation DAG and Linear; it does not redefine application architecture or implementation blockers.
 
 ## Inputs and sources of truth
 
@@ -25,7 +25,15 @@ The source-of-truth responsibilities are distinct:
 - The repository and tests contain the implemented and verifiable state.
 - The human is the authority for ecosystem selection, acceptance, approved architecture changes, and—by default—final commit, push, and merge.
 
-Only work whose dependencies are satisfied is `READY`. Agent Execution Flow determines how that work is executed; it does not change why work is ready or blocked.
+Only work whose dependencies are satisfied is `READY`. Agent Execution Flow determines how that work is executed; it does not change why work is ready or blocked. A human-authorized bundle may contain internal dependency chains, but an issue may progress internally only after its blockers outside the bundle are satisfied and its predecessors inside the bundle have passed focused validation. That internal progression is not human approval and does not make any issue `Done`.
+
+## Execution units
+
+The authorized unit of work may be one substantial or isolated Linear issue, or an execution bundle of related issues. Bundles are formed dynamically from current `READY` work, real dependencies, component relationships, useful parallelism, and natural convergence boundaries. They are never inferred from consecutive issue numbers and must not cross a major architecture gate merely to enlarge the batch.
+
+Each issue remains a granular Linear tracking and acceptance unit. Within an explicitly authorized bundle, focused validation may unlock a dependent bundle member without an intermediate human checkpoint; broader integration validation and consolidated review occur before the bundle reaches the Human Review Gate. The bundle ends at that gate, and authorization never carries into the next bundle.
+
+A dependent member whose blockers outside the bundle are satisfied, and whose predecessors inside the bundle have met their acceptance criteria with focused validation passing, is **`BUNDLE-READY`**. This is an execution convention only: it is not a Linear status, it never overrides an external blocker or alters a blocker relationship, and it is not human approval. `05-execution-plan.md` owns its operational rules.
 
 ## Ecosystem selection
 
@@ -40,7 +48,7 @@ GPT and Claude are independent, equivalent entry paths. There is:
 - no mandatory cross-provider review, although the human may request one;
 - no fixed number of workers or subagents.
 
-The ecosystem choice is made again for each next unit or wave of `READY` work.
+The ecosystem choice is made again for each next authorized issue or execution bundle.
 
 ## GPT execution ecosystem
 
@@ -72,21 +80,21 @@ This is an execution-policy requirement, not an architecture dependency.
 
 ### Sol — Orchestrator
 
-Sol is the top-level GPT orchestrator. Sol reads project context, interprets the Implementation DAG, reads `READY` Linear work, selects work with satisfied dependencies, organizes execution waves, distributes units of work, tracks results, and returns failed work for correction. Sol does not need to implement tasks directly.
+Sol is the top-level GPT orchestrator. Sol reads project context, interprets the Implementation DAG, reads `READY` Linear work, derives the authorized issue or bundle boundary, organizes any internal execution waves, distributes units of work, tracks results, and returns failed work for correction. A bundle normally uses one Sol orchestration and top-level review cycle rather than repeating the hierarchy for every member. Sol does not need to implement tasks directly.
 
 ### Terra — Tech Lead
 
-Terra receives work already planned by Sol and leads the execution team. Terra understands the objective and technical context, may decompose already-planned work further when useful, distributes subtasks, coordinates local execution, and consolidates results. Terra is not primarily a worker expected to write all code alone.
+Terra receives work already planned by Sol and leads the execution team. Terra understands the objective and technical context, may decompose already-planned work further when useful, distributes subtasks, coordinates focused validation and internal bundle progression, and consolidates the integrated result. Terra is not primarily a worker expected to write all code alone.
 
 ### Luna xhigh workers
 
-Luna xhigh agents implement bounded subtasks such as implementation, tests, investigation, refactoring, and related documentation. Their count varies with task complexity and independence. Subtasks may run in parallel when the DAG and local dependencies permit it.
+Luna xhigh agents implement bounded subtasks such as implementation, tests, investigation, refactoring, and related documentation. Their count varies with task complexity and independence. When a bundle exposes three to five genuinely independent workstreams, Terra should target approximately three to five parallel Luna xhigh workers. This is a target, not a quota: do not create artificial workstreams, and do not default to one worker when useful parallelism exists.
 
 ### Internal review and consolidation
 
-Internal review may inspect implementation details, find bugs, validate tests, detect inconsistencies, and request corrections before consolidation. Terra then gathers results, resolves internal inconsistencies, verifies integration, and confirms readiness for top-level review.
+Each issue receives focused implementation validation and local review proportional to its risk. Internal review may inspect implementation details, find bugs, validate tests, detect inconsistencies, and request corrections before consolidation. Terra then gathers the bundle results, resolves internal inconsistencies, runs the broader integration validation required at the convergence boundary, and confirms readiness for top-level review.
 
-Sol performs general review against the original task, architecture, acceptance criteria, tests, regressions, dependencies, and repository integration. Sol reviews the consolidated result rather than necessarily every worker action or line.
+Sol performs general review of the consolidated issue or bundle against the authorized scope, architecture, every member's acceptance criteria, tests, regressions, dependencies, and repository integration. Sol reviews the consolidated result rather than necessarily every worker action or line.
 
 If review fails, work returns to Terra and the team for another execution / correction cycle. If it passes, it proceeds to the Human Review Gate.
 
@@ -118,7 +126,7 @@ If review fails, another execution / correction cycle begins. If it passes, the 
 
 ## Human review gate
 
-The GPT and Claude paths converge at the same human gate. The human:
+The GPT and Claude paths converge at the same human gate for the completed issue or bundle. The human:
 
 - reads the changes;
 - understands the code and decisions;
@@ -157,18 +165,19 @@ Automatic commit, push, or merge is not part of the approved flow.
 
 ## Linear execution loop
 
-After human approval, Linear is updated according to the approved lifecycle: the task is updated, completed work is marked when applicable, dependent work is unblocked, and newly ready tasks are identified. Any commit, push, or merge remains a separate human-controlled action unless explicitly delegated.
+After human approval, Linear is updated according to the approved lifecycle: the applicable issue or bundle members are updated, approved work is marked when applicable, dependent work is unblocked, and newly ready tasks are identified. Any commit, push, or merge remains a separate human-controlled action unless explicitly delegated.
 
 ```text
-READY work
+authorized READY issue or execution bundle
 → execution in the human-selected ecosystem
-→ internal review and consolidation
+→ focused per-issue validation and internal progression
+→ bundle integration validation and consolidation
 → top-level ecosystem review
 → human review and approval
 → acceptance / completion decision
 → Linear state update
 → newly unblocked READY work
-→ next execution wave
+→ next separately authorized execution unit
 ```
 
 Failed internal, top-level, or human review loops back to execution / correction before Linear completion. Linear remains the operational source for task status and dependencies.
@@ -201,9 +210,9 @@ That later configuration must ensure that a worker assigned the `Luna xhigh` sem
 - **AEF-INV-07 (diagram principle 7):** The Claude ecosystem uses Opus 5 as orchestrator and default executor.
 - **AEF-INV-08 (diagram principle 8):** Opus 5 may execute directly without delegation.
 - **AEF-INV-09 (diagram principle 9):** Sonnet subagents are optional.
-- **AEF-INV-10 (diagram principle 10):** Team size and decomposition may vary according to the task.
+- **AEF-INV-10 (diagram principle 10):** Team size and decomposition may vary according to the authorized issue or bundle.
 - **AEF-INV-11 (diagram principle 11):** Parallel execution is encouraged when dependencies permit it.
-- **AEF-INV-12 (diagram principle 12):** Top-level orchestrators review consolidated results rather than necessarily every worker action.
+- **AEF-INV-12 (diagram principle 12):** Top-level orchestrators review consolidated issue or bundle results rather than necessarily every worker action.
 - **AEF-INV-13 (diagram principle 13):** Failed review may trigger another execution or correction cycle.
 - **AEF-INV-14 (diagram principle 14):** Agents may edit code, inspect repositories, run tests, and propose corrections.
 - **AEF-INV-15 (diagram principle 15):** The human retains final approval and commit / push / merge authority.
