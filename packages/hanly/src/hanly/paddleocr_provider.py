@@ -278,7 +278,7 @@ class PaddleOCRProvider:
         shape: tuple[int, ...] = (image.height, image.width)
         if channels > 1:
             shape += (channels,)
-        array = np.frombuffer(image.data, dtype=np.uint8).reshape(shape)
+        array: Any = np.frombuffer(image.data, dtype=np.uint8).reshape(shape)
 
         if image.pixel_format is PixelFormat.GRAYSCALE_8:
             # PaddleX unpacks height, width, and channels from the array it is
@@ -292,6 +292,15 @@ class PaddleOCRProvider:
         elif image.pixel_format is PixelFormat.RGBA_8888:
             # Drop alpha and convert RGBA to Paddle's BGR convention.
             array = array[..., [2, 1, 0]]
+
+        if array.ndim != 3 or array.dtype != np.uint8:
+            # PaddleX unpacks height, width, and channels from the array it is
+            # given. Checking here turns a malformed buffer into a clear
+            # provider error instead of an obscure failure inside the library.
+            raise PaddleOCRProviderError(
+                "normalized ROI must be a 3-D uint8 array, got "
+                f"{array.ndim}-D {array.dtype}"
+            )
         return np.array(array, dtype=np.uint8, copy=True)
 
     @classmethod
