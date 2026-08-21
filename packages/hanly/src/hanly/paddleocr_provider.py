@@ -181,7 +181,7 @@ class PaddleOCRProvider:
         try:
             # Keep this import before any direct paddle import.  On Windows,
             # PaddleOCR's supported import order avoids a native DLL conflict.
-            from paddleocr import PaddleOCR  # type: ignore[import-untyped]
+            from paddleocr import PaddleOCR
         except Exception as exc:
             raise PaddleOCRProviderError(
                 f"PaddleOCR is unavailable: {exc}"

@@ -20,5 +20,12 @@ include = ["packages/**/*.py", "tests/**/*.py", "spikes/**/*.py"]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.10"
 files = ["packages", "tests", "spikes"]
+
+[[tool.mypy.overrides]]
+module = ["paddleocr.*", "kiwipiepy.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["numpy.*"]
+follow_imports = "skip"
