@@ -80,7 +80,7 @@ This must be resolved and verified before HAN-19 Manual Hotkey Lookup can be con
 - Reviewer: Claude (Opus 5)
 - Review ecosystem: Claude, reviewing a Codex-implemented bundle
 - Date: 2026-08-20
-- Status: Closed, including a follow-up manual-review cleanup pass. Latest-wins and currency guarantees hold under stress. One open V1 runtime issue recorded — UI-thread shutdown against a blocking dispatcher — with its structural decision assigned to HAN-16. Nothing blocks the next bundle.
+- Status: Closed, including a follow-up manual-review cleanup pass. Latest-wins and currency guarantees hold under stress. One open V1 runtime issue recorded — UI-thread shutdown against a blocking dispatcher — with its structural decision assigned to HAN-17 Basic Popup. Nothing in this review blocks the revised HAN-15 concrete-runtime gate.
 
 Gates after the review: **147 passed, Ruff clean, mypy clean across 39 source
 files.**
@@ -108,8 +108,8 @@ directory, `fsync`, `os.replace`, and best-effort cleanup on failure.
 
 - **The `result_dispatcher` contract is now explicit at the seam.** A dispatcher
   must post and return without waiting; a blocking marshal deadlocks shutdown.
-  Documented on `ResultDispatcher` and on `stop()`, which is where HAN-15/HAN-18
-  integration will read it. No behavior changed — see the deferred item for the
+  Documented on `ResultDispatcher` and on `stop()`, which is where HAN-17 popup
+  and later desktop integration will read it. No behavior changed — see the deferred item for the
   decision this defers.
 
 ### Manual-review cleanup pass (2026-08-20)
@@ -206,9 +206,9 @@ than guessed from a test double.
 
 No small implementation adjustment was applied beyond the seam documentation: a
 blocking dispatcher cannot be detected from inside `stop()`, and anything
-stronger would pre-empt the HAN-16 lifecycle decision.
+stronger would pre-empt the HAN-17 lifecycle decision.
 
-*Trigger: must be resolved during HAN-16 Basic Popup, before any real UI
+*Trigger: must be resolved during HAN-17 Basic Popup, before any real UI
 shutdown path is considered complete.*
 
 ### Deferred considerations
@@ -254,10 +254,10 @@ shutdown path is considered complete.*
 
 ### Next bundle
 
-Nothing in this review blocks the next implementation bundle. The one open V1
-runtime issue is scoped to HAN-16 Basic Popup, where the UI dispatcher it
-concerns is first introduced. The target-point-to-token issue remains owned by
-HAN-19.
+Nothing in this review blocks HAN-15 Concrete Hanly V1 Engine Integration, the
+revised next gate. The one open V1 runtime issue is scoped to HAN-17 Basic Popup,
+where the UI dispatcher it concerns is first introduced. The target-point-to-token
+issue remains owned by HAN-19.
 
 ## Review assignment
 

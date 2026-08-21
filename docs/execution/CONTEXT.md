@@ -70,6 +70,15 @@ Otherwise the constraints below are sufficient.
 - **DAG-INV-11** Nodes are capabilities, not files or exhaustive task lists.
 - **DAG-INV-16** Korean fixtures are small deterministic test inputs, not the HanlyOCR benchmark.
 - **DAG-INV-17** The lifecycle and packaging spikes are non-blocking risk discovery.
+- **DAG-INV-18** HAN-15 owns the official ResourceManager-backed PaddleOCR + Kiwi + KRDICT runtime composition before desktop interaction capabilities consume it; update/distribution remains later.
+
+## Current V1 ownership boundary
+
+- Engine/provider implementations and normalized seams already exist in `hanly`.
+- HAN-15 owns the first official repository/runtime composition of those current capabilities, including the reproducible real-engine development entrypoint.
+- HAN-16 Capture, HAN-17 Basic Popup, HAN-18 Hotkey Service, and HAN-19 Manual Hotkey Lookup own desktop interaction and presentation, not provider construction.
+- HAN-34 Basic Control Center is the inserted post-HAN-18 capability and does not block HAN-19.
+- HAN-24/25 and later packaging/release work continue to own remote acquisition, update UI, distribution, and release concerns.
 
 The remaining DAG invariants describe dependency structure; Linear carries that
 structure operationally, so consult `03` directly when readiness is in question.

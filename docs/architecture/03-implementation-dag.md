@@ -8,7 +8,7 @@ This is the master implementation plan for Hanly Desktop V1. It defines implemen
 
 An edge in this DAG represents a real implementation blocker unless documented as a deliberate project gate.
 
-The deliberate gate that validates the engine independently before desktop work must be preserved. Absence of an edge means work may be parallelized when its stated inputs are available; it does not make the work mandatory to parallelize.
+The deliberate gate that validates the engine independently before desktop work must be preserved. A separate concrete-runtime gate then turns the implemented provider capabilities into the official repository-owned PaddleOCR + Kiwi + KRDICT runtime before desktop interaction capabilities consume it. Absence of an edge means work may be parallelized when its stated inputs are available; it does not make the work mandatory to parallelize.
 
 ## Wave 0 — Repository Foundation
 
@@ -122,9 +122,9 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 
 - **Goal:** Locate, validate, and report on mandatory local V1 resources as `valid`, `missing`, `outdated`, or `incompatible`.
 - **Dependencies:** `Core Contracts`.
-- **Blocks:** `Basic Control Center`, `UpdateService / ResourceFetcher`, and `Resource / Update UI Integration`.
+- **Blocks:** `Concrete Hanly V1 Engine Integration`, `Basic Control Center`, `UpdateService / ResourceFetcher`, and `Resource / Update UI Integration`.
 - **Parallelism:** May run in parallel with A–D. It continues on a side track and is not a `LookupPipeline` dependency in the approved DAG.
-- **Convergence:** With `Desktop Foundation` at `Basic Control Center`; with `Desktop Foundation` at `UpdateService / ResourceFetcher`; and with both update service and Control Center at `Resource / Update UI Integration`.
+- **Convergence:** With `Desktop Foundation` and the implemented provider stack at `Concrete Hanly V1 Engine Integration`; with that concrete runtime at `Basic Control Center`; with `Desktop Foundation` at `UpdateService / ResourceFetcher`; and with both update service and Control Center at `Resource / Update UI Integration`.
 - **Acceptance criteria:** Local resource availability, version, model / dictionary status, and compatibility can be reported without remote download or update UX. Application/composition wiring can obtain validated paths and configuration and supply them explicitly to concrete providers; providers do not need a direct `ResourceManager` dependency.
 
 ## Wave 3 — Engine Integration
@@ -140,61 +140,72 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 
 ### Engine E2E Validation
 
-- **Goal:** Demonstrate `image → Hanly Engine → LookupResult` through a development harness without desktop UI.
+- **Goal:** Validate the reusable engine path `image → Hanly Engine → LookupResult` without desktop UI before application composition begins.
 - **Dependencies:** `LookupPipeline`.
 - **Blocks:** `Desktop Foundation` as a deliberate project gate.
 - **Parallelism:** Runs after engine convergence; `ResourceManager Core` remains on its independent side track.
-- **Convergence:** Validates the complete engine path.
-- **Acceptance criteria:** The `hanly` engine functions independently of `hanly-app`. The development harness may supply explicit test resource paths / configuration directly, preserving `ResourceManager Core` as a separate side track.
+- **Convergence:** Validates the engine contracts and pipeline path independently of the desktop client.
+- **Acceptance criteria:** The `hanly` engine functions independently of `hanly-app`. The harness may supply explicit test resource paths / configuration directly and may use deterministic seams; it is not the official repository-owned real-provider runtime composition, which is established after Desktop Foundation.
 
 ## Wave 4 — Desktop Foundation
 
 ### Desktop Foundation
 
-- **Goal:** Establish the first `hanly-app` infrastructure: `DesktopController`, `ConfigManager`, `LookupController`, `JobExecutor` / worker, basic lifecycle, and first engine integration.
+- **Goal:** Establish the first `hanly-app` infrastructure: `DesktopController`, `ConfigManager`, `LookupController`, `JobExecutor` / worker, basic lifecycle, and the worker-owned composition seam.
 - **Dependencies:** `Engine E2E Validation`.
-- **Blocks:** Wave 5 desktop capabilities, `UpdateService / ResourceFetcher`, and later desktop integration.
-- **Parallelism:** This shared foundation unlocks the Wave 5 branches.
-- **Convergence:** Brings the independently validated engine into the desktop client.
+- **Blocks:** `Concrete Hanly V1 Engine Integration`, Wave 5 desktop capabilities, `UpdateService / ResourceFetcher`, and later desktop integration.
+- **Parallelism:** This shared foundation unlocks the concrete-runtime gate and the later desktop branches according to their explicit dependencies.
+- **Convergence:** Establishes bounded worker execution and the application composition boundary; it does not yet supply the official real PaddleOCR + Kiwi + KRDICT runtime.
 - **Acceptance criteria:** Basic app lifecycle works, `hanly-app` depends on `hanly` only in the allowed direction, and heavy processing does not run on the UI thread. `LookupController` and `JobExecutor` enforce a bounded / latest-wins policy so stale hover jobs cannot accumulate without bound; superseded work is cancelled or suppressed where reasonably possible, while final request-currency validation remains mandatory.
 
-## Wave 5 — Parallel Desktop Capabilities
+## Wave 5 — Concrete Runtime + Desktop Capabilities
 
-Branches A–D may be implemented in parallel once their dependencies are satisfied. Branch D additionally requires `ResourceManager Core`.
+`Concrete Hanly V1 Engine Integration` is the deliberate gate at the start of this wave. Capture, popup, hotkey, and Control Center work may proceed only after that concrete runtime exists. Once the gate is satisfied, the four desktop branches may run in parallel according to their own dependencies; Basic Control Center additionally requires `ResourceManager Core`.
 
-### A — Capture Service
+### A — Concrete Hanly V1 Engine Integration
+
+- **Goal:** Turn the already-implemented provider and engine capabilities into the first official, repository-owned concrete Hanly V1 runtime.
+- **Dependencies:** `Desktop Foundation`, `ResourceManager Core`, `LookupPipeline`, and the completed PaddleOCR, Kiwi, and KRDICT provider branches.
+- **Blocks:** `Capture Service`, `Basic Popup`, `Hotkey Service`, `Basic Control Center`, and `Manual Hotkey Lookup`.
+- **Parallelism:** This is a convergence gate, not a parallel desktop branch.
+- **Convergence:** `PaddleOCRProvider` + `KiwiProvider` + `KRDICTProvider` + `ResourceManager` + the worker-owned hanly-app composition layer.
+- **Acceptance criteria:** A repository-owned composition root constructs the real providers from ResourceManager-validated current local paths/configuration; supported development dependencies are wired; an official minimal entrypoint/harness runs a real Korean `image/ROI → PaddleOCR → Kiwi → KRDICT → LookupResult` path without disposable review scripts or test-only manual provider construction.
+
+This capability integrates only behavior already implemented by the current provider APIs. A small local/development resource path is sufficient. It does not own capture, popup, hotkeys, hover, target-point-to-token correction, production resource acquisition/update/distribution, packaging, or future provider capabilities.
+
+### B — Capture Service
 
 - **Goal:** Provide screen capture, monitor selection, cursor coordinates, ROI capture, and basic region support.
-- **Dependencies:** `Desktop Foundation`.
+- **Dependencies:** `Concrete Hanly V1 Engine Integration` and `Desktop Foundation`.
 - **Blocks:** `Manual Hotkey Lookup`.
-- **Parallelism:** May run in parallel with B–D.
+- **Parallelism:** May run in parallel with C–E after the concrete-runtime gate.
 - **Convergence:** `Manual Hotkey Lookup`.
 - **Acceptance criteria:** The desktop client can capture a cursor-centered ROI and support the approved basic monitor / region choices.
 
-### B — Basic Popup
+### C — Basic Popup
 
 - **Goal:** Provide `PopupController` and a borderless PyQt6 popup that positions and renders `LookupResult` with a reasonable V1 visual baseline.
-- **Dependencies:** `Desktop Foundation`.
+- **Dependencies:** `Concrete Hanly V1 Engine Integration` and `Desktop Foundation`.
 - **Blocks:** `Manual Hotkey Lookup`.
-- **Parallelism:** May run in parallel with A, C, and D.
+- **Parallelism:** May run in parallel with B, D, and E after the concrete-runtime gate.
 - **Convergence:** `Manual Hotkey Lookup`.
-- **Acceptance criteria:** The popup renders processed successful and normal non-success `LookupResult` states and does not depend on concrete engine providers.
+- **Acceptance criteria:** The popup renders processed successful and normal non-success `LookupResult` states, does not depend on concrete engine providers, and resolves the UI-thread shutdown/dispatcher issue recorded by the Desktop Foundation review.
 
-### C — Hotkey Service
+### D — Hotkey Service
 
 - **Goal:** Register and unregister global hotkeys for lookup and capture-mode actions.
-- **Dependencies:** `Desktop Foundation`.
+- **Dependencies:** `Concrete Hanly V1 Engine Integration` and `Desktop Foundation`.
 - **Blocks:** `Manual Hotkey Lookup`.
-- **Parallelism:** May run in parallel with A, B, and D.
+- **Parallelism:** May run in parallel with B, C, and E after the concrete-runtime gate.
 - **Convergence:** `Manual Hotkey Lookup`.
 - **Acceptance criteria:** A global lookup trigger and capture-mode actions can reach desktop application orchestration.
 
-### D — Basic Control Center
+### E — Basic Control Center
 
 - **Goal:** Establish the pywebview HTML/CSS/JavaScript interface for capture start / stop, target / region selection, basic settings and app state, local resource status, current OCR provider, update controls, hover delay, and hotkeys.
-- **Dependencies:** `Desktop Foundation` and `ResourceManager Core`.
+- **Dependencies:** `Concrete Hanly V1 Engine Integration`, `Desktop Foundation`, and `ResourceManager Core`.
 - **Blocks:** Final `Hover Lookup Integration` and `Resource / Update UI Integration`.
-- **Parallelism:** May run beside A–C once both of its dependencies are satisfied.
+- **Parallelism:** May run beside B–D once all of its dependencies are satisfied. It is the inserted planning capability after Hotkey Service, tracked operationally as HAN-34.
 - **Convergence:** With the hover runtime before final hover integration; with `UpdateService / ResourceFetcher` and `ResourceManager Core` at `Resource / Update UI Integration`.
 - **Acceptance criteria:** The Control Center shows real resource availability, model / dictionary version and compatibility state; it contains no linguistic logic.
 
@@ -203,11 +214,20 @@ Branches A–D may be implemented in parallel once their dependencies are satisf
 ### Manual Hotkey Lookup
 
 - **Goal:** Deliver the first full desktop vertical slice and retain it as a V1 feature.
-- **Dependencies:** `Capture Service`, `Basic Popup`, `Hotkey Service`, `LookupPipeline`, and the desktop foundation that hosts them.
+- **Dependencies:** `Concrete Hanly V1 Engine Integration`, `Capture Service`, `Basic Popup`, `Hotkey Service`, `LookupPipeline`, and the desktop foundation that hosts them.
 - **Blocks:** Automatic hover integration; it deliberately validates the complete desktop stack first.
 - **Parallelism:** This is a convergence point, not an independent parallel branch.
-- **Convergence:** Capture + popup + hotkey + engine.
-- **Acceptance criteria:** `cursor over word → hotkey → capture ROI → JobExecutor → LookupPipeline → LookupResult → popup` works end to end with heavy work off the UI thread.
+- **Convergence:** Already-wired concrete engine + capture + popup + hotkey.
+- **Acceptance criteria:** `cursor over word → hotkey → capture ROI → JobExecutor → the established concrete LookupPipeline → LookupResult → popup` works end to end with heavy work off the UI thread. The target-point-to-token correctness issue is resolved and verified with real providers before this capability is accepted; HAN-19 does not reconstruct provider/resource composition.
+
+### Operational Linear mapping for Wave 5–6
+
+- HAN-15 — Concrete Hanly V1 Engine Integration.
+- HAN-16 — Capture Service.
+- HAN-17 — Basic Popup.
+- HAN-18 — Hotkey Service.
+- HAN-34 — Basic Control Center, inserted after HAN-18 and intentionally not a Manual Hotkey Lookup blocker.
+- HAN-19 — Manual Hotkey Lookup.
 
 ## Wave 7 — Automatic Hover Runtime
 
@@ -346,13 +366,16 @@ This wave may run in parallel with Wave 7 once its own inputs exist.
 
 The resource branch preserves these exact relationships:
 
-- `Basic Control Center` depends on `Desktop Foundation` and `ResourceManager Core`.
+- `Concrete Hanly V1 Engine Integration` depends on `Desktop Foundation`, `ResourceManager Core`, `LookupPipeline`, and the implemented concrete provider branches.
+- `Concrete Hanly V1 Engine Integration` consumes current local/development resources; it does not acquire or update them.
+- `Basic Control Center` depends on `Concrete Hanly V1 Engine Integration`, `Desktop Foundation`, and `ResourceManager Core`.
 - `UpdateService / ResourceFetcher` depends on `ResourceManager Core` and `Desktop Foundation`.
 - `UpdateService / ResourceFetcher` does not depend on the Control Center UI.
 - `Resource / Update UI Integration` depends on and converges `Basic Control Center`, `UpdateService / ResourceFetcher`, and `ResourceManager Core`.
 - `UpdateService / ResourceFetcher` obtains resources; `ResourceManager` understands and validates them.
 - `ResourceManager Core` is mandatory for V1 but is not an approved dependency of `LookupPipeline` in this DAG.
 - Application/composition wiring obtains validated paths and configuration from `ResourceManager` and supplies them explicitly to concrete providers. Providers do not require a direct `ResourceManager` dependency.
+- Production resource acquisition, update, and distribution remain owned by `UpdateService / ResourceFetcher` and later delivery/release capabilities, not by the concrete-runtime gate.
 
 ## HanlyOCR research track
 
@@ -398,7 +421,7 @@ Detailed implementation plans are created just in time when a capability becomes
 ## DAG invariants
 
 - **DAG-INV-01 (diagram rule 1):** `hanly` remains independent from `hanly-app`.
-- **DAG-INV-02 (diagram rule 2):** Engine functionality is validated before desktop integration.
+- **DAG-INV-02 (diagram rule 2):** Reusable engine functionality is validated independently before desktop composition and interaction.
 - **DAG-INV-03 (diagram rule 3):** Core contracts unlock parallel provider, resolver, and resource-manager work.
 - **DAG-INV-04 (diagram rule 4):** Manual Hotkey Lookup precedes automatic hover.
 - **DAG-INV-05 (diagram rule 5):** Manual Hotkey Lookup remains a V1 feature.
@@ -417,3 +440,4 @@ Detailed implementation plans are created just in time when a capability becomes
 - **DAG-INV-15:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation required before presentation.
 - **DAG-INV-16:** Korean Test Fixtures are small deterministic inputs for ordinary automated tests, distinct from the non-blocking HanlyOCR benchmark dataset.
 - **DAG-INV-17:** The desktop lifecycle and packaging feasibility spikes are non-blocking risk-discovery capabilities unless their evidence leads to a later human-approved DAG change.
+- **DAG-INV-18:** The official concrete PaddleOCR + Kiwi + KRDICT runtime is composed through ResourceManager-backed application wiring before capture, popup, hotkey, and manual-lookup capabilities consume it; later update/distribution work remains separate.

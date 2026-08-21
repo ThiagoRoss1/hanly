@@ -87,12 +87,14 @@ One component, provider, or capability implemented behind an already defined sea
 
 ### Gate
 
-Convergence points, integration capabilities, shared-contract definitions, and architecture-sensitive work — including `Core Contracts`, `Engine E2E Validation`, `Desktop Foundation`, `Manual Hotkey Lookup`, `Desktop V1 Integration`, and `V1 Validation`.
+Convergence points, integration capabilities, shared-contract definitions, and architecture-sensitive work — including `Core Contracts`, `Engine E2E Validation`, `Desktop Foundation`, `Concrete Hanly V1 Engine Integration`, `Manual Hotkey Lookup`, `Desktop V1 Integration`, and `V1 Validation`.
 
 - More workers where genuinely independent workstreams exist; an optional coordination layer where integration judgment materially helps. Neither is mandatory.
 - Context: the full relevant architecture documents.
 - Checks: the intended integration path runs, plus the bundle mechanical gates.
 - Gate tier raises the care taken with architecture and integration. It does not by itself require a separate reviewer per member, and it does not pull deep review into the implementation run.
+
+In the current V1 DAG, HAN-15 `Concrete Hanly V1 Engine Integration` is a deliberate single-issue gate. Do not bundle HAN-16–18 or HAN-34 through it merely because they are its descendants. After HAN-15 is approved and `Done`, derive the next desktop-capability bundle from the then-current Linear blockers.
 
 ## Skills precedence
 

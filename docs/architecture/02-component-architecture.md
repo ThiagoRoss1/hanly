@@ -91,6 +91,8 @@ Its interface hides concrete OCR, morphology, dictionary, database, and UI imple
 
 Application/composition wiring obtains validated resource paths and configuration from `ResourceManager` and supplies each concrete provider with the explicit resources it requires during construction or configuration. Providers therefore do not need to depend directly on `ResourceManager`. `LookupPipeline` remains unaware of resource location and depends only on provider interfaces and normalized contracts.
 
+The V1 plan distinguishes four ownership layers: provider and engine implementations live in `hanly`; HAN-15 establishes the official ResourceManager-backed PaddleOCR + Kiwi + KRDICT runtime composition in application wiring; later desktop capabilities consume that runtime for interaction and presentation; and still-later update/distribution capabilities acquire and deliver resources. Concrete composition does not move provider policy into UI code or pull remote resource delivery forward.
+
 `ResourceManager` has no UI, GitHub Actions, download-progress, or update-UX responsibility. This composition responsibility does not prescribe a dependency-injection framework or introduce a new facade.
 
 ## Hanly desktop application
