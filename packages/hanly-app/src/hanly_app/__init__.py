@@ -1,5 +1,15 @@
 """Hanly desktop application package."""
 
+from .capture import (
+    CaptureBackend,
+    CaptureBackendError,
+    CaptureError,
+    CaptureResult,
+    CaptureService,
+    MonitorInfo,
+    MSSBackend,
+    ScreenRect,
+)
 from .composition import (
     LookupWorker,
     build_lookup_controller,
@@ -9,8 +19,24 @@ from .composition import (
 )
 from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, Theme
 from .desktop_controller import DesktopController, DesktopState, LookupRuntime
+from .hotkeys import (
+    DEFAULT_HOTKEYS,
+    DuplicateHotkeyError,
+    HotkeyAction,
+    HotkeyError,
+    HotkeyService,
+)
 from .job_executor import JobExecutor, Worker
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher, ResultHandler
+from .popup import (
+    PopupContent,
+    PopupController,
+    PopupPosition,
+    PopupRuntime,
+    PopupSize,
+    ScreenGeometry,
+    format_lookup_result,
+)
 from .runtime import (
     HanlyRuntime,
     RuntimeConfigError,
@@ -21,20 +47,39 @@ from .runtime import (
 
 __all__ = [
     "AppConfig",
+    "CaptureBackend",
+    "CaptureBackendError",
+    "CaptureError",
     "CaptureMode",
+    "CaptureResult",
+    "CaptureService",
     "ConfigError",
     "ConfigManager",
+    "DEFAULT_HOTKEYS",
     "DesktopController",
     "DesktopState",
+    "DuplicateHotkeyError",
     "HanlyRuntime",
+    "HotkeyAction",
+    "HotkeyError",
+    "HotkeyService",
     "JobExecutor",
     "LookupController",
     "LookupRequest",
     "LookupRuntime",
     "LookupWorker",
+    "MSSBackend",
+    "MonitorInfo",
+    "PopupContent",
+    "PopupController",
+    "PopupPosition",
+    "PopupRuntime",
+    "PopupSize",
     "ResultDispatcher",
     "ResultHandler",
     "RuntimeConfigError",
+    "ScreenGeometry",
+    "ScreenRect",
     "Theme",
     "Worker",
     "build_lookup_controller",
@@ -43,5 +88,6 @@ __all__ = [
     "create_lookup_controller_from_config",
     "create_lookup_worker_factory",
     "create_worker_factory_from_config",
+    "format_lookup_result",
     "load_runtime",
 ]

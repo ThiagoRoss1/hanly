@@ -6,6 +6,7 @@ dev = [
     "packaging>=24.0",
     "pytest>=8.3",
     "ruff>=0.6",
+    "types-pynput>=1.8",
 ]
 
 [tool.pytest.ini_options]
@@ -24,7 +25,7 @@ select = ["E", "F", "I", "UP"]
 files = ["packages", "tests", "tools", "spikes"]
 
 [[tool.mypy.overrides]]
-module = ["paddleocr.*", "kiwipiepy.*", "PIL.*"]
+module = ["paddleocr.*", "kiwipiepy.*", "PIL.*", "mss.*", "PyQt6.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
