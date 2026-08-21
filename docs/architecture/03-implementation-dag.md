@@ -282,7 +282,45 @@ This wave may run in parallel with Wave 7 once its own inputs exist.
 - **Blocks:** `Resource / Update UI Integration`.
 - **Parallelism:** May run beside Wave 7 and does not wait for the Control Center.
 - **Convergence:** With `Basic Control Center` and `ResourceManager Core` at `Resource / Update UI Integration`.
-- **Acceptance criteria:** The non-UI module can use GitHub Releases or another configured source, report progress, and hand downloaded resources over for validation. It is not coupled to GitHub Actions or the Control Center.
+- **Acceptance criteria:** The non-UI module can use GitHub Releases or another configured source, report progress, and hand downloaded resources over for validation. It is not coupled to GitHub Actions or the Control Center. It also satisfies the SQLite resource safety requirements below.
+
+#### SQLite resource safety and activation
+
+The KRDICT dictionary is a single SQLite file that the running application
+depends on. Replacing it in place is the failure mode this section exists to
+prevent: a truncated download or an interrupted copy would otherwise leave the
+user with a broken dictionary and no way back.
+
+- **Stage, then activate.** Downloads and updates land in a temporary file
+  alongside the destination. The current known-good database is never replaced
+  before the new artifact has passed validation.
+- **Validate before activation.** A staged artifact must satisfy, in order:
+  its expected checksum, its expected schema and version, and a SQLite
+  integrity check (`PRAGMA quick_check`, escalating to `PRAGMA integrity_check`
+  where a definitive answer is warranted). Schema shape alone is not sufficient
+  evidence that a database file is intact.
+- **Activate atomically.** Only a fully validated artifact is promoted, via an
+  atomic file replacement.
+- **Failure is non-destructive.** If validation or replacement fails, the
+  previous known-good database remains in place and usable, and the failure is
+  reported rather than swallowed.
+- **Keep a last-known-good.** Preserve a rollback path where the resource kind
+  warrants it, so a bad activation can be reverted rather than re-downloaded
+  under pressure.
+- **Detection at rest, not only at update time.** `ResourceManager` must detect
+  and report a corrupted or invalid KRDICT database during startup/runtime
+  validation, as status and diagnostics, instead of handing it to a provider
+  silently. Today `ResourceManager` validates tables, columns, indexes,
+  metadata, and `user_version`, but performs no integrity check; extending it is
+  part of this capability.
+- **Recovery is a supported path.** A resource found invalid must be
+  re-downloadable or repairable, rather than leaving the user with a broken
+  dictionary and no route forward.
+
+These requirements are about resource safety and lifecycle. They constrain how
+`UpdateService` / `ResourceFetcher` and `ResourceManager` divide the work; they
+do not change the boundary that `UpdateService` obtains resources while
+`ResourceManager` understands and validates them.
 
 ### Resource / Update UI Integration
 

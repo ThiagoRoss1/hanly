@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small repository-owned KRDICT-shaped source for development smoke runs. -->
+<dictionary>
+  <entry>
+    <headword>책</headword>
+    <part_of_speech>명사</part_of_speech>
+    <sense>
+      <translation>
+        <language>English</language>
+        <trans_dfn>book</trans_dfn>
+      </translation>
+    </sense>
+  </entry>
+  <entry>
+    <headword>읽다</headword>
+    <part_of_speech>동사</part_of_speech>
+    <sense>
+      <translation>
+        <language>English</language>
+        <trans_dfn>to read</trans_dfn>
+      </translation>
+    </sense>
+  </entry>
+</dictionary>

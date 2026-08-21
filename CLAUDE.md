@@ -18,14 +18,26 @@ Execution runs in two separate phases. **Phase A (implementation)** ends at a Re
 
 `04`, `05`, `docs/execution/CONTEXT.md`, `checkpoints/`, and `review-handoffs/` are V1 execution scaffolding and may be archived or removed after V1. `01`-`03` are product architecture and are not.
 
+## Readability and comments
+
+Separate distinct logical steps inside a function with a blank line, and keep tightly related statements together — blank lines mark phases, they are not inserted between every statement.
+
+When one function mixes independent responsibilities (normalization, validation, configuration merging, object construction), prefer a few clearly named private helpers over one dense block. Aim for three to five meaningful helpers, not one-line fragments.
+
+Comments explain non-obvious intent, invariants, external-library quirks, or *why* — never what the code already says. Keep them to one line where possible, two or three when needed, and up to five only for genuinely complex behavior.
+
+Docstrings state a class's or function's contract and purpose. They do not restate implementation details already visible in the body, and they are not the place for usage examples that belong in a README.
+
+Longer operational instructions, historical context, and debugging rationale belong in `docs/`, a review handoff, or a `README` — not in source comments.
+
 ## Commands
 
 The Wave 0 quality gates are:
 
 ```bash
 python -m pytest
-python -m ruff check packages tests
-python -m mypy packages tests
+python -m ruff check packages tests tools
+python -m mypy packages tests tools
 ```
 
 The root `test_*.py` files are **exploratory spikes, not pytest tests** — they are `__main__` scripts with Portuguese comments and no assertions. Don't wire them into a future `tests/` suite; the DAG's `Korean Test Fixtures` capability covers real test inputs.

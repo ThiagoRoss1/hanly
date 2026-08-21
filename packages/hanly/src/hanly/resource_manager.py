@@ -189,25 +189,76 @@ class ResourceManager:
     ``ResourceStatus.VALID``.
     """
 
-    def __init__(self, manifest: ResourceManifest | Iterable[ResourceSpec]) -> None:
+    def __init__(
+        self,
+        manifest: ResourceManifest | Iterable[ResourceSpec],
+        *,
+        base_path: str | os.PathLike[str] | None = None,
+    ) -> None:
         self.manifest = (
             manifest if isinstance(manifest, ResourceManifest) else ResourceManifest(manifest)
         )
+        self._base_path = Path(base_path).expanduser().resolve() if base_path is not None else None
+        self._reject_unresolvable_paths()
         self._metadata: dict[str, ResourceMetadata] = {}
         self._validated: dict[str, ValidatedResource] = {}
         self._diagnostics: dict[str, tuple[str, ...]] = {}
 
+    @property
+    def base_path(self) -> Path | None:
+        """Return the absolute base used to resolve relative manifest paths."""
+
+        return self._base_path
+
+    def _reject_unresolvable_paths(self) -> None:
+        """Fail fast on relative manifest paths that have no base to resolve from.
+
+        Checked here rather than during ``validate`` so the manifest is either
+        well formed or refused outright, and a single bad entry cannot abort the
+        scan of every other resource.
+        """
+
+        if self._base_path is not None:
+            return
+        offenders: list[str] = []
+        for spec in self.manifest:
+            fields = [("resource path", spec.path)]
+            if spec.version_file is not None:
+                fields.append(("version_file", spec.version_file))
+            offenders.extend(
+                f"{spec.resource_id} {field_name} {Path(value)}"
+                for field_name, value in fields
+                if not Path(value).is_absolute()
+            )
+        if offenders:
+            raise ResourceManagerError(
+                "relative manifest paths require a ResourceManager base_path: "
+                + "; ".join(offenders)
+            )
+
     def validate(self) -> dict[str, ResourceMetadata]:
-        """Validate all manifest entries and return normalized metadata."""
+        """Validate all manifest entries and return normalized metadata.
+
+        Every resource problem is reported as status and diagnostics; this does
+        not raise for resource conditions.  A manifest that cannot be resolved
+        at all is refused when the manager is constructed instead.
+        """
 
         metadata: dict[str, ResourceMetadata] = {}
         diagnostics: dict[str, tuple[str, ...]] = {}
         observed_versions: dict[str, str] = {}
+        resolved_paths: dict[str, Path] = {}
 
         for spec in self.manifest:
-            resource_metadata, resource_diagnostics, observed_version = self._validate_spec(spec)
+            (
+                resource_metadata,
+                resource_diagnostics,
+                observed_version,
+                resolved_path,
+            ) = self._validate_spec(spec)
             metadata[spec.resource_id] = resource_metadata
             diagnostics[spec.resource_id] = resource_diagnostics
+            resolved_paths[spec.resource_id] = resolved_path
             if observed_version is not None:
                 observed_versions[spec.resource_id] = observed_version
 
@@ -242,7 +293,7 @@ class ResourceManager:
         self._validated = {
             spec.resource_id: ValidatedResource(
                 metadata=metadata[spec.resource_id],
-                path=Path(spec.path).resolve(),
+                path=resolved_paths[spec.resource_id],
                 configuration=spec.configuration,
                 diagnostics=diagnostics[spec.resource_id],
             )
@@ -351,8 +402,13 @@ class ResourceManager:
 
     def _validate_spec(
         self, spec: ResourceSpec
-    ) -> tuple[ResourceMetadata, tuple[str, ...], str | None]:
-        path = Path(spec.path).expanduser()
+    ) -> tuple[ResourceMetadata, tuple[str, ...], str | None, Path]:
+        path = self._resolve_manifest_path(spec.path, field_name="resource path")
+        version_path = (
+            self._resolve_manifest_path(spec.version_file, field_name="version_file")
+            if spec.version_file is not None
+            else None
+        )
         expected_version = spec.required_version
         fallback_version = spec.installed_version or expected_version or ""
         if not path.exists():
@@ -365,6 +421,7 @@ class ResourceManager:
                 ),
                 (f"resource path does not exist: {path}",),
                 None,
+                path,
             )
 
         diagnostics: list[str] = []
@@ -383,7 +440,7 @@ class ResourceManager:
                 diagnostics.append(f"resource is unreadable: {exc}")
 
         if not diagnostics and spec.version_file is not None:
-            version_path = Path(spec.version_file)
+            assert version_path is not None
             try:
                 observed_version = version_path.read_text(encoding="utf-8").strip()
             except (OSError, UnicodeError) as exc:
@@ -433,7 +490,26 @@ class ResourceManager:
             compatible=compatible,
             checksum=actual_checksum,
         )
-        return metadata, tuple(diagnostics), observed_version
+        return metadata, tuple(diagnostics), observed_version, path
+
+    def _resolve_manifest_path(
+        self,
+        value: str | os.PathLike[str],
+        *,
+        field_name: str,
+    ) -> Path:
+        """Resolve a manifest path without falling back to process CWD."""
+
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path.resolve()
+        if self._base_path is None:
+            # Construction already refused this manifest; this guard only keeps
+            # the CWD fallback from reappearing if that check is ever bypassed.
+            raise ResourceManagerError(
+                f"relative {field_name} is not allowed without ResourceManager base_path: {path}"
+            )
+        return (self._base_path / path).resolve()
 
     @staticmethod
     def _assert_readable(path: Path) -> None:

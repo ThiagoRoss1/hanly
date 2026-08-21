@@ -135,10 +135,6 @@ class LookupController:
             raise
         return request
 
-    # Explicit alias reads naturally at call sites that distinguish lookup
-    # submission from generic executor submission.
-    submit_lookup = submit
-
     def invalidate(self) -> None:
         """Invalidate the current request without submitting replacement work."""
 

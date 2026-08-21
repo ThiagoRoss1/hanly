@@ -7,3 +7,6 @@ __pycache__/
 build/
 dist/
 .coverage
+resources/dev/krdict/*.sqlite3
+resources/dev/models/
+resources/dev/runtime-local.json

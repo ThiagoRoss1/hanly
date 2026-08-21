@@ -8,6 +8,7 @@ import hanly.resource_manager as resource_manager_module
 import pytest
 from hanly.resource_manager import (
     ResourceManager,
+    ResourceManagerError,
     ResourceManifest,
     ResourceSpec,
     ResourceStatus,
@@ -108,6 +109,85 @@ def test_version_file_mismatch_is_outdated(tmp_path: Path) -> None:
 
     assert metadata["ocr-model"].status is ResourceStatus.OUTDATED
     assert metadata["ocr-model"].version == "1.0"
+
+
+def test_relative_paths_resolve_from_manager_base_not_process_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = tmp_path / "resource-bundle"
+    base.mkdir()
+    (base / "model.bin").write_bytes(b"base model")
+    (base / "model.version").write_text("1.0\n", encoding="utf-8")
+
+    cwd = tmp_path / "working-directory"
+    cwd.mkdir()
+    (cwd / "model.bin").write_bytes(b"wrong model")
+    (cwd / "model.version").write_text("9.0\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)
+
+    manager = ResourceManager(
+        (
+            ResourceSpec(
+                "ocr-model",
+                "model.bin",
+                version="1.0",
+                version_file="model.version",
+            ),
+        ),
+        base_path=base,
+    )
+
+    metadata = manager.validate()
+
+    assert manager.base_path == base.resolve()
+    assert metadata["ocr-model"].status is ResourceStatus.VALID
+    assert manager.validated_path("ocr-model") == (base / "model.bin").resolve()
+    assert manager.validated_resource("ocr-model").path == manager.validated_path("ocr-model")
+
+
+def test_relative_paths_without_a_base_are_refused_at_construction() -> None:
+    # A malformed manifest is a configuration error, so it is refused before a
+    # manager exists rather than part-way through a scan.
+    with pytest.raises(ResourceManagerError, match="base_path") as excinfo:
+        ResourceManager(
+            (
+                ResourceSpec(
+                    "ocr-model",
+                    "model.bin",
+                    version_file="model.version",
+                ),
+                ResourceSpec("dictionary", "krdict.sqlite3"),
+            )
+        )
+
+    message = str(excinfo.value)
+    assert "ocr-model resource path" in message
+    assert "ocr-model version_file" in message
+    assert "dictionary resource path" in message
+
+
+def test_validate_reports_resource_health_instead_of_raising(tmp_path: Path) -> None:
+    # Resource health is normal operating state: one bad resource must not hide
+    # the status of the others by aborting the scan.
+    present = tmp_path / "model.bin"
+    present.write_bytes(b"model")
+
+    manager = ResourceManager(
+        (
+            ResourceSpec("present", present),
+            ResourceSpec("absent", tmp_path / "missing.bin"),
+            ResourceSpec("wrong-kind", present, kind="directory"),
+            ResourceSpec("bad-checksum", present, checksum="sha256:" + "0" * 64),
+        )
+    )
+
+    metadata = manager.validate()
+
+    assert metadata["present"].status is ResourceStatus.VALID
+    assert metadata["absent"].status is ResourceStatus.MISSING
+    assert metadata["wrong-kind"].status is not ResourceStatus.VALID
+    assert metadata["bad-checksum"].status is not ResourceStatus.VALID
+    assert manager.diagnostics("wrong-kind") == ("resource is not a directory",)
 
 
 def test_krdict_schema_is_validated_locally(tmp_path: Path) -> None:

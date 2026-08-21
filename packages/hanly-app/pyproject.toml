@@ -10,5 +10,12 @@ readme = {text = "Hanly desktop application package.", content-type = "text/plai
 requires-python = ">=3.10"
 dependencies = ["hanly==0.0.0"]
 
+[project.optional-dependencies]
+runtime = ["hanly[concrete]==0.0.0"]
+dev = [
+    "hanly-app[runtime]",
+    "Pillow>=10,<13",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
