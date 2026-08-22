@@ -100,6 +100,6 @@ Dismissed — never silently dropped.
 
 ```bash
 python -m pytest
-python -m ruff check packages tests
-python -m mypy packages tests
+python -m ruff check packages tests tools
+python -m mypy packages tests tools
 ```

@@ -14,15 +14,15 @@ from .contracts import (
 )
 from .errors import HanlyError
 from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
-from .word_resolver import WordResolver
+from .word_resolver import TargetResolver, WordResolver
 
 
 class LookupPipeline:
     """Run OCR, target resolution, morphology, and dictionary lookup.
 
     The pipeline deliberately knows only normalized contracts, provider
-    protocols, and :class:`WordResolver`.  It does not select or construct a
-    concrete provider.  A confidence threshold is optional: when omitted,
+    protocols, and the :class:`TargetResolver` seam.  It does not select or
+    construct a concrete provider.  A confidence threshold is optional: when omitted,
     OCR confidence is retained as evidence but does not reject a lookup.
     When configured, it applies to the OCR region resolved at the target and a
     below-threshold region produces the normal ``UNUSABLE`` outcome.
@@ -33,7 +33,7 @@ class LookupPipeline:
         ocr_provider: OCRProvider,
         morphology_provider: MorphologyProvider,
         dictionary_provider: DictionaryProvider,
-        word_resolver: WordResolver | None = None,
+        word_resolver: TargetResolver | None = None,
         *,
         confidence_threshold: float | None = None,
     ) -> None:
@@ -80,18 +80,14 @@ class LookupPipeline:
             )
 
         try:
-            text = self._word_resolver.resolve(ocr_results, target)
+            resolution = self._word_resolver.resolve_target(ocr_results, target)
+            # A resolver that returns a malformed pair fails here and becomes
+            # an ordinary word-resolution error rather than a shape ladder.
+            region, text = resolution if resolution is not None else (None, "")
         except Exception as exc:
             return self._error_result("word resolution", exc, context)
 
-        if text is not None and not isinstance(text, str):
-            return self._error_result(
-                "word resolution",
-                HanlyError("WordResolver returned a non-string text value"),
-                context,
-            )
-
-        if text is None or not text.strip():
+        if region is None or not text.strip():
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
                 diagnostics=("OCR target did not resolve to one usable text region",),
@@ -102,7 +98,7 @@ class LookupPipeline:
         context = LookupContext(text=text, ocr_results=ocr_results)
 
         try:
-            low_confidence = self._is_low_confidence(ocr_results, text)
+            low_confidence = self._is_low_confidence(region)
         except Exception as exc:
             return self._error_result("confidence processing", exc, context)
         if low_confidence:
@@ -135,15 +131,15 @@ class LookupPipeline:
 
         lemma = lemmas[0]
         diagnostics: tuple[str, ...] = ()
-        if len(lemmas) > 1:
-            # The target point selects an OCR region, not a token inside it, so
-            # a multi-token region always resolves to its first lemma. Recording
-            # that keeps the limitation visible to callers instead of silently
-            # answering for a word the user may not be pointing at.
+        if len(lemmas) > 1 and len(text.split()) > 1:
+            # One resolved word analyzing into several lemmas is ordinary
+            # Korean morphology. A segment still holding several words is not:
+            # the answer may be for a word the user is not pointing at, so that
+            # reduction stays visible instead of silent.
             diagnostics = (
-                f"Resolved segment {text!r} contains {len(lemmas)} usable lemmas; "
-                f"looked up the first ({lemma!r}) because the target point "
-                f"selects a region rather than a token",
+                f"Resolved segment {text!r} holds several words and "
+                f"{len(lemmas)} usable lemmas; looked up the first ({lemma!r}) "
+                f"because the pipeline does not re-target inside a segment",
             )
 
         context = LookupContext(text=text, lemma=lemma, ocr_results=ocr_results)
@@ -167,28 +163,11 @@ class LookupPipeline:
             context=context,
         )
 
-    def _is_low_confidence(
-        self,
-        ocr_results: Sequence[OCRResult],
-        text: str,
-    ) -> bool:
-        threshold = self._confidence_threshold
-        if threshold is None:
-            return False
+    def _is_low_confidence(self, region: OCRResult) -> bool:
+        """Apply confidence policy to the OCR region that contains the target."""
 
-        matching = tuple(
-            result
-            for result in ocr_results
-            if isinstance(result, OCRResult) and result.text.strip() == text
-        )
-        if not matching:
-            # A custom resolver may normalize or synthesize text. In that case
-            # there is no OCR evidence on which to apply a confidence policy.
-            return False
-        # Duplicate text is resolved by geometry inside WordResolver. The
-        # conservative minimum keeps this policy deterministic without adding
-        # another geometry implementation to the pipeline.
-        return min(result.confidence for result in matching) < threshold
+        threshold = self._confidence_threshold
+        return threshold is not None and region.confidence < threshold
 
     @staticmethod
     def _error_result(

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from hanly import (
+    BoundingBox,
     DictionaryEntry,
     HanlyError,
     LookupPipeline,
@@ -14,6 +15,7 @@ from hanly import (
     OCRResult,
     PixelFormat,
     Point,
+    Quad,
     ROIImage,
 )
 from hanly.kiwi_provider import KiwiProvider
@@ -34,6 +36,13 @@ _IMAGE = ROIImage(
 )
 _READING_TARGET = Point(x=100, y=24)
 _NOUN_TARGET = Point(x=24, y=24)
+_LINE_OCR_RESULT = OCRResult(
+    text="책을 읽습니다.",
+    confidence=0.95,
+    quad=Quad.from_bounding_box(
+        BoundingBox(left=0, top=0, right=192, bottom=48)
+    ),
+)
 
 
 class _DeterministicOCR:
@@ -109,11 +118,31 @@ def test_engine_e2e_returns_success_from_roi_to_dictionary_entry(
     assert result.entries == (
         DictionaryEntry(headword="읽다", definitions=("to read",), part_of_speech="동사"),
     )
+    assert result.diagnostics == ()
     assert result.error is None
     assert result.context is not None
     assert result.context.text == "읽습니다."
     assert result.context.lemma == "읽다"
     assert result.context.ocr_results == KOREAN_OCR_RESULTS
+
+
+def test_engine_e2e_real_kiwi_looks_up_the_word_targeted_inside_a_line_region(
+    krdict_database: Path, real_kiwi: KiwiProvider
+) -> None:
+    ocr = _DeterministicOCR((_LINE_OCR_RESULT,))
+    pipeline, dictionary = _pipeline(ocr, real_kiwi, krdict_database)
+    try:
+        result = pipeline.lookup(_IMAGE, Point(x=120, y=24))
+    finally:
+        dictionary.close()
+
+    assert result.status is LookupStatus.SUCCESS
+    assert result.entries == (
+        DictionaryEntry(headword="읽다", definitions=("to read",), part_of_speech="동사"),
+    )
+    assert result.context is not None
+    assert result.context.text == "읽습니다."
+    assert result.context.lemma == "읽다"
 
 
 def test_engine_e2e_returns_normal_not_found_without_an_exception(

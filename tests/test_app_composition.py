@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 from threading import Event
 
@@ -64,9 +65,14 @@ class _Resolver:
     def __init__(self, targets: list[Point]) -> None:
         self.targets = targets
 
-    def resolve(self, _ocr_results, target: Point) -> str:
+    def resolve_target(
+        self,
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> tuple[OCRResult, str] | None:
+        assert ocr_results is not None and target is not None
         self.targets.append(target)
-        return "책"
+        return ocr_results[0], "책"
 
 
 def test_provider_factories_and_close_run_on_executor_thread_and_point_is_exact() -> None:

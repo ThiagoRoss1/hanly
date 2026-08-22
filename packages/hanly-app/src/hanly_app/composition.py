@@ -9,7 +9,7 @@ engine adapter.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol, cast
+from typing import Protocol
 
 from hanly import (
     DictionaryProvider,
@@ -18,7 +18,7 @@ from hanly import (
     MorphologyProvider,
     OCRProvider,
 )
-from hanly.word_resolver import WordResolver
+from hanly.word_resolver import TargetResolver, WordResolver
 
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
 
@@ -41,11 +41,9 @@ OCRProviderFactory = Callable[[], OCRProvider]
 MorphologyProviderFactory = Callable[[], MorphologyProvider]
 DictionaryProviderFactory = Callable[[], DictionaryProvider]
 
-# ``WordResolver`` is a concrete engine class rather than a protocol, so a
-# resolver double cannot satisfy it structurally. Narrowing this alias would
-# require introducing a resolver protocol in the engine seam, which is out of
-# scope here; the cast below is therefore deliberate.
-ResolverFactory = Callable[[], Any]
+# The engine exposes ``TargetResolver`` as a structural seam, so a substituted
+# resolver satisfies this alias without inheriting anything and without a cast.
+ResolverFactory = Callable[[], TargetResolver]
 
 #: Retained for callers that describe any provider factory generically.
 ProviderFactory = Callable[[], object]
@@ -91,7 +89,7 @@ class LookupWorker:
                 ocr_provider=ocr_provider,
                 morphology_provider=morphology_provider,
                 dictionary_provider=dictionary_provider,
-                word_resolver=cast(WordResolver, resolver),
+                word_resolver=resolver,
                 confidence_threshold=confidence_threshold,
             )
         except Exception:

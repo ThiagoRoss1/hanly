@@ -3,13 +3,64 @@
 Rigs used to exercise Hanly by hand. **Nothing here ships.** Neither `hanly` nor
 `hanly-app` imports this directory, and it is not part of either package.
 
+## `dev_alpha.py`
+
+Starts the human-testable desktop alpha through the real manual lookup
+composition. It prepares the local mini dictionary, validates or discovers the
+named PaddleOCR model directories, sets the offline PaddleX source-check flag,
+and then launches the Qt popup/hotkey path.
+
+### Setup
+
+Install the concrete and desktop developer extras:
+
+```powershell
+python -m pip install -e "packages/hanly[concrete]"
+python -m pip install -e "packages/hanly-app[dev]"
+```
+
+The one supported startup command is:
+
+```powershell
+python tools/dev_alpha.py
+```
+
+When startup is complete, the command prints the default lookup hotkey and
+keeps running until the Qt application is stopped.
+
+Local preparation lives in `dev_resources.py` beside this file. Every path it
+resolves is relative to this checkout, so it stays out of the shipped
+`hanly_app` package; reusable database construction remains in
+`hanly.krdict_build`.
+
+Startup automatically builds the gitignored `resources/dev/krdict/krdict.sqlite3`
+from the committed `resources/dev/krdict/krdict-mini.xml` when the database is
+missing. It never downloads resources or overwrites `runtime.json` or a
+machine-local config. The canonical config points at
+`resources/dev/models/`; if those directories do not contain model files,
+startup also checks the standard local PaddleX cache at
+`~/.paddlex/official_models/` (or `PADDLEX_HOME/official_models/`) and uses a
+disposable effective config for that run. If neither location has the named
+models, startup stops with the exact directories searched and the local setup
+action required.
+
+The canonical development config disables PaddleOCR's optional document and
+text-line orientation models. The launcher also sets
+`PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`, so this path does not attempt
+remote model acquisition.
+
+For the first deterministic manual test, display Korean text containing `책`
+(for example `책을 읽습니다.`), place the cursor on `책`, and press the default
+`ctrl+shift+space` lookup hotkey. The mini dictionary contains `책 → book` and
+`읽다 → to read`; other words normally produce a visible not-found result.
+
 ## `dev_lookup.py`
 
 Runs one real `image → PaddleOCR → Kiwi → KRDICT → LookupResult` lookup through
 the actual `LookupController` and prints the normalized result as JSON. It
-exists so the real path can be verified without a disposable script. Once the
-popup (HAN-16) and hotkey (HAN-19) capabilities land, the application itself
-becomes the way to see a lookup and this becomes a debugging aid.
+exists so the real path can be verified without a disposable script. The
+desktop alpha is now the normal way to see a lookup; this remains a focused
+engine/runtime debugging aid.
 
 ### Setup
 
@@ -20,16 +71,10 @@ python -m pip install -e "packages/hanly[concrete]"
 python -m pip install -e "packages/hanly-app[dev]"
 ```
 
-Build the gitignored SQLite dictionary from the tiny Korean source subset in the
-repository:
-
-```powershell
-python -c "from pathlib import Path; from hanly.krdict_build import build_krdict_database; build_krdict_database(Path('resources/dev/krdict/krdict-mini.xml'), Path('resources/dev/krdict/krdict.sqlite3'))"
-```
-
 `resources/dev/krdict/krdict-mini.xml` is a hand-written two-entry file in
-KRDICT's shape, not real dictionary data. It is a placeholder so this rig can
-resolve a word offline until the real KRDICT dump is processed.
+KRDICT's shape, not real dictionary data. The supported `dev_alpha.py` command
+builds its gitignored SQLite artifact automatically; the lookup rig can reuse
+that artifact for a focused engine-only check.
 
 ### Runtime configuration
 

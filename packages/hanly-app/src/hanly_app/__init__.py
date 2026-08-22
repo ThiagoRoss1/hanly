@@ -28,6 +28,12 @@ from .hotkeys import (
 )
 from .job_executor import JobExecutor, Worker
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher, ResultHandler
+from .manual_lookup import (
+    ManualLookupRuntime,
+    ManualLookupStartupError,
+    create_manual_lookup,
+    create_qt_manual_lookup,
+)
 from .popup import (
     PopupContent,
     PopupController,
@@ -69,6 +75,8 @@ __all__ = [
     "LookupRuntime",
     "LookupWorker",
     "MSSBackend",
+    "ManualLookupRuntime",
+    "ManualLookupStartupError",
     "MonitorInfo",
     "PopupContent",
     "PopupController",
@@ -87,6 +95,8 @@ __all__ = [
     "create_lookup_controller",
     "create_lookup_controller_from_config",
     "create_lookup_worker_factory",
+    "create_manual_lookup",
+    "create_qt_manual_lookup",
     "create_worker_factory_from_config",
     "format_lookup_result",
     "load_runtime",

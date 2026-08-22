@@ -1,25 +1,46 @@
-"""Resolve the OCR region under an engine-level target point."""
+"""Resolve the OCR word under an engine-level target point."""
 
 from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
 from .contracts import OCRResult, Point, Quad
 
 _GEOMETRY_EPSILON = 1e-9
 
 
+@runtime_checkable
+class TargetResolver(Protocol):
+    """The resolver seam :class:`LookupPipeline` composes.
+
+    Application composition may substitute a resolver (see the desktop
+    package's ``word_resolver_factory``), so the pipeline depends on this
+    structural contract rather than on :class:`WordResolver` itself.
+    """
+
+    def resolve_target(
+        self,
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> tuple[OCRResult, str] | None:
+        """Return the OCR region containing ``target`` and the word at it."""
+
+
 class WordResolver:
-    """Select one non-empty OCR segment containing a target point.
+    """Select the Korean word under a target point.
 
     The resolver deliberately owns no cursor or capture integration. The
     caller supplies a point in the same normalized coordinate space as the
     OCR quads. A point must be inside the actual quadrilateral: the derived
     integer bounding box is useful for coarse consumers but cannot decide a
-    hit for tilted text.
+    hit for tilted text. PaddleOCR commonly returns one line-level quad, so a
+    second, local hit test maps the target's position along that quad to the
+    whitespace-delimited word inside the recognized text.
 
     OCR adapters already provide reading order, so candidate handling keeps
     that order and never depends on set/dict iteration or confidence as an
     implicit tie-breaker. If zero or more than one usable candidate contains
-    the target, resolution is ambiguous and returns ``None``.
+    the target, resolution is ambiguous and returns ``None``. A target in the
+    whitespace between words is also a normal no-result outcome.
     """
 
     @staticmethod
@@ -27,12 +48,27 @@ class WordResolver:
         ocr_results: Sequence[OCRResult] | None,
         target: Point | None,
     ) -> str | None:
-        """Return the sole OCR text hit at ``target`` or ``None``.
+        """Return the whitespace-delimited OCR word at ``target``.
 
         Empty/whitespace-only text, malformed sequence members, degenerate
         quads, a missing target, and zero or multiple geometric hits are all
         normal no-result outcomes. OCR confidence is intentionally not
         thresholded here; confidence policy belongs to the later pipeline.
+        """
+
+        resolution = WordResolver.resolve_target(ocr_results, target)
+        return None if resolution is None else resolution[1]
+
+    @staticmethod
+    def resolve_target(
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> tuple[OCRResult, str] | None:
+        """Return the selected OCR region and word at ``target``.
+
+        The region is retained so the pipeline can apply confidence policy to
+        the OCR evidence that actually contains the target, even when that
+        evidence contains several whitespace-delimited words.
         """
 
         if target is None or not isinstance(target, Point) or ocr_results is None:
@@ -43,7 +79,7 @@ class WordResolver:
         except TypeError:
             return None
 
-        hits: list[str] = []
+        hits: list[OCRResult] = []
         for result in candidates:
             if not isinstance(result, OCRResult):
                 continue
@@ -54,11 +90,16 @@ class WordResolver:
             if not text or not _usable_quad(result.quad):
                 continue
             if _contains(result.quad, target):
-                hits.append(text)
+                hits.append(result)
 
         if len(hits) != 1:
             return None
-        return hits[0]
+
+        result = hits[0]
+        word = _word_at_target(result.text, result.quad, target)
+        if word is None:
+            return None
+        return result, word
 
 
 def _usable_quad(quad: Quad) -> bool:
@@ -132,6 +173,98 @@ def _contains(quad: Quad, target: Point) -> bool:
     return inside
 
 
+def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
+    """Map a target's local horizontal position to one OCR word.
+
+    The axis derived by :func:`_text_axis` is stable for the tilted
+    quadrilaterals emitted by PaddleOCR. Character widths are not
+    measured here because the OCR contract exposes only the line quad; for a
+    Korean OCR line, proportional differences are small compared with the
+    word-sized spacing this mapping needs to distinguish.
+    """
+
+    if not text:
+        return None
+
+    fraction = _horizontal_fraction(quad, target)
+    if fraction is None:
+        return None
+
+    index = min(len(text) - 1, max(0, int(fraction * len(text))))
+    if text[index].isspace():
+        return None
+
+    start = index
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+
+    end = index + 1
+    while end < len(text) and not text[end].isspace():
+        end += 1
+
+    word = text[start:end].strip()
+    return word or None
+
+
+def _horizontal_fraction(quad: Quad, target: Point) -> float | None:
+    """Return target position along a quad's left-to-right text axis."""
+
+    axis = _text_axis(quad)
+    if axis is None:
+        return None
+
+    left, right = axis
+    dx = right.x - left.x
+    dy = right.y - left.y
+    length_squared = _squared_length(left, right)
+
+    fraction = ((target.x - left.x) * dx + (target.y - left.y) * dy) / length_squared
+    tolerance = _GEOMETRY_EPSILON * max(1.0, abs(dx), abs(dy))
+    if fraction < -tolerance or fraction > 1 + tolerance:
+        return None
+    return min(1.0, max(0.0, fraction))
+
+
+def _text_axis(quad: Quad) -> tuple[Point, Point] | None:
+    """Return the midpoints of the two edges that cap a text line's ends.
+
+    Only the quad's shape is used. `Quad` fixes corner order no further than
+    "the order the provider reported them, conventionally clockwise", so the
+    starting corner is not part of the contract and cannot be assumed to be
+    the top-left one. Of the two opposite edge pairs, the shorter pair caps
+    the ends of a line, which holds for tilted quads as well as upright ones.
+    """
+
+    points = quad.points
+    edges = tuple((points[index], points[(index + 1) % 4]) for index in range(4))
+    caps = min(
+        ((edges[0], edges[2]), (edges[1], edges[3])),
+        key=lambda pair: sum(_squared_length(*edge) for edge in pair),
+    )
+
+    start = _midpoint(*caps[0])
+    end = _midpoint(*caps[1])
+    if _squared_length(start, end) <= _GEOMETRY_EPSILON:
+        return None
+
+    # Shape alone leaves the reading direction ambiguous by 180 degrees. V1
+    # resolves Korean text that reads left to right on screen, so the cap with
+    # the smaller x starts the axis; y breaks the tie for near-vertical quads.
+    if (end.x, end.y) < (start.x, start.y):
+        start, end = end, start
+    return start, end
+
+
+def _midpoint(start: Point, end: Point) -> Point:
+    return Point(x=(start.x + end.x) / 2, y=(start.y + end.y) / 2)
+
+
+def _squared_length(start: Point, end: Point) -> float:
+    dx = end.x - start.x
+    dy = end.y - start.y
+    return dx * dx + dy * dy
+
+
 def _on_segment(target: Point, start: Point, end: Point, scale: float) -> bool:
     """Return whether ``target`` lies on the closed segment ``start``-``end``."""
 
@@ -154,4 +287,4 @@ def _on_segment(target: Point, start: Point, end: Point, scale: float) -> bool:
     )
 
 
-__all__ = ["WordResolver"]
+__all__ = ["TargetResolver", "WordResolver"]

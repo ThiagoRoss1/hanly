@@ -16,6 +16,69 @@ def test_resolver_returns_the_text_of_the_quad_containing_the_target() -> None:
     assert resolver.resolve(KOREAN_OCR_RESULTS, Point(x=100, y=24)) == "읽습니다."
 
 
+def test_resolver_selects_a_word_inside_a_line_level_ocr_region() -> None:
+    line = _result(
+        "책을 읽습니다.",
+        Quad.from_bounding_box(BoundingBox(left=0, top=0, right=192, bottom=48)),
+    )
+
+    assert WordResolver.resolve((line,), Point(x=24, y=24)) == "책을"
+    assert WordResolver.resolve((line,), Point(x=120, y=24)) == "읽습니다."
+    assert WordResolver.resolve((line,), Point(x=50, y=24)) is None
+
+
+def test_resolver_maps_word_selection_along_a_tilted_line_quad() -> None:
+    line = _result(
+        "책을 읽습니다.",
+        Quad(
+            p1=Point(x=0, y=10),
+            p2=Point(x=192, y=0),
+            p3=Point(x=192, y=48),
+            p4=Point(x=0, y=58),
+        ),
+    )
+
+    # The target follows the slanted text axis rather than the axis-aligned
+    # bounding box, and lands inside the second whitespace-delimited word.
+    assert WordResolver.resolve((line,), Point(x=120, y=29)) == "읽습니다."
+
+
+def test_word_selection_is_invariant_to_the_quads_starting_corner() -> None:
+    """`Quad` fixes corner order only up to the starting corner, so the same
+    physical quad and target must resolve to the same word for every valid
+    rotation of that order, including the clockwise top-right start."""
+
+    corners = Quad.from_bounding_box(
+        BoundingBox(left=0, top=0, right=192, bottom=48)
+    ).points
+    rotations = tuple(
+        Quad(*(corners[(start + offset) % 4] for offset in range(4))) for start in range(4)
+    )
+    reversed_orders = tuple(
+        Quad(*(corners[(start - offset) % 4] for offset in range(4))) for start in range(4)
+    )
+
+    for quad in rotations + reversed_orders:
+        line = _result("책을 읽습니다.", quad)
+        assert WordResolver.resolve((line,), Point(x=24, y=24)) == "책을"
+        assert WordResolver.resolve((line,), Point(x=120, y=24)) == "읽습니다."
+
+
+def test_word_selection_is_invariant_to_starting_corner_on_a_tilted_quad() -> None:
+    corners = Quad(
+        p1=Point(x=0, y=10),
+        p2=Point(x=192, y=0),
+        p3=Point(x=192, y=48),
+        p4=Point(x=0, y=58),
+    ).points
+
+    for start in range(4):
+        quad = Quad(*(corners[(start + offset) % 4] for offset in range(4)))
+        line = _result("책을 읽습니다.", quad)
+        assert WordResolver.resolve((line,), Point(x=24, y=29)) == "책을"
+        assert WordResolver.resolve((line,), Point(x=120, y=29)) == "읽습니다."
+
+
 def test_resolver_uses_true_quad_hit_testing_not_its_derived_box() -> None:
     tilted = Quad(
         p1=Point(x=10.0, y=10.0),

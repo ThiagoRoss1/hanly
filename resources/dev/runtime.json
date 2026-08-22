@@ -22,6 +22,9 @@
     "text_detection_model_dir": "models/PP-OCRv5_mobile_det",
     "text_recognition_model_name": "korean_PP-OCRv5_mobile_rec",
     "text_recognition_model_dir": "models/korean_PP-OCRv5_mobile_rec",
+    "use_doc_orientation_classify": false,
+    "use_doc_unwarping": false,
+    "use_textline_orientation": false,
     "enable_mkldnn": false
   }
 }

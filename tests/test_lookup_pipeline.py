@@ -55,13 +55,13 @@ class _Resolver:
     def __init__(self, events: list[str]) -> None:
         self.events = events
 
-    def resolve(
+    def resolve_target(
         self,
         ocr_results: Sequence[OCRResult] | None,
         target: Point | None,
-    ) -> str | None:
+    ) -> tuple[OCRResult, str] | None:
         self.events.append("resolver")
-        return WordResolver.resolve(ocr_results, target)
+        return WordResolver.resolve_target(ocr_results, target)
 
 
 class _Morphology:
@@ -110,33 +110,106 @@ def _pipeline(
         ocr_provider=_OCR(events, ocr_results),
         morphology_provider=_morphology(events, analyses),
         dictionary_provider=_Dictionary(events, entries),
-        word_resolver=_Resolver(events),  # type: ignore[arg-type]
+        word_resolver=_Resolver(events),
         confidence_threshold=confidence_threshold,
     )
 
 
-def test_multi_token_segment_reports_that_only_the_first_lemma_was_used() -> None:
-    """Real OCR returns line-level regions, so a resolved segment routinely
-    holds several tokens while the target point selects only the region. The
-    first lemma still wins, but the reduction must not be silent."""
+def test_multi_word_segment_reports_that_only_the_first_lemma_was_used() -> None:
+    """A substituted resolver may hand back a whole multi-word OCR region.
+    The first lemma still wins, but that reduction must not be silent."""
+
+    line = OCRResult(
+        text="책을 읽습니다.",
+        confidence=0.95,
+        quad=Quad.from_bounding_box(BoundingBox(left=0, top=0, right=192, bottom=48)),
+    )
+
+    class _AnyTextMorphology:
+        def __init__(self, analyses: Sequence[TokenAnalysis]) -> None:
+            self.analyses = analyses
+
+        def analyze(self, text: str) -> Sequence[TokenAnalysis]:
+            assert text == line.text
+            return self.analyses
+
+    class _WholeRegionResolver:
+        def resolve_target(
+            self,
+            ocr_results: Sequence[OCRResult] | None,
+            target: Point | None,
+        ) -> tuple[OCRResult, str] | None:
+            del ocr_results, target
+            return line, line.text
+
+    from hanly.lookup_pipeline import LookupPipeline
+
+    events: list[str] = []
+    pipeline = LookupPipeline(
+        ocr_provider=_OCR(events, (line,)),
+        morphology_provider=_AnyTextMorphology(
+            (
+                TokenAnalysis(token="책", lemma="책", part_of_speech="명사"),
+                TokenAnalysis(token="을", lemma="을", part_of_speech="조사"),
+                TokenAnalysis(token="읽습니다", lemma="읽다", part_of_speech="동사"),
+            )
+        ),
+        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+        word_resolver=_WholeRegionResolver(),
+    )
+
+    result = pipeline.lookup(_IMAGE, Point(x=24, y=24))
+
+    assert result.status is LookupStatus.SUCCESS
+    assert result.context is not None
+    assert result.context.lemma == "책"
+    assert any("3 usable lemmas" in note for note in result.diagnostics)
+    assert any("holds several words" in note for note in result.diagnostics)
+
+
+def test_narrowed_word_with_several_lemmas_reports_no_reduction_diagnostic() -> None:
+    """Korean morphology routinely splits one resolved word into several
+    lemmas. That is not a reduction and must not produce a diagnostic."""
 
     events: list[str] = []
     pipeline = _pipeline(
         events,
         analyses=(
-            TokenAnalysis(token="책", lemma="책", part_of_speech="명사"),
-            TokenAnalysis(token="을", lemma="을", part_of_speech="조사"),
-            TokenAnalysis(token="읽습니다", lemma="읽다", part_of_speech="동사"),
+            TokenAnalysis(token="읽", lemma="읽다", part_of_speech="동사"),
+            TokenAnalysis(token="습니다", lemma="습니다", part_of_speech="어미"),
         ),
     )
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.SUCCESS
+    assert result.diagnostics == ()
+
+
+def test_pipeline_narrows_a_line_region_before_morphology() -> None:
+    events: list[str] = []
+    line = OCRResult(
+        text="책을 읽습니다.",
+        confidence=0.95,
+        quad=Quad.from_bounding_box(
+            BoundingBox(left=0, top=0, right=192, bottom=48)
+        ),
+    )
+    from hanly.lookup_pipeline import LookupPipeline
+
+    pipeline = LookupPipeline(
+        ocr_provider=_OCR(events, (line,)),
+        morphology_provider=_morphology(events),
+        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+    )
+
+    result = pipeline.lookup(_IMAGE, Point(x=120, y=24))
+
+    assert result.status is LookupStatus.SUCCESS
     assert result.context is not None
-    assert result.context.lemma == "책"
-    assert any("3 usable lemmas" in note for note in result.diagnostics)
-    assert any("region rather than a token" in note for note in result.diagnostics)
+    assert result.context.text == "읽습니다."
+    assert result.context.lemma == "읽다"
+    assert result.diagnostics == ()
 
 
 def test_single_token_segment_reports_no_reduction_diagnostic() -> None:
@@ -257,11 +330,11 @@ def test_pipeline_converts_word_resolution_exceptions_to_error_results() -> None
     from hanly.lookup_pipeline import LookupPipeline
 
     class _RaisingResolver:
-        def resolve(
+        def resolve_target(
             self,
             ocr_results: Sequence[OCRResult] | None,
             target: Point | None,
-        ) -> str | None:
+        ) -> tuple[OCRResult, str] | None:
             del ocr_results, target
             raise RuntimeError("resolution exploded")
 
@@ -269,7 +342,7 @@ def test_pipeline_converts_word_resolution_exceptions_to_error_results() -> None
         _OCR([]),
         _morphology([]),
         _Dictionary([], (_ENTRY,)),
-        word_resolver=_RaisingResolver(),  # type: ignore[arg-type]
+        word_resolver=_RaisingResolver(),
     ).lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.ERROR
