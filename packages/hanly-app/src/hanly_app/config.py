@@ -28,6 +28,13 @@ class Theme(str, Enum):
     DARK = "dark"
 
 
+#: Supported bounds for the hover debounce, in milliseconds. Architecture V1
+#: tunes hover empirically inside roughly 80-250 ms; these wider bounds keep
+#: that experimentation open while rejecting values that cannot be a debounce.
+HOVER_DELAY_MIN_MS = 20
+HOVER_DELAY_MAX_MS = 2000
+
+
 class ConfigError(ValueError):
     """Raised when persisted configuration cannot be read or validated."""
 
@@ -75,8 +82,11 @@ class AppConfig:
             raise ValueError("hotkey must be a non-empty string")
         if not isinstance(self.hover_delay_ms, int) or isinstance(self.hover_delay_ms, bool):
             raise ValueError("hover_delay_ms must be an integer")
-        if self.hover_delay_ms <= 0:
-            raise ValueError("hover_delay_ms must be greater than zero")
+        if not HOVER_DELAY_MIN_MS <= self.hover_delay_ms <= HOVER_DELAY_MAX_MS:
+            raise ValueError(
+                "hover_delay_ms must be between "
+                f"{HOVER_DELAY_MIN_MS} and {HOVER_DELAY_MAX_MS} milliseconds"
+            )
         if not isinstance(self.capture_mode, CaptureMode):
             object.__setattr__(self, "capture_mode", _coerce_capture_mode(self.capture_mode))
         if not isinstance(self.theme, Theme):

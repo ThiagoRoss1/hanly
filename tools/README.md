@@ -5,10 +5,11 @@ Rigs used to exercise Hanly by hand. **Nothing here ships.** Neither `hanly` nor
 
 ## `dev_alpha.py`
 
-Starts the human-testable desktop alpha through the real manual lookup
-composition. It prepares the local mini dictionary, validates or discovers the
-named PaddleOCR model directories, sets the offline PaddleX source-check flag,
-and then launches the Qt popup/hotkey path.
+Starts the human-testable desktop alpha through the shared manual and automatic
+hover lookup composition. It prepares the local mini dictionary, validates or
+discovers the named PaddleOCR model directories, sets the offline PaddleX
+source-check flag, and then launches the Qt popup, hotkey, and mouse-observer
+path.
 
 ### Setup
 
@@ -25,8 +26,17 @@ The one supported startup command is:
 python tools/dev_alpha.py
 ```
 
-When startup is complete, the command prints the default lookup hotkey and
-keeps running until the Qt application is stopped.
+When startup is complete, the command reports that automatic hover is active,
+prints the default manual lookup hotkey, and opens the Control Center. The
+Control Center shares the alpha's Qt event loop, so hover and the manual hotkey
+stay live while it is open; closing it leaves the alpha running until the Qt
+application is stopped. Opening it at startup is a development affordance for
+manual testing, not the final end-user lifecycle.
+
+Developer preferences are read from and written to the gitignored
+`resources/dev/app-config.json`, which is also what the Control Center edits.
+The hover debounce comes from that file's `hover_delay_ms`; changes apply at
+the next start.
 
 Local preparation lives in `dev_resources.py` beside this file. Every path it
 resolves is relative to this checkout, so it stays out of the shipped
@@ -49,10 +59,11 @@ text-line orientation models. The launcher also sets
 `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`, so this path does not attempt
 remote model acquisition.
 
-For the first deterministic manual test, display Korean text containing `책`
-(for example `책을 읽습니다.`), place the cursor on `책`, and press the default
-`ctrl+shift+space` lookup hotkey. The mini dictionary contains `책 → book` and
-`읽다 → to read`; other words normally produce a visible not-found result.
+For the first deterministic test, display Korean text containing `책` (for
+example `책을 읽습니다.`) and keep the cursor stable on `책` for automatic
+lookup. The default `ctrl+shift+space` hotkey exercises the same path manually.
+The mini dictionary contains `책 → book` and `읽다 → to read`; other words
+normally produce a visible not-found result.
 
 ## `dev_lookup.py`
 

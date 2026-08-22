@@ -93,6 +93,16 @@ class LookupController:
         self._stopped = False
 
     @property
+    def accepting(self) -> bool:
+        """Whether the executor can still accept submissions.
+
+        This turns false permanently once the executor's worker cannot be
+        constructed, which is the state a caller needs to stop offering work.
+        """
+
+        return self._executor.running
+
+    @property
     def current_request_id(self) -> int | None:
         """Return the current request number, or ``None`` after invalidation."""
 

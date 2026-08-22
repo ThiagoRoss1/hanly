@@ -1,8 +1,8 @@
-"""Start the first human-testable Hanly desktop alpha.
+"""Start the human-testable Hanly desktop alpha.
 
 The launcher prepares only local development resources, sets the offline
-PaddleX source-check flag, and delegates the desktop composition to the public
-manual-lookup runner. It does not construct providers itself.
+PaddleX source-check flag, and delegates to the shared manual/automatic desktop
+composition. It does not construct providers itself.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def run_dev_alpha(
     alpha_runner: ManualAlphaRunner | None = None,
     environment: MutableMapping[str, str] | None = None,
 ) -> int:
-    """Prepare local resources and run the public manual desktop alpha.
+    """Prepare local resources and run the public desktop alpha.
 
     ``resource_preparer`` and ``alpha_runner`` are injectable so startup
     ordering and cleanup can be tested without opening a real Qt application.
@@ -72,7 +72,7 @@ def run_dev_alpha(
     if result is None:
         return 0
     if isinstance(result, bool) or not isinstance(result, int):
-        raise DevAlphaError("manual alpha runner must return an integer exit code")
+        raise DevAlphaError("desktop alpha runner must return an integer exit code")
     return result
 
 
@@ -80,11 +80,22 @@ def _default_alpha_runner(*, config_path: Path) -> int | None:
     """Run the desktop composition after local resources are ready.
 
     The desktop imports stay inside the function so this rig can be imported
-    and its startup ordering tested without the runtime extra installed.
+    and its startup ordering tested without the runtime extra installed. The
+    OCR runtime is imported before any of them, because Qt changes the process
+    DLL search path that PaddleOCR's native libraries need.
     """
+
+    _preload_ocr_runtime()
 
     try:
         from hanly_app.capture import CaptureService
+        from hanly_app.config import ConfigManager
+        from hanly_app.control_center import (
+            ControlCenterBridge,
+            ControlCenterHost,
+            ControlCenterUnavailable,
+            prepare_control_center_qt,
+        )
         from hanly_app.manual_lookup import create_qt_manual_lookup
         from hanly_app.runtime import load_runtime
         from PyQt6.QtWidgets import QApplication
@@ -94,11 +105,23 @@ def _default_alpha_runner(*, config_path: Path) -> int | None:
             "(PyQt6, mss, and pynput)"
         ) from error
 
+    try:
+        prepare_control_center_qt()
+    except ControlCenterUnavailable as error:
+        raise DevAlphaError(f"could not prepare the Control Center runtime: {error}") from error
+
     application = QApplication.instance() or QApplication(sys.argv)
     runtime = load_runtime(config_path)
+    settings = ConfigManager(_dev_app_config_path())
+    settings.load()
     capture = CaptureService()
     try:
-        manual = create_qt_manual_lookup(runtime, capture)
+        manual = create_qt_manual_lookup(
+            runtime,
+            capture,
+            app_config=settings.config,
+            hover_on_error=_report_hover_error,
+        )
     except Exception:
         capture.close()
         raise
@@ -109,13 +132,68 @@ def _default_alpha_runner(*, config_path: Path) -> int | None:
     try:
         manual.start()
         print(
-            "Hanly dev alpha ready. Point at Korean text and press "
-            "Ctrl+Shift+Space.",
+            "Hanly dev alpha ready. Keep the cursor stable over Korean text "
+            "for automatic lookup, or press Ctrl+Shift+Space for manual lookup.",
             flush=True,
+        )
+        _open_dev_control_center(
+            ControlCenterHost(
+                ControlCenterBridge(
+                    config_manager=settings,
+                    capture_service=capture,
+                    runtime=runtime,
+                    desktop_controller=manual,
+                )
+            )
         )
         return application.exec()
     finally:
         manual.shutdown()
+
+
+def _preload_ocr_runtime() -> None:
+    """Import the OCR library before Qt claims the process DLL search path.
+
+    PaddleOCR pulls in native libraries whose dependencies fail to load on
+    Windows once PyQt6 has been imported first, and provider construction
+    happens later on the worker thread. Importing it here keeps that ordering
+    correct. A missing library is not fatal: the provider reports it.
+    """
+
+    try:
+        import paddleocr  # noqa: F401
+    except Exception as error:
+        print(f"Hanly dev alpha: OCR preload skipped: {error}", file=sys.stderr, flush=True)
+
+
+def _report_hover_error(stage: str, error: BaseException) -> None:
+    """Make an automatic-hover failure visible in the developer console."""
+
+    print(f"Hanly dev alpha: {stage}: {error}", file=sys.stderr, flush=True)
+
+
+def _dev_app_config_path() -> Path:
+    """Keep developer preferences beside the other local dev resources."""
+
+    return default_dev_config_path().parent / "app-config.json"
+
+
+def _open_dev_control_center(host: object) -> None:
+    """Show the Control Center so the developer alpha can exercise it.
+
+    Opening it here is deliberately a development affordance: it runs the same
+    Qt event loop, so hover and the manual hotkey stay live while it is open,
+    and closing it returns to the ordinary alpha loop. The real application
+    lifecycle owns how this window is opened for end users.
+    """
+
+    open_window = getattr(host, "open", None)
+    if not callable(open_window):
+        return
+    try:
+        open_window()
+    except Exception as error:
+        print(f"Hanly dev alpha: Control Center unavailable: {error}", file=sys.stderr)
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hanly · Control Center</title>
+    <link rel="stylesheet" href="control_center.css">
+  </head>
+  <body>
+    <main class="shell" id="control-center">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">Hanly / desktop desk</p>
+          <h1>Read what is ready.</h1>
+          <p class="lede">Control capture at a glance, then leave the desk quiet while Hanly reads.</p>
+        </div>
+        <div class="readiness-mark" aria-label="Hanly readiness mark">
+          <span>준</span><span>비</span><span>읽</span><span>기</span>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="status-spine" aria-labelledby="status-heading">
+          <div class="spine-heading">
+            <p class="eyebrow">Live status</p>
+            <h2 id="status-heading">At a glance</h2>
+          </div>
+          <div class="status-line" id="status-line" data-state="new">
+            <span class="status-dot" aria-hidden="true"></span>
+            <div>
+              <span class="status-label">Application</span>
+              <strong id="app-state">Starting</strong>
+            </div>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Capture</span>
+            <strong id="capture-state">Stopped</strong>
+          </div>
+          <div class="status-item">
+            <span class="status-label">OCR provider</span>
+            <strong id="ocr-provider">—</strong>
+          </div>
+          <div class="spine-footer">
+            <span class="utility" id="resource-count">0 resources</span>
+            <span class="utility">V1 / local</span>
+          </div>
+        </aside>
+
+        <section class="workspace" aria-label="Control Center controls">
+          <section class="workspace-section capture-section" aria-labelledby="capture-heading">
+            <div class="section-intro">
+              <p class="eyebrow">01 / capture</p>
+              <h2 id="capture-heading">Choose the reading surface</h2>
+              <p>Start or stop the listener, then tell Hanly where your text lives.</p>
+            </div>
+            <div class="capture-controls">
+              <div class="action-row">
+                <button class="button button-primary" id="start-capture" type="button">Start capture</button>
+                <button class="button button-quiet" id="stop-capture" type="button">Stop capture</button>
+              </div>
+              <div class="field-grid">
+                <label class="field">
+                  <span>Capture scope</span>
+                  <select id="capture-mode">
+                    <option value="full_monitor">Current monitor</option>
+                    <option value="region">Selected region</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Target monitor</span>
+                  <select id="capture-target">
+                    <option value="cursor">Follow cursor</option>
+                  </select>
+                </label>
+              </div>
+              <div class="region-panel">
+                <div class="region-fields">
+                  <label class="field"><span>Left</span><input id="region-left" type="number"></label>
+                  <label class="field"><span>Top</span><input id="region-top" type="number"></label>
+                  <label class="field"><span>Width</span><input id="region-width" type="number" min="1"></label>
+                  <label class="field"><span>Height</span><input id="region-height" type="number" min="1"></label>
+                </div>
+                <div class="region-actions">
+                  <button class="text-button" id="apply-region" type="button">Apply region</button>
+                  <button class="text-button" id="clear-region" type="button">Clear region</button>
+                </div>
+              </div>
+              <p class="hint" id="region-hint">No region selected. Choose a scope to keep capture close to the word.</p>
+            </div>
+          </section>
+
+          <section class="workspace-section resources-section" aria-labelledby="resources-heading">
+            <div class="section-intro">
+              <p class="eyebrow">02 / readiness</p>
+              <h2 id="resources-heading">Local tools</h2>
+              <p>ResourceManager is the source of truth for local availability and compatibility.</p>
+            </div>
+            <div class="resource-list" id="resource-list" aria-live="polite"></div>
+          </section>
+
+          <section class="workspace-section settings-section" aria-labelledby="settings-heading">
+            <div class="section-intro">
+              <p class="eyebrow">03 / settings</p>
+              <h2 id="settings-heading">Make it feel like yours</h2>
+              <p>These preferences stay local to the desktop client.</p>
+            </div>
+            <div class="settings-grid">
+              <label class="field">
+                <span>Hover delay <small>(ms)</small></span>
+                <input id="hover-delay" type="number" min="1" max="2000" step="10" inputmode="numeric">
+              </label>
+              <label class="field">
+                <span>Lookup hotkey</span>
+                <input id="hotkey" type="text" spellcheck="false" autocomplete="off">
+              </label>
+            </div>
+            <div class="update-placeholder" aria-disabled="true">
+              <div>
+                <span class="eyebrow">Updates</span>
+                <strong>Not connected yet</strong>
+                <p id="update-message">Update controls arrive with HAN-24/HAN-25.</p>
+              </div>
+              <button class="button button-disabled" type="button" disabled>Check for updates</button>
+            </div>
+          </section>
+        </section>
+      </div>
+      <footer class="footer"><span>Hanly Control Center</span><span class="utility">State is local · actions are explicit</span></footer>
+    </main>
+    <script src="control_center.js"></script>
+  </body>
+</html>

@@ -246,6 +246,23 @@ def _mss_capture(screenshot: _MSSScreenShot) -> BackendCapture:
     return BackendCapture(width=width, height=height, rgb=bytes(screenshot.rgb))
 
 
+def _clamped_to(bounds: ScreenRect, point: Point) -> Point:
+    """Move a point onto the closest position inside a rectangle."""
+
+    return Point(
+        min(max(point.x, float(bounds.left)), float(bounds.right - 1)),
+        min(max(point.y, float(bounds.top)), float(bounds.bottom - 1)),
+    )
+
+
+def _distance_to(bounds: ScreenRect, point: Point) -> float:
+    """Squared distance from a point to the closest edge of a rectangle."""
+
+    dx = max(bounds.left - point.x, 0.0, point.x - (bounds.right - 1))
+    dy = max(bounds.top - point.y, 0.0, point.y - (bounds.bottom - 1))
+    return dx * dx + dy * dy
+
+
 def _mss_rect(raw: object) -> ScreenRect:
     if not isinstance(raw, Mapping):
         raise CaptureBackendError("MSS monitor data must be a mapping")
@@ -317,7 +334,11 @@ class CaptureService:
         monitors = self.enumerate_monitors()
         selected = self._select_monitor(monitors, cursor, monitor)
         if not selected.bounds.contains(cursor):
-            raise CaptureError("cursor is outside selected monitor")
+            if monitor is not None:
+                raise CaptureError("cursor is outside selected monitor")
+            # The monitor was resolved as nearest to a pre-clamp coordinate, so
+            # capture the edge of that display the OS would have clamped to.
+            cursor = _clamped_to(selected.bounds, cursor)
         clip_bounds = _resolve_clip_bounds(selected, cursor, region)
 
         desired = _centered_region(cursor, self._roi_width, self._roi_height)
@@ -394,7 +415,14 @@ class CaptureService:
         for candidate in monitors:
             if candidate.bounds.contains(cursor):
                 return candidate
-        raise CaptureError("no monitor contains cursor")
+
+        # Global mouse hooks report some events with pre-clamp coordinates, so
+        # a cursor the OS actually placed on a display can arrive outside every
+        # monitor rectangle. Resolving to the nearest monitor keeps that event
+        # usable; only having no monitor at all is a real failure.
+        if not monitors:
+            raise CaptureError("no monitor is available for capture")
+        return min(monitors, key=lambda candidate: _distance_to(candidate.bounds, cursor))
 
 
 def _resolve_clip_bounds(

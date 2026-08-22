@@ -138,11 +138,21 @@ def _canonical_key_part(part: str) -> str:
 
     # Pynput names non-character keys (function keys, media keys, and virtual
     # key codes) in angle brackets. Keeping the conversion here also lets the
-    # existing human-friendly ``ctrl+shift+space`` setting remain valid.
+    # existing human-friendly ``ctrl+shift+space`` setting remain valid. Only
+    # identifier-shaped names can be one, so punctuation is rejected instead of
+    # being wrapped into a binding pynput could never register.
+    if not token.replace("_", "").isalnum():
+        raise HotkeyError(f"invalid hotkey key part: {part!r}")
     return f"<{token}>"
 
 
-def _canonical_hotkey(value: str) -> str:
+def canonical_hotkey(value: str) -> str:
+    """Normalize a human-written combination, raising on anything unusable.
+
+    Exposed so callers that persist a hotkey can reject a spelling this
+    service could never register.
+    """
+
     if not isinstance(value, str) or not value.strip():
         raise HotkeyError("hotkey bindings must be non-empty strings")
 
@@ -169,7 +179,7 @@ def _normalize_bindings(bindings: HotkeyBindings) -> dict[HotkeyAction, str]:
         action = _coerce_action(raw_action)
         if action in normalized:
             raise HotkeyError(f"hotkey action is registered more than once: {action.value}")
-        binding = _canonical_hotkey(raw_binding)
+        binding = canonical_hotkey(raw_binding)
         previous = by_binding.get(binding)
         if previous is not None:
             raise DuplicateHotkeyError(
@@ -370,4 +380,5 @@ __all__ = [
     "HotkeyListener",
     "HotkeyListenerFactory",
     "HotkeyService",
+    "canonical_hotkey",
 ]

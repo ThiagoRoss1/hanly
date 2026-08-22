@@ -174,3 +174,19 @@ def test_qt_import_and_dispatch_are_optional() -> None:
     assert events == []
     app.processEvents()
     assert events == ["delivered"]
+
+
+def test_clear_hides_the_popup_and_drops_the_result_it_was_showing() -> None:
+    events: list[tuple[str, LookupResult | None, PopupPosition | None]] = []
+    view = _RecordingView(events)
+    controller = PopupController(view, popup_size=PopupSize(200, 120))
+
+    controller.open(_non_success(LookupStatus.ERROR), Point(10, 10),
+                    ScreenGeometry(0, 0, 800, 600))
+    assert controller.visible is True
+
+    controller.clear()
+
+    assert controller.visible is False
+    assert controller.result is None
+    assert [name for name, _, _ in events][-1] == "hide"

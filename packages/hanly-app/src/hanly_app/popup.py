@@ -235,6 +235,17 @@ class PopupController:
         self._view.hide()
         self._visible = False
 
+    def clear(self) -> None:
+        """Hide the popup and drop the result it was showing.
+
+        Used when the user stops capture: whatever the popup last displayed
+        describes work that is no longer running.
+        """
+
+        self.hide()
+        self._result = None
+        self._position = None
+
     def close(self) -> None:
         """Hide and release the popup view."""
 

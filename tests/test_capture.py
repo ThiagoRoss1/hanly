@@ -222,3 +222,59 @@ def test_default_factory_uses_the_current_non_deprecated_mss_api() -> None:
         factory = _import_mss_factory()
 
     assert factory is mss.MSS
+
+
+class _SizedBackend(FakeBackend):
+    """Backend that always returns a correctly sized buffer for its region."""
+
+    def grab(self, region: ScreenRect) -> BackendCapture:
+        self.last_region = region
+        return BackendCapture(
+            width=region.width,
+            height=region.height,
+            rgb=bytes(region.width * region.height * 3),
+        )
+
+
+def _two_monitor_service() -> tuple[CaptureService, _SizedBackend]:
+    backend = _SizedBackend(
+        (
+            _monitor(left=0, top=0, width=200, height=120, name="Right"),
+            _monitor(left=-200, top=0, width=200, height=120, name="Left"),
+        )
+    )
+    return _service(backend), backend
+
+
+def test_out_of_desktop_cursor_resolves_to_the_nearest_monitor() -> None:
+    """Global mouse hooks deliver some events with pre-clamp coordinates, so a
+    cursor the OS actually placed on a display can arrive outside every
+    monitor rectangle. Such an event must still capture, not fail."""
+
+    service, _backend = _two_monitor_service()
+
+    past_right = service.capture_at_cursor(Point(2200, 60))
+    assert past_right.region.right <= 200
+
+    past_left = service.capture_at_cursor(Point(-2400, 60))
+    assert past_left.region.left >= -200
+
+    below = service.capture_at_cursor(Point(100, 1300))
+    assert below.region.bottom <= 120
+
+
+def test_cursor_on_either_physical_monitor_still_selects_that_monitor() -> None:
+    service, _backend = _two_monitor_service()
+
+    assert service.capture_at_cursor(Point(100, 60)).region == ScreenRect(80, 50, 40, 20)
+    assert service.capture_at_cursor(Point(-100, 60)).region == ScreenRect(-120, 50, 40, 20)
+    # Both extreme in-range corners belong to a real monitor.
+    assert service.capture_at_cursor(Point(199, 119)).region.right <= 200
+    assert service.capture_at_cursor(Point(-200, 0)).region.left == -200
+
+
+def test_capture_reports_a_real_failure_when_no_monitor_exists() -> None:
+    backend = FakeBackend((), pixels=b"")
+
+    with pytest.raises(CaptureError, match="no monitor is available"):
+        _service(backend).capture_at_cursor(Point(10, 10))

@@ -16,6 +16,7 @@ runtime = [
     "mss>=10.2,<11",
     "pynput>=1.8,<2",
     "PyQt6>=6.7,<7",
+    "pywebview[qt6]>=6.2,<7",
 ]
 dev = [
     "hanly-app[runtime]",
@@ -24,3 +25,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+hanly_app = ["assets/control_center/*.html", "assets/control_center/*.css", "assets/control_center/*.js"]

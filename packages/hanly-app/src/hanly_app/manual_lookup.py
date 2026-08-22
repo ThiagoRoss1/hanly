@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias
 from hanly import HanlyError, LookupResult, LookupStatus, Point
 
 from .capture import CaptureResult
+from .config import AppConfig
 from .hotkeys import (
     DEFAULT_HOTKEYS,
     HotkeyAction,
@@ -24,7 +25,10 @@ from .hotkeys import (
     HotkeyHandler,
     HotkeyService,
 )
+from .hover_controller import HoverScheduler
+from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
+from .mouse_observer import MouseListenerFactory
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
@@ -87,9 +91,11 @@ class ManualLookupRuntime:
         close_popup: Callable[[], None],
         current_cursor: CursorProvider,
         dispatcher: ResultDispatcher,
+        clear_popup: Callable[[], None] | None = None,
         hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
         hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
+        hover_runtime: HoverLookupRuntime | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -101,20 +107,26 @@ class ManualLookupRuntime:
             raise TypeError("popup must be callable")
         if not callable(close_popup):
             raise TypeError("close_popup must be callable")
+        if clear_popup is not None and not callable(clear_popup):
+            raise TypeError("clear_popup must be callable")
         if not callable(current_cursor):
             raise TypeError("current_cursor must be callable")
         if not callable(dispatcher):
             raise TypeError("dispatcher must be callable")
         if not isinstance(hotkey, str) or not hotkey.strip():
             raise TypeError("hotkey must be a non-empty string")
+        if hover_runtime is not None and not isinstance(hover_runtime, HoverLookupRuntime):
+            raise TypeError("hover_runtime must be a HoverLookupRuntime")
 
         self._controller = controller
         self._capture_service = capture_service
         self._popup = popup
         self._close_popup = close_popup
+        self._clear_popup = clear_popup or close_popup
         self._current_cursor = current_cursor
         self._dispatcher = dispatcher
         self._shutdown_scheduler = shutdown_scheduler or _schedule_shutdown
+        self._hover_runtime = hover_runtime
         self._hotkeys = (hotkey_factory or _create_hotkey)(
             self._handle_action,
             {HotkeyAction.LOOKUP: hotkey},
@@ -137,6 +149,26 @@ class ManualLookupRuntime:
         return self._hotkeys
 
     @property
+    def hover_runtime(self) -> HoverLookupRuntime | None:
+        """Return the optional automatic-hover path sharing this composition."""
+
+        return self._hover_runtime
+
+    def attach_hover(self, hover_runtime: HoverLookupRuntime) -> None:
+        """Attach automatic hover before startup, sharing controller and capture."""
+
+        if not isinstance(hover_runtime, HoverLookupRuntime):
+            raise TypeError("hover_runtime must be a HoverLookupRuntime")
+        if hover_runtime.controller is not self._controller:
+            raise ValueError("hover_runtime must use the manual lookup controller")
+        with self._lock:
+            if self._started or self._closed:
+                raise RuntimeError("hover runtime must be attached before startup")
+            if self._hover_runtime is not None:
+                raise RuntimeError("manual lookup already has a hover runtime")
+            self._hover_runtime = hover_runtime
+
+    @property
     def started(self) -> bool:
         """Whether the manual path accepts lookup actions."""
 
@@ -150,12 +182,17 @@ class ManualLookupRuntime:
             if self._closed:
                 raise RuntimeError("manual lookup runtime has been shut down")
             if self._started:
+                hover_runtime = self._hover_runtime
+                if hover_runtime is not None and not hover_runtime.failed:
+                    hover_runtime.resume()
                 return
             self._started = True
 
         try:
             self._controller.start()
             self._hotkeys.register()
+            if self._hover_runtime is not None:
+                self._hover_runtime.start()
         except Exception as error:
             # Roll back through the ordinary shutdown path so the popup and
             # capture service acquired before start() are closed too. Marking
@@ -178,6 +215,8 @@ class ManualLookupRuntime:
 
         # Invalidate before stop so queued or in-flight results fail the
         # controller's final currency check. The worker is never joined here.
+        if self._hover_runtime is not None:
+            self._hover_runtime.shutdown()
         self._controller.invalidate()
         try:
             self._controller.stop(wait=False)
@@ -189,6 +228,36 @@ class ManualLookupRuntime:
                     self._capture_service.close()
                 finally:
                     self._schedule_hotkey_shutdown()
+
+    def invalidate(self) -> None:
+        """Drop the current lookup attempt while both triggers keep running."""
+
+        with self._lock:
+            if self._closed:
+                return
+            hover_runtime = self._hover_runtime
+        self._controller.invalidate()
+        if hover_runtime is not None:
+            hover_runtime.invalidate()
+
+    def pause(self) -> None:
+        """Stop automatic hover observation, leaving the manual hotkey live."""
+
+        with self._lock:
+            if self._closed:
+                return
+            hover_runtime = self._hover_runtime
+        self._controller.invalidate()
+        if hover_runtime is not None:
+            hover_runtime.pause()
+        # Whatever the popup is showing describes work that is no longer
+        # running, so stopping capture must not leave it on screen.
+        self._clear_popup()
+
+    def resume(self) -> None:
+        """Resume the shared lookup path after :meth:`pause`."""
+
+        self.start()
 
     def _handle_action(self, action: HotkeyAction) -> None:
         """Capture and submit from the UI-dispatched application callback."""
@@ -228,9 +297,16 @@ def create_manual_lookup(
     close_popup: Callable[[], None],
     current_cursor: CursorProvider,
     dispatcher: ResultDispatcher,
+    clear_popup: Callable[[], None] | None = None,
     hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
     hotkey_factory: HotkeyFactory | None = None,
     shutdown_scheduler: ShutdownScheduler | None = None,
+    hover_enabled: bool = False,
+    hover_delay_ms: float | None = None,
+    hover_scheduler: HoverScheduler | None = None,
+    app_config: AppConfig | None = None,
+    hover_listener_factory: MouseListenerFactory | None = None,
+    hover_on_error: HoverErrorHandler | None = None,
 ) -> ManualLookupRuntime:
     """Compose a manual path from the existing runtime and desktop seams."""
 
@@ -239,17 +315,31 @@ def create_manual_lookup(
         result_dispatcher=dispatcher,
         thread_name="hanly-manual-lookup",
     )
-    return ManualLookupRuntime(
+    manual = ManualLookupRuntime(
         controller,
         capture_service,
         popup,
         close_popup=close_popup,
         current_cursor=current_cursor,
         dispatcher=dispatcher,
+        clear_popup=clear_popup,
         hotkey=hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
     )
+    if hover_enabled:
+        manual.attach_hover(
+            HoverLookupRuntime(
+                controller,
+                capture_service,
+                delay_ms=_hover_delay(hover_delay_ms, app_config),
+                scheduler=hover_scheduler,
+                dispatcher=dispatcher,
+                listener_factory=hover_listener_factory,
+                on_error=hover_on_error,
+            )
+        )
+    return manual
 
 
 def create_qt_manual_lookup(
@@ -260,6 +350,12 @@ def create_qt_manual_lookup(
     parent: QWidget | None = None,
     hotkey_factory: HotkeyFactory | None = None,
     shutdown_scheduler: ShutdownScheduler | None = None,
+    hover_enabled: bool = True,
+    hover_delay_ms: float | None = None,
+    hover_scheduler: HoverScheduler | None = None,
+    app_config: AppConfig | None = None,
+    hover_listener_factory: MouseListenerFactory | None = None,
+    hover_on_error: HoverErrorHandler | None = None,
 ) -> ManualLookupRuntime:
     """Build the real Qt alpha composition on the caller's UI thread.
 
@@ -271,6 +367,7 @@ def create_qt_manual_lookup(
     from PyQt6.QtGui import QCursor
 
     from .popup import PopupController
+    from .qt_hover_scheduler import QtHoverScheduler
     from .qt_popup import QtPopupTrigger, QtPopupView, QtResultDispatcher
 
     dispatcher = QtResultDispatcher(parent)
@@ -287,17 +384,43 @@ def create_qt_manual_lookup(
         cursor = QCursor.pos()
         return Point(float(cursor.x()), float(cursor.y()))
 
-    return ManualLookupRuntime(
+    manual = ManualLookupRuntime(
         controller,
         capture_service,
         popup_trigger.open,
         close_popup=popup_controller.close,
+        clear_popup=popup_controller.clear,
         current_cursor=current_cursor,
         dispatcher=dispatcher,
         hotkey=hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
     )
+    if hover_enabled:
+        manual.attach_hover(
+            HoverLookupRuntime(
+                controller,
+                capture_service,
+                delay_ms=_hover_delay(hover_delay_ms, app_config),
+                # Debounce on the Qt UI thread that already dispatches movement
+                # rather than spawning a timer thread per cursor event.
+                scheduler=hover_scheduler or QtHoverScheduler(parent),
+                dispatcher=dispatcher,
+                listener_factory=hover_listener_factory,
+                on_error=hover_on_error,
+            )
+        )
+    return manual
+
+
+def _hover_delay(delay_ms: float | None, app_config: AppConfig | None) -> float:
+    """Resolve the hover debounce from the explicit value, then user config."""
+
+    if delay_ms is not None:
+        return delay_ms
+    if app_config is not None:
+        return float(app_config.hover_delay_ms)
+    return AppConfig().hover_delay_ms
 
 
 def _as_result_handler(popup: PopupPresenter) -> ResultHandler:
@@ -339,6 +462,8 @@ __all__ = [
     "CursorProvider",
     "HotkeyFactory",
     "HotkeyRuntime",
+    "HoverLookupRuntime",
+    "HoverErrorHandler",
     "ManualLookupRuntime",
     "ManualLookupStartupError",
     "PopupPresenter",

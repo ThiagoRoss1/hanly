@@ -18,6 +18,14 @@ from .composition import (
     create_lookup_worker_factory,
 )
 from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, Theme
+from .control_center import (
+    ControlCenterAssets,
+    ControlCenterBridge,
+    ControlCenterHost,
+    ControlCenterUnavailable,
+    load_control_center_assets,
+    prepare_control_center_qt,
+)
 from .desktop_controller import DesktopController, DesktopState, LookupRuntime
 from .hotkeys import (
     DEFAULT_HOTKEYS,
@@ -26,6 +34,8 @@ from .hotkeys import (
     HotkeyError,
     HotkeyService,
 )
+from .hover_controller import HoverController, HoverRequest
+from .hover_lookup import HoverLookupRuntime
 from .job_executor import JobExecutor, Worker
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher, ResultHandler
 from .manual_lookup import (
@@ -34,6 +44,7 @@ from .manual_lookup import (
     create_manual_lookup,
     create_qt_manual_lookup,
 )
+from .mouse_observer import MouseObserver
 from .popup import (
     PopupContent,
     PopupController,
@@ -61,6 +72,10 @@ __all__ = [
     "CaptureService",
     "ConfigError",
     "ConfigManager",
+    "ControlCenterAssets",
+    "ControlCenterBridge",
+    "ControlCenterHost",
+    "ControlCenterUnavailable",
     "DEFAULT_HOTKEYS",
     "DesktopController",
     "DesktopState",
@@ -69,6 +84,9 @@ __all__ = [
     "HotkeyAction",
     "HotkeyError",
     "HotkeyService",
+    "HoverController",
+    "HoverLookupRuntime",
+    "HoverRequest",
     "JobExecutor",
     "LookupController",
     "LookupRequest",
@@ -78,6 +96,7 @@ __all__ = [
     "ManualLookupRuntime",
     "ManualLookupStartupError",
     "MonitorInfo",
+    "MouseObserver",
     "PopupContent",
     "PopupController",
     "PopupPosition",
@@ -100,4 +119,6 @@ __all__ = [
     "create_worker_factory_from_config",
     "format_lookup_result",
     "load_runtime",
+    "load_control_center_assets",
+    "prepare_control_center_qt",
 ]
