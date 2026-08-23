@@ -31,6 +31,7 @@ from .control_center import (
 )
 from .desktop_controller import DesktopController, DesktopState
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
+from .resource_bootstrap import RuntimeBootstrapError, bootstrap_runtime_config
 from .runtime import RuntimeConfigError, load_runtime
 from .signal_bridge import QtSignalBridge
 from .tray import TrayService
@@ -570,27 +571,63 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
-    runtime_config = args.runtime_config or discover_runtime_config()
-    if runtime_config is None:
-        print(_missing_runtime_config_message(), file=sys.stderr)
-        return 2
-
     try:
+        runtime_config = _resolve_runtime_config(args.runtime_config)
         return run_desktop(runtime_config, app_config=args.app_config)
-    except (DesktopApplicationError, RuntimeConfigError, OSError, ValueError) as error:
-        print(f"Hanly Desktop: {error}", file=sys.stderr)
+    except (
+        DesktopApplicationError,
+        RuntimeBootstrapError,
+        RuntimeConfigError,
+        OSError,
+        ValueError,
+    ) as error:
+        _report_startup_error(error)
         return 2
 
 
-def _missing_runtime_config_message() -> str:
-    """Name every location searched so the failure is actionable without docs."""
+def _resolve_runtime_config(explicit: Path | None) -> Path:
+    """Return the configuration to start from, provisioning a normal launch.
 
-    beside = Path(sys.executable).resolve().parent / RUNTIME_CONFIG_NAME
-    return (
-        "Hanly Desktop: no runtime configuration found. Expected "
-        f"{beside} or {default_runtime_config_path()}, "
-        "or pass --runtime-config with an explicit path."
-    )
+    An explicit path is an operator choice: it neither creates files nor
+    reaches the release channel behind the caller's back.
+    """
+
+    if explicit is not None:
+        return explicit
+    discovered = discover_runtime_config() or default_runtime_config_path()
+    return bootstrap_runtime_config(discovered)
+
+
+def _report_startup_error(error: BaseException) -> None:
+    """Report startup failure even when the packaged app has no console."""
+
+    message = f"Hanly Desktop: {error}"
+    print(message, file=sys.stderr, flush=True)
+    if not getattr(sys, "frozen", False):
+        return
+
+    _show_native_startup_error(message)
+
+
+def _show_native_startup_error(message: str) -> None:
+    """Show a minimal native error dialog for a windowed packaged launch."""
+
+    # Keep the established PaddleOCR-before-Qt ordering even on the failure
+    # path.  A minimal native dialog gives a windowed PyInstaller build an
+    # actionable error when stderr is not attached to a terminal.
+    preload_ocr_runtime()
+    try:
+        from PyQt6.QtWidgets import QApplication, QMessageBox
+
+        # Bound to a local so a QApplication created here outlives the modal
+        # call; `instance()` is typed as the base class, which has no windows.
+        application = QApplication.instance() or QApplication(sys.argv)
+        parent = application.activeWindow() if isinstance(application, QApplication) else None
+        QMessageBox.critical(parent, "Hanly Desktop", message)
+    except Exception:
+        # stderr remains the fallback for systems without the optional Qt
+        # runtime or without a usable display server.
+        return
 
 
 __all__ = [

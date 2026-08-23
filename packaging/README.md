@@ -18,6 +18,17 @@ default is the current host), and `--dry-run` to inspect the PyInstaller
 command. The tool creates the release archive after a successful onedir build;
 it never installs dependencies, downloads models, or contacts a remote service.
 
+PyInstaller loads `PyQt6.QtWidgets` while analyzing a Linux build, which needs
+the system `libEGL.so.1` loader. On Ubuntu 22.04 and 24.04 that loader is
+provided by `libegl1`. The build workflow installs only that package, without
+recommended extras, on its Linux job. A local Ubuntu builder can prepare the
+same dependency with:
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes --no-install-recommends libegl1
+```
+
 ## Artifact and resource conventions
 
 The onedir output is written under `dist/<platform>/hanly-desktop/`. The tool
@@ -32,16 +43,27 @@ then creates one application archive at the root of `dist/`:
 HAN-28/HAN-29 release tooling can publish those files under the stable
 `hanly-desktop-<platform>` stem. Resource delivery is separate and uses one
 asset per runtime resource under the
-`hanly-resources-<resource-id>-<version>.<archive>` convention. A release run
-expects the `paddle_detection_model`, `paddle_recognition_model`, and `krdict`
-assets and generates their checksummed `hanly-resources.json` metadata. These
-artifacts are not collected from `resources/dev`, a local PaddleX cache, or any
-other developer-machine cache by this spec.
+`hanly-resources-<resource-id>-<version>.<archive>` convention. The release
+tool derives each resource version from that name (or accepts equivalent
+explicit metadata); it never substitutes the application tag for a resource
+version. A release run expects the `paddle_detection_model`,
+`paddle_recognition_model`, and `krdict` assets and generates their checksummed
+`hanly-resources.json` metadata. These artifacts are not collected from
+`resources/dev`, a local PaddleX cache, or any other developer-machine cache by
+this spec.
 
 A `directory` resource must be delivered as a `.zip`: `UpdateService` unpacks it
 with `zipfile` and installs every other kind as the downloaded file itself. The
 manifest generator rejects any other container rather than publishing a resource
 no client can activate.
+
+A model archive must place its files at the archive root, not inside a wrapper
+directory, because `UpdateService` activates the extracted tree as the resource
+directory itself. Startup enforces this: `load_runtime` requires each model
+directory to hold at least one file directly at its root, so a mis-packed
+archive fails with a named error instead of starting the desktop and failing
+later inside PaddleOCR. The check is filename-agnostic and does not encode any
+model's file names.
 
 ## Versioning and the release flow
 
@@ -62,7 +84,8 @@ Releasing is semi-automatic. The human chooses the version and creates the tag:
 4. Pushing the tag runs the build workflow, which refuses to build if the tag
    and the product version disagree, then produces the three platform archives.
 5. Dispatch the release workflow with that tag and the run id of the separately
-   produced resource artifacts. It finds the tag's application build itself.
+   produced resource artifacts. It finds the tag's application build itself;
+   resource versions come from the resource artifact names.
 
 ```powershell
 python tools/release_version.py                # print the current version
@@ -79,7 +102,17 @@ selected by tag rather than by a copied run id.
 
 The packaged application looks for `runtime.json` beside the executable, then in
 the settings directory (`%LOCALAPPDATA%\Hanly` or `~/.config/hanly`).
-`--runtime-config` overrides both:
+Without `--runtime-config`, the first launch creates the per-user runtime
+configuration when needed, validates its three external resources (the two
+PaddleOCR model directories and the KRDICT SQLite database), and provisions
+missing resources from the latest `ThiagoRoss1/hanly` release manifest
+(`hanly-resources.json`). Each activated artifact's release identity is stored
+as `installed_version`; later launches skip provisioning while the local
+resources remain valid. The application does not embed these artifacts, and a
+corresponding public release must exist for first-run acquisition to succeed.
+
+`--runtime-config` overrides discovery and bypasses automatic configuration
+creation and remote provisioning:
 
 ```powershell
 dist/windows/hanly-desktop/hanly-desktop.exe --runtime-config path/to/runtime.json
@@ -88,6 +121,3 @@ dist/windows/hanly-desktop/hanly-desktop.exe --runtime-config path/to/runtime.js
 Paths inside that JSON resolve relative to the configuration file. Remote updates
 stay off until the configuration declares an `updates` block naming a release
 channel, so a build with no such block never contacts GitHub.
-
-Producing that first configuration and acquiring the resources it points at is
-not yet automated — see the Wave 10 handoff for the first-run gap and its owner.

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
+import types
 from collections.abc import Callable
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic
 from typing import Any, cast
 
+import hanly_app.application as application_module
+import pytest
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
 from hanly_app.application import (
     RUNTIME_CONFIG_NAME,
@@ -314,3 +318,114 @@ def test_discovery_reports_nothing_rather_than_guessing(tmp_path: Path) -> None:
     executable.write_bytes(b"frozen")
 
     assert discover_runtime_config({"LOCALAPPDATA": str(tmp_path / "empty")}, executable) is None
+
+
+def test_explicit_runtime_config_skips_first_run_bootstrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "operator-runtime.json"
+    calls: list[Path] = []
+
+    def forbidden_bootstrap(path: str | Path) -> Path:
+        calls.append(Path(path))
+        raise AssertionError("explicit runtime config must not bootstrap")
+
+    monkeypatch.setattr(application_module, "bootstrap_runtime_config", forbidden_bootstrap)
+    monkeypatch.setattr(
+        application_module,
+        "run_desktop",
+        lambda runtime_config, *, app_config=None: (
+            0 if Path(runtime_config) == config else 1
+        ),
+    )
+
+    assert application_module.main(["--runtime-config", str(config)]) == 0
+    assert calls == []
+
+
+def test_automatic_launch_bootstraps_the_discovered_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    discovered = tmp_path / "runtime.json"
+    calls: list[Path] = []
+
+    monkeypatch.setattr(application_module, "discover_runtime_config", lambda: discovered)
+
+    def bootstrap(path: str | Path) -> Path:
+        calls.append(Path(path))
+        return discovered
+
+    monkeypatch.setattr(
+        application_module,
+        "bootstrap_runtime_config",
+        bootstrap,
+    )
+    monkeypatch.setattr(application_module, "run_desktop", lambda *_args, **_kwargs: 0)
+
+    assert application_module.main([]) == 0
+    assert calls == [discovered]
+
+
+def test_fresh_automatic_launch_bootstraps_the_default_config_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default = tmp_path / "Hanly" / "runtime.json"
+    calls: list[Path] = []
+
+    monkeypatch.setattr(application_module, "discover_runtime_config", lambda: None)
+    monkeypatch.setattr(application_module, "default_runtime_config_path", lambda: default)
+
+    def bootstrap(path: str | Path) -> Path:
+        calls.append(Path(path))
+        return default
+
+    monkeypatch.setattr(application_module, "bootstrap_runtime_config", bootstrap)
+    monkeypatch.setattr(application_module, "run_desktop", lambda *_args, **_kwargs: 0)
+
+    assert application_module.main([]) == 0
+    assert calls == [default]
+
+
+def test_windowed_startup_failure_uses_native_error_reporter(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(application_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(application_module, "_show_native_startup_error", messages.append)
+
+    application_module._report_startup_error(RuntimeError("resource release unavailable"))
+
+    assert messages == ["Hanly Desktop: resource release unavailable"]
+    assert "resource release unavailable" in capsys.readouterr().err
+
+
+def test_native_startup_reporter_preloads_ocr_before_opening_the_qt_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _Application:
+        @classmethod
+        def instance(cls) -> None:
+            return None
+
+        def __init__(self, _argv: object) -> None:
+            events.append("qt")
+
+        def activeWindow(self) -> None:
+            return None
+
+    class _MessageBox:
+        @staticmethod
+        def critical(_parent: object, title: str, message: str) -> None:
+            events.extend([title, message])
+
+    widgets = types.ModuleType("PyQt6.QtWidgets")
+    widgets.QApplication = _Application  # type: ignore[attr-defined]
+    widgets.QMessageBox = _MessageBox  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "PyQt6.QtWidgets", widgets)
+    monkeypatch.setattr(application_module, "preload_ocr_runtime", lambda: events.append("ocr"))
+
+    application_module._show_native_startup_error("resource setup failed")
+
+    assert events == ["ocr", "qt", "Hanly Desktop", "resource setup failed"]

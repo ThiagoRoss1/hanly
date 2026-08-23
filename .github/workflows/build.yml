@@ -42,6 +42,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # PyInstaller inspects PyQt6.QtWidgets during Linux collection. The
+      # Ubuntu hosted image does not include the loader that owns libEGL.so.1.
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libegl1
+
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip

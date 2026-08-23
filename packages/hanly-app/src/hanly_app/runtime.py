@@ -145,59 +145,14 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
     """
 
     path = Path(config_path).expanduser()
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise RuntimeConfigError(f"could not load runtime config {path}: {exc}") from exc
-    if not isinstance(raw, Mapping):
-        raise RuntimeConfigError("runtime config must contain a JSON object")
-
+    raw = _load_runtime_payload(path)
     root = path.resolve().parent
     try:
         paddle_values = _paddle_values(raw)
-        resources_value = raw.get("resources")
-        if not isinstance(resources_value, Mapping):
-            raise ValueError("resources is required and must be a JSON object")
-
-        resource_values = dict(resources_value)
+        manager = _resource_manager_from_payload(raw, root)
         detection_id = _REQUIRED_RESOURCE_IDS["detection"]
         recognition_id = _REQUIRED_RESOURCE_IDS["recognition"]
         krdict_id = _REQUIRED_RESOURCE_IDS["krdict"]
-        for resource_id in (detection_id, recognition_id, krdict_id):
-            if resource_id not in resource_values:
-                raise ValueError(f"resources.{resource_id} is required")
-        detection_value = resource_values[detection_id]
-        recognition_value = resource_values[recognition_id]
-        krdict_value = resource_values[krdict_id]
-
-        _configured_model_dir(
-            paddle_values,
-            "detection",
-            root,
-            detection_value,
-        )
-        _configured_model_dir(
-            paddle_values,
-            "recognition",
-            root,
-            recognition_value,
-        )
-
-        _resource_path(krdict_value, root, "krdict")
-
-        specs = _resource_specs(
-            resource_values,
-            required_configurations={
-                detection_id: {"model_name": _model_name(paddle_values, "detection")},
-                recognition_id: {"model_name": _model_name(paddle_values, "recognition")},
-            },
-            required_kinds={
-                detection_id: "directory",
-                recognition_id: "directory",
-                krdict_id: "krdict",
-            },
-        )
-        manager = ResourceManager(ResourceManifest(specs), base_path=root)
         metadata = manager.validate()
         invalid = []
         for resource_id, resource_metadata in metadata.items():
@@ -211,6 +166,7 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
             raise RuntimeConfigError(
                 "runtime resource validation failed: " + "; ".join(invalid)
             )
+        _require_model_files_at_root(manager, (detection_id, recognition_id))
 
         paddle_config = _paddle_config(
             paddle_values,
@@ -236,6 +192,98 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
         krdict_path=manager.validated_path(krdict_id),
         confidence_threshold=confidence_threshold,
     )
+
+
+def _require_model_files_at_root(
+    manager: ResourceManager, resource_ids: tuple[str, ...]
+) -> None:
+    """Reject a model directory that holds no file directly at its root.
+
+    ``ResourceManager`` validates a directory resource as existing, readable,
+    and a directory. A model archive packed inside a wrapper directory passes
+    all three, activates, and then fails much later inside PaddleOCR with no
+    link back to the packaging mistake. The check is filename-agnostic: it
+    asserts the layout PaddleOCR needs without encoding any model's file names.
+    """
+
+    for resource_id in resource_ids:
+        path = manager.validated_path(resource_id)
+        try:
+            has_root_file = any(entry.is_file() for entry in path.iterdir())
+        except OSError as exc:
+            raise RuntimeConfigError(
+                f"could not read the model directory for {resource_id}: {exc}"
+            ) from exc
+        if not has_root_file:
+            raise RuntimeConfigError(
+                f"{resource_id} has no model file directly in {path}: a model archive "
+                "must place its files at the resource root, not inside a wrapper directory"
+            )
+
+
+def load_resource_manager(config_path: str | Path) -> ResourceManager:
+    """Load the local resource manifest without requiring resources to exist.
+
+    First-run provisioning uses this composition-owned parser to inspect a
+    generated or existing runtime configuration before asking ``UpdateService``
+    to fill missing artifacts. Runtime startup still calls :func:`load_runtime`,
+    which performs the final all-valid check and builds provider options.
+    """
+
+    path = Path(config_path).expanduser()
+    raw = _load_runtime_payload(path)
+    try:
+        return _resource_manager_from_payload(raw, path.resolve().parent)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise RuntimeConfigError(f"invalid runtime config {path}: {exc}") from exc
+
+
+def _load_runtime_payload(path: Path) -> Mapping[str, object]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeConfigError(f"could not load runtime config {path}: {exc}") from exc
+    if not isinstance(raw, Mapping):
+        raise RuntimeConfigError("runtime config must contain a JSON object")
+    return raw
+
+
+def _resource_manager_from_payload(
+    raw: Mapping[str, object], root: Path
+) -> ResourceManager:
+    paddle_values = _paddle_values(raw)
+    resources_value = raw.get("resources")
+    if not isinstance(resources_value, Mapping):
+        raise ValueError("resources is required and must be a JSON object")
+
+    resource_values = dict(resources_value)
+    detection_id = _REQUIRED_RESOURCE_IDS["detection"]
+    recognition_id = _REQUIRED_RESOURCE_IDS["recognition"]
+    krdict_id = _REQUIRED_RESOURCE_IDS["krdict"]
+    for resource_id in (detection_id, recognition_id, krdict_id):
+        if resource_id not in resource_values:
+            raise ValueError(f"resources.{resource_id} is required")
+    detection_value = resource_values[detection_id]
+    recognition_value = resource_values[recognition_id]
+    krdict_value = resource_values[krdict_id]
+
+    _configured_model_dir(paddle_values, "detection", root, detection_value)
+    _configured_model_dir(paddle_values, "recognition", root, recognition_value)
+    _resource_path(krdict_value, root, "krdict")
+
+    specs = _resource_specs(
+        resource_values,
+        required_configurations={
+            detection_id: {"model_name": _model_name(paddle_values, "detection")},
+            recognition_id: {"model_name": _model_name(paddle_values, "recognition")},
+        },
+        required_kinds={
+            detection_id: "directory",
+            recognition_id: "directory",
+            krdict_id: "krdict",
+        },
+    )
+    return ResourceManager(ResourceManifest(specs), base_path=root)
 
 
 def create_lookup_controller_from_config(
@@ -582,5 +630,6 @@ __all__ = [
     "RuntimeConfigError",
     "create_lookup_controller_from_config",
     "create_worker_factory_from_config",
+    "load_resource_manager",
     "load_runtime",
 ]

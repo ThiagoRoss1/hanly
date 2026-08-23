@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 from hanly_app.update_service import RemoteManifest
 
-from tools.build_release_manifest import ResourceArtifact, build_manifest, main
+from tools.build_release_manifest import (
+    ResourceArtifact,
+    build_manifest,
+    main,
+    resource_version_from_asset_name,
+)
 
 
 def test_build_manifest_hashes_each_artifact_and_emits_release_asset_urls(
@@ -93,6 +98,28 @@ def test_cli_accepts_explicit_resource_specs_and_writes_update_service_manifest(
     assert payload["resources"]["model"]["asset_name"] == "model.zip"
 
 
+def test_cli_can_derive_resource_version_from_artifact_name(tmp_path: Path) -> None:
+    archive = tmp_path / "hanly-resources-model-v4.5.6.zip"
+    archive.write_bytes(b"model")
+    output = tmp_path / "hanly-resources.json"
+
+    assert main(
+        [
+            "--release",
+            "v2.0.0",
+            "--release-base-url",
+            "https://github.example/releases/download/v2.0.0",
+            "--output",
+            str(output),
+            "--resource-from-name",
+            f"model|directory|{archive}",
+        ]
+    ) == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["resources"]["model"]["version"] == "v4.5.6"
+
+
 def test_directory_resources_must_be_delivered_as_a_zip_archive(tmp_path: Path) -> None:
     """``UpdateService`` unpacks a directory resource with ``zipfile`` alone."""
 
@@ -148,9 +175,9 @@ def test_base_url_whitespace_and_trailing_slashes_never_reach_asset_urls(
 def test_generated_manifest_is_accepted_by_the_update_service_contract(tmp_path: Path) -> None:
     """The release tool and ``UpdateService`` must not drift apart silently."""
 
-    models = tmp_path / "hanly-resources-paddle_detection_model-v1.zip"
+    models = tmp_path / "hanly-resources-paddle_detection_model-v1.0.0.zip"
     models.write_bytes(b"detection model archive")
-    dictionary = tmp_path / "hanly-resources-krdict-v1.sqlite3"
+    dictionary = tmp_path / "hanly-resources-krdict-v1.0.0.sqlite3"
     dictionary.write_bytes(b"dictionary")
 
     payload = build_manifest(
@@ -174,5 +201,77 @@ def test_generated_manifest_is_accepted_by_the_update_service_contract(tmp_path:
     assert detection.checksum is not None and detection.checksum.startswith("sha256:")
     assert detection.url == (
         "https://github.com/acme/hanly/releases/download/v1.0.0/"
-        "hanly-resources-paddle_detection_model-v1.zip"
+        "hanly-resources-paddle_detection_model-v1.0.0.zip"
     )
+
+
+def test_resource_versions_are_derived_independently_and_consumed_by_remote_manifest(
+    tmp_path: Path,
+) -> None:
+    detection = tmp_path / "hanly-resources-paddle_detection_model-2026.08.zip"
+    recognition = tmp_path / "hanly-resources-paddle_recognition_model-v3.2.1.zip"
+    dictionary = tmp_path / "hanly-resources-krdict-2025-12.sqlite3"
+    for artifact in (detection, recognition, dictionary):
+        artifact.write_bytes(artifact.name.encode())
+
+    payload = build_manifest(
+        "v1.0.0",
+        "https://github.com/acme/hanly/releases/download/v1.0.0",
+        (
+            ResourceArtifact.from_asset_name("paddle_detection_model", "directory", detection),
+            ResourceArtifact.from_asset_name(
+                "paddle_recognition_model", "directory", recognition
+            ),
+            ResourceArtifact.from_asset_name("krdict", "krdict", dictionary),
+        ),
+    )
+
+    manifest = RemoteManifest.from_payload(payload)
+
+    assert manifest["paddle_detection_model"].version == "2026.08"
+    assert manifest["paddle_recognition_model"].version == "v3.2.1"
+    assert manifest["krdict"].version == "2025-12"
+
+
+def test_resource_artifact_name_parser_rejects_malformed_or_ambiguous_names() -> None:
+    with pytest.raises(ValueError, match="does not match resource id"):
+        resource_version_from_asset_name("hanly-resources-krdict-2026.08.zip", "models")
+
+    with pytest.raises(ValueError, match="must include a version"):
+        resource_version_from_asset_name("hanly-resources-krdict-.sqlite3", "krdict")
+
+    with pytest.raises(ValueError, match="archive suffix"):
+        resource_version_from_asset_name("hanly-resources-krdict-2026.08", "krdict")
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        resource_version_from_asset_name(
+            "hanly-resources-krdict-2026.08.sqlite3.zip", "krdict"
+        )
+
+
+def test_explicit_resource_version_must_agree_with_versioned_asset_name(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "hanly-resources-model-v2.zip"
+    artifact.write_bytes(b"model")
+
+    with pytest.raises(ValueError, match="conflicts with artifact name version"):
+        ResourceArtifact("model", "directory", "v1", artifact)
+
+
+def test_release_workflow_does_not_use_application_tag_as_resource_version() -> None:
+    workflow = (Path(__file__).parents[1] / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--resource-from-name" in workflow
+    assert 'directory|$RELEASE_TAG|' not in workflow
+    assert 'krdict|$RELEASE_TAG|' not in workflow
+
+
+def test_a_name_without_a_documented_version_cannot_derive_one(tmp_path: Path) -> None:
+    artifact = tmp_path / "krdict.sqlite3"
+    artifact.write_bytes(b"dictionary")
+
+    with pytest.raises(ValueError, match="does not match resource id"):
+        ResourceArtifact.from_asset_name("krdict", "krdict", artifact)

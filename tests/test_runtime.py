@@ -72,9 +72,21 @@ def _runtime_config(
     return path
 
 
+def _model_directories(tmp_path: Path) -> None:
+    """Create the two model directories in the layout PaddleOCR loads from.
+
+    The inference file is a placeholder: startup only requires that a model
+    directory holds a file at its root, never a particular file name.
+    """
+
+    for name in ("det", "rec"):
+        directory = tmp_path / "models" / name
+        directory.mkdir(parents=True)
+        (directory / "inference.pdiparams").write_bytes(b"model")
+
+
 def _valid_config(tmp_path: Path) -> Path:
-    (tmp_path / "models" / "det").mkdir(parents=True)
-    (tmp_path / "models" / "rec").mkdir(parents=True)
+    _model_directories(tmp_path)
     (tmp_path / "data").mkdir()
     _krdict_database(tmp_path / "data" / "krdict.sqlite3")
     return _runtime_config(tmp_path)
@@ -144,8 +156,7 @@ def test_runtime_config_requires_explicit_detection_and_recognition_name_dir_pai
     paddle: dict[str, object],
     message: str,
 ) -> None:
-    (tmp_path / "models" / "det").mkdir(parents=True)
-    (tmp_path / "models" / "rec").mkdir(parents=True)
+    _model_directories(tmp_path)
     (tmp_path / "data").mkdir()
     _krdict_database(tmp_path / "data" / "krdict.sqlite3")
     config = _runtime_config(tmp_path, paddle=paddle)
@@ -196,6 +207,31 @@ def test_invalid_declared_optional_resource_also_blocks_runtime_startup(
 
     with pytest.raises(RuntimeConfigError, match="unused_asset.*does not exist"):
         load_runtime(valid)
+
+
+def test_a_model_archive_nested_under_a_wrapper_directory_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """A mis-packed model archive must fail at startup, not inside PaddleOCR."""
+
+    config = _valid_config(tmp_path)
+    detection = tmp_path / "models" / "det"
+    nested = detection / "PP-OCRv5_mobile_det"
+    nested.mkdir()
+    (detection / "inference.pdiparams").rename(nested / "inference.pdiparams")
+
+    with pytest.raises(RuntimeConfigError, match="paddle_detection_model has no model file"):
+        load_runtime(config)
+
+
+def test_an_empty_model_directory_is_rejected_before_provider_construction(
+    tmp_path: Path,
+) -> None:
+    config = _valid_config(tmp_path)
+    (tmp_path / "models" / "rec" / "inference.pdiparams").unlink()
+
+    with pytest.raises(RuntimeConfigError, match="paddle_recognition_model has no model file"):
+        load_runtime(config)
 
 
 def test_concrete_provider_factories_are_deferred_and_krdict_lifecycle_stays_on_worker(

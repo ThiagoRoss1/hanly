@@ -83,6 +83,24 @@ def test_build_runs_repository_gates_before_producing_an_artifact() -> None:
     assert gates and builds and max(gates) < min(builds)
 
 
+def test_linux_build_installs_only_the_missing_egl_loader_dependency() -> None:
+    steps = _steps(_workflow("build.yml"), "build")
+    linux_dependencies = [
+        step for step in steps if step.get("name") == "Install Linux packaging dependencies"
+    ]
+
+    assert len(linux_dependencies) == 1
+    step = linux_dependencies[0]
+    assert step["if"] == "matrix.platform == 'linux'"
+    commands = [line.strip() for line in step["run"].splitlines() if line.strip()]
+    assert commands == [
+        "sudo apt-get update",
+        "sudo apt-get install --yes --no-install-recommends libegl1",
+    ]
+    build = next(item for item in steps if item.get("name") == "Build application package")
+    assert steps.index(step) < steps.index(build)
+
+
 def test_build_retains_only_the_release_archive() -> None:
     upload = next(
         step

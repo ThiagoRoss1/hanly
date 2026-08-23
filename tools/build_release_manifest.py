@@ -23,6 +23,54 @@ SUPPORTED_RESOURCE_KINDS = frozenset({"file", "directory", "sqlite", "krdict"})
 # every other kind as the downloaded file itself, so a directory delivered in
 # any other container cannot be activated by a client.
 DIRECTORY_ARCHIVE_SUFFIX = ".zip"
+RESOURCE_ARCHIVE_SUFFIXES = (".tar.gz", ".sqlite3", ".sqlite", ".db", ".zip", ".bin")
+_VERSION_CHARACTERS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._+-"
+)
+
+
+def resource_version_from_asset_name(asset_name: str, resource_id: str) -> str:
+    """Extract one resource version from the documented release asset name.
+
+    The resource id is supplied by the composition contract, which removes the
+    otherwise ambiguous boundary between an id and a version containing dashes.
+    """
+
+    _validate_asset_name(asset_name)
+    normalized_id = resource_id.strip()
+    if not normalized_id:
+        raise ValueError("resource id must not be empty")
+
+    prefix = f"hanly-resources-{normalized_id}-"
+    if not asset_name.startswith(prefix):
+        raise ValueError(
+            f"asset name {asset_name!r} does not match resource id {normalized_id!r}"
+        )
+
+    remainder = asset_name[len(prefix) :]
+    suffix = next(
+        (
+            candidate
+            for candidate in RESOURCE_ARCHIVE_SUFFIXES
+            if remainder.lower().endswith(candidate)
+        ),
+        None,
+    )
+    if suffix is None:
+        raise ValueError(
+            f"resource asset {asset_name!r} must end in a supported archive suffix"
+        )
+
+    version = remainder[: -len(suffix)]
+    if not version:
+        raise ValueError(f"resource asset {asset_name!r} must include a version")
+    if not version[0].isalnum():
+        raise ValueError(f"resource asset {asset_name!r} has an invalid version")
+    if any(character not in _VERSION_CHARACTERS for character in version):
+        raise ValueError(f"resource asset {asset_name!r} has an invalid version")
+    if any(version.lower().endswith(candidate) for candidate in RESOURCE_ARCHIVE_SUFFIXES):
+        raise ValueError(f"resource asset {asset_name!r} has an ambiguous version")
+    return version
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +82,25 @@ class ResourceArtifact:
     version: str
     path: Path
     asset_name: str | None = None
+
+    @classmethod
+    def from_asset_name(
+        cls,
+        resource_id: str,
+        kind: str,
+        path: Path,
+        asset_name: str | None = None,
+    ) -> ResourceArtifact:
+        """Build an artifact whose version comes from its documented file name."""
+
+        published = (asset_name or Path(path).name).strip()
+        return cls(
+            resource_id,
+            kind,
+            resource_version_from_asset_name(published, resource_id),
+            Path(path),
+            asset_name,
+        )
 
     def __post_init__(self) -> None:
         for field_name in ("resource_id", "kind", "version"):
@@ -51,6 +118,18 @@ class ResourceArtifact:
             self, "asset_name", None if self.asset_name is None else self.asset_name.strip()
         )
         _validate_asset_name(self.published_asset_name)
+
+        # A documented artifact name carries its own version. Publishing it
+        # under a different one would advertise metadata the file contradicts.
+        if self.published_asset_name.startswith(f"hanly-resources-{self.resource_id}-"):
+            named_version = resource_version_from_asset_name(
+                self.published_asset_name, self.resource_id
+            )
+            if named_version != self.version:
+                raise ValueError(
+                    f"resource {self.resource_id} version {self.version!r} conflicts with "
+                    f"artifact name version {named_version!r}"
+                )
 
         if self.kind == "directory" and not self.published_asset_name.lower().endswith(
             DIRECTORY_ARCHIVE_SUFFIX
@@ -153,6 +232,19 @@ def _resource_spec(value: str) -> ResourceArtifact:
     return ResourceArtifact(resource_id, kind, version, Path(path), asset_name)
 
 
+def _resource_spec_from_name(value: str) -> ResourceArtifact:
+    """Parse ``id|kind|path[|asset_name]`` and derive its version from its name."""
+
+    fields = value.split("|", 3)
+    if len(fields) not in {3, 4} or any(not field.strip() for field in fields[:3]):
+        raise ValueError(
+            "resource-from-name must use id|kind|path or id|kind|path|asset_name"
+        )
+    resource_id, kind, path = fields[:3]
+    asset_name = fields[3] if len(fields) == 4 else None
+    return ResourceArtifact.from_asset_name(resource_id.strip(), kind, Path(path), asset_name)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", required=True, help="release tag/version")
@@ -165,9 +257,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--resource",
         action="append",
-        required=True,
         metavar="ID|KIND|VERSION|PATH[|ASSET_NAME]",
         help="explicit staged resource artifact (repeat for each resource)",
+    )
+    parser.add_argument(
+        "--resource-from-name",
+        action="append",
+        metavar="ID|KIND|PATH[|ASSET_NAME]",
+        help="staged resource whose version is derived from its documented asset name",
     )
     return parser
 
@@ -177,7 +274,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _parser().parse_args(argv)
     try:
-        resources = tuple(_resource_spec(value) for value in args.resource)
+        resources = tuple(
+            [_resource_spec(value) for value in args.resource or ()]
+            + [_resource_spec_from_name(value) for value in args.resource_from_name or ()]
+        )
+        if not resources:
+            raise ValueError("at least one resource specification is required")
         payload = build_manifest(args.release, args.release_base_url, resources)
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc

@@ -96,23 +96,26 @@ jobs:
           # artifacts to the approved remote UpdateService contract.
           find_resource() {
             local pattern="$1"
-            find release-inputs/resources -type f -name "$pattern" -print -quit
+            mapfile -t matches < <(find release-inputs/resources -type f -name "$pattern" -print | sort)
+            ((${#matches[@]} == 1)) || {
+              echo "expected exactly one resource artifact matching $pattern; found ${#matches[@]}" >&2
+              printf '  %s\n' "${matches[@]}" >&2
+              return 1
+            }
+            printf '%s' "${matches[0]}"
           }
 
           detection="$(find_resource 'hanly-resources-paddle_detection_model*')"
           recognition="$(find_resource 'hanly-resources-paddle_recognition_model*')"
           krdict="$(find_resource 'hanly-resources-krdict*')"
-          test -n "$detection" || { echo 'missing paddle detection resource artifact' >&2; exit 1; }
-          test -n "$recognition" || { echo 'missing paddle recognition resource artifact' >&2; exit 1; }
-          test -n "$krdict" || { echo 'missing krdict resource artifact' >&2; exit 1; }
 
           python tools/build_release_manifest.py \
             --release "$RELEASE_TAG" \
             --release-base-url "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG" \
             --output release-output/hanly-resources.json \
-            --resource "paddle_detection_model|directory|$RELEASE_TAG|$detection" \
-            --resource "paddle_recognition_model|directory|$RELEASE_TAG|$recognition" \
-            --resource "krdict|krdict|$RELEASE_TAG|$krdict"
+            --resource-from-name "paddle_detection_model|directory|$detection" \
+            --resource-from-name "paddle_recognition_model|directory|$recognition" \
+            --resource-from-name "krdict|krdict|$krdict"
 
           mapfile -t app_assets < <(find release-inputs/app -type f \( -name 'hanly-desktop-*.zip' -o -name 'hanly-desktop-*.tar.gz' \) -print | sort)
           ((${#app_assets[@]} > 0)) || { echo 'missing hanly-desktop application archives' >&2; exit 1; }
