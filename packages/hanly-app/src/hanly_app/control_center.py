@@ -130,7 +130,7 @@ class _SelectedRegion:
 def load_control_center_assets() -> ControlCenterAssets:
     """Load the HTML/CSS/JS bundle from package data."""
 
-    asset_root = files("hanly_app").joinpath("assets", "control_center")
+    asset_root = files("hanly_app").joinpath("assets").joinpath("control_center")
     html_path = Path(str(asset_root.joinpath("index.html")))
     return ControlCenterAssets(
         html=asset_root.joinpath("index.html").read_text(encoding="utf-8"),

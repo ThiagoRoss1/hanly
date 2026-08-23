@@ -597,7 +597,8 @@ one covers the unsupported-algorithm and unreadable-path error semantics.
 A repository-wide scan for other post-3.10 stdlib APIs (`tomllib`,
 `ExceptionGroup`, `StrEnum`, `datetime.UTC`, `TaskGroup`, `typing.Self` /
 `override`, `itertools.batched`, `contextlib.chdir`, ...) found no further
-occurrences. `file_digest` was the only one.
+occurrences. `file_digest` was the only *runtime* API. That scan was not
+sufficient on its own — see root cause 4.
 
 ### Root cause 2 — mypy `import-not-found` for pystray and webview
 
@@ -641,6 +642,56 @@ that typing. `ControlCenterHost` binds the module to `object` and duck-types via
 `getattr` regardless — that pre-existing seam is already recorded in the
 Post-V1 inventory and was deliberately not touched here.
 
+### Root cause 4 — Python 3.10: variadic `Traversable.joinpath`
+
+A second 3.10-only failure surfaced after the first fix landed:
+
+```text
+control_center.py:133: error: Too many arguments for "joinpath" of "Traversable"  [call-arg]
+```
+
+`load_control_center_assets` called
+`files("hanly_app").joinpath("assets", "control_center")`.
+`importlib.abc.Traversable.joinpath` accepted a **single** child until Python
+3.11, where it became variadic. This is a typeshed signature difference, not a
+missing symbol, so the runtime-API grep from root cause 1 could not have caught
+it — and on 3.10 the call is a genuine `TypeError`, not merely a type error.
+
+Fixed by chaining, which is correct on every supported version and keeps the
+`Traversable` seam intact:
+
+```python
+asset_root = files("hanly_app").joinpath("assets").joinpath("control_center")
+```
+
+Every other `joinpath` call in the repository is single-argument.
+
+### Matrix-wide static verification
+
+The real lesson from root causes 1 and 4 is that a single-interpreter mypy run
+cannot certify a `>=3.10` floor. Static analysis now runs across the declared
+matrix rather than only on the local interpreter:
+
+```text
+mypy --python-version 3.10  Success: 77 source files
+mypy --python-version 3.11  Success: 77 source files
+mypy --python-version 3.12  Success: 77 source files
+mypy --python-version 3.13  Success: 77 source files
+```
+
+Two mechanics matter when reproducing this. Each version needs its **own
+`--cache-dir`**; a shared cache leaks one version's analysis into the next and
+produces spurious failures. And numpy's bundled stubs use `type` statements that
+only parse under 3.12+, which aborts the 3.10 and 3.11 runs before any project
+file is checked — so those runs used a minimal `numpy` stub on `MYPYPATH`. That
+does not weaken the result: the project config already sets
+`follow_imports = "skip"` for `numpy.*`, so numpy contributes no typing to the
+normal run either.
+
+This cross-version sweep is a local verification step, not a CI change. Making
+it a permanent gate — and whether the numpy stub workaround is acceptable as
+committed tooling — is left for human decision.
+
 ### Root cause 3 — why local mypy passed while Linux CI failed
 
 The environment difference, now recorded explicitly:
@@ -669,6 +720,7 @@ CI-equivalent venv (dev group + editable packages, no runtime extras)
   python -m pytest                            293 passed, 13 skipped
   python -m ruff check packages tests tools    All checks passed
   python -m mypy packages tests tools          Success: 77 source files
+  mypy --python-version 3.10/3.11/3.12/3.13    Success: 77 source files each
 
 Local .venv (full desktop runtime extras)
   python -m pytest                            309 passed
@@ -689,10 +741,10 @@ control_center.py:583: error: Cannot find implementation or library stub for mod
 ### Not verified locally
 
 No Python 3.10 interpreter is available on this machine (3.12, 3.13, 3.14 only;
-no `uv`). The 3.10 fix is verified by construction — `hashlib.new` +
-incremental `update()` is available in every supported version, the scan found
-no other post-3.10 API, and the new tests pin the behavior on 3.13 — but the
-3.10 job itself remains unverified until CI runs.
+no `uv`), so no test has been **executed** on 3.10. Static analysis is now clean
+under 3.10 semantics across all 77 files, and both 3.10 defects are fixed by
+constructs available in every supported version, but the 3.10 job's test run
+remains unverified until CI runs.
 
 ### Preserved cleanup decisions
 
