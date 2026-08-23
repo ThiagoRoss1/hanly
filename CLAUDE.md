@@ -36,8 +36,8 @@ The Wave 0 quality gates are:
 
 ```bash
 python -m pytest
-python -m ruff check packages tests tools
-python -m mypy packages tests tools
+python -m ruff check packages packaging tests tools
+python -m mypy packages packaging tests tools
 ```
 
 The root `test_*.py` files are **exploratory spikes, not pytest tests** — they are `__main__` scripts with Portuguese comments and no assertions. Don't wire them into a future `tests/` suite; the DAG's `Korean Test Fixtures` capability covers real test inputs.

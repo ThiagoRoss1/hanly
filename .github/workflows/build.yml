@@ -1,0 +1,97 @@
+name: Build Desktop Artifacts
+
+# Each job installs the full desktop runtime and freezes a multi-gigabyte
+# onedir package, so artifact production is deliberate rather than automatic.
+# Correctness on every push stays with the ci.yml Python matrix.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # One entry per platform. Declaring `platform` and `runner` under
+        # `include` alongside a separate matrix vector would collapse every
+        # entry into a single job instead of expanding to three.
+        include:
+          - platform: windows
+            runner: windows-latest
+            python-version: "3.10"
+          - platform: macos
+            runner: macos-latest
+            python-version: "3.10"
+          - platform: linux
+            runner: ubuntu-latest
+            python-version: "3.10"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group dev
+
+      - name: Install packages
+        run: |
+          python -m pip install --editable packages/hanly
+          python -m pip install --editable "packages/hanly-app[runtime]"
+
+      # A tag push is the release identity, so the tag and the product
+      # version must agree before any artifact is produced under that name.
+      - name: Verify the tag matches the product version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python tools/release_version.py --tag "${{ github.ref_name }}"
+
+      - name: Install packaging tool
+        run: python -m pip install "pyinstaller>=6,<7"
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Run lint
+        run: python -m ruff check packages packaging tests tools
+
+      - name: Run type checks
+        run: python -m mypy packages packaging tests tools
+
+      - name: Build application package
+        run: python tools/build_package.py --platform ${{ matrix.platform }}
+
+      - name: Verify the release archive exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=""
+          for candidate in "dist/hanly-desktop-${{ matrix.platform }}".{zip,tar.gz}; do
+            if [ -f "$candidate" ]; then archive="$candidate"; fi
+          done
+          test -n "$archive" || { echo "no release archive for ${{ matrix.platform }}" >&2; exit 1; }
+          echo "release archive: $archive ($(wc -c < "$archive") bytes)"
+
+      # Only the archive is retained. The uncompressed onedir tree beside it is
+      # the same payload again, and PyInstaller's work cache is not releasable.
+      - name: Retain platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanly-desktop-${{ matrix.platform }}
+          path: |
+            dist/hanly-desktop-${{ matrix.platform }}.zip
+            dist/hanly-desktop-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14

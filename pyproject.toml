@@ -5,8 +5,10 @@ dev = [
     "numpy>=1.24",
     "packaging>=24.0",
     "pytest>=8.3",
+    "pyyaml>=6.0",
     "ruff>=0.6",
     "types-pynput>=1.8",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.pytest.ini_options]
@@ -16,13 +18,19 @@ pythonpath = ["."]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-include = ["packages/**/*.py", "tests/**/*.py", "tools/**/*.py", "spikes/**/*.py"]
+include = [
+    "packages/**/*.py",
+    "packaging/**/*.py",
+    "tests/**/*.py",
+    "tools/**/*.py",
+    "spikes/**/*.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-files = ["packages", "tests", "tools", "spikes"]
+files = ["packages", "packaging", "tests", "tools", "spikes"]
 
 [[tool.mypy.overrides]]
 module = ["paddleocr.*", "kiwipiepy.*", "PIL.*", "mss.*", "PyQt6.*", "pystray.*", "webview.*"]

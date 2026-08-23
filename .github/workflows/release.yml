@@ -1,0 +1,153 @@
+name: Release Hanly Desktop
+
+# Publication stays a deliberate dispatch: resource archives are produced and
+# versioned outside this repository, so a tag alone cannot supply them. The
+# application build is found from the tag rather than a copied run id.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish (for example v0.1.0)"
+        required: true
+        type: string
+      resource_run_id:
+        description: "Successful resource build run id containing explicit resource archives"
+        required: true
+        type: string
+      resource_pattern:
+        description: "Artifact name pattern for explicit resource archives"
+        required: true
+        default: "hanly-resources-*"
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    name: Publish release assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tooling
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --editable packages/hanly
+          python -m pip install --editable packages/hanly-app
+
+      - name: Verify the tag matches the product version
+        run: python tools/release_version.py --tag "${{ inputs.tag }}"
+
+      # The build workflow runs on the tag itself, so selecting its run by tag
+      # ties the published binaries to the commit that tag names without asking
+      # a human to copy a run id that could point anywhere.
+      - name: Resolve the application build for this tag
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh run list --workflow build.yml --branch "$RELEASE_TAG" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          test -n "$run_id" || {
+            echo "no successful build run found for tag $RELEASE_TAG" >&2
+            exit 1
+          }
+          printf 'run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download per-platform application artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.build.outputs.run_id }}
+          pattern: hanly-desktop-*
+          path: release-inputs/app
+          merge-multiple: false
+
+      - name: Download resource artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resource_run_id }}
+          pattern: ${{ inputs.resource_pattern }}
+          path: release-inputs/resources
+          merge-multiple: false
+
+      - name: Build checksummed resource manifest
+        id: manifest
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-output
+
+          # Resource IDs and kinds are deliberately explicit. ResourceManager
+          # remains the local authority; this workflow only maps staged release
+          # artifacts to the approved remote UpdateService contract.
+          find_resource() {
+            local pattern="$1"
+            find release-inputs/resources -type f -name "$pattern" -print -quit
+          }
+
+          detection="$(find_resource 'hanly-resources-paddle_detection_model*')"
+          recognition="$(find_resource 'hanly-resources-paddle_recognition_model*')"
+          krdict="$(find_resource 'hanly-resources-krdict*')"
+          test -n "$detection" || { echo 'missing paddle detection resource artifact' >&2; exit 1; }
+          test -n "$recognition" || { echo 'missing paddle recognition resource artifact' >&2; exit 1; }
+          test -n "$krdict" || { echo 'missing krdict resource artifact' >&2; exit 1; }
+
+          python tools/build_release_manifest.py \
+            --release "$RELEASE_TAG" \
+            --release-base-url "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG" \
+            --output release-output/hanly-resources.json \
+            --resource "paddle_detection_model|directory|$RELEASE_TAG|$detection" \
+            --resource "paddle_recognition_model|directory|$RELEASE_TAG|$recognition" \
+            --resource "krdict|krdict|$RELEASE_TAG|$krdict"
+
+          mapfile -t app_assets < <(find release-inputs/app -type f \( -name 'hanly-desktop-*.zip' -o -name 'hanly-desktop-*.tar.gz' \) -print | sort)
+          ((${#app_assets[@]} > 0)) || { echo 'missing hanly-desktop application archives' >&2; exit 1; }
+          mapfile -t resource_assets < <(find release-inputs/resources -type f \( -name 'hanly-resources-*.zip' -o -name 'hanly-resources-*.tar.gz' -o -name 'hanly-resources-*.sqlite3' \) -print | sort)
+          ((${#resource_assets[@]} == 3)) || { echo 'expected three resource archives' >&2; exit 1; }
+
+          # Checksums are recorded under the published asset names so a
+          # consumer can verify downloaded files directly, not under the
+          # staging paths the artifacts happen to land in here.
+          for asset in "${app_assets[@]}" "${resource_assets[@]}" release-output/hanly-resources.json; do
+            ( cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")" )
+          done > release-output/SHA256SUMS
+
+          printf '%s\n' "${app_assets[@]}" > release-output/application-assets.txt
+          printf '%s\n' "${resource_assets[@]}" > release-output/resource-assets.txt
+
+      - name: Create GitHub release and attach artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # gh would otherwise create a missing tag at the default branch head,
+          # publishing binaries under a ref that was never built or reviewed.
+          gh api "repos/${{ github.repository }}/git/ref/tags/$RELEASE_TAG" >/dev/null \
+            || { echo "release tag $RELEASE_TAG does not exist" >&2; exit 1; }
+
+          mapfile -t app_assets < release-output/application-assets.txt
+          mapfile -t resource_assets < release-output/resource-assets.txt
+          gh release create "$RELEASE_TAG" \
+            "${app_assets[@]}" \
+            "${resource_assets[@]}" \
+            release-output/hanly-resources.json \
+            release-output/SHA256SUMS \
+            --title "Hanly Desktop $RELEASE_TAG" \
+            --generate-notes

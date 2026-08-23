@@ -37,6 +37,9 @@ from .tray import TrayService
 from .update_coordinator import UpdateCoordinator
 from .update_service import GitHubReleaseFetcher, UpdateService
 
+#: File name a packaged installation uses for its runtime configuration.
+RUNTIME_CONFIG_NAME = "runtime.json"
+
 #: How often a worker waiting on the Qt thread rechecks for shutdown.
 _DISPATCH_POLL_SECONDS = 0.05
 
@@ -386,6 +389,35 @@ def default_app_config_path(
     return (root / "hanly" / "config.json").resolve()
 
 
+def default_runtime_config_path(
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the per-user runtime configuration path beside the settings file."""
+
+    return default_app_config_path(environment).with_name(RUNTIME_CONFIG_NAME)
+
+
+def discover_runtime_config(
+    environment: Mapping[str, str] | None = None,
+    executable: str | Path | None = None,
+) -> Path | None:
+    """Find a runtime configuration without requiring a command-line argument.
+
+    A packaged installation ships or writes ``runtime.json`` beside the
+    executable; a developer or an updated installation keeps it with the
+    per-user settings. Explicit ``--runtime-config`` still wins over both.
+    """
+
+    beside_executable = (
+        Path(sys.executable if executable is None else executable).resolve().parent
+        / RUNTIME_CONFIG_NAME
+    )
+    for candidate in (beside_executable, default_runtime_config_path(environment)):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _update_coordinator(
     runtime_config: Path,
     resource_manager: ResourceManager,
@@ -521,9 +553,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Hanly Desktop V1")
     parser.add_argument(
         "--runtime-config",
-        required=True,
         type=Path,
-        help="runtime/provider/resource JSON configuration",
+        help=(
+            "runtime/provider/resource JSON configuration "
+            f"(default: {RUNTIME_CONFIG_NAME} beside the executable or in the settings directory)"
+        ),
     )
     parser.add_argument(
         "--app-config",
@@ -535,11 +569,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    runtime_config = args.runtime_config or discover_runtime_config()
+    if runtime_config is None:
+        print(_missing_runtime_config_message(), file=sys.stderr)
+        return 2
+
     try:
-        return run_desktop(args.runtime_config, app_config=args.app_config)
+        return run_desktop(runtime_config, app_config=args.app_config)
     except (DesktopApplicationError, RuntimeConfigError, OSError, ValueError) as error:
         print(f"Hanly Desktop: {error}", file=sys.stderr)
         return 2
+
+
+def _missing_runtime_config_message() -> str:
+    """Name every location searched so the failure is actionable without docs."""
+
+    beside = Path(sys.executable).resolve().parent / RUNTIME_CONFIG_NAME
+    return (
+        "Hanly Desktop: no runtime configuration found. Expected "
+        f"{beside} or {default_runtime_config_path()}, "
+        "or pass --runtime-config with an explicit path."
+    )
 
 
 __all__ = [
@@ -548,6 +599,8 @@ __all__ = [
     "DiagnosticLog",
     "QtApplication",
     "default_app_config_path",
+    "default_runtime_config_path",
+    "discover_runtime_config",
     "load_update_service",
     "main",
     "run_desktop",

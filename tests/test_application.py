@@ -10,9 +10,12 @@ from typing import Any, cast
 
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
 from hanly_app.application import (
+    RUNTIME_CONFIG_NAME,
     DesktopApplication,
     DiagnosticLog,
     default_app_config_path,
+    default_runtime_config_path,
+    discover_runtime_config,
     load_update_service,
 )
 
@@ -258,3 +261,56 @@ def test_install_preparation_never_joins_the_lookup_worker_on_the_qt_thread() ->
 
     assert requested_on == [qt_thread]
     assert joined_on and joined_on[0] != qt_thread
+
+
+def test_the_runtime_configuration_sits_beside_the_settings_file(tmp_path: Path) -> None:
+    environment = {"LOCALAPPDATA": str(tmp_path)}
+
+    runtime = default_runtime_config_path(environment)
+
+    assert runtime.name == RUNTIME_CONFIG_NAME
+    assert runtime.parent == default_app_config_path(environment).parent
+
+
+def test_a_packaged_launch_prefers_the_configuration_beside_the_executable(
+    tmp_path: Path,
+) -> None:
+    """A packaged user should not have to pass --runtime-config to start the app."""
+
+    application_dir = tmp_path / "hanly-desktop"
+    application_dir.mkdir()
+    executable = application_dir / "hanly-desktop.exe"
+    executable.write_bytes(b"frozen")
+    beside = application_dir / RUNTIME_CONFIG_NAME
+    beside.write_text("{}", encoding="utf-8")
+
+    settings_root = tmp_path / "settings"
+    environment = {"LOCALAPPDATA": str(settings_root)}
+    per_user = default_runtime_config_path(environment)
+    per_user.parent.mkdir(parents=True)
+    per_user.write_text("{}", encoding="utf-8")
+
+    assert discover_runtime_config(environment, executable) == beside
+
+
+def test_the_per_user_configuration_is_used_when_none_ships_with_the_build(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "bin" / "hanly-desktop.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"frozen")
+
+    environment = {"LOCALAPPDATA": str(tmp_path / "settings")}
+    per_user = default_runtime_config_path(environment)
+    per_user.parent.mkdir(parents=True)
+    per_user.write_text("{}", encoding="utf-8")
+
+    assert discover_runtime_config(environment, executable) == per_user
+
+
+def test_discovery_reports_nothing_rather_than_guessing(tmp_path: Path) -> None:
+    executable = tmp_path / "bin" / "hanly-desktop.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"frozen")
+
+    assert discover_runtime_config({"LOCALAPPDATA": str(tmp_path / "empty")}, executable) is None
