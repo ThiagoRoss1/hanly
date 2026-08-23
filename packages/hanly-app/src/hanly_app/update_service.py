@@ -573,8 +573,11 @@ def _verify_checksum(path: Path, expected: str) -> None:
     if algorithm not in hashlib.algorithms_available:
         raise ResourceUpdateError(f"unsupported artifact checksum algorithm: {algorithm}")
     try:
+        hasher = hashlib.new(algorithm)
         with path.open("rb") as stream:
-            actual = hashlib.file_digest(stream, algorithm).hexdigest()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        actual = hasher.hexdigest()
     except (OSError, ValueError) as exc:
         raise ResourceUpdateError(f"could not hash staged artifact: {exc}") from exc
     if not hmac.compare_digest(actual, digest):

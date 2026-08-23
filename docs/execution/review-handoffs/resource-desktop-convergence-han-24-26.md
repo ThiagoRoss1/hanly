@@ -187,13 +187,16 @@ models; and `--help` exiting 0 with **no PyQt6 module imported**.
 ## Final gates
 
 ```text
-python -m pytest                            307 passed
+python -m pytest                            309 passed
 python -m ruff check packages tests tools    All checks passed
 python -m mypy packages tests tools          Success: 77 source files
 git diff --check                             clean
 python -m hanly_app --help                   exit 0, PyQt6 not imported
 python -m hanly_app --runtime-config ...      started, real models constructed
 ```
+
+Re-validated after the CI matrix fix; see *CI Matrix Compatibility Pass* below
+for the per-environment results.
 
 ## Closeout Cleanup Pass
 
@@ -480,7 +483,7 @@ recursive `JSONValue` alias would express it honestly.
 
 | Location | Item | Reason |
 | --- | --- | --- |
-| `tray.py:258` | `import pystray  # type: ignore[import-untyped]` | pystray ships no `py.typed` (verified). One localized import; `TrayBackend` documents the surface used. |
+| `pyproject.toml` mypy overrides | `pystray.*`, `webview.*` in `ignore_missing_imports` | Desktop runtime extras absent from the static-analysis environment. pystray also ships no `py.typed` (verified); pywebview does ship `py.typed`, so it is still checked normally wherever it is installed. `TrayBackend` documents the pystray surface used. |
 | `signal_bridge.py` `_qt_timer` | `cast(SignalTimer, QTimer())` | `QTimer.timeout` is a `pyqtBoundSignal` whose stubbed `connect` cannot satisfy a structural Protocol. Asserted once instead of spreading PyQt types. |
 | `update_service.py:284` | `getattr(response, "headers", None)` | urllib responses and injected openers do not all expose `headers`; affects only progress totals. |
 | `qt_popup.py:38` | `# type: ignore[call-arg]` | PyQt signal-connect stub; predates this bundle. |
@@ -549,6 +552,154 @@ None outstanding from this review.
   recorded triggers.
 - The HAN-19 proportional target-mapping limitation remains settled; revisit
   only on new functional evidence.
+
+## CI Matrix Compatibility Pass
+
+A follow-up compatibility pass fixed CI failures that local validation could
+not see. No feature work, no behavior change, no commit.
+
+### Root cause 1 — Python 3.10: `hashlib.file_digest` does not exist
+
+`update_service._verify_checksum` hashed the staged artifact with
+`hashlib.file_digest(stream, algorithm)`. That helper was added in **Python
+3.11**, while both packages declare `requires-python = ">=3.10"` and CI runs a
+3.10 job. Every update-service test that reaches artifact verification failed
+on 3.10 only: staged artifact validation/install, failed SQLite validation,
+directory extraction/install, wrong-checksum rejection, valid-checksum install,
+and rollback idempotency. The failing tests were a symptom; the defect was that
+the declared floor was never actually exercised locally.
+
+The floor was **not** raised. `resource_manager._digest` already hashed
+incrementally with the same streaming idiom, so `_verify_checksum` was aligned
+to it:
+
+```python
+hasher = hashlib.new(algorithm)
+with path.open("rb") as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        hasher.update(chunk)
+actual = hasher.hexdigest()
+```
+
+Preserved unchanged: file-based streaming at a 1 MiB chunk (no artifact is read
+whole into memory), the `algorithm:digest` / bare-digest syntax, the
+`hashlib.algorithms_available` rejection of unknown algorithms, `OSError` and
+`ValueError` both surfacing as `ResourceUpdateError("could not hash staged
+artifact: ...")`, and the `hmac.compare_digest` comparison. `hashlib.new` was
+moved inside the `try` so an algorithm that is listed but unusable still
+reports through the same error path.
+
+Two focused tests in `tests/test_update_service.py` now pin the contract rather
+than the interpreter version: one hashes a 2 MiB payload (larger than one read
+chunk) across `sha256:`, bare-digest, and `sha512:` forms plus a mismatch, and
+one covers the unsupported-algorithm and unreadable-path error semantics.
+
+A repository-wide scan for other post-3.10 stdlib APIs (`tomllib`,
+`ExceptionGroup`, `StrEnum`, `datetime.UTC`, `TaskGroup`, `typing.Self` /
+`override`, `itertools.batched`, `contextlib.chdir`, ...) found no further
+occurrences. `file_digest` was the only one.
+
+### Root cause 2 — mypy `import-not-found` for pystray and webview
+
+CI installs only `--group dev` plus the two packages **without extras**, so no
+desktop runtime distribution is present when mypy runs. `pystray` and
+`pywebview` were the only two such imports not covered by the existing
+per-module mypy override, so they failed as `import-not-found` on 3.11/3.12/3.13.
+
+`tray.py` carried `# type: ignore[import-untyped]`, which is the code emitted
+when a package *is* installed without `py.typed` — the wrong code for an absent
+package, so CI additionally reported `Error code "import-not-found" not covered
+by "type: ignore[import-untyped]" comment`.
+
+**CI dependency installation was not changed.** The static-analysis environment
+is deliberately free of desktop runtime distributions: `paddleocr`, `kiwipiepy`,
+`PIL`, `mss`, and `PyQt6` are already modeled as per-module
+`ignore_missing_imports` overrides, and `pynput` typing is supplied by the
+`types-pynput` stub package in the dev group rather than by installing `pynput`.
+Installing the runtime extras for CI would pull `paddlepaddle`, `PyQt6`, and
+`PyQt6-WebEngine` on four interpreters to satisfy static analysis alone.
+
+The fix extends that existing, narrow boundary with the two missing modules:
+
+```toml
+[[tool.mypy.overrides]]
+module = ["paddleocr.*", "kiwipiepy.*", "PIL.*", "mss.*", "PyQt6.*", "pystray.*", "webview.*"]
+ignore_missing_imports = true
+```
+
+No global `ignore_missing_imports`, no file-level ignore, no new `Any` /
+`object` / `getattr` in application code. The stale inline
+`# type: ignore[import-untyped]` in `_load_pystray` was removed — the override
+covers both the absent and the installed-but-untyped case — and its docstring
+now records both halves of the boundary. `cast(TrayBackend, pystray)` and the
+`TrayBackend` / `TrayIcon` contracts are unchanged.
+
+`ignore_missing_imports` degrades a module to `Any` **only when it cannot be
+resolved**. `pywebview` ships `py.typed` (verified in the local venv), so where
+it is installed mypy still checks it normally; the override does not discard
+that typing. `ControlCenterHost` binds the module to `object` and duck-types via
+`getattr` regardless — that pre-existing seam is already recorded in the
+Post-V1 inventory and was deliberately not touched here.
+
+### Root cause 3 — why local mypy passed while Linux CI failed
+
+The environment difference, now recorded explicitly:
+
+| | Local `.venv` | CI job |
+| --- | --- | --- |
+| Install | full desktop runtime extras | `--group dev` + both packages, no extras |
+| `pystray` | installed, no `py.typed` -> `import-untyped` (matched the inline ignore) | absent -> `import-not-found` |
+| `webview` | installed **with** `py.typed` -> checked, no error at all | absent -> `import-not-found` |
+| Interpreter | 3.13 only | 3.10 / 3.11 / 3.12 / 3.13 |
+
+So local validation exercised neither the failing import resolution nor the
+3.10 interpreter. Both gaps were structural, not incidental.
+
+To close the first gap, an ephemeral CI-equivalent virtualenv was built for this
+pass (`python -m venv`, `pip install --group dev`, both packages editable, no
+extras) and reproduced both mypy errors byte-for-byte before the fix. All gates
+now run in that environment as well as the local one.
+
+### Validation
+
+Both environments, Python 3.13:
+
+```text
+CI-equivalent venv (dev group + editable packages, no runtime extras)
+  python -m pytest                            293 passed, 13 skipped
+  python -m ruff check packages tests tools    All checks passed
+  python -m mypy packages tests tools          Success: 77 source files
+
+Local .venv (full desktop runtime extras)
+  python -m pytest                            309 passed
+  python -m ruff check packages tests tools    All checks passed
+  python -m mypy packages tests tools          Success: 77 source files
+  git diff --check                             clean
+```
+
+Before the fix, the CI-equivalent environment reproduced exactly the two CI
+errors:
+
+```text
+tray.py:258: error: Cannot find implementation or library stub for module named "pystray"  [import-not-found]
+tray.py:258: note: Error code "import-not-found" not covered by "type: ignore[import-untyped]" comment
+control_center.py:583: error: Cannot find implementation or library stub for module named "webview"  [import-not-found]
+```
+
+### Not verified locally
+
+No Python 3.10 interpreter is available on this machine (3.12, 3.13, 3.14 only;
+no `uv`). The 3.10 fix is verified by construction — `hashlib.new` +
+incremental `update()` is available in every supported version, the scan found
+no other post-3.10 API, and the new tests pin the behavior on 3.13 — but the
+3.10 job itself remains unverified until CI runs.
+
+### Preserved cleanup decisions
+
+`ResourceManager` typing, the `TrayBackend` / `TrayIcon` contracts, the hotkey
+listener join contract, the importlib-based Paddle preload in `bootstrap.py`,
+and `SignalModule` typing are all unchanged. Nothing was widened to `Any`,
+`object`, or `getattr` to satisfy CI.
 
 ## Suggested review targets
 

@@ -25,7 +25,7 @@ select = ["E", "F", "I", "UP"]
 files = ["packages", "tests", "tools", "spikes"]
 
 [[tool.mypy.overrides]]
-module = ["paddleocr.*", "kiwipiepy.*", "PIL.*", "mss.*", "PyQt6.*"]
+module = ["paddleocr.*", "kiwipiepy.*", "PIL.*", "mss.*", "PyQt6.*", "pystray.*", "webview.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

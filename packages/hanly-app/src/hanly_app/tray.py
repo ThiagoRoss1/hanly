@@ -251,11 +251,12 @@ class TrayService:
 def _load_pystray() -> TrayBackend:
     """Load pystray only when a real tray is requested.
 
-    pystray ships no ``py.typed`` marker, so the import is untyped at this one
-    external boundary; :class:`TrayBackend` describes what is used from it.
+    pystray ships no ``py.typed`` marker and is a desktop runtime extra absent
+    from static analysis, so the module is untyped at this one external
+    boundary; :class:`TrayBackend` describes what is used from it.
     """
 
-    import pystray  # type: ignore[import-untyped]
+    import pystray
 
     return cast(TrayBackend, pystray)
 

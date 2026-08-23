@@ -391,3 +391,35 @@ def test_a_redirect_cannot_downgrade_the_https_transport() -> None:
     for rejected in ("http://example.test/asset", "ftp://example.test/asset"):
         with pytest.raises(ResourceUpdateError, match="must be delivered over https"):
             handler.redirect_request(request, None, 302, "Found", {}, rejected)
+
+
+def test_checksum_verification_streams_multi_chunk_artifacts(tmp_path: Path) -> None:
+    """The verifier must hash incrementally on every supported interpreter, so
+    it is pinned against a payload larger than one read chunk rather than a
+    stdlib helper that only exists from Python 3.11 onward."""
+
+    from hanly_app.update_service import _verify_checksum
+
+    artifact = tmp_path / "artifact.bin"
+    payload = b"\xa1\x9c" * (1024 * 1024)
+    artifact.write_bytes(payload)
+
+    _verify_checksum(artifact, f"sha256:{_sha256(payload)}")
+    _verify_checksum(artifact, _sha256(payload).upper())
+    _verify_checksum(artifact, f"sha512:{hashlib.sha512(payload).hexdigest()}")
+
+    with pytest.raises(ResourceUpdateError, match="checksum does not match"):
+        _verify_checksum(artifact, f"sha256:{'0' * 64}")
+
+
+def test_checksum_verification_reports_unusable_algorithms_and_paths(tmp_path: Path) -> None:
+    from hanly_app.update_service import _verify_checksum
+
+    artifact = tmp_path / "artifact.bin"
+    artifact.write_bytes(b"payload")
+
+    with pytest.raises(ResourceUpdateError, match="unsupported artifact checksum algorithm"):
+        _verify_checksum(artifact, "crc32:00000000")
+
+    with pytest.raises(ResourceUpdateError, match="could not hash staged artifact"):
+        _verify_checksum(tmp_path / "missing.bin", f"sha256:{'0' * 64}")
