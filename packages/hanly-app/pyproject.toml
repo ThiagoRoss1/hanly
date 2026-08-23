@@ -10,6 +10,9 @@ readme = {text = "Hanly desktop application package.", content-type = "text/plai
 requires-python = ">=3.10"
 dependencies = ["hanly==0.0.0"]
 
+[project.scripts]
+hanly-desktop = "hanly_app.application:main"
+
 [project.optional-dependencies]
 runtime = [
     "hanly[concrete]==0.0.0",
@@ -17,6 +20,7 @@ runtime = [
     "pynput>=1.8,<2",
     "PyQt6>=6.7,<7",
     "pywebview[qt6]>=6.2,<7",
+    "pystray>=0.19,<1",
 ]
 dev = [
     "hanly-app[runtime]",

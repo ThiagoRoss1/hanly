@@ -172,6 +172,21 @@ class JobExecutor(Generic[ItemT, ResultT]):
         if wait and thread is not None and thread is not threading.current_thread():
             thread.join()
 
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait for an already-requested shutdown to finish its worker.
+
+        Separating the wait from :meth:`shutdown` lets a caller request
+        shutdown on a thread that must not block and complete the wait
+        elsewhere. Returns whether the worker thread has finished.
+        """
+
+        with self._condition:
+            thread = self._thread
+        if thread is None or thread is threading.current_thread():
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
+
     def _run(self) -> None:
         with self._condition:
             self._thread_ident = threading.get_ident()

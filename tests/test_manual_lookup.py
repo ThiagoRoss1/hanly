@@ -58,7 +58,7 @@ class _Listener:
     def stop(self) -> None:
         self.stopped = True
 
-    def join(self, *, timeout: float | None = None) -> None:
+    def join(self, timeout: float | None = None) -> None:
         assert timeout == 1.0
 
     def trigger_lookup(self, binding: str) -> None:
@@ -211,6 +211,31 @@ def test_lookup_hotkey_posts_to_ui_captures_there_and_delivers_result_on_ui() ->
     assert popup.results == [_success()]
     assert popup.opened_on == [ui_thread]
     assert hotkeys.dispatcher is queue
+    composition.shutdown()
+
+
+def test_app_config_initializes_hotkey_and_capture_mode() -> None:
+    from hanly_app.config import AppConfig, CaptureMode
+
+    queue = _QueueDispatcher()
+    hotkeys = _HotkeyFactory()
+    capture = _Capture()
+    popup = _Popup()
+    composition = create_manual_lookup(
+        _Runtime(_Worker()),
+        capture,
+        popup.open,
+        close_popup=popup.close,
+        current_cursor=lambda: _CURSOR,
+        dispatcher=queue,
+        hotkey_factory=hotkeys,
+        app_config=AppConfig(hotkey="alt+shift+h", capture_mode=CaptureMode.REGION),
+    )
+
+    assert composition.capture_service.capture_mode is CaptureMode.REGION
+    composition.start()
+    assert hotkeys.listener is not None
+    assert "<shift>+<alt>+h" in hotkeys.listener.callbacks
     composition.shutdown()
 
 

@@ -30,7 +30,8 @@ When startup is complete, the command reports that automatic hover is active,
 prints the default manual lookup hotkey, and opens the Control Center. The
 Control Center shares the alpha's Qt event loop, so hover and the manual hotkey
 stay live while it is open; closing it leaves the alpha running until the Qt
-application is stopped. Opening it at startup is a development affordance for
+application is stopped. Ctrl+C now follows the same graceful SIGINT bridge as
+the production desktop path. Opening it at startup is a development affordance for
 manual testing, not the final end-user lifecycle.
 
 Developer preferences are read from and written to the gitignored

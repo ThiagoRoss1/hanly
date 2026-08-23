@@ -1,11 +1,21 @@
 """Hanly desktop application package."""
 
+from .application import (
+    DesktopApplication,
+    DesktopApplicationError,
+    DiagnosticLog,
+    default_app_config_path,
+    load_update_service,
+    run_desktop,
+)
+from .bootstrap import preload_ocr_runtime
 from .capture import (
     CaptureBackend,
     CaptureBackendError,
     CaptureError,
     CaptureResult,
     CaptureService,
+    ConfiguredCaptureService,
     MonitorInfo,
     MSSBackend,
     ScreenRect,
@@ -61,6 +71,20 @@ from .runtime import (
     create_worker_factory_from_config,
     load_runtime,
 )
+from .signal_bridge import QtSignalBridge
+from .tray import TrayService, TrayState, TrayStatus
+from .update_coordinator import UpdateCoordinator
+from .update_service import (
+    DownloadProgress,
+    GitHubReleaseFetcher,
+    RemoteManifest,
+    RemoteResource,
+    ResourceFetcher,
+    ResourceUpdateError,
+    UpdateAvailability,
+    UpdateResult,
+    UpdateService,
+)
 
 __all__ = [
     "AppConfig",
@@ -70,6 +94,7 @@ __all__ = [
     "CaptureMode",
     "CaptureResult",
     "CaptureService",
+    "ConfiguredCaptureService",
     "ConfigError",
     "ConfigManager",
     "ControlCenterAssets",
@@ -77,10 +102,15 @@ __all__ = [
     "ControlCenterHost",
     "ControlCenterUnavailable",
     "DEFAULT_HOTKEYS",
+    "DesktopApplication",
+    "DesktopApplicationError",
     "DesktopController",
     "DesktopState",
+    "DiagnosticLog",
+    "DownloadProgress",
     "DuplicateHotkeyError",
     "HanlyRuntime",
+    "GitHubReleaseFetcher",
     "HotkeyAction",
     "HotkeyError",
     "HotkeyService",
@@ -105,9 +135,21 @@ __all__ = [
     "ResultDispatcher",
     "ResultHandler",
     "RuntimeConfigError",
+    "QtSignalBridge",
+    "RemoteManifest",
+    "RemoteResource",
+    "ResourceFetcher",
+    "ResourceUpdateError",
     "ScreenGeometry",
     "ScreenRect",
     "Theme",
+    "TrayService",
+    "TrayState",
+    "TrayStatus",
+    "UpdateAvailability",
+    "UpdateCoordinator",
+    "UpdateResult",
+    "UpdateService",
     "Worker",
     "build_lookup_controller",
     "build_lookup_worker_factory",
@@ -117,8 +159,12 @@ __all__ = [
     "create_manual_lookup",
     "create_qt_manual_lookup",
     "create_worker_factory_from_config",
+    "default_app_config_path",
     "format_lookup_result",
     "load_runtime",
+    "load_update_service",
     "load_control_center_assets",
     "prepare_control_center_qt",
+    "preload_ocr_runtime",
+    "run_desktop",
 ]

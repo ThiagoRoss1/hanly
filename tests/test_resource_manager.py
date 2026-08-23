@@ -225,6 +225,42 @@ def test_schema_mismatch_is_incompatible(tmp_path: Path) -> None:
     assert metadata["krdict"].status is ResourceStatus.INCOMPATIBLE
 
 
+def test_sqlite_integrity_failure_is_incompatible_with_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "krdict.sqlite"
+    _create_krdict_database(database)
+
+    def fail_integrity(_path: Path) -> None:
+        raise ValueError(
+            "PRAGMA quick_check returned malformed; "
+            "PRAGMA integrity_check returned malformed"
+        )
+
+    monkeypatch.setattr(ResourceManager, "_validate_integrity", staticmethod(fail_integrity))
+    manager = ResourceManager((ResourceSpec("krdict", database, kind="krdict"),))
+
+    metadata = manager.validate()
+
+    assert metadata["krdict"].status is ResourceStatus.INCOMPATIBLE
+    assert "SQLite integrity check failed" in manager.diagnostics("krdict")[0]
+    assert "PRAGMA quick_check" in manager.diagnostics("krdict")[0]
+
+
+def test_valid_sqlite_resource_passes_integrity_check(tmp_path: Path) -> None:
+    database = tmp_path / "resource.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE values_table (value TEXT NOT NULL)")
+    connection.commit()
+    connection.close()
+
+    manager = ResourceManager((ResourceSpec("resource", database, kind="sqlite"),))
+
+    metadata = manager.validate()
+
+    assert metadata["resource"].status is ResourceStatus.VALID
+
+
 def test_resource_compatibility_requirements_are_normalized(tmp_path: Path) -> None:
     model = tmp_path / "model.bin"
     dictionary = tmp_path / "dictionary.bin"

@@ -454,6 +454,12 @@ class ResourceManager:
             except (OSError, UnicodeError, sqlite3.Error, ValueError) as exc:
                 diagnostics.append(f"schema is incompatible: {exc}")
 
+        if not diagnostics and (spec.kind in {"sqlite", "krdict"} or spec.schema is not None):
+            try:
+                self._validate_integrity(path)
+            except (OSError, sqlite3.Error, ValueError) as exc:
+                diagnostics.append(f"SQLite integrity check failed: {exc}")
+
         if not diagnostics and spec.checksum is not None:
             try:
                 algorithm, expected_digest = _parse_checksum(spec.checksum)
@@ -597,6 +603,60 @@ class ResourceManager:
             return metadata.get("schema_version", str(schema.version))
         finally:
             connection.close()
+
+    @staticmethod
+    def _validate_integrity(path: Path) -> None:
+        """Validate SQLite contents after the schema contract has passed.
+
+        ``quick_check`` is the inexpensive startup check. Its normal result is
+        exactly one ``ok`` row; any other result is treated as a failed or
+        ambiguous check and escalated to ``integrity_check`` for a definitive
+        diagnostic before the resource is rejected.
+        """
+
+        if not path.is_file():
+            raise ValueError("SQLite integrity validation requires a file")
+
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            quick_error: str | None = None
+            try:
+                quick_rows = tuple(
+                    str(row[0]).strip() for row in connection.execute("PRAGMA quick_check")
+                )
+            except sqlite3.Error as exc:
+                quick_rows = ()
+                quick_error = str(exc)
+
+            if quick_error is None and quick_rows == ("ok",):
+                return
+
+            integrity_error: str | None = None
+            try:
+                integrity_rows = tuple(
+                    str(row[0]).strip()
+                    for row in connection.execute("PRAGMA integrity_check")
+                )
+            except sqlite3.Error as exc:
+                integrity_rows = ()
+                integrity_error = str(exc)
+
+            quick_result = quick_error or _format_integrity_rows(quick_rows)
+            integrity_result = integrity_error or _format_integrity_rows(integrity_rows)
+            raise ValueError(
+                f"PRAGMA quick_check returned {quick_result}; "
+                f"PRAGMA integrity_check returned {integrity_result}"
+            )
+        finally:
+            connection.close()
+
+
+def _format_integrity_rows(rows: tuple[str, ...]) -> str:
+    """Render SQLite pragma output without dropping diagnostic rows."""
+
+    if not rows:
+        return "no result"
+    return "; ".join(rows)
 
 
 def _quote(identifier: str) -> str:

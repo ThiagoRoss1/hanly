@@ -14,6 +14,8 @@ from typing import Protocol, TypeAlias, cast
 
 from hanly import PixelFormat, Point, ROIImage
 
+from .config import CaptureMode
+
 
 class CaptureError(RuntimeError):
     """Base error for invalid capture requests or unusable capture data."""
@@ -423,6 +425,97 @@ class CaptureService:
         if not monitors:
             raise CaptureError("no monitor is available for capture")
         return min(monitors, key=lambda candidate: _distance_to(candidate.bounds, cursor))
+
+
+class ConfiguredCaptureService:
+    """Apply live desktop capture preferences at the app-owned seam.
+
+    The underlying capture service remains responsible for monitor discovery,
+    ROI geometry, and backend access. This wrapper only selects the monitor
+    and optional region for each manual or hover request, so both triggers
+    observe the same settings without leaking Control Center state into the
+    engine or the capture backend.
+    """
+
+    def __init__(self, capture_service: object) -> None:
+        if not callable(getattr(capture_service, "capture_at_cursor", None)):
+            raise TypeError("capture_service must provide capture_at_cursor(cursor)")
+        if not callable(getattr(capture_service, "close", None)):
+            raise TypeError("capture_service must provide close()")
+        self._capture_service = capture_service
+        self._capture_mode = CaptureMode.FULL_MONITOR
+        self._monitor: int | None = None
+        self._region: ScreenRect | None = None
+
+    @property
+    def capture_mode(self) -> CaptureMode:
+        """Return the live capture-area preference."""
+
+        return self._capture_mode
+
+    @property
+    def monitor(self) -> int | None:
+        """Return the selected monitor, or ``None`` for cursor resolution."""
+
+        return self._monitor
+
+    @property
+    def region(self) -> ScreenRect | None:
+        """Return the selected region, if one is configured."""
+
+        return self._region
+
+    def set_preferences(
+        self,
+        *,
+        capture_mode: CaptureMode = CaptureMode.FULL_MONITOR,
+        monitor: int | None = None,
+        region: ScreenRect | None = None,
+    ) -> None:
+        """Atomically replace the monitor, region, and capture mode choices."""
+
+        if not isinstance(capture_mode, CaptureMode):
+            raise TypeError("capture_mode must be a CaptureMode")
+        if monitor is not None:
+            _integer(monitor, "monitor selection")
+            if monitor <= 0:
+                raise ValueError("monitor selection must be positive")
+        if region is not None and not isinstance(region, ScreenRect):
+            raise TypeError("region must be a ScreenRect")
+
+        self._capture_mode = capture_mode
+        self._monitor = monitor
+        self._region = region
+
+    def capture_at_cursor(self, cursor: Point) -> CaptureResult:
+        """Capture through the configured monitor/region selection."""
+
+        monitor = self._monitor
+        region = self._region if self._capture_mode is CaptureMode.REGION else None
+        capture = getattr(self._capture_service, "capture_at_cursor")
+        if monitor is None and region is None:
+            return cast(CaptureResult, capture(cursor))
+
+        try:
+            return cast(CaptureResult, capture(cursor, monitor=monitor, region=region))
+        except TypeError as error:
+            # Preserve compatibility with narrow test/client capture seams
+            # that predate configurable keyword arguments. A real
+            # ``CaptureService`` accepts them and never takes this branch.
+            if "unexpected keyword" not in str(error):
+                raise
+            return cast(CaptureResult, capture(cursor))
+
+    def enumerate_monitors(self) -> tuple[MonitorInfo, ...]:
+        """Forward monitor discovery for the Control Center."""
+
+        enumerate_monitors = getattr(self._capture_service, "enumerate_monitors")
+        return tuple(enumerate_monitors())
+
+    def close(self) -> None:
+        """Release the underlying capture backend."""
+
+        getattr(self._capture_service, "close")()
 
 
 def _resolve_clip_bounds(

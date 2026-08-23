@@ -13,11 +13,13 @@ from hanly_app.capture import (
     CaptureError,
     CaptureResult,
     CaptureService,
+    ConfiguredCaptureService,
     MonitorInfo,
     MSSBackend,
     ScreenRect,
     _import_mss_factory,
 )
+from hanly_app.config import CaptureMode
 
 
 @dataclass
@@ -65,6 +67,18 @@ def test_capture_at_cursor_centers_roi_and_returns_local_target() -> None:
     assert result.target == Point(20, 10)
     assert result.image == ROIImage(40, 20, PixelFormat.RGB_888, bytes(40 * 20 * 3))
     assert backend.last_region == result.region
+
+
+def test_configured_capture_service_applies_live_monitor_and_region_preferences() -> None:
+    backend = FakeBackend((_monitor(),), pixels=bytes(30 * 20 * 3))
+    configured = ConfiguredCaptureService(_service(backend, roi_size=(30, 20)))
+    region = ScreenRect(10, 20, 30, 20)
+
+    configured.set_preferences(capture_mode=CaptureMode.REGION, monitor=1, region=region)
+    result = configured.capture_at_cursor(Point(25, 30))
+
+    assert result.region == region
+    assert result.target == Point(15, 10)
 
 
 @pytest.mark.parametrize(

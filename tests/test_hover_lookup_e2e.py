@@ -94,7 +94,7 @@ class _MouseListener:
     def stop(self) -> None:
         self.stopped += 1
 
-    def join(self, *, timeout: float | None = None) -> None:
+    def join(self, timeout: float | None = None) -> None:
         assert timeout == 1.0
 
     def emit(self, point: Point) -> None:

@@ -96,8 +96,10 @@ def _default_alpha_runner(*, config_path: Path) -> int | None:
             ControlCenterUnavailable,
             prepare_control_center_qt,
         )
+        from hanly_app.desktop_controller import DesktopController
         from hanly_app.manual_lookup import create_qt_manual_lookup
         from hanly_app.runtime import load_runtime
+        from hanly_app.signal_bridge import QtSignalBridge
         from PyQt6.QtWidgets import QApplication
     except ImportError as error:
         raise DevAlphaError(
@@ -126,11 +128,22 @@ def _default_alpha_runner(*, config_path: Path) -> int | None:
         capture.close()
         raise
 
+    # Wrap the runtime the way production does, so the Control Center drives
+    # the same lifecycle seam here as it does in the desktop application.
+    controller = DesktopController(manual)
+
     # start() closes what it acquired if registration fails, and shutdown() is
     # idempotent, so both exit routes may request it unconditionally.
-    application.aboutToQuit.connect(manual.shutdown)
+    signal_bridge = QtSignalBridge(
+        application,
+        manual.shutdown_gracefully,
+        on_error=lambda error: _report_hover_error("SIGINT shutdown", error),
+    )
+    application.aboutToQuit.connect(signal_bridge.close)
+    application.aboutToQuit.connect(manual.shutdown_gracefully)
+    signal_bridge.install()
     try:
-        manual.start()
+        controller.start()
         print(
             "Hanly dev alpha ready. Keep the cursor stable over Korean text "
             "for automatic lookup, or press Ctrl+Shift+Space for manual lookup.",
@@ -142,28 +155,31 @@ def _default_alpha_runner(*, config_path: Path) -> int | None:
                     config_manager=settings,
                     capture_service=capture,
                     runtime=runtime,
-                    desktop_controller=manual,
+                    desktop_controller=controller,
                 )
             )
         )
         return application.exec()
     finally:
-        manual.shutdown()
+        signal_bridge.close()
+        manual.shutdown_gracefully()
 
 
 def _preload_ocr_runtime() -> None:
-    """Import the OCR library before Qt claims the process DLL search path.
+    """Use the production OCR/Qt bootstrap ordering in the developer alpha.
 
-    PaddleOCR pulls in native libraries whose dependencies fail to load on
-    Windows once PyQt6 has been imported first, and provider construction
-    happens later on the worker thread. Importing it here keeps that ordering
-    correct. A missing library is not fatal: the provider reports it.
+    Importing the helper still happens before any Qt import above. Keeping one
+    shipped implementation prevents the developer harness and production
+    startup from silently diverging on the known Windows DLL constraint.
     """
 
-    try:
-        import paddleocr  # noqa: F401
-    except Exception as error:
-        print(f"Hanly dev alpha: OCR preload skipped: {error}", file=sys.stderr, flush=True)
+    from hanly_app.bootstrap import preload_ocr_runtime
+
+    preload_ocr_runtime(
+        on_diagnostic=lambda message: print(
+            f"Hanly dev alpha: {message}", file=sys.stderr, flush=True
+        )
+    )
 
 
 def _report_hover_error(stage: str, error: BaseException) -> None:

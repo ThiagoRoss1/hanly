@@ -119,6 +119,17 @@ class HoverLookupRuntime:
         with self._lock:
             return self._failed
 
+    @property
+    def delay_ms(self) -> float:
+        """Return the live debounce delay used by the hover controller."""
+
+        return self._hover.delay_ms
+
+    def set_delay_ms(self, delay_ms: float) -> None:
+        """Apply a debounce delay to future and pending hover attempts."""
+
+        self._hover.set_delay_ms(delay_ms)
+
     def start(self) -> None:
         """Start lookup execution and global observation."""
 

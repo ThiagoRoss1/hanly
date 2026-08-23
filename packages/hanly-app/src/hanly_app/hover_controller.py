@@ -165,6 +165,62 @@ class HoverController:
 
         self.start()
 
+    def set_delay_ms(self, delay_ms: float) -> None:
+        """Apply a new stability delay, rescheduling a pending attempt.
+
+        The current point remains the same, but the old timer and generation
+        are invalidated so a callback already racing with this update cannot
+        deliver the attempt under the previous configuration.
+        """
+
+        if isinstance(delay_ms, bool) or not isinstance(delay_ms, (int, float)):
+            raise TypeError("delay_ms must be a number")
+        if not isfinite(delay_ms) or delay_ms <= 0:
+            raise ValueError("delay_ms must be positive")
+
+        with self._lock:
+            if self._closed:
+                return
+            self._delay_ms = float(delay_ms)
+            request = self._current_request if self._running else None
+            old_timer = self._timer
+            self._timer = None
+            self._generation += 1
+            generation = self._generation
+            self._last_timer_fired_generation = None
+
+        self._cancel(old_timer)
+        if request is None:
+            return
+
+        try:
+            timer = self._scheduler(
+                self._delay_ms,
+                lambda: self._timer_fired(request, generation),
+            )
+            if not callable(getattr(timer, "cancel", None)):
+                raise TypeError("scheduler must return a cancellable handle")
+        except Exception:
+            with self._lock:
+                if self._generation == generation and self._current_request is request:
+                    self._current_request = None
+                    self._generation += 1
+            raise
+
+        with self._lock:
+            if (
+                self._closed
+                or not self._running
+                or self._generation != generation
+                or self._current_request is not request
+                or self._last_timer_fired_generation == generation
+            ):
+                cancel_timer = timer
+            else:
+                self._timer = timer
+                cancel_timer = None
+        self._cancel(cancel_timer)
+
     def invalidate(self) -> None:
         """Invalidate the current attempt while continuing to observe points."""
 

@@ -35,13 +35,21 @@ class DuplicateHotkeyError(HotkeyError):
 
 
 class HotkeyListener(Protocol):
-    """Minimal listener lifecycle hidden behind the desktop hotkey seam."""
+    """The listener lifecycle hidden behind the desktop hotkey seam.
+
+    ``join`` is part of the seam, not an optional extra: the concrete backend
+    runs on its own thread and shutdown must be bounded rather than fire and
+    forget.
+    """
 
     def start(self) -> None:
         """Start receiving global key events."""
 
     def stop(self) -> None:
         """Stop receiving global key events."""
+
+    def join(self, timeout: float | None = None) -> None:
+        """Wait briefly for the listener thread to finish after ``stop``."""
 
 
 HotkeyHandler: TypeAlias = Callable[[HotkeyAction], None]
@@ -59,6 +67,9 @@ DEFAULT_HOTKEYS: Mapping[HotkeyAction | str, str] = MappingProxyType(
         HotkeyAction.PAUSE_CAPTURE: "ctrl+shift+f10",
     }
 )
+
+#: Bounded wait for a stopped listener thread, so shutdown cannot hang.
+_STOP_JOIN_SECONDS = 1.0
 
 _ACTION_ALIASES = {
     "lookup": HotkeyAction.LOOKUP,
@@ -216,28 +227,16 @@ class _PynputListener:
     def stop(self) -> None:
         self._listener.stop()
 
-    def join(self, timeout: float | None = 1.0) -> None:
+    def join(self, timeout: float | None = None) -> None:
         self._listener.join(timeout)
 
 
 def _stop_listener(listener: HotkeyListener) -> None:
-    """Stop and boundedly join a listener when its backend provides ``join``."""
+    """Stop a listener and wait a bounded time for its thread to finish."""
 
     listener.stop()
-
-    join = getattr(listener, "join", None)
-    if not callable(join):
-        return
-
     try:
-        join(timeout=1.0)
-    except TypeError:
-        # Small test doubles and third-party wrappers sometimes expose join()
-        # without the standard thread timeout parameter.
-        try:
-            join()
-        except RuntimeError:
-            pass
+        listener.join(_STOP_JOIN_SECONDS)
     except RuntimeError:
         # pynput's listener is itself a Thread and runs hotkey callbacks on it,
         # so a handler that shuts the service down would be joining itself.
@@ -313,10 +312,6 @@ class HotkeyService:
                     for action, binding in self._bindings.items()
                 }
                 listener = self._listener_factory(callbacks)
-                if not callable(getattr(listener, "start", None)):
-                    raise TypeError("hotkey listener must provide start()")
-                if not callable(getattr(listener, "stop", None)):
-                    raise TypeError("hotkey listener must provide stop()")
                 self._listener = listener
                 self._registered = True
                 listener.start()
@@ -340,6 +335,60 @@ class HotkeyService:
             self._registered = False
         if listener is not None:
             _stop_listener(listener)
+
+    def rebind(
+        self,
+        action: HotkeyAction | str,
+        binding: str,
+    ) -> None:
+        """Replace one binding without interrupting an active service.
+
+        A replacement listener is started before the previous listener is
+        stopped. If construction or registration fails, the old listener and
+        binding remain authoritative.
+        """
+
+        normalized_action = _coerce_action(action)
+        normalized_binding = canonical_hotkey(binding)
+        previous_listener: HotkeyListener | None = None
+
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("hotkey service has been shut down")
+            configured_bindings: dict[HotkeyAction | str, str] = {
+                configured_action: configured_binding
+                for configured_action, configured_binding in self._bindings.items()
+            }
+            configured_bindings[normalized_action] = normalized_binding
+            next_bindings = _normalize_bindings(configured_bindings)
+            if next_bindings == self._bindings:
+                return
+
+            if not self._registered:
+                self._bindings = next_bindings
+                return
+
+            callbacks = {
+                binding_value: (
+                    lambda configured_action=configured_action: self._trigger(configured_action)
+                )
+                for configured_action, binding_value in next_bindings.items()
+            }
+            listener = self._listener_factory(callbacks)
+            try:
+                listener.start()
+            except Exception:
+                try:
+                    _stop_listener(listener)
+                except Exception:
+                    pass
+                raise
+            previous_listener = self._listener
+            self._listener = listener
+            self._bindings = next_bindings
+
+        if previous_listener is not None:
+            _stop_listener(previous_listener)
 
     def shutdown(self) -> None:
         """Unregister once and permanently close this service."""

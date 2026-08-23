@@ -24,7 +24,7 @@ class _Listener:
     def stop(self) -> None:
         self.stopped += 1
 
-    def join(self, *, timeout: float | None = None) -> None:
+    def join(self, timeout: float | None = None) -> None:
         assert timeout == 1.0
         self.joined += 1
 
@@ -137,6 +137,24 @@ def test_registration_is_idempotent_and_unregister_is_idempotent() -> None:
     assert service.registered is False
 
 
+def test_rebind_replaces_active_listener_without_losing_registration() -> None:
+    received: list[HotkeyAction] = []
+    service, listeners = _service(
+        received.append,
+        bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
+    )
+    service.register()
+
+    service.rebind(HotkeyAction.LOOKUP, "alt+shift+h")
+
+    assert service.registered is True
+    assert service.bindings[HotkeyAction.LOOKUP] == "<shift>+<alt>+h"
+    assert listeners[0].stopped == 1
+    assert listeners[1].started == 1
+    listeners[1].trigger("<shift>+<alt>+h")
+    assert received == [HotkeyAction.LOOKUP]
+
+
 def test_dispatch_queued_before_unregister_is_suppressed() -> None:
     posted: list[Callable[[], None]] = []
     received: list[HotkeyAction] = []
@@ -198,7 +216,7 @@ def test_handler_that_shuts_down_the_service_does_not_self_join() -> None:
     # pynput's listener is a Thread and runs hotkey callbacks on it, so a
     # "quit" hotkey ends up joining the thread it is running on.
     class _SelfJoiningListener(_Listener):
-        def join(self, *, timeout: float | None = None) -> None:
+        def join(self, timeout: float | None = None) -> None:
             self.joined += 1
             raise RuntimeError("cannot join current thread")
 

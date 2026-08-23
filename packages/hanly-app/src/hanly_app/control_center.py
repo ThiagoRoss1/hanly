@@ -10,17 +10,20 @@ from __future__ import annotations
 
 import sys
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from hanly.resource_manager import ResourceManager
 
 from .capture import CaptureService, MonitorInfo, ScreenRect
-from .config import HOVER_DELAY_MAX_MS, HOVER_DELAY_MIN_MS, AppConfig, ConfigManager
+from .config import HOVER_DELAY_MAX_MS, HOVER_DELAY_MIN_MS, AppConfig, CaptureMode, ConfigManager
+from .desktop_controller import DesktopState
 from .hotkeys import HotkeyError, canonical_hotkey
+from .runtime import HanlyRuntime
+from .update_coordinator import UpdateCoordinator
 
 
 class ControlCenterUnavailable(RuntimeError):
@@ -57,6 +60,39 @@ def prepare_control_center_qt() -> None:
         raise ControlCenterUnavailable(
             "the Control Center requires the pywebview Qt6 runtime extra"
         ) from error
+
+
+class DesktopLifecycle(Protocol):
+    """What the Control Center genuinely requires of the desktop controller.
+
+    Every member backs a visible control, so a controller missing one would
+    make a button or setting silently do nothing rather than fail visibly.
+    """
+
+    @property
+    def state(self) -> DesktopState:
+        """The current desktop lifecycle state."""
+
+    def start(self) -> None:
+        """Start capture from a new or shut-down state."""
+
+    def pause(self) -> None:
+        """Stop capture while leaving the desktop startable."""
+
+    def resume(self) -> None:
+        """Resume capture after :meth:`pause`."""
+
+    def apply_config(self, config: AppConfig) -> None:
+        """Apply persisted desktop preferences to running services."""
+
+    def set_capture_preferences(
+        self,
+        *,
+        capture_mode: CaptureMode,
+        monitor: int | None,
+        region: ScreenRect | None,
+    ) -> None:
+        """Apply the selected capture target and region."""
 
 
 class MonitorSource(Protocol):
@@ -127,35 +163,50 @@ class ControlCenterBridge:
     _UPDATE_STATUS = {
         "available": False,
         "status": "unavailable",
-        "message": "Update controls arrive with HAN-24/HAN-25.",
+        "message": "Resource updates are not configured for this runtime.",
     }
 
     def __init__(
         self,
         *,
         config_manager: ConfigManager | None = None,
-        desktop_controller: object | None = None,
+        desktop_controller: DesktopLifecycle | None = None,
         capture_service: MonitorSource | CaptureService | None = None,
         resource_manager: ResourceManager | None = None,
-        runtime: object | None = None,
+        update_service: object | None = None,
+        update_coordinator: UpdateCoordinator | None = None,
+        diagnostics: Callable[[], Sequence[str]] | None = None,
+        on_lifecycle_changed: Callable[[], None] | None = None,
+        runtime: HanlyRuntime | None = None,
         ocr_provider: str = "PaddleOCR",
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")
-        if desktop_controller is not None and not callable(
-            getattr(desktop_controller, "start", None)
-        ):
-            raise TypeError("desktop_controller must provide start()")
+
         if not isinstance(ocr_provider, str) or not ocr_provider.strip():
             raise ValueError("ocr_provider must be a non-empty string")
+        if diagnostics is not None and not callable(diagnostics):
+            raise TypeError("diagnostics must be callable")
+        if on_lifecycle_changed is not None and not callable(on_lifecycle_changed):
+            raise TypeError("on_lifecycle_changed must be callable")
 
         self._config_manager = config_manager
         self._config = config_manager.config if config_manager is not None else AppConfig()
         self._desktop_controller = desktop_controller
         self._capture_service = capture_service
-        runtime_resources = getattr(runtime, "resource_manager", None)
-        self._resource_manager = resource_manager or runtime_resources
+        self._resource_manager = resource_manager or (
+            runtime.resource_manager if runtime is not None else None
+        )
         self._ocr_provider = ocr_provider.strip()
+        self._diagnostics = diagnostics
+        self._on_lifecycle_changed = on_lifecycle_changed
+        if update_service is not None and update_coordinator is not None:
+            raise ValueError("pass update_service or update_coordinator, not both")
+        self._update_coordinator = update_coordinator or (
+            UpdateCoordinator(cast(Any, update_service), resource_manager=self._resource_manager)
+            if update_service is not None
+            else None
+        )
         self._capture_running = False
         self._target: str = "cursor"
         self._region: _SelectedRegion | None = None
@@ -178,28 +229,37 @@ class ControlCenterBridge:
             "runtime": {
                 "ocr_provider": self._ocr_provider,
                 "resources": self._resources(),
+                "diagnostics": (
+                    list(self._diagnostics()) if self._diagnostics is not None else []
+                ),
             },
-            "updates": dict(self._UPDATE_STATUS),
+            "updates": (
+                self._update_coordinator.snapshot()
+                if self._update_coordinator is not None
+                else dict(self._UPDATE_STATUS)
+            ),
         }
 
     def start_capture(self) -> dict[str, Any]:
         """Start capture through the existing desktop lifecycle controller."""
 
-        if self._desktop_controller is not None:
-            start = getattr(self._desktop_controller, "start", None)
-            if callable(start):
-                start()
+        controller = self._desktop_controller
+        if controller is not None:
+            if controller.state is DesktopState.PAUSED:
+                controller.resume()
+            else:
+                controller.start()
         self._capture_running = True
+        self._notify_lifecycle_changed()
         return self.get_state()
 
     def stop_capture(self) -> dict[str, Any]:
         """Pause capture through the existing desktop lifecycle controller."""
 
         if self._desktop_controller is not None:
-            pause = getattr(self._desktop_controller, "pause", None)
-            if callable(pause):
-                pause()
+            self._desktop_controller.pause()
         self._capture_running = False
+        self._notify_lifecycle_changed()
         return self.get_state()
 
     def set_capture_mode(self, mode: object) -> dict[str, Any]:
@@ -218,6 +278,7 @@ class ControlCenterBridge:
             if not any(item["index"] == index for item in self._targets()):
                 raise ValueError(f"unknown capture target: {target!r}")
             self._target = f"monitor:{index}"
+        self._apply_capture_preferences()
         return self.get_state()
 
     def set_region(self, region: Mapping[str, object] | None) -> dict[str, Any]:
@@ -227,6 +288,7 @@ class ControlCenterBridge:
             self._region = None
         else:
             self._region = _SelectedRegion(_screen_rect(region))
+        self._apply_capture_preferences()
         return self.get_state()
 
     def set_hover_delay(self, delay_ms: object) -> dict[str, Any]:
@@ -272,17 +334,40 @@ class ControlCenterBridge:
         return self.get_state()
 
     def check_for_updates(self) -> dict[str, object]:
-        """Keep the update action explicit until its owning issues land."""
+        """Schedule a non-blocking update availability check."""
 
-        raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        if self._update_coordinator is None:
+            raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        self._update_coordinator.check_for_updates()
+        return self.get_state()
 
-    def install_update(self) -> dict[str, object]:
-        """Keep installation unavailable until update delivery is implemented."""
+    def install_update(self, resource_id: object | None = None) -> dict[str, object]:
+        """Schedule one non-blocking update installation."""
 
-        raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        if self._update_coordinator is None:
+            raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        self._update_coordinator.install_update(resource_id)
+        return self.get_state()
+
+    def replace_capture_service(
+        self,
+        capture_service: MonitorSource | CaptureService,
+    ) -> None:
+        """Use the capture seam rebuilt after safe resource activation."""
+
+        self._capture_service = capture_service
+
+    def apply_live_state(self) -> None:
+        """Reapply persisted config and transient target/region state."""
+
+        self._apply_live_config()
 
     def _current_config(self) -> AppConfig:
         return self._config_manager.config if self._config_manager is not None else self._config
+
+    def _notify_lifecycle_changed(self) -> None:
+        if self._on_lifecycle_changed is not None:
+            self._on_lifecycle_changed()
 
     def _update_config(self, **changes: object) -> None:
         if self._config_manager is not None:
@@ -291,13 +376,33 @@ class ControlCenterBridge:
             values: dict[str, Any] = self._config.to_dict()
             values.update(changes)
             self._config = AppConfig.from_dict(values)
+        self._apply_live_config()
+
+    def _apply_live_config(self) -> None:
+        """Forward persisted settings to a desktop controller when present."""
+
+        if self._desktop_controller is None:
+            return
+        self._desktop_controller.apply_config(self._current_config())
+        self._apply_capture_preferences()
+
+    def _apply_capture_preferences(self) -> None:
+        """Forward target and region state through the app-owned seam."""
+
+        if self._desktop_controller is None:
+            return
+        monitor = None if self._target == "cursor" else self._target_index(self._target)
+        region = None if self._region is None else self._region.rect
+        self._desktop_controller.set_capture_preferences(
+            capture_mode=self._current_config().capture_mode,
+            monitor=monitor,
+            region=region,
+        )
 
     def _desktop_state(self) -> str:
         if self._desktop_controller is None:
             return "running" if self._capture_running else "new"
-        state = getattr(self._desktop_controller, "state", None)
-        name = getattr(state, "name", None)
-        return str(name).lower() if name is not None else "unknown"
+        return self._desktop_controller.state.name.lower()
 
     def _is_capture_running(self, state_name: str) -> bool:
         return state_name == "running" or self._capture_running

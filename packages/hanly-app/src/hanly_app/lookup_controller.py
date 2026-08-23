@@ -180,6 +180,16 @@ class LookupController:
             self._current_request_id = None
         self._executor.shutdown(wait=wait, cancel_pending=cancel_pending)
 
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait for a requested stop to release worker-owned providers.
+
+        ``stop(wait=False)`` may be called from a thread that must not block,
+        such as a UI thread; this completes that shutdown from a thread that
+        may.
+        """
+
+        return self._executor.join(timeout)
+
     shutdown = stop
     close = stop
 

@@ -89,6 +89,22 @@ def test_configured_hover_delay_is_forwarded_to_scheduler() -> None:
     assert scheduler.calls[0][0] == 220
 
 
+def test_live_delay_update_reschedules_current_pending_attempt() -> None:
+    stable: list[HoverRequest] = []
+    controller, scheduler, posted = _controller(stable, delay_ms=220)
+
+    controller.on_position(Point(10, 20))
+    first = scheduler.calls[0][1]
+    controller.set_delay_ms(80)
+
+    assert first.cancelled is True
+    assert controller.delay_ms == 80
+    assert scheduler.calls[-1][0] == 80
+    scheduler.fire()
+    posted.pop()()
+    assert stable[0].point == Point(10, 20)
+
+
 def test_each_movement_cancels_prior_timer_and_supersedes_current_request() -> None:
     stable: list[HoverRequest] = []
     controller, scheduler, posted = _controller(stable)

@@ -4,11 +4,12 @@
   const fallbackState = {
     app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
     config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space" },
-    runtime: { ocr_provider: "—", resources: [] },
-    updates: { available: false, status: "unavailable", message: "Update controls arrive with HAN-24/HAN-25." }
+    runtime: { ocr_provider: "—", resources: [], diagnostics: [] },
+    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null }
   };
 
   let currentState = fallbackState;
+  let refreshTimer = null;
 
   // pywebview injects its api after the document is parsed, so the bridge has
   // to be resolved per call. Capturing it here would pin it to null forever.
@@ -54,6 +55,56 @@
     });
   }
 
+  function renderUpdates(updates) {
+    const updateState = updates || fallbackState.updates;
+    const resources = updateState.resources || [];
+    const select = byId("update-resource");
+    const install = byId("install-update");
+    const check = byId("check-updates");
+    const progressPanel = byId("update-progress");
+    const progressBar = byId("update-progress-bar");
+    const progressLabel = byId("update-progress-label");
+    const available = resources.filter(function (resource) { return resource.available; });
+    select.innerHTML = "";
+    if (available.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No updates available";
+      select.appendChild(option);
+    } else {
+      available.forEach(function (resource) {
+        const option = document.createElement("option");
+        option.value = resource.id;
+        option.textContent = resource.id + " · v" + resource.version;
+        select.appendChild(option);
+      });
+      select.value = updateState.active_resource_id || available[0].id;
+    }
+    const busy = ["checking", "downloading", "validating"].indexOf(updateState.status) !== -1;
+    select.disabled = busy || available.length === 0;
+    check.disabled = busy;
+    install.disabled = busy || available.length === 0;
+    byId("update-status").textContent = formatStatus(updateState.status || "idle");
+    byId("update-message").textContent = updateState.message || fallbackState.updates.message;
+    const progress = updateState.progress;
+    progressPanel.hidden = !progress || !busy;
+    if (progress) {
+      progressLabel.textContent = formatStatus(progress.phase);
+      progressBar.removeAttribute("value");
+      if (progress.fraction !== null && progress.fraction !== undefined) {
+        progressBar.value = progress.fraction;
+      }
+    }
+    if (busy) {
+      if (refreshTimer === null) {
+        refreshTimer = window.setInterval(function () { invoke("get_state"); }, 500);
+      }
+    } else if (refreshTimer !== null) {
+      window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+  }
+
   function renderState(state) {
     currentState = state || fallbackState;
     const app = currentState.app || fallbackState.app;
@@ -66,6 +117,8 @@
     byId("capture-state").textContent = app.capture_running ? "Running" : "Stopped";
     byId("ocr-provider").textContent = runtime.ocr_provider || "—";
     byId("resource-count").textContent = (runtime.resources || []).length + " resources";
+    const diagnosticCount = (runtime.diagnostics || []).length;
+    byId("diagnostic-state").textContent = diagnosticCount === 0 ? "Clear" : diagnosticCount + " reported";
     byId("capture-mode").value = app.capture_mode || "full_monitor";
     byId("hover-delay").value = config.hover_delay_ms || 150;
     byId("hotkey").value = config.hotkey || "";
@@ -73,7 +126,7 @@
     ["left", "top", "width", "height"].forEach(function (field) {
       byId("region-" + field).value = app.region ? app.region[field] : "";
     });
-    byId("update-message").textContent = updates.message || fallbackState.updates.message;
+    renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
   }
@@ -96,6 +149,11 @@
   byId("clear-region").addEventListener("click", function () { invoke("set_region", null); });
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
+  byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });
+  byId("install-update").addEventListener("click", function () {
+    const resourceId = byId("update-resource").value;
+    invoke("install_update", resourceId || undefined);
+  });
 
   window.addEventListener("pywebviewready", function () {
     invoke("get_state");

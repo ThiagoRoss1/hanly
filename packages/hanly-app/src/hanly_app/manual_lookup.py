@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 from hanly import HanlyError, LookupResult, LookupStatus, Point
 
-from .capture import CaptureResult
-from .config import AppConfig
+from .capture import CaptureResult, ConfiguredCaptureService, ScreenRect
+from .config import AppConfig, CaptureMode
 from .hotkeys import (
     DEFAULT_HOTKEYS,
     HotkeyAction,
@@ -119,7 +119,11 @@ class ManualLookupRuntime:
             raise TypeError("hover_runtime must be a HoverLookupRuntime")
 
         self._controller = controller
-        self._capture_service = capture_service
+        self._capture_service = (
+            capture_service
+            if isinstance(capture_service, ConfiguredCaptureService)
+            else ConfiguredCaptureService(capture_service)
+        )
         self._popup = popup
         self._close_popup = close_popup
         self._clear_popup = clear_popup or close_popup
@@ -135,6 +139,11 @@ class ManualLookupRuntime:
         self._lock = RLock()
         self._started = False
         self._closed = False
+        self._hotkey = hotkey
+        self._capture_mode = CaptureMode.FULL_MONITOR
+        self._hover_delay_ms: float | None = (
+            hover_runtime.delay_ms if hover_runtime is not None else None
+        )
 
     @property
     def controller(self) -> LookupController:
@@ -153,6 +162,66 @@ class ManualLookupRuntime:
         """Return the optional automatic-hover path sharing this composition."""
 
         return self._hover_runtime
+
+    @property
+    def capture_service(self) -> ConfiguredCaptureService:
+        """Return the shared capture seam used by manual and hover paths."""
+
+        return self._capture_service
+
+    def apply_config(self, config: AppConfig) -> None:
+        """Apply desktop preferences to already-running services."""
+
+        if not isinstance(config, AppConfig):
+            raise TypeError("config must be an AppConfig")
+
+        with self._lock:
+            if self._closed:
+                return
+            hotkey_changed = config.hotkey != self._hotkey
+            hover_runtime = self._hover_runtime
+
+        if hotkey_changed:
+            rebind = getattr(self._hotkeys, "rebind", None)
+            if not callable(rebind):
+                with self._lock:
+                    if self._started:
+                        raise RuntimeError(
+                            "configured hotkey cannot be changed while running"
+                        )
+            else:
+                rebind(HotkeyAction.LOOKUP, config.hotkey)
+
+        if hover_runtime is not None:
+            hover_runtime.set_delay_ms(float(config.hover_delay_ms))
+
+        self._capture_mode = config.capture_mode
+        self._capture_service.set_preferences(
+            capture_mode=config.capture_mode,
+            monitor=self._capture_service.monitor,
+            region=self._capture_service.region,
+        )
+        with self._lock:
+            self._hotkey = config.hotkey
+            self._hover_delay_ms = float(config.hover_delay_ms)
+
+    def set_capture_preferences(
+        self,
+        *,
+        capture_mode: CaptureMode,
+        monitor: int | None,
+        region: ScreenRect | None,
+    ) -> None:
+        """Apply Control Center target and region choices to both triggers."""
+
+        if not isinstance(capture_mode, CaptureMode):
+            raise TypeError("capture_mode must be a CaptureMode")
+        self._capture_mode = capture_mode
+        self._capture_service.set_preferences(
+            capture_mode=capture_mode,
+            monitor=monitor,
+            region=region,
+        )
 
     def attach_hover(self, hover_runtime: HoverLookupRuntime) -> None:
         """Attach automatic hover before startup, sharing controller and capture."""
@@ -207,6 +276,40 @@ class ManualLookupRuntime:
     def shutdown(self) -> None:
         """Close UI resources and request non-blocking worker/listener shutdown."""
 
+        self._shutdown(wait=False)
+
+    def shutdown_gracefully(self) -> None:
+        """Close desktop resources and wait for worker-owned providers to close.
+
+        Only safe on a thread that may block, such as process exit. A UI
+        thread must use :meth:`begin_shutdown` and :meth:`await_shutdown`.
+        """
+
+        self._shutdown(wait=True)
+        self.await_shutdown()
+
+    def begin_shutdown(self) -> None:
+        """Release UI-owned resources and request worker shutdown without waiting.
+
+        Safe to call on the Qt thread: it never joins the lookup worker, so an
+        in-flight OCR job cannot freeze the popup, tray, or Control Center.
+        """
+
+        self._shutdown(wait=False)
+
+    def await_shutdown(self, timeout: float | None = None) -> bool:
+        """Wait for worker-owned providers to close after :meth:`begin_shutdown`.
+
+        Must be called from a thread that may block. Returns whether the
+        worker finished, so a caller can decide not to touch files it still
+        holds open.
+        """
+
+        return self._controller.join(timeout)
+
+    def _shutdown(self, *, wait: bool) -> None:
+        """Shared teardown with an explicit UI-safe or process-exit wait policy."""
+
         with self._lock:
             if self._closed:
                 return
@@ -214,12 +317,13 @@ class ManualLookupRuntime:
             self._started = False
 
         # Invalidate before stop so queued or in-flight results fail the
-        # controller's final currency check. The worker is never joined here.
+        # controller's final currency check. Production shutdown waits so
+        # worker-owned provider and SQLite cleanup completes before exit.
         if self._hover_runtime is not None:
             self._hover_runtime.shutdown()
         self._controller.invalidate()
         try:
-            self._controller.stop(wait=False)
+            self._controller.stop(wait=wait)
         finally:
             try:
                 self._close_popup()
@@ -227,7 +331,10 @@ class ManualLookupRuntime:
                 try:
                     self._capture_service.close()
                 finally:
-                    self._schedule_hotkey_shutdown()
+                    if wait:
+                        self._hotkeys.shutdown()
+                    else:
+                        self._schedule_hotkey_shutdown()
 
     def invalidate(self) -> None:
         """Drop the current lookup attempt while both triggers keep running."""
@@ -315,15 +422,21 @@ def create_manual_lookup(
         result_dispatcher=dispatcher,
         thread_name="hanly-manual-lookup",
     )
+    configured_capture = (
+        capture_service
+        if isinstance(capture_service, ConfiguredCaptureService)
+        else ConfiguredCaptureService(capture_service)
+    )
+    configured_hotkey = app_config.hotkey if app_config is not None else hotkey
     manual = ManualLookupRuntime(
         controller,
-        capture_service,
+        configured_capture,
         popup,
         close_popup=close_popup,
         current_cursor=current_cursor,
         dispatcher=dispatcher,
         clear_popup=clear_popup,
-        hotkey=hotkey,
+        hotkey=configured_hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
     )
@@ -331,7 +444,7 @@ def create_manual_lookup(
         manual.attach_hover(
             HoverLookupRuntime(
                 controller,
-                capture_service,
+                manual.capture_service,
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
                 scheduler=hover_scheduler,
                 dispatcher=dispatcher,
@@ -339,6 +452,8 @@ def create_manual_lookup(
                 on_error=hover_on_error,
             )
         )
+    if app_config is not None:
+        manual.apply_config(app_config)
     return manual
 
 
@@ -384,15 +499,21 @@ def create_qt_manual_lookup(
         cursor = QCursor.pos()
         return Point(float(cursor.x()), float(cursor.y()))
 
+    configured_capture = (
+        capture_service
+        if isinstance(capture_service, ConfiguredCaptureService)
+        else ConfiguredCaptureService(capture_service)
+    )
+    configured_hotkey = app_config.hotkey if app_config is not None else hotkey
     manual = ManualLookupRuntime(
         controller,
-        capture_service,
+        configured_capture,
         popup_trigger.open,
         close_popup=popup_controller.close,
         clear_popup=popup_controller.clear,
         current_cursor=current_cursor,
         dispatcher=dispatcher,
-        hotkey=hotkey,
+        hotkey=configured_hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
     )
@@ -400,7 +521,7 @@ def create_qt_manual_lookup(
         manual.attach_hover(
             HoverLookupRuntime(
                 controller,
-                capture_service,
+                manual.capture_service,
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
                 # Debounce on the Qt UI thread that already dispatches movement
                 # rather than spawning a timer thread per cursor event.
@@ -410,6 +531,8 @@ def create_qt_manual_lookup(
                 on_error=hover_on_error,
             )
         )
+    if app_config is not None:
+        manual.apply_config(app_config)
     return manual
 
 

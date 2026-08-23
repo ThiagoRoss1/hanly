@@ -40,6 +40,10 @@
             <span class="status-label">OCR provider</span>
             <strong id="ocr-provider">—</strong>
           </div>
+          <div class="status-item">
+            <span class="status-label">Diagnostics</span>
+            <strong id="diagnostic-state">Clear</strong>
+          </div>
           <div class="spine-footer">
             <span class="utility" id="resource-count">0 resources</span>
             <span class="utility">V1 / local</span>
@@ -114,13 +118,28 @@
                 <input id="hotkey" type="text" spellcheck="false" autocomplete="off">
               </label>
             </div>
-            <div class="update-placeholder" aria-disabled="true">
+            <div class="update-panel" aria-live="polite">
               <div>
                 <span class="eyebrow">Updates</span>
-                <strong>Not connected yet</strong>
-                <p id="update-message">Update controls arrive with HAN-24/HAN-25.</p>
+                <strong id="update-status">No update check</strong>
+                <p id="update-message">Check remote metadata for newer validated resources.</p>
               </div>
-              <button class="button button-disabled" type="button" disabled>Check for updates</button>
+              <div class="update-actions">
+                <label class="field update-resource-field">
+                  <span>Resource</span>
+                  <select id="update-resource" disabled>
+                    <option value="">No updates available</option>
+                  </select>
+                </label>
+                <div class="action-row update-button-row">
+                  <button class="button button-quiet" id="check-updates" type="button">Check for updates</button>
+                  <button class="button button-primary" id="install-update" type="button" disabled>Install update</button>
+                </div>
+                <div class="update-progress" id="update-progress" hidden>
+                  <progress id="update-progress-bar" max="1" value="0"></progress>
+                  <span id="update-progress-label">Preparing…</span>
+                </div>
+              </div>
             </div>
           </section>
         </section>

@@ -20,6 +20,7 @@ from hanly_app.control_center import (
     ControlCenterUnavailable,
     load_control_center_assets,
 )
+from hanly_app.desktop_controller import DesktopState
 
 
 class _Runtime:
@@ -34,6 +35,40 @@ class _Runtime:
 
     def shutdown(self) -> None:
         self.events.append("shutdown")
+
+
+class _Controller:
+    """A double for the desktop lifecycle seam the Control Center requires."""
+
+    def __init__(self, runtime: _Runtime) -> None:
+        self._runtime = runtime
+        self.state = DesktopState.NEW
+        self.configs: list[AppConfig] = []
+        self.preferences: list[tuple[CaptureMode, int | None, ScreenRect | None]] = []
+
+    def start(self) -> None:
+        self._runtime.start()
+        self.state = DesktopState.RUNNING
+
+    def pause(self) -> None:
+        self._runtime.invalidate()
+        self.state = DesktopState.PAUSED
+
+    def resume(self) -> None:
+        self._runtime.events.append("resume")
+        self.state = DesktopState.RUNNING
+
+    def apply_config(self, config: AppConfig) -> None:
+        self.configs.append(config)
+
+    def set_capture_preferences(
+        self,
+        *,
+        capture_mode: CaptureMode,
+        monitor: int | None,
+        region: ScreenRect | None,
+    ) -> None:
+        self.preferences.append((capture_mode, monitor, region))
 
 
 def _bridge(tmp_path: Path) -> tuple[ControlCenterBridge, _Runtime, ConfigManager]:
@@ -65,18 +100,7 @@ def _bridge(tmp_path: Path) -> tuple[ControlCenterBridge, _Runtime, ConfigManage
     manager.validate()
     config = ConfigManager(tmp_path / "settings.json")
     runtime = _Runtime()
-    controller = SimpleNamespace(state=SimpleNamespace(name="NEW"), start=None, pause=None)
-
-    def start() -> None:
-        runtime.start()
-        controller.state = SimpleNamespace(name="RUNNING")
-
-    def pause() -> None:
-        runtime.invalidate()
-        controller.state = SimpleNamespace(name="PAUSED")
-
-    controller.start = start
-    controller.pause = pause
+    controller = _Controller(runtime)
     return (
         ControlCenterBridge(
             config_manager=config,
@@ -137,6 +161,18 @@ def test_bridge_actions_control_capture_and_persist_settings(tmp_path: Path) -> 
     assert bridge.get_state()["app"]["state"] == "paused"
 
 
+def test_start_capture_resumes_a_paused_desktop_controller(tmp_path: Path) -> None:
+    bridge, runtime, _config = _bridge(tmp_path)
+
+    bridge.start_capture()
+    bridge.stop_capture()
+
+    state = bridge.start_capture()
+
+    assert runtime.events == ["start", "invalidate", "resume"]
+    assert state["app"]["state"] == "running"
+
+
 def test_update_actions_are_explicitly_unavailable(tmp_path: Path) -> None:
     bridge, _, _ = _bridge(tmp_path)
 
@@ -145,10 +181,55 @@ def test_update_actions_are_explicitly_unavailable(tmp_path: Path) -> None:
     assert status == {
         "available": False,
         "status": "unavailable",
-        "message": "Update controls arrive with HAN-24/HAN-25.",
+        "message": "Resource updates are not configured for this runtime.",
     }
     with pytest.raises(ControlCenterUnavailable):
         bridge.check_for_updates()
+
+
+def test_update_actions_use_the_application_coordinator(tmp_path: Path) -> None:
+    class _Coordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, object | None]] = []
+            self.state = {
+                "available": True,
+                "status": "available",
+                "message": "Resource updates are available.",
+                "resources": [
+                    {
+                        "id": "krdict",
+                        "version": "2",
+                        "current_version": "1",
+                        "available": True,
+                    }
+                ],
+                "active_resource_id": None,
+                "progress": None,
+            }
+
+        def snapshot(self) -> dict[str, object]:
+            return self.state
+
+        def check_for_updates(self) -> dict[str, object]:
+            self.calls.append(("check", None))
+            return self.state
+
+        def install_update(self, resource_id: object | None = None) -> dict[str, object]:
+            self.calls.append(("install", resource_id))
+            return self.state
+
+    bridge, _, _ = _bridge(tmp_path)
+    coordinator = _Coordinator()
+    bridge = ControlCenterBridge(
+        config_manager=bridge._config_manager,  # type: ignore[attr-defined]
+        update_coordinator=coordinator,  # type: ignore[arg-type]
+    )
+
+    assert bridge.get_state()["updates"]["status"] == "available"
+    bridge.check_for_updates()
+    bridge.install_update("krdict")
+
+    assert coordinator.calls == [("check", None), ("install", "krdict")]
 
 
 def test_bridge_validates_region_and_monitor_target_choices(tmp_path: Path) -> None:
@@ -229,6 +310,8 @@ def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None
     assert "<title>Hanly · Control Center</title>" in assets.html
     assert "--jade: #47756D" in assets.css
     assert "function renderState" in assets.javascript
+    assert "function renderUpdates" in assets.javascript
+    assert "install_update" in assets.javascript
     assert "sqlite" not in assets.javascript.lower()
 
 

@@ -35,3 +35,32 @@ controller = runtime.create_lookup_controller(on_result)
 Relative paths in the file resolve against the directory containing it, never
 against the process working directory. See `resources/dev/runtime.json` for the
 canonical shape and `tools/README.md` for running a real lookup end to end.
+
+## Desktop V1 entry point
+
+The shipped desktop composition is available through either equivalent command:
+
+```powershell
+hanly-desktop --runtime-config path/to/runtime.json
+python -m hanly_app --runtime-config path/to/runtime.json
+```
+
+Use `--app-config` to override the per-user preferences path. Startup preloads
+PaddleOCR before importing Qt on Windows, then composes the worker-owned lookup
+runtime, Control Center, background update coordinator, system tray, live
+settings, and graceful SIGINT/shutdown lifecycle.
+
+Remote resource delivery is optional. A runtime may configure the represented
+GitHub Releases adapter without making the engine depend on it:
+
+```json
+{
+  "updates": {
+    "github": {
+      "owner": "example",
+      "repository": "hanly",
+      "manifest_asset": "hanly-resources.json"
+    }
+  }
+}
+```
