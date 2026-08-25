@@ -12,6 +12,7 @@ import sqlite3
 import tempfile
 import unicodedata
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -225,39 +226,86 @@ def _english_definitions(node: ElementTree.Element) -> tuple[str, ...]:
     return tuple(fallback_definitions)
 
 
-def _record_nodes(root: ElementTree.Element) -> list[ElementTree.Element]:
-    nodes = [element for element in root.iter() if _local_name(element.tag) in _RECORD_TAGS]
-    if nodes:
-        return nodes
-    return [root]
+@dataclass(frozen=True)
+class KRDICTBuildResult:
+    """What one build produced, so a large source can be sanity-checked."""
+
+    database_path: Path
+    entry_count: int
+    definition_count: int
+    skipped_without_english: int
 
 
-def _parse_source(source_path: Path) -> OrderedDict[tuple[str, str | None], list[str]]:
+def _collect_record(
+    node: ElementTree.Element,
+    records: OrderedDict[tuple[str, str | None], list[str]],
+) -> bool:
+    """Fold one record into ``records``; return whether it had a usable entry."""
+
+    headword = _find_field(node, _HEADWORD_TAGS)
+    if not headword:
+        return False
+
+    definitions = _english_definitions(node)
+    if not definitions:
+        return False
+
+    key = (headword, _find_field(node, _PART_OF_SPEECH_TAGS) or None)
+    target = records.setdefault(key, [])
+    for definition in definitions:
+        if definition not in target:
+            target.append(definition)
+    return True
+
+
+def _parse_source(
+    source_path: Path,
+) -> tuple[OrderedDict[tuple[str, str | None], list[str]], int]:
+    """Stream the source into deduplicated records, and count what was skipped.
+
+    Records are read one at a time and released, because the published KRDICT
+    dump is far larger than the fixtures this builder started with and a whole
+    parsed document would not fit comfortably in memory. An entry without an
+    English definition is normal in the real dump and is counted rather than
+    fatal; a source that yields no entry at all is still an error, since that
+    means the wrong file or the wrong element names.
+    """
+
+    records: OrderedDict[tuple[str, str | None], list[str]] = OrderedDict()
+    skipped = 0
+    saw_record_tag = False
     try:
-        root = ElementTree.parse(source_path).getroot()
+        context = ElementTree.iterparse(source_path, events=("start", "end"))
+        _event, root = next(context)
+        for event, element in context:
+            if event != "end" or _local_name(element.tag) not in _RECORD_TAGS:
+                continue
+            saw_record_tag = True
+            if not _collect_record(element, records):
+                skipped += 1
+            element.clear()
+            # Records are siblings under the root, so their emptied shells
+            # accumulate there unless the root is cleared as we go.
+            root.clear()
+        if not saw_record_tag:
+            # A source whose whole document is one record, which the fixtures
+            # use. It is small by construction, so parsing it again is cheap.
+            single = ElementTree.parse(source_path).getroot()
+            if not _collect_record(single, records):
+                skipped += 1
     except (ElementTree.ParseError, OSError) as exc:
         raise KRDICTBuildError(f"unable to read KRDICT XML source: {source_path}") from exc
 
-    records: OrderedDict[tuple[str, str | None], list[str]] = OrderedDict()
-    for node in _record_nodes(root):
-        headword = _find_field(node, _HEADWORD_TAGS)
-        if not headword:
-            continue
-        part_of_speech = _find_field(node, _PART_OF_SPEECH_TAGS) or None
-        definitions = _english_definitions(node)
-        if not definitions:
-            raise KRDICTBuildError(
-                f"entry {headword!r} has no English definition"
-            )
-        key = (headword, part_of_speech)
-        target = records.setdefault(key, [])
-        for definition in definitions:
-            if definition not in target:
-                target.append(definition)
-
     if not records:
-        raise KRDICTBuildError("KRDICT XML source contains no dictionary entries")
-    return records
+        detail = (
+            f" ({skipped} entr{'y' if skipped == 1 else 'ies'} had no English definition)"
+            if skipped
+            else ""
+        )
+        raise KRDICTBuildError(
+            f"KRDICT XML source contains no dictionary entries{detail}"
+        )
+    return records, skipped
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -295,17 +343,31 @@ def build_krdict_database(
     source_path: str | os.PathLike[str],
     database_path: str | os.PathLike[str],
 ) -> Path:
-    """Build a deterministic indexed SQLite artifact from a KRDICT XML dump.
+    """Build an indexed SQLite artifact from a KRDICT XML dump.
+
+    Returns the destination path. Use :func:`build_krdict_report` when the
+    counts matter, as they do for a full dump where a plausible-looking file
+    can still be the wrong one.
+    """
+
+    return build_krdict_report(source_path, database_path).database_path
+
+
+def build_krdict_report(
+    source_path: str | os.PathLike[str],
+    database_path: str | os.PathLike[str],
+) -> KRDICTBuildResult:
+    """Build the artifact and report what went into it.
 
     The destination is replaced only after a complete temporary database has
-    been committed.  Rebuilding the same source therefore produces the same
+    been committed. Rebuilding the same source therefore produces the same
     logical and byte-level artifact without requiring a production KRDICT
     download in tests or development.
     """
 
     source = Path(source_path)
     destination = Path(database_path)
-    records = _parse_source(source)
+    records, skipped = _parse_source(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     temporary_path: Path | None = None
@@ -344,7 +406,13 @@ def build_krdict_database(
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-    return destination
+
+    return KRDICTBuildResult(
+        database_path=destination,
+        entry_count=len(records),
+        definition_count=sum(len(values) for values in records.values()),
+        skipped_without_english=skipped,
+    )
 
 
 # A descriptive alias helps callers that name the capability after its output
@@ -357,6 +425,8 @@ __all__ = [
     "KRDICT_SCHEMA_MARKER",
     "KRDICT_SCHEMA_NAME",
     "KRDICT_SCHEMA_VERSION",
+    "KRDICTBuildResult",
     "build_krdict_database",
+    "build_krdict_report",
     "build_krdict_sqlite",
 ]
