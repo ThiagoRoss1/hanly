@@ -22,6 +22,11 @@ Run the local quality gates:
 
 ```bash
 python -m pytest
-python -m ruff check packages tests
-python -m mypy packages tests
+python -m ruff check benchmarks packages packaging tests tools
+python -m mypy benchmarks packages packaging tests tools
 ```
+
+After installing the desktop runtime, `hanly run` opens a session-only capture
+selector (whole monitor or a dragged region) and then starts the same Hanly
+desktop composition. The ordinary `hanly-desktop` entry point remains the
+direct app launch.

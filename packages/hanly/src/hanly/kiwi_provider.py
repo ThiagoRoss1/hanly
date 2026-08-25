@@ -24,6 +24,15 @@ class KiwiProvider:
 
     def __init__(self, analyzer: object | None = None) -> None:
         self._analyzer = analyzer
+        self._prewarmed = False
+
+    def prewarm(self) -> None:
+        """Initialize Kiwi and exercise its tokenizer once on the caller thread."""
+
+        if self._prewarmed:
+            return
+        self.analyze("한")
+        self._prewarmed = True
 
     def analyze(self, text: str) -> Sequence[TokenAnalysis]:
         """Return normalized token analyses for ``text``.

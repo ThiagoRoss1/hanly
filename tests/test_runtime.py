@@ -52,6 +52,9 @@ def _runtime_config(
     resources: dict[str, object] | None = None,
 ) -> Path:
     payload = {
+        # These tests are about the PaddleOCR adapter, which the shipped
+        # configuration no longer selects by default.
+        "ocr_backend": "paddle",
         "resources": resources
         or {
             "paddle_detection_model": {"path": "models/det", "kind": "directory"},
@@ -109,7 +112,7 @@ def test_runtime_config_is_rooted_and_passes_explicit_paths_and_options_to_paddl
     assert runtime.resource_manager.configuration("paddle_recognition_model")["model_name"] == (
         "korean_PP-OCRv5_mobile_rec"
     )
-    options = runtime.paddle_config.to_engine_kwargs()
+    options = runtime.require_paddle_config().to_engine_kwargs()
     assert options["text_detection_model_name"] == "PP-OCRv5_mobile_det"
     assert options["text_detection_model_dir"] == str(
         (tmp_path / "models" / "det").resolve()
@@ -131,7 +134,7 @@ def test_enable_mkldnn_is_omitted_when_runtime_config_does_not_set_it(
 
     runtime = load_runtime(config)
 
-    assert "enable_mkldnn" not in runtime.paddle_config.to_engine_kwargs()
+    assert "enable_mkldnn" not in runtime.require_paddle_config().to_engine_kwargs()
 
 
 @pytest.mark.parametrize(
@@ -184,7 +187,7 @@ def test_unknown_paddle_keys_still_pass_through_to_the_library(tmp_path: Path) -
     payload["paddle"]["cpu_threads"] = 4
     config.write_text(json.dumps(payload), encoding="utf-8")
 
-    options = load_runtime(config).paddle_config.to_engine_kwargs()
+    options = load_runtime(config).require_paddle_config().to_engine_kwargs()
 
     assert options["cpu_threads"] == 4
 
@@ -270,6 +273,20 @@ def test_concrete_provider_factories_are_deferred_and_krdict_lifecycle_stays_on_
             assert text == "책"
             return (TokenAnalysis(token="책", lemma="책"),)
 
+    class FakeTextRecognition:
+        def __init__(self, *, config: object) -> None:
+            del config
+            construction_threads["fast_ocr"] = threading.get_ident()
+
+        def prewarm(self) -> None:
+            construction_threads["prewarm:fast_ocr"] = threading.get_ident()
+
+        def recognize_text(self, _image: ROIImage) -> object:
+            raise AssertionError("manual lookup must bypass fast hover OCR")
+
+        def close(self) -> None:
+            close_threads["fast_ocr"] = threading.get_ident()
+
     class FakeKRDICT:
         def __init__(self, database_path: Path) -> None:
             assert database_path == (tmp_path / "data" / "krdict.sqlite3").resolve()
@@ -284,12 +301,16 @@ def test_concrete_provider_factories_are_deferred_and_krdict_lifecycle_stays_on_
             close_threads["krdict"] = threading.get_ident()
 
     monkeypatch.setattr(runtime_module, "PaddleOCRProvider", FakeOCR)
+    monkeypatch.setattr(
+        runtime_module, "PaddleTextRecognitionProvider", FakeTextRecognition
+    )
     monkeypatch.setattr(runtime_module, "KiwiProvider", FakeKiwi)
     monkeypatch.setattr(runtime_module, "KRDICTProvider", FakeKRDICT)
 
     controller = runtime.create_lookup_controller(lambda _result: delivered.set())
     assert not constructed.is_set()
     controller.start()
+    assert controller.wait_until_ready(timeout=2)
     controller.submit(_IMAGE, _TARGET)
     assert constructed.wait(timeout=2)
     assert delivered.wait(timeout=2)
@@ -298,5 +319,6 @@ def test_concrete_provider_factories_are_deferred_and_krdict_lifecycle_stays_on_
     worker_thread = controller._executor.thread_ident
     assert worker_thread is not None
     assert set(construction_threads.values()) == {worker_thread}
+    assert "prewarm:fast_ocr" in construction_threads
     assert lookup_threads == {"krdict": worker_thread}
-    assert close_threads == {"krdict": worker_thread}
+    assert close_threads == {"krdict": worker_thread, "fast_ocr": worker_thread}

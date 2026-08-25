@@ -1,5 +1,13 @@
 # Final V1 Beta Implementation and Validation Review Handoff
 
+> **HAN-30 evidence update (2026-08-23).** The human has now confirmed that the
+> current real GitHub Actions build completed for macOS, Linux, and Windows.
+> This supersedes the earlier in-progress matrix snapshot below only for build
+> completion. It proves that all three packaging jobs completed; it does not
+> prove that any frozen desktop launches, provisions real resources, or performs
+> OCR/lookup correctly. The remaining artifact/runtime checks are tracked in
+> `docs/execution/reports/han-35/baseline.md` and remain human/external evidence.
+
 ## Bundle
 
 - Member issues: HAN-36, HAN-37, HAN-30

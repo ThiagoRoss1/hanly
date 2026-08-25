@@ -332,9 +332,21 @@ class UpdateService:
         self._manifest: RemoteManifest | None = None
 
     def check_for_updates(self) -> tuple[UpdateAvailability, ...]:
+        """Report release resources this installation actually uses.
+
+        A release serves every backend, so its manifest can advertise
+        resources the local configuration never declared, and an EasyOCR install
+        has no use for PaddleOCR model files. Offering those would also offer
+        something that cannot be acted on: ``install`` resolves a destination
+        from the local manifest and refuses an id that is not in it.
+        """
+
         manifest = self._fetcher.fetch_manifest()
         self._manifest = manifest
         current = self._current_states()
+        # The manifest iterates specs, not ids, so membership is taken from
+        # the ids themselves rather than from the manifest directly.
+        declared = {spec.resource_id for spec in self._resource_manager.manifest}
         return tuple(
             UpdateAvailability(
                 resource=resource,
@@ -345,6 +357,7 @@ class UpdateService:
                 ),
             )
             for resource in manifest
+            if resource.resource_id in declared
         )
 
     def install(

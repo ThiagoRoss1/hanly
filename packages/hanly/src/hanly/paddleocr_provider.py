@@ -9,6 +9,7 @@ result dictionaries and NumPy arrays remain implementation details here.
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,171 @@ class PaddleOCRConfig:
 
 class PaddleOCRProviderError(ProviderError):
     """Expected failure while constructing or invoking the Paddle adapter."""
+
+
+@dataclass(frozen=True, slots=True)
+class TextRecognitionResult:
+    """One geometry-free result from Paddle's public recognition module."""
+
+    text: str
+    confidence: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str):
+            raise TypeError("recognition text must be a string")
+        if not isfinite(self.confidence) or not 0 <= self.confidence <= 1:
+            raise ValueError("recognition confidence must be between 0 and 1")
+
+
+class PaddleTextRecognitionProvider:
+    """Bounded adapter around PaddleOCR's public ``TextRecognition`` module."""
+
+    def __init__(
+        self,
+        config: PaddleOCRConfig | None = None,
+        *,
+        engine: Any | None = None,
+        engine_factory: Callable[..., Any] | None = None,
+    ) -> None:
+        if engine is not None and engine_factory is not None:
+            raise ValueError("engine and engine_factory are mutually exclusive")
+
+        if engine is None:
+            provider_config = config or PaddleOCRConfig()
+            model_name = provider_config.text_recognition_model_name
+            model_dir = provider_config.text_recognition_model_dir
+            if model_name is None or model_dir is None:
+                raise PaddleOCRProviderError(
+                    "text recognition model name and directory are required"
+                )
+            factory = engine_factory or self._load_text_recognition_factory()
+            try:
+                engine = factory(
+                    model_name=model_name,
+                    model_dir=str(model_dir),
+                    input_shape=[3, 48, 160],
+                    cpu_threads=2,
+                    enable_mkldnn=False,
+                )
+            except Exception as exc:
+                raise PaddleOCRProviderError(
+                    f"TextRecognition initialization failed: {exc}"
+                ) from exc
+
+        if not callable(getattr(engine, "predict", None)):
+            raise PaddleOCRProviderError(
+                "TextRecognition engine must provide a callable predict method"
+            )
+        self._engine = engine
+        self._prewarmed = False
+
+    @staticmethod
+    def _load_text_recognition_factory() -> Callable[..., Any]:
+        try:
+            from paddleocr import TextRecognition
+        except Exception as exc:
+            raise PaddleOCRProviderError(
+                f"Paddle TextRecognition is unavailable: {exc}"
+            ) from exc
+        return TextRecognition
+
+    def recognize_text(self, image: ROIImage) -> TextRecognitionResult | None:
+        """Recognize one already-cropped line image without text detection."""
+
+        if not isinstance(image, ROIImage):
+            raise TypeError("image must be an ROIImage")
+        paddle_image = PaddleOCRProvider._to_paddle_image(image)
+        try:
+            raw_results = self._engine.predict(paddle_image)
+        except Exception as exc:
+            raise PaddleOCRProviderError(
+                f"TextRecognition inference failed: {exc}"
+            ) from exc
+        try:
+            return self._normalize_result(raw_results)
+        except PaddleOCRProviderError:
+            raise
+        except Exception as exc:
+            raise PaddleOCRProviderError(
+                f"TextRecognition returned malformed output: {exc}"
+            ) from exc
+
+    def prewarm(self) -> None:
+        """Run one real, idempotent inference before the worker becomes ready."""
+
+        if self._prewarmed:
+            return
+        blank = ROIImage(96, 32, PixelFormat.RGB_888, bytes(96 * 32 * 3))
+        self.recognize_text(blank)
+        self._prewarmed = True
+
+    def close(self) -> None:
+        close = getattr(self._engine, "close", None)
+        if callable(close):
+            close()
+
+    @classmethod
+    def _normalize_result(cls, raw_results: Any) -> TextRecognitionResult | None:
+        if raw_results is None:
+            return None
+        if cls._is_result_mapping(raw_results):
+            items = [raw_results]
+        elif PaddleOCRProvider._is_sequence(raw_results):
+            items = list(raw_results)
+        else:
+            raise PaddleOCRProviderError(
+                "TextRecognition returned malformed output: expected a result sequence"
+            )
+        if not items:
+            return None
+        if len(items) != 1:
+            raise PaddleOCRProviderError(
+                "TextRecognition must return exactly one result for one crop"
+            )
+
+        result = cls._result_mapping(items[0])
+        text = result.get("rec_text")
+        confidence = result.get("rec_score")
+        if not isinstance(text, str) or isinstance(confidence, bool) or not isinstance(
+            confidence, (int, float)
+        ):
+            raise PaddleOCRProviderError(
+                "TextRecognition returned malformed output: invalid text or confidence"
+            )
+        try:
+            return TextRecognitionResult(text.strip(), float(confidence))
+        except (TypeError, ValueError) as exc:
+            raise PaddleOCRProviderError(
+                f"TextRecognition returned malformed output: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _is_result_mapping(value: Any) -> bool:
+        return isinstance(value, Mapping) or (
+            hasattr(value, "__getitem__")
+            and (hasattr(value, "rec_text") or hasattr(value, "keys"))
+        )
+
+    @staticmethod
+    def _result_mapping(value: Any) -> Mapping[str, Any]:
+        if isinstance(value, Mapping):
+            return value
+        json_value = getattr(value, "json", None)
+        if callable(json_value):
+            json_value = json_value()
+        if isinstance(json_value, Mapping):
+            nested = json_value.get("res", json_value)
+            if isinstance(nested, Mapping):
+                return nested
+        try:
+            return {
+                "rec_text": value["rec_text"],
+                "rec_score": value["rec_score"],
+            }
+        except Exception as exc:
+            raise PaddleOCRProviderError(
+                "TextRecognition returned malformed output: invalid result mapping"
+            ) from exc
 
 
 class PaddleOCRProvider:
@@ -496,4 +662,10 @@ class PaddleOCRProvider:
         raise ValueError("each OCR geometry must contain four points or a box")
 
 
-__all__ = ["PaddleOCRConfig", "PaddleOCRProvider", "PaddleOCRProviderError"]
+__all__ = [
+    "PaddleOCRConfig",
+    "PaddleOCRProvider",
+    "PaddleOCRProviderError",
+    "PaddleTextRecognitionProvider",
+    "TextRecognitionResult",
+]

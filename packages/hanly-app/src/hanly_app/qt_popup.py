@@ -22,6 +22,7 @@ from .popup import (
     ScreenGeometry,
     format_lookup_result,
 )
+from .runtime_trace import RuntimeTraceSink, emit_trace
 
 
 class _QueuedCallbackBridge(QObject):
@@ -121,10 +122,21 @@ class QtPopupView(QFrame):
 class QtPopupTrigger:
     """Open a popup result at the current cursor and available screen."""
 
-    def __init__(self, popup: PopupController) -> None:
+    def __init__(
+        self,
+        popup: PopupController,
+        *,
+        trace_sink: RuntimeTraceSink | None = None,
+    ) -> None:
         self._popup = popup
+        self._trace_sink = trace_sink
 
-    def open(self, result: LookupResult) -> PopupPosition:
+    def open(
+        self,
+        result: LookupResult,
+        *,
+        lookup_request_id: int | None = None,
+    ) -> PopupPosition | None:
         """Owned V1 result trigger used by lookup callbacks."""
 
         cursor = QCursor.pos()
@@ -132,24 +144,47 @@ class QtPopupTrigger:
         if screen is None:
             raise RuntimeError("no Qt screen is available for popup placement")
         geometry = screen.availableGeometry()
-        return self._popup.open(
-            result,
-            Point(float(cursor.x()), float(cursor.y())),
-            ScreenGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height()),
+        try:
+            position = self._popup.open(
+                result,
+                Point(float(cursor.x()), float(cursor.y())),
+                ScreenGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height()),
+            )
+        except BaseException as error:
+            emit_trace(
+                self._trace_sink,
+                "popup_visibility_error",
+                stage="popup_visible",
+                lookup_request_id=lookup_request_id,
+                error_type=type(error).__name__,
+            )
+            raise
+        emit_trace(
+            self._trace_sink,
+            "popup_visible" if position is not None else "popup_suppressed",
+            stage="popup_visible" if position is not None else "popup_policy",
+            lookup_request_id=lookup_request_id,
+            result_status=result.status.value,
         )
+        return position
 
 
 class QtPopupRuntime:
     """Compose the Qt popup, open trigger, dispatcher, and UI shutdown seam."""
 
-    def __init__(self, lookup_controller: LookupStopper) -> None:
+    def __init__(
+        self,
+        lookup_controller: LookupStopper,
+        *,
+        trace_sink: RuntimeTraceSink | None = None,
+    ) -> None:
         self.dispatcher = QtResultDispatcher()
         self.view = QtPopupView()
         self.popup = PopupController(self.view, popup_size=self.view.popup_size)
-        self.trigger = QtPopupTrigger(self.popup)
+        self.trigger = QtPopupTrigger(self.popup, trace_sink=trace_sink)
         self._runtime = PopupRuntime(self.popup, lookup_controller)
 
-    def open(self, result: LookupResult) -> PopupPosition:
+    def open(self, result: LookupResult) -> PopupPosition | None:
         """Open the V1 popup trigger for a completed lookup result."""
 
         return self.trigger.open(result)

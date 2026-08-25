@@ -98,6 +98,20 @@ def test_runtime_hook_preloads_paddleocr_without_importing_qt() -> None:
     assert "torch" not in source
 
 
+def test_windows_package_includes_the_one_line_hanly_command() -> None:
+    spec = (ROOT / "packaging" / "hanly-desktop.spec").read_text(encoding="utf-8")
+    wrapper = (ROOT / "packaging" / "hanly.cmd").read_text(encoding="utf-8")
+    app_project = (
+        ROOT / "packages" / "hanly-app" / "pyproject.toml"
+    ).read_text(
+        encoding="utf-8"
+    )
+
+    assert 'ROOT / "packaging" / "hanly.cmd"' in spec
+    assert '"%~dp0hanly-desktop.exe" %*' in wrapper
+    assert 'hanly = "hanly_app.cli:main"' in app_project
+
+
 def test_host_platform_rejects_an_unsupported_system_by_name() -> None:
     with pytest.raises(ValueError, match="freebsd"):
         host_platform("freebsd")

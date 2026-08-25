@@ -49,13 +49,16 @@ datas = collect_data_files(
         "assets/control_center/*.js",
     ],
 )
+if sys.platform == "win32":
+    datas.append((str(ROOT / "packaging" / "hanly.cmd"), "."))
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
-# PaddleOCR's import graph is intentionally lazy in the application. Explicit
-# collection keeps the frozen artifact independent of dynamic-import guesses.
-for package_name in ("paddle", "paddleocr", "paddlex"):
-    package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
+for package_name in ("easyocr", "torch", "torchvision", "paddle", "paddleocr", "paddlex"):
+    try:
+        package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
+    except Exception:
+        continue
     datas.extend(package_datas)
     binaries.extend(package_binaries)
     hiddenimports.extend(package_hiddenimports)

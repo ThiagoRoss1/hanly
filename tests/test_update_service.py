@@ -423,3 +423,28 @@ def test_checksum_verification_reports_unusable_algorithms_and_paths(tmp_path: P
 
     with pytest.raises(ResourceUpdateError, match="could not hash staged artifact"):
         _verify_checksum(tmp_path / "missing.bin", f"sha256:{'0' * 64}")
+
+
+def test_updates_are_not_offered_for_resources_this_install_never_declared(
+    tmp_path: Path,
+) -> None:
+    """A release serves every backend, so its manifest can advertise PaddleOCR
+    models to an EasyOCR install. Offering them would offer something ``install``
+    then refuses, because it resolves destinations from the local manifest."""
+
+    service, _manager, fetcher = _service(tmp_path)
+    fetcher.manifest = RemoteManifest(
+        (
+            *fetcher.manifest,
+            RemoteResource(
+                "paddle_detection_model",
+                "9",
+                url="https://example.test/detection",
+                kind="directory",
+            ),
+        )
+    )
+
+    availability = service.check_for_updates()
+
+    assert [item.resource.resource_id for item in availability] == ["krdict"]

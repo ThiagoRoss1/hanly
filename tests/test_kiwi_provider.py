@@ -70,6 +70,17 @@ def test_kiwi_provider_returns_empty_for_empty_input_without_calling_analyzer() 
     assert analyzer.inputs == []
 
 
+def test_kiwi_provider_prewarm_runs_one_small_analysis_and_reuses_analyzer() -> None:
+    analyzer = _FakeAnalyzer((_FakeToken("한", "NNG", "한"),))
+    provider = KiwiProvider(analyzer=analyzer)
+
+    provider.prewarm()
+    provider.prewarm()
+    provider.analyze("한국어")
+
+    assert analyzer.inputs == ["한", "한국어"]
+
+
 class _FailingAnalyzer:
     def tokenize(self, text: str) -> tuple[object, ...]:
         del text

@@ -36,13 +36,18 @@ The Wave 0 quality gates are:
 
 ```bash
 python -m pytest
-python -m ruff check packages packaging tests tools
-python -m mypy packages packaging tests tools
+python -m ruff check packages packaging tests tools benchmarks
+python -m mypy packages packaging tests tools benchmarks
 ```
 
-The root `test_*.py` files are **exploratory spikes, not pytest tests** — they are `__main__` scripts with Portuguese comments and no assertions. Don't wire them into a future `tests/` suite; the DAG's `Korean Test Fixtures` capability covers real test inputs.
+Run the desktop from a checkout with an explicit configuration, which skips
+first-run provisioning against the (not yet published) release channel:
 
-The venv (`.venv/`, gitignored) runs Python 3.13 and already has `paddleocr`, `paddlepaddle`, `kiwipiepy`, `pillow`, `numpy`. The architecture targets Python **3.10+**, so don't rely on 3.13-only syntax.
+```bash
+python -m hanly_app.cli run --runtime-config resources/dev/runtime-easyocr.json
+```
+
+The venv (`.venv/`, gitignored) runs Python 3.13 and already has `easyocr`, `torch`, `paddleocr`, `paddlepaddle`, `kiwipiepy`, `pillow`, `numpy`. The architecture targets Python **3.10+**, so don't rely on 3.13-only syntax.
 
 ## Architecture
 
@@ -63,9 +68,21 @@ Read `docs/architecture/01`–`04` before changing anything structural. The big 
 
 `LookupResult` must model success, **normal non-success** (empty / not-found / unusable / low confidence), and processing errors — non-success is not an exception.
 
-## Superseded decisions
+## OCR backend
 
-- **EasyOCR is not part of V1.** `PaddleOCRProvider` is the only V1 OCR implementation; `OCRProvider` stays abstract so future adapters remain possible. `test_ocr_comparison.py` still benchmarks EasyOCR — it is a historical spike from before that decision, not current architecture. Don't cite it as evidence and don't "sync" the docs to it.
+**EasyOCR is the V1 backend.** A runtime configuration naming no backend means
+EasyOCR, a first launch provisions only `krdict`, and the desktop constructs
+`EasyOCRProvider`. This supersedes the earlier decision that Paddle was V1's
+only OCR implementation; do not restore that text from an older revision.
+
+`PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`
+(see `resources/dev/runtime.json`), together with its recognition-first hover
+fast path, which only Paddle supplies. Neither is on the default path.
+
+Measurements, the diagnosed defects behind the swap, and the deferred items are
+in `docs/execution/reports/ocr-latency-and-roadmap.md`. Read it before changing
+OCR behavior — several tuning levers there were measured and rejected.
+
 - **HanlyOCR** (a custom/fine-tuned model) is a future, non-blocking research track. It never blocks the V1 critical path, and its benchmark corpus is distinct from the small `Korean Test Fixtures`.
 
 ## Architecture docs ↔ visual diagrams

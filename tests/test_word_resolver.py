@@ -24,7 +24,10 @@ def test_resolver_selects_a_word_inside_a_line_level_ocr_region() -> None:
 
     assert WordResolver.resolve((line,), Point(x=24, y=24)) == "책을"
     assert WordResolver.resolve((line,), Point(x=120, y=24)) == "읽습니다."
-    assert WordResolver.resolve((line,), Point(x=50, y=24)) is None
+    # Word boundaries follow per-script advance widths, so the space occupies
+    # only the narrow band its glyph actually renders in.
+    assert WordResolver.resolve((line,), Point(x=50, y=24)) == "책을"
+    assert WordResolver.resolve((line,), Point(x=62, y=24)) is None
 
 
 def test_resolver_maps_word_selection_along_a_tilted_line_quad() -> None:
@@ -142,7 +145,10 @@ def test_resolver_still_accepts_a_thin_but_real_quad() -> None:
     assert WordResolver.resolve((thin,), Point(x=60.0, y=1.0)) == "책"
 
 
-def test_resolver_returns_none_when_target_hits_multiple_candidates() -> None:
+def test_a_nested_candidate_wins_over_the_region_enclosing_it() -> None:
+    """Both regions contain the point equally well by proportion, so the more
+    specific one is the better evidence."""
+
     candidates = (
         _result(
             "책",
@@ -154,7 +160,29 @@ def test_resolver_returns_none_when_target_hits_multiple_candidates() -> None:
         ),
     )
 
-    assert WordResolver().resolve(candidates, Point(x=20, y=20)) is None
+    assert WordResolver().resolve(candidates, Point(x=20, y=20)) == "을"
+
+
+def test_overlapping_text_lines_resolve_to_the_line_the_point_sits_inside() -> None:
+    """A dense paragraph makes an OCR adapter emit line quads that overlap
+    vertically. Refusing to answer there is what made the popup work on loosely
+    spaced text and silently fail on a chat transcript."""
+
+    upper = _result(
+        "읽습니다.",
+        Quad.from_bounding_box(BoundingBox(left=40, top=6, right=120, bottom=30)),
+    )
+    lower = _result(
+        "책은",
+        Quad.from_bounding_box(BoundingBox(left=30, top=27, right=66, bottom=43)),
+    )
+    candidates = (upper, lower)
+
+    # Deep inside either line, that line answers.
+    assert WordResolver().resolve(candidates, Point(x=60, y=12)) == "읽습니다."
+    assert WordResolver().resolve(candidates, Point(x=45, y=40)) == "책은"
+    # Inside the two-pixel overlap, one of them still answers.
+    assert WordResolver().resolve(candidates, Point(x=50, y=28)) is not None
 
 
 def test_resolver_keeps_candidate_handling_deterministic_in_provider_order() -> None:
@@ -171,3 +199,35 @@ def test_resolver_keeps_candidate_handling_deterministic_in_provider_order() -> 
     assert resolver.resolve((first, second), Point(x=10, y=10)) == "첫째"
     assert resolver.resolve((first, second), Point(x=30, y=10)) == "둘째"
     assert resolver.resolve((first, second), Point(x=10, y=10)) == "첫째"
+
+
+def test_word_boundaries_follow_rendered_character_widths() -> None:
+    """A space is roughly a third the width of a Hangul syllable. Treating every
+    character as equally wide gave whitespace an oversized hit region, which a
+    user experiences as a dead zone sitting over a real glyph."""
+
+    line = _result(
+        "책을 읽습니다.",
+        Quad.from_bounding_box(BoundingBox(left=0, top=0, right=192, bottom=48)),
+    )
+
+    dead = [
+        x for x in range(0, 192) if WordResolver.resolve((line,), Point(x=x, y=24)) is None
+    ]
+
+    # The whole gap sits between the two words rather than intruding on either.
+    assert 0 < len(dead) <= 16
+    assert all(WordResolver.resolve((line,), Point(x=x, y=24)) is None for x in dead)
+    assert max(dead) - min(dead) == len(dead) - 1
+    assert WordResolver.resolve((line,), Point(x=min(dead) - 1, y=24)) == "책을"
+    assert WordResolver.resolve((line,), Point(x=max(dead) + 1, y=24)) == "읽습니다."
+
+
+def test_latin_and_punctuation_advances_do_not_shift_korean_words() -> None:
+    line = _result(
+        "책을 ok.",
+        Quad.from_bounding_box(BoundingBox(left=0, top=0, right=100, bottom=24)),
+    )
+
+    assert WordResolver.resolve((line,), Point(x=10, y=12)) == "책을"
+    assert WordResolver.resolve((line,), Point(x=90, y=12)) == "ok."

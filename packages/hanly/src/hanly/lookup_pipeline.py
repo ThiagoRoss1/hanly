@@ -1,6 +1,6 @@
 """Provider-only orchestration for normalized Hanly lookups."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import isfinite
 
 from .contracts import (
@@ -12,7 +12,7 @@ from .contracts import (
     ROIImage,
     TokenAnalysis,
 )
-from .errors import HanlyError
+from .errors import HanlyError, LookupCancelled
 from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
 from .word_resolver import TargetResolver, WordResolver
 
@@ -57,7 +57,13 @@ class LookupPipeline:
 
         return self._confidence_threshold
 
-    def lookup(self, image: ROIImage, target: Point) -> LookupResult:
+    def lookup(
+        self,
+        image: ROIImage,
+        target: Point,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> LookupResult:
         """Return a normalized result for ``image`` at ``target``.
 
         Empty, unresolved, low-confidence, and not-found outcomes are ordinary
@@ -66,11 +72,13 @@ class LookupPipeline:
         need exception handling for normal lookup execution.
         """
 
+        _abort_if_cancelled(cancelled)
         try:
             ocr_results = tuple(self._ocr_provider.recognize(image))
         except Exception as exc:
             return self._error_result("OCR", exc)
 
+        _abort_if_cancelled(cancelled)
         context = LookupContext(ocr_results=ocr_results)
         if not ocr_results:
             return LookupResult(
@@ -87,6 +95,7 @@ class LookupPipeline:
         except Exception as exc:
             return self._error_result("word resolution", exc, context)
 
+        _abort_if_cancelled(cancelled)
         if region is None or not text.strip():
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
@@ -96,6 +105,16 @@ class LookupPipeline:
 
         text = text.strip()
         context = LookupContext(text=text, ocr_results=ocr_results)
+
+        # Hanly's downstream language services are Korean-only. OCR must run
+        # before we can know what the pixels contain, but Latin text, numbers,
+        # and punctuation must not wake Kiwi or KRDICT.
+        if not _contains_hangul(text):
+            return LookupResult(
+                status=LookupStatus.UNUSABLE,
+                diagnostics=("Resolved OCR target contains no Hangul",),
+                context=context,
+            )
 
         try:
             low_confidence = self._is_low_confidence(region)
@@ -118,6 +137,7 @@ class LookupPipeline:
         except Exception as exc:
             return self._error_result("morphology", exc, context)
 
+        _abort_if_cancelled(cancelled)
         try:
             lemmas = _usable_lemmas(analyses)
         except Exception as exc:
@@ -142,6 +162,7 @@ class LookupPipeline:
                 f"because the pipeline does not re-target inside a segment",
             )
 
+        _abort_if_cancelled(cancelled)
         context = LookupContext(text=text, lemma=lemma, ocr_results=ocr_results)
         try:
             entries = tuple(self._dictionary_provider.lookup(lemma))
@@ -204,6 +225,24 @@ def _usable_lemmas(analyses: Sequence[TokenAnalysis]) -> tuple[str, ...]:
         if lemma:
             lemmas.append(lemma)
     return tuple(lemmas)
+
+
+def _abort_if_cancelled(cancelled: Callable[[], bool] | None) -> None:
+    if cancelled is not None and cancelled():
+        raise LookupCancelled("lookup was superseded")
+
+
+def _contains_hangul(text: str) -> bool:
+    """Return whether text contains a modern or compatibility Hangul codepoint."""
+
+    return any(
+        "\u1100" <= character <= "\u11ff"
+        or "\u3130" <= character <= "\u318f"
+        or "\ua960" <= character <= "\ua97f"
+        or "\uac00" <= character <= "\ud7a3"
+        or "\ud7b0" <= character <= "\ud7ff"
+        for character in text
+    )
 
 
 __all__ = ["LookupPipeline"]

@@ -19,6 +19,7 @@ pythonpath = ["."]
 target-version = "py310"
 line-length = 100
 include = [
+    "benchmarks/**/*.py",
     "packages/**/*.py",
     "packaging/**/*.py",
     "tests/**/*.py",
@@ -30,10 +31,21 @@ include = [
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-files = ["packages", "packaging", "tests", "tools", "spikes"]
+files = ["benchmarks", "packages", "packaging", "tests", "tools", "spikes"]
 
 [[tool.mypy.overrides]]
-module = ["paddleocr.*", "kiwipiepy.*", "PIL.*", "mss.*", "PyQt6.*", "pystray.*", "webview.*"]
+module = [
+    "paddleocr.*",
+    "easyocr.*",
+    "torch.*",
+    "kiwipiepy.*",
+    "PIL.*",
+    "mss.*",
+    "PyQt6.*",
+    "pystray.*",
+    "webview.*",
+    "psutil.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

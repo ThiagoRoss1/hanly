@@ -71,7 +71,10 @@ class AppConfig:
     """
 
     hotkey: str = "ctrl+shift+space"
-    hover_delay_ms: int = 150
+    # 80 ms sits at the low end of the architecture's empirical hover range.
+    # It became affordable once a flat ROI stopped costing a full OCR call and
+    # nearby cursor positions started reusing one cached recognition.
+    hover_delay_ms: int = 80
     capture_mode: CaptureMode = CaptureMode.FULL_MONITOR
     theme: Theme = Theme.SYSTEM
     popup_enabled: bool = True

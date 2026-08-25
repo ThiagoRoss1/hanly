@@ -8,7 +8,7 @@ This view defines how the Hanly V1 desktop application starts and how an automat
 
 It does not define package ownership, implementation sequencing, browser or mobile behavior, DOM integration, subtitle processing, or HanlyOCR research.
 
-> **Decision update:** The approved visual diagram predates a later V1 scope decision. EasyOCR is no longer part of V1. `OCRProvider` remains an abstraction, with `PaddleOCRProvider` as the V1 implementation. Provider configurability remains an architectural capability for possible future implementations.
+> **Decision update (2026-08-24):** `EasyOCRProvider` is V1's OCR implementation. `PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`, but it is off the default path — it was measurably slower and heavier, not less accurate. Rationale: `DECISION-2026-08-24-ocr-backend.md`. `OCRProvider` remains an abstraction and provider configurability remains available.
 
 ## Startup flow
 
@@ -22,7 +22,7 @@ Startup is ordered as follows:
    - the SQLite database is present, readable, and schema-compatible;
    - required application assets are present.
 4. **Initialize Providers.** The provider categories may initialize in parallel:
-   - `OCRProvider`: the configured V1 implementation is `PaddleOCRProvider`.
+   - `OCRProvider`: the configured V1 implementation is `EasyOCRProvider`.
    - `MorphologyProvider`: Kiwi / kiwipiepy is the initial implementation.
    - `DictionaryProvider`: KRDICT backed by read-only SQLite is the initial implementation.
 5. **Initialize Lookup Pipeline.** `LookupPipeline` orchestrates target resolution, linguistic analysis, and dictionary lookup through provider contracts. It never references PaddleOCR, Kiwi, or KRDICT directly.
@@ -102,7 +102,7 @@ The hover delay is configurable and must be tuned empirically. Initial experimen
 
 > **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
 
-- **RF-INV-10:** The configured V1 OCR implementation is `PaddleOCRProvider`; `LookupPipeline` remains coupled only to `OCRProvider`, which preserves future provider configurability.
+- **RF-INV-10:** The configured V1 OCR implementation is `EasyOCRProvider`; `LookupPipeline` remains coupled only to `OCRProvider`, which preserves future provider configurability.
 - **RF-INV-11:** Desktop lookup execution is bounded / latest-wins, while final request-currency validation remains mandatory before presentation.
 - **RF-INV-12:** `LookupResult` represents successful, normal non-success, and processing-error outcomes without requiring every non-success to be an exception.
 

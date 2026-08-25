@@ -68,6 +68,28 @@ def test_factory_work_and_close_run_on_one_background_thread() -> None:
     assert close_calls == [worker_thread]
 
 
+def test_worker_readiness_can_be_observed_without_blocking_start() -> None:
+    factory_entered = Event()
+    release_factory = Event()
+
+    def factory() -> RecordingWorker:
+        factory_entered.set()
+        assert release_factory.wait(timeout=2)
+        return RecordingWorker([], [])
+
+    executor: JobExecutor[str, str] = JobExecutor(factory, lambda _item, _result: None)
+    executor.start()
+
+    assert factory_entered.wait(timeout=2)
+    assert executor.worker_ready is False
+    assert executor.wait_until_ready(timeout=0) is False
+
+    release_factory.set()
+    assert executor.wait_until_ready(timeout=2) is True
+    assert executor.worker_ready is True
+    executor.shutdown()
+
+
 def test_new_submission_replaces_the_single_pending_item() -> None:
     first_started = Event()
     release_first = Event()

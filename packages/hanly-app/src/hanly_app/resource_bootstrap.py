@@ -22,7 +22,12 @@ from typing import Any
 
 from hanly.resource_manager import ResourceManager, ResourceMetadata, ResourceStatus
 
-from .runtime import RuntimeConfigError, load_resource_manager
+from .runtime import (
+    OCRBackend,
+    RuntimeConfigError,
+    load_resource_manager,
+    read_ocr_backend,
+)
 from .update_service import (
     GitHubReleaseFetcher,
     RemoteResource,
@@ -35,10 +40,23 @@ PUBLIC_REPOSITORY_OWNER = "ThiagoRoss1"
 PUBLIC_REPOSITORY_NAME = "hanly"
 PUBLIC_MANIFEST_ASSET = "hanly-resources.json"
 PUBLIC_RELEASE_CHANNEL = f"{PUBLIC_REPOSITORY_OWNER}/{PUBLIC_REPOSITORY_NAME}"
-REQUIRED_RESOURCE_KINDS = {
+#: Every resource a runtime may declare, with the kind it must have.
+RESOURCE_KINDS = {
     "paddle_detection_model": "directory",
     "paddle_recognition_model": "directory",
     "krdict": "krdict",
+}
+
+#: What each backend must have provisioned before the desktop can start.
+#: EasyOCR resolves its own models through its storage directory, so it
+#: declares no managed model resource.
+REQUIRED_RESOURCE_IDS = {
+    OCRBackend.PADDLE: (
+        "paddle_detection_model",
+        "paddle_recognition_model",
+        "krdict",
+    ),
+    OCRBackend.EASYOCR: ("krdict",),
 }
 
 
@@ -64,11 +82,12 @@ def bootstrap_runtime_config(
     if not path.exists():
         _write_default_config(path)
 
+    required = REQUIRED_RESOURCE_IDS[read_ocr_backend(path)]
     manager = _load_manager(path, context="cannot prepare runtime configuration")
     metadata = manager.validate()
     missing = [
         resource_id
-        for resource_id in REQUIRED_RESOURCE_KINDS
+        for resource_id in required
         if metadata[resource_id].status is not ResourceStatus.VALID
     ]
     if not missing:
@@ -110,8 +129,14 @@ def _install_resources(
     try:
         availability = service.check_for_updates()
     except UpdateServiceError as error:
+        # Reaching the release channel is only how a launch with no
+        # configuration of its own obtains resources. Say so, because the
+        # failure otherwise reads as a broken application to anyone running
+        # from a checkout before any release exists.
         raise RuntimeBootstrapError(
-            f"could not obtain required resources from {PUBLIC_RELEASE_CHANNEL}: {error}"
+            f"could not obtain required resources from {PUBLIC_RELEASE_CHANNEL}: "
+            f"{error}. Start with --runtime-config pointing at an existing "
+            f"configuration to use local resources instead."
         ) from error
 
     remote = {item.resource.resource_id: item.resource for item in availability}
@@ -144,10 +169,10 @@ def _require_deliverable_resources(
         )
 
     mismatched = [
-        f"{resource_id} (expected {REQUIRED_RESOURCE_KINDS[resource_id]}, "
+        f"{resource_id} (expected {RESOURCE_KINDS[resource_id]}, "
         f"got {remote[resource_id].kind})"
         for resource_id in resource_ids
-        if remote[resource_id].kind != REQUIRED_RESOURCE_KINDS[resource_id]
+        if remote[resource_id].kind != RESOURCE_KINDS[resource_id]
     ]
     if mismatched:
         raise RuntimeBootstrapError(
@@ -258,33 +283,25 @@ def _write_json_atomically(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def _default_runtime_payload() -> dict[str, Any]:
-    detection_path = "resources/models/PP-OCRv5_mobile_det"
-    recognition_path = "resources/models/korean_PP-OCRv5_mobile_rec"
+    """Return the configuration a first launch writes.
+
+    EasyOCR declares no managed model resource: it resolves its own models
+    through its storage directory, so a first run provisions only KRDICT. The
+    PaddleOCR adapter remains available to a configuration that names it.
+    """
+
     return {
         "manifest_version": 1,
+        "ocr_backend": OCRBackend.EASYOCR.value,
+        "skip_flat_rois": True,
         "resources": {
-            "paddle_detection_model": {
-                "kind": "directory",
-                "path": detection_path,
-            },
-            "paddle_recognition_model": {
-                "kind": "directory",
-                "path": recognition_path,
-            },
             "krdict": {
                 "kind": "krdict",
                 "path": "resources/krdict/krdict.sqlite3",
             },
         },
-        "paddle": {
-            "text_detection_model_name": "PP-OCRv5_mobile_det",
-            "text_detection_model_dir": detection_path,
-            "text_recognition_model_name": "korean_PP-OCRv5_mobile_rec",
-            "text_recognition_model_dir": recognition_path,
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
-            "use_textline_orientation": False,
-            "enable_mkldnn": False,
+        "easyocr": {
+            "languages": ["ko"],
         },
         "updates": {
             "github": {
@@ -319,7 +336,8 @@ __all__ = [
     "PUBLIC_RELEASE_CHANNEL",
     "PUBLIC_REPOSITORY_NAME",
     "PUBLIC_REPOSITORY_OWNER",
-    "REQUIRED_RESOURCE_KINDS",
+    "REQUIRED_RESOURCE_IDS",
+    "RESOURCE_KINDS",
     "RuntimeBootstrapError",
     "bootstrap_runtime_config",
 ]

@@ -1,5 +1,6 @@
 {
   "manifest_version": 1,
+  "ocr_backend": "paddle",
   "resources": {
     "paddle_detection_model": {
       "kind": "directory",

@@ -11,3 +11,4 @@ resources/dev/krdict/*.sqlite3
 resources/dev/models/
 resources/dev/runtime-local.json
 resources/dev/app-config.json
+artifacts/han35/

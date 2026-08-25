@@ -45,6 +45,19 @@ hanly-desktop --runtime-config path/to/runtime.json
 python -m hanly_app --runtime-config path/to/runtime.json
 ```
 
+For a terminal-first launch, select the session capture area and start that
+same desktop runtime with one command:
+
+```powershell
+hanly run
+```
+
+The selector offers the monitor under the cursor or a dragged region contained
+within one monitor. Cancelling exits without provisioning resources or starting
+background capture. The selection lasts for this process only; it does not
+silently replace saved preferences. `--runtime-config` and `--app-config` may
+follow `hanly run` when explicit paths are needed.
+
 Use `--app-config` to override the per-user preferences path. Startup preloads
 PaddleOCR before importing Qt on Windows, then composes the worker-owned lookup
 runtime, Control Center, background update coordinator, system tray, live

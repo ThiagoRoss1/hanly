@@ -6,6 +6,11 @@ platform-native **onedir** application and includes the `hanly` engine,
 Qt runtime libraries. The frozen startup hook preserves the required
 PaddleOCR-before-Qt ordering; the application still enters through
 `hanly_app.application.main` and retains the `--runtime-config` argument.
+On Windows the onedir application also contains `hanly.cmd`; from that
+directory, `hanly run` opens the whole-monitor/drag-region selector and then
+dispatches to the same frozen executable. Normal `hanly-desktop.exe` launch is
+unchanged. Installed Python distributions expose the same command through the
+`hanly` console script.
 
 Build with the authoritative interpreter for the current host:
 

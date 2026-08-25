@@ -9,6 +9,7 @@ from hanly.paddleocr_provider import (
     PaddleOCRConfig,
     PaddleOCRProvider,
     PaddleOCRProviderError,
+    PaddleTextRecognitionProvider,
 )
 
 
@@ -160,3 +161,69 @@ def test_config_passes_explicit_model_names_and_paths_to_engine_factory() -> Non
             "use_textline_orientation": False,
         }
     ]
+
+
+def test_text_recognition_provider_uses_the_bounded_public_module_options() -> None:
+    calls: list[Mapping[str, object]] = []
+    engines: list[_FakeEngine] = []
+
+    def factory(**kwargs: object) -> _FakeEngine:
+        calls.append(kwargs)
+        engine = _FakeEngine([{"rec_text": "책", "rec_score": 0.97}])
+        engines.append(engine)
+        return engine
+
+    config = PaddleOCRConfig(
+        text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
+        text_recognition_model_dir="models/rec",
+    )
+    provider = PaddleTextRecognitionProvider(config=config, engine_factory=factory)
+
+    result = provider.recognize_text(_roi())
+
+    assert calls == [
+        {
+            "model_name": "korean_PP-OCRv5_mobile_rec",
+            "model_dir": "models/rec",
+            "input_shape": [3, 48, 160],
+            "cpu_threads": 2,
+            "enable_mkldnn": False,
+        }
+    ]
+    assert result is not None
+    assert result.text == "책"
+    assert result.confidence == 0.97
+    engine_input = engines[0].inputs[0]
+    assert engine_input.shape == (1, 2, 3)
+    assert engine_input.dtype == np.uint8
+
+
+def test_text_recognition_provider_rejects_malformed_or_multiple_results() -> None:
+    malformed = PaddleTextRecognitionProvider(
+        engine=_FakeEngine([{"rec_text": ("책",), "rec_score": 0.9}])
+    )
+    multiple = PaddleTextRecognitionProvider(
+        engine=_FakeEngine(
+            [
+                {"rec_text": "책", "rec_score": 0.9},
+                {"rec_text": "학교", "rec_score": 0.9},
+            ]
+        )
+    )
+
+    with pytest.raises(PaddleOCRProviderError, match="malformed"):
+        malformed.recognize_text(_roi())
+    with pytest.raises(PaddleOCRProviderError, match="exactly one"):
+        multiple.recognize_text(_roi())
+
+
+def test_text_recognition_prewarm_runs_real_inference_once() -> None:
+    engine = _FakeEngine([{"rec_text": "", "rec_score": 0.0}])
+    provider = PaddleTextRecognitionProvider(engine=engine)
+
+    provider.prewarm()
+    provider.prewarm()
+
+    assert len(engine.inputs) == 1
+    assert engine.inputs[0].shape == (32, 96, 3)
+    assert engine.inputs[0].dtype == np.uint8

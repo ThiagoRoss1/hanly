@@ -334,7 +334,7 @@ def test_explicit_runtime_config_skips_first_run_bootstrap(
     monkeypatch.setattr(
         application_module,
         "run_desktop",
-        lambda runtime_config, *, app_config=None: (
+        lambda runtime_config, **_options: (
             0 if Path(runtime_config) == config else 1
         ),
     )

@@ -119,6 +119,8 @@ class MouseObserver:
         self._listener: MouseListener | None = None
         self._running = False
         self._generation = 0
+        self._pending_point: Point | None = None
+        self._delivery_pending = False
 
     @property
     def running(self) -> bool:
@@ -164,6 +166,8 @@ class MouseObserver:
             self._listener = None
             self._running = False
             self._generation += 1
+            self._pending_point = None
+            self._delivery_pending = False
 
         if listener is not None:
             _stop_listener(listener)
@@ -174,6 +178,10 @@ class MouseObserver:
         with self._lock:
             if not self._running:
                 return
+            self._pending_point = point
+            if self._delivery_pending:
+                return
+            self._delivery_pending = True
             dispatcher = self._dispatcher
             generation = self._generation
 
@@ -181,10 +189,21 @@ class MouseObserver:
             with self._lock:
                 if not self._running or generation != self._generation:
                     return
+                latest = self._pending_point
+                self._pending_point = None
+                self._delivery_pending = False
                 handler = self._on_position
-            handler(point)
+            if latest is not None:
+                handler(latest)
 
-        dispatcher(deliver)
+        try:
+            dispatcher(deliver)
+        except BaseException:
+            with self._lock:
+                if generation == self._generation:
+                    self._pending_point = None
+                    self._delivery_pending = False
+            raise
 
 
 __all__ = [

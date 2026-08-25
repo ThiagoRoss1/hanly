@@ -7,3 +7,7 @@ class HanlyError(Exception):
 
 class ProviderError(HanlyError):
     """Failure raised by a provider implementation."""
+
+
+class LookupCancelled(HanlyError):
+    """A lookup superseded between provider stages."""

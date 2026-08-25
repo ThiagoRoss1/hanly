@@ -318,6 +318,19 @@ def _submit_hover(
     assert dispatcher.drain_one()
 
 
+def _await_hover_ready(
+    manual: ManualLookupRuntime,
+    dispatcher: _QueueDispatcher,
+) -> None:
+    hover = manual.hover_runtime
+    assert hover is not None
+    assert manual.controller.wait_until_ready(timeout=2)
+    deadline = monotonic() + 2
+    while not hover.hover_controller.running and monotonic() < deadline:
+        dispatcher.drain_one(timeout=0.05)
+    assert hover.hover_controller.running
+
+
 def _wait_for_popup(
     dispatcher: _QueueDispatcher,
     popup: _Popup,
@@ -357,6 +370,7 @@ def test_hover_e2e_runs_real_pipeline_and_uses_manual_popup_sink(
 
     try:
         manual.start()
+        _await_hover_ready(manual, dispatcher)
         listener = listeners.listeners[0]
         _submit_hover(listener, _UI_POINT, dispatcher, scheduler)
         _wait_for_popup(dispatcher, popup, 1)
@@ -388,8 +402,8 @@ def test_hover_e2e_supersedes_stale_movement_and_keeps_latest_work_bounded() -> 
         capture,
         popup,
         ocr,
-        _morphology,
-        _dictionary,
+        morphology,
+        dictionary,
         resolver,
     ) = _runtime(
         definitions={"책": ("book",), "둘째": ("second",), "마지막": ("latest",)},
@@ -397,6 +411,7 @@ def test_hover_e2e_supersedes_stale_movement_and_keeps_latest_work_bounded() -> 
     )
     try:
         manual.start()
+        _await_hover_ready(manual, dispatcher)
         listener = listeners.listeners[0]
         _submit_hover(listener, _UI_POINT, dispatcher, scheduler)
         assert ocr.first_started.wait(timeout=2)
@@ -410,7 +425,9 @@ def test_hover_e2e_supersedes_stale_movement_and_keeps_latest_work_bounded() -> 
 
         assert ocr.calls == [_IMAGE_BY_POINT[_UI_POINT], _IMAGE_BY_POINT[_LATEST_POINT]]
         assert capture.cursors == [_UI_POINT, _SECOND_POINT, _LATEST_POINT]
-        assert resolver.targets == [_TARGET, _TARGET]
+        assert resolver.targets == [_TARGET]
+        assert morphology.calls == ["마지막"]
+        assert dictionary.calls == ["마지막"]
         result = popup.results[0]
         assert result.context is not None
         assert result.context.text == "마지막"
@@ -435,6 +452,7 @@ def test_hover_e2e_pause_cancels_pending_delay_before_capture_or_lookup() -> Non
     ) = _runtime(definitions={"책": ("book",)})
     try:
         manual.start()
+        _await_hover_ready(manual, dispatcher)
         listener = listeners.listeners[0]
         listener.emit(_UI_POINT)
         assert dispatcher.drain_one()

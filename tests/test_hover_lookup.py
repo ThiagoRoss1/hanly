@@ -142,6 +142,7 @@ def _runtime(
     *,
     worker: _Worker | None = None,
     capture: _Capture | None = None,
+    on_invalidate: Callable[[], None] | None = None,
 ) -> tuple[
     HoverLookupRuntime,
     _Scheduler,
@@ -169,8 +170,23 @@ def _runtime(
         scheduler=scheduler,
         dispatcher=dispatcher,
         listener_factory=listeners,
+        on_invalidate=on_invalidate,
     )
     return runtime, scheduler, listeners, dispatcher, actual_capture, actual_worker, results
+
+
+def _await_hover_ready(
+    runtime: HoverLookupRuntime,
+    dispatcher: _QueueDispatcher,
+) -> None:
+    assert runtime.controller.wait_until_ready(timeout=2)
+    for _ in range(100):
+        if dispatcher.pending:
+            dispatcher.drain_one()
+        if runtime.hover_controller.running:
+            return
+        Event().wait(0.01)
+    raise AssertionError("hover observation did not start after worker readiness")
 
 
 def test_stable_hover_captures_cursor_roi_and_uses_worker_popup_path() -> None:
@@ -178,6 +194,7 @@ def test_stable_hover_captures_cursor_roi_and_uses_worker_popup_path() -> None:
     caller_thread = threading.get_ident()
 
     runtime.start()
+    _await_hover_ready(runtime, dispatcher)
     listeners.listeners[0].emit(120, 80)
     dispatcher.drain_one()
     assert scheduler.calls[0][0] == 220
@@ -196,15 +213,74 @@ def test_stable_hover_captures_cursor_roi_and_uses_worker_popup_path() -> None:
         if dispatcher.pending:
             break
         Event().wait(0.01)
-    dispatcher.drain_one()
+    if dispatcher.pending:
+        dispatcher.drain_one()
 
     assert results == [_result()]
+    runtime.shutdown()
+
+
+def test_cursor_movement_clears_any_previous_popup_immediately() -> None:
+    cleared: list[str] = []
+    runtime, _scheduler, listeners, dispatcher, _capture, _worker, _results = _runtime(
+        on_invalidate=lambda: cleared.append("clear")
+    )
+    runtime.start()
+    _await_hover_ready(runtime, dispatcher)
+
+    listeners.listeners[0].emit(10, 20)
+    dispatcher.drain_one()
+
+    assert cleared == ["clear"]
+    runtime.shutdown()
+
+
+def test_hover_capture_is_gated_until_resident_worker_is_ready() -> None:
+    release_factory = Event()
+    factory_entered = Event()
+    scheduler = _Scheduler()
+    listeners = _ListenerFactory()
+    dispatcher = _QueueDispatcher()
+    capture = _Capture()
+    worker = _Worker()
+
+    def factory() -> _Worker:
+        factory_entered.set()
+        assert release_factory.wait(timeout=2)
+        return worker
+
+    controller = LookupController(factory, lambda _result: None)
+    runtime = HoverLookupRuntime(
+        controller,
+        capture,
+        scheduler=scheduler,
+        dispatcher=dispatcher,
+        listener_factory=listeners,
+    )
+
+    runtime.start()
+    assert factory_entered.wait(timeout=2)
+    listeners.listeners[0].emit(50, 60)
+    dispatcher.drain_one()
+
+    assert scheduler.calls == []
+    assert capture.cursors == []
+
+    release_factory.set()
+    for _ in range(100):
+        if dispatcher.pending:
+            break
+        Event().wait(0.01)
+    dispatcher.drain_one()
+
+    assert scheduler.calls
     runtime.shutdown()
 
 
 def test_mouse_move_supersedes_hover_and_stale_result_is_not_presented() -> None:
     runtime, scheduler, listeners, dispatcher, _capture, worker, results = _runtime()
     runtime.start()
+    _await_hover_ready(runtime, dispatcher)
 
     listeners.listeners[0].emit(100, 100)
     dispatcher.drain_one()
@@ -220,7 +296,8 @@ def test_mouse_move_supersedes_hover_and_stale_result_is_not_presented() -> None
         if dispatcher.pending:
             break
         Event().wait(0.01)
-    dispatcher.drain_one()
+    if dispatcher.pending:
+        dispatcher.drain_one()
 
     assert results == []
     runtime.shutdown()
@@ -235,6 +312,7 @@ def test_hover_forwards_normal_non_success_result_to_the_existing_popup_sink() -
         worker=_Worker({1: not_found})
     )
     runtime.start()
+    _await_hover_ready(runtime, dispatcher)
 
     listeners.listeners[0].emit(100, 100)
     dispatcher.drain_one()
@@ -255,6 +333,7 @@ def test_hover_forwards_normal_non_success_result_to_the_existing_popup_sink() -
 def test_pause_cancels_pending_hover_and_shutdown_suppresses_queued_work() -> None:
     runtime, scheduler, listeners, dispatcher, capture, worker, results = _runtime()
     runtime.start()
+    _await_hover_ready(runtime, dispatcher)
 
     listeners.listeners[0].emit(10, 20)
     dispatcher.drain_one()
@@ -287,6 +366,7 @@ def test_pause_cancels_pending_hover_and_shutdown_suppresses_queued_work() -> No
 def test_mouse_move_before_hover_submission_does_not_cancel_manual_lookup() -> None:
     runtime, scheduler, listeners, dispatcher, _capture, worker, results = _runtime()
     runtime.start()
+    _await_hover_ready(runtime, dispatcher)
 
     manual_request = runtime.controller.submit(_IMAGE, Point(0, 0))
     assert worker.started.wait(timeout=2)
@@ -332,6 +412,7 @@ def test_invalid_capture_result_is_reported_without_submitting_unbounded_work() 
         on_error=lambda stage, error: errors.append((stage, error)),
     )
     runtime.start()
+    _await_hover_ready(runtime, dispatcher)
     listeners.listeners[0].emit(1, 2)
     dispatcher.drain_one()
     scheduler.fire()
@@ -382,6 +463,8 @@ def test_manual_composition_attaches_hover_to_the_same_controller_capture_and_po
         hover_listener_factory=listeners,
     )
     manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
     listeners.listeners[0].emit(50, 60)
     dispatcher.drain_one()
     scheduler.fire()
@@ -488,17 +571,12 @@ def test_fatal_lookup_failure_stops_hover_instead_of_capturing_forever() -> None
     hover = manual.hover_runtime
     assert hover is not None
 
-    # The first attempt submits before the executor's worker factory has run,
-    # so the fatal state only becomes visible to the next one.
-    _settle(dispatcher, listeners, scheduler, 40)
     for _ in range(500):
         _drain(dispatcher)
-        if not manual.controller.accepting:
+        if hover.failed:
             break
         Event().wait(0.01)
     assert manual.controller.accepting is False
-    _settle(dispatcher, listeners, scheduler, 55)
-    _drain(dispatcher)
 
     assert hover.failed is True
     assert hover.running is False
@@ -548,6 +626,8 @@ def test_configured_hover_delay_reaches_the_scheduler() -> None:
         app_config=AppConfig(hover_delay_ms=220),
     )
     manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
     listeners.listeners[0].emit(40, 10)
     dispatcher.drain_one()
 

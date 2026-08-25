@@ -70,6 +70,21 @@ def test_movement_handler_runs_only_through_the_injected_dispatcher() -> None:
     assert received == [Point(12, 34)]
 
 
+def test_queued_movement_is_coalesced_to_the_latest_position() -> None:
+    received: list[Point] = []
+    posted: list[Callable[[], None]] = []
+    observer, listeners = _observer(received.append, dispatcher=posted.append)
+
+    observer.start()
+    listeners[0].emit(10, 10)
+    listeners[0].emit(20, 20)
+    listeners[0].emit(30, 30)
+
+    assert len(posted) == 1
+    posted[0]()
+    assert received == [Point(30, 30)]
+
+
 def test_start_and_stop_are_idempotent() -> None:
     observer, listeners = _observer(lambda _point: None)
 

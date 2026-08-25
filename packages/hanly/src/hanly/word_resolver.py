@@ -7,6 +7,14 @@ from .contracts import OCRResult, Point, Quad
 
 _GEOMETRY_EPSILON = 1e-9
 
+# Character advances relative to a full-width Hangul syllable. Used to place
+# word boundaries along a line quad; see :func:`_advance_weight`.
+_FULL_WIDTH_ADVANCE = 1.0
+_LATIN_ADVANCE = 0.55
+_SPACE_ADVANCE = 0.35
+_PUNCTUATION_ADVANCE = 0.35
+_NARROW_PUNCTUATION = frozenset(".,:;!?'\"·`^|")
+
 
 @runtime_checkable
 class TargetResolver(Protocol):
@@ -38,9 +46,16 @@ class WordResolver:
 
     OCR adapters already provide reading order, so candidate handling keeps
     that order and never depends on set/dict iteration or confidence as an
-    implicit tie-breaker. If zero or more than one usable candidate contains
-    the target, resolution is ambiguous and returns ``None``. A target in the
-    whitespace between words is also a normal no-result outcome.
+    implicit tie-breaker. A target inside no candidate returns ``None``, as
+    does a target in the whitespace between words.
+
+    Several candidates may legitimately contain one target: an OCR adapter
+    reading a dense paragraph emits line quads that overlap vertically where
+    the lines are tightly set, so a point near a line boundary falls inside
+    two of them. That is ordinary output rather than ambiguity, and refusing
+    to answer showed up as a popup that worked on loosely spaced text and
+    silently failed on a chat transcript. The line the point sits furthest
+    inside wins.
     """
 
     @staticmethod
@@ -92,10 +107,10 @@ class WordResolver:
             if _contains(result.quad, target):
                 hits.append(result)
 
-        if len(hits) != 1:
+        if not hits:
             return None
 
-        result = hits[0]
+        result = hits[0] if len(hits) == 1 else _most_interior(hits, target)
         word = _word_at_target(result.text, result.quad, target)
         if word is None:
             return None
@@ -177,10 +192,13 @@ def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
     """Map a target's local horizontal position to one OCR word.
 
     The axis derived by :func:`_text_axis` is stable for the tilted
-    quadrilaterals emitted by PaddleOCR. Character widths are not
-    measured here because the OCR contract exposes only the line quad; for a
-    Korean OCR line, proportional differences are small compared with the
-    word-sized spacing this mapping needs to distinguish.
+    quadrilaterals emitted by an OCR adapter. The OCR contract exposes only the
+    line quad, so character positions are estimated from per-script advance
+    weights rather than measured. Treating every character as equally wide is
+    what this deliberately avoids: a space is roughly a third the width of a
+    Hangul syllable, so a uniform mapping gives whitespace an oversized hit
+    region and shifts every character after it, which reads to a user as a dead
+    zone over a real glyph.
     """
 
     if not text:
@@ -190,7 +208,7 @@ def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
     if fraction is None:
         return None
 
-    index = min(len(text) - 1, max(0, int(fraction * len(text))))
+    index = _character_index(text, fraction)
     if text[index].isspace():
         return None
 
@@ -204,6 +222,63 @@ def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
 
     word = text[start:end].strip()
     return word or None
+
+
+def _most_interior(hits: list[OCRResult], target: Point) -> OCRResult:
+    """Return the candidate whose text line the target sits furthest inside.
+
+    Overlap between OCR line quads is vertical, so vertical margin separates
+    them, but measured as a fraction of the line's own height, otherwise a
+    tall quad always outranks the shorter one nested inside it. A genuine
+    nesting scores equally on that fraction and is settled by area, which
+    prefers the more specific region. Provider reading order breaks anything
+    still equal.
+    """
+
+    def rank(indexed: tuple[int, OCRResult]) -> tuple[float, float, int]:
+        index, result = indexed
+        box = result.bounding_box
+        height = max(1, box.bottom - box.top)
+        margin = min(target.y - box.top, box.bottom - target.y) / height
+        area = (box.right - box.left) * (box.bottom - box.top)
+        return (-margin, area, index)
+
+    return min(enumerate(hits), key=rank)[1]
+
+
+def _character_index(text: str, fraction: float) -> int:
+    """Return the character whose estimated advance span contains ``fraction``."""
+
+    advances = [_advance_weight(character) for character in text]
+    total = sum(advances)
+    if total <= 0.0:
+        return min(len(text) - 1, max(0, int(fraction * len(text))))
+
+    travelled = fraction * total
+    consumed = 0.0
+    for index, advance in enumerate(advances):
+        consumed += advance
+        if travelled < consumed:
+            return index
+    return len(text) - 1
+
+
+def _advance_weight(character: str) -> float:
+    """Return one character's width relative to a full-width Hangul syllable.
+
+    These are coarse typographic ratios, not font metrics. They only need to be
+    good enough to keep word boundaries near their rendered position, and being
+    approximately right is a large improvement over assuming every character is
+    equally wide.
+    """
+
+    if character.isspace():
+        return _SPACE_ADVANCE
+    if character in _NARROW_PUNCTUATION:
+        return _PUNCTUATION_ADVANCE
+    if character.isascii():
+        return _LATIN_ADVANCE
+    return _FULL_WIDTH_ADVANCE
 
 
 def _horizontal_fraction(quad: Quad, target: Point) -> float | None:

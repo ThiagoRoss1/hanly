@@ -221,6 +221,25 @@ def test_single_token_segment_reports_no_reduction_diagnostic() -> None:
     assert result.diagnostics == ()
 
 
+def test_non_hangul_target_stops_before_morphology_and_dictionary() -> None:
+    events: list[str] = []
+    latin = OCRResult(
+        text="English",
+        confidence=0.99,
+        quad=Quad.from_bounding_box(
+            BoundingBox(left=0, top=0, right=10, bottom=10)
+        ),
+    )
+
+    result = _pipeline(events, ocr_results=(latin,)).lookup(_IMAGE, _TARGET)
+
+    assert result.status is LookupStatus.UNUSABLE
+    assert result.context is not None
+    assert result.context.text == "English"
+    assert events == ["ocr", "resolver"]
+    assert any("Hangul" in diagnostic for diagnostic in result.diagnostics)
+
+
 def test_error_diagnostic_does_not_repeat_the_stage_prefix() -> None:
     events: list[str] = []
     pipeline = _pipeline(events)

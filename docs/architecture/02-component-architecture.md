@@ -50,11 +50,11 @@ Each provider interface is an engine seam. Concrete adapters satisfy those inter
 
 | Provider interface | Contract | Initial adapter(s) | External dependency |
 | --- | --- | --- | --- |
-| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `PaddleOCRProvider` (V1) | PaddleOCR |
+| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `EasyOCRProvider` (V1), `PaddleOCRProvider` (selectable) | EasyOCR, PaddleOCR |
 | `MorphologyProvider` | Korean text in; `TokenAnalysis` out | `KiwiProvider` | Kiwi / kiwipiepy |
 | `DictionaryProvider` | Dictionary-form lookup in; normalized `DictionaryEntry` data out | `KRDICTProvider` | Processed KRDICT in local, read-only SQLite |
 
-> **Decision update:** The approved visual diagram predates a later V1 scope decision. EasyOCR is no longer part of V1. `OCRProvider` remains an abstraction, with `PaddleOCRProvider` as the V1 implementation.
+> **Decision update (2026-08-24):** `EasyOCRProvider` is V1's OCR implementation. `PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`, but it is off the default path — it was measurably slower and heavier, not less accurate. Rationale: `DECISION-2026-08-24-ocr-backend.md`. `OCRProvider` remains an abstraction and provider configurability remains available.
 
 Provider selection remains configurable as an architectural concept for possible future implementations. `LookupPipeline` knows only `OCRProvider`, not the concrete OCR implementation. Likewise, it does not know Kiwi, KRDICT, or SQLite.
 

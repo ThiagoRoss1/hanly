@@ -80,7 +80,7 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 - **Convergence:** `LookupPipeline`.
 - **Acceptance criteria:** OCR results are normalized and no PaddleOCR objects leak through the `OCRProvider` seam.
 
-> **Decision update:** The approved visual diagram predates a later V1 scope decision. EasyOCR is no longer part of V1. `OCRProvider` remains an abstraction, with `PaddleOCRProvider` as the V1 implementation. Provider configurability remains available for possible future implementations.
+> **Decision update (2026-08-24):** `EasyOCRProvider` is V1's OCR implementation. `PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`, but it is off the default path — it was measurably slower and heavier, not less accurate. Rationale: `DECISION-2026-08-24-ocr-backend.md`. `OCRProvider` remains an abstraction and provider configurability remains available.
 
 ### B — Kiwi Morphology Provider
 
@@ -473,7 +473,7 @@ Detailed implementation plans are created just in time when a capability becomes
 
 > **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
 
-- **DAG-INV-13:** `OCRProvider` remains abstract, `PaddleOCRProvider` is the only V1 OCR implementation, and provider configurability remains available for possible future implementations.
+- **DAG-INV-13:** `OCRProvider` remains abstract, `EasyOCRProvider` is the V1 OCR implementation with `PaddleOCRProvider` retained and selectable, and provider configurability remains available for possible future implementations.
 - **DAG-INV-14:** Application/composition wiring injects validated resource paths and configuration into concrete providers; neither providers nor `LookupPipeline` depend directly on `ResourceManager`.
 - **DAG-INV-15:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation required before presentation.
 - **DAG-INV-16:** Korean Test Fixtures are small deterministic inputs for ordinary automated tests, distinct from the non-blocking HanlyOCR benchmark dataset.

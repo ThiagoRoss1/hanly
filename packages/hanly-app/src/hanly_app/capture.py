@@ -16,6 +16,11 @@ from hanly import PixelFormat, Point, ROIImage
 
 from .config import CaptureMode
 
+# ROI origins are snapped to this many pixels so that small cursor movements
+# reuse one identical ROI. At the 200x100 default this keeps the cursor within
+# 16 px of centre, well inside the margin a captured text line needs.
+DEFAULT_ROI_GRID = 32
+
 
 class CaptureError(RuntimeError):
     """Base error for invalid capture requests or unusable capture data."""
@@ -304,9 +309,11 @@ class CaptureService:
         backend: CaptureBackend | None = None,
         *,
         roi_size: tuple[int, int] = (200, 100),
+        roi_grid: int = 1,
     ) -> None:
         self._backend = backend if backend is not None else MSSBackend()
         self._roi_width, self._roi_height = _validate_roi_size(roi_size)
+        self._roi_grid = _validate_roi_grid(roi_grid)
 
     def enumerate_monitors(self) -> tuple[MonitorInfo, ...]:
         """Return selectable monitors, normalizing backend failures."""
@@ -343,7 +350,9 @@ class CaptureService:
             cursor = _clamped_to(selected.bounds, cursor)
         clip_bounds = _resolve_clip_bounds(selected, cursor, region)
 
-        desired = _centered_region(cursor, self._roi_width, self._roi_height)
+        desired = _centered_region(
+            cursor, self._roi_width, self._roi_height, self._roi_grid
+        )
         captured_region = _intersection(desired, clip_bounds)
         target = Point(cursor.x - captured_region.left, cursor.y - captured_region.top)
         if not 0 <= target.x < captured_region.width or not 0 <= target.y < captured_region.height:
@@ -555,12 +564,52 @@ def _validate_cursor(cursor: object) -> None:
         raise ValueError("cursor coordinates must be finite")
 
 
-def _centered_region(cursor: Point, width: int, height: int) -> ScreenRect:
+def _centered_region(
+    cursor: Point,
+    width: int,
+    height: int,
+    grid: int = 1,
+) -> ScreenRect:
+    """Return the ROI around ``cursor``, with its origin snapped to ``grid``.
+
+    Snapping is what makes ROI caching possible at all. An origin computed
+    directly from the cursor changes with every pixel of movement, so two
+    hovers over the same word produce different pixels and no cache can ever
+    match them. Rounding to the nearest grid step keeps small movements on one
+    identical ROI while holding the cursor within half a step of centre, which
+    is far inside the margin a text line needs.
+    """
+
     # Use the pixel-center span so a one-pixel ROI centered at coordinate zero
     # still contains that coordinate.
     left = floor(cursor.x - (width - 1) / 2)
     top = floor(cursor.y - (height - 1) / 2)
+    if grid > 1:
+        left = _snap(left, grid, width)
+        top = _snap(top, grid, height)
     return ScreenRect(left, top, width, height)
+
+
+def _snap(value: int, grid: int, extent: int) -> int:
+    """Round ``value`` to the nearest multiple of ``grid``, bounding the shift.
+
+    Floor division rounds toward negative infinity, so this is also correct for
+    the negative origins a secondary monitor produces. The shift is capped at a
+    quarter of the ROI so a grid chosen for one ROI size cannot push the cursor
+    toward — or past — the edge of a smaller one.
+    """
+
+    snapped = ((value + grid // 2) // grid) * grid
+    limit = max(1, extent // 4)
+    return max(value - limit, min(value + limit, snapped))
+
+
+def _validate_roi_grid(grid: object) -> int:
+    _integer(grid, "ROI grid")
+    assert isinstance(grid, int)
+    if grid < 1:
+        raise ValueError("ROI grid must be a positive integer")
+    return grid
 
 
 def _intersection(first: ScreenRect, second: ScreenRect) -> ScreenRect:
@@ -583,6 +632,7 @@ def _contains_rect(outer: ScreenRect, inner: ScreenRect) -> bool:
 
 
 __all__ = [
+    "DEFAULT_ROI_GRID",
     "BackendCapture",
     "BackendMonitor",
     "CaptureBackend",

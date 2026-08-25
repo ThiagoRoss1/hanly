@@ -6,32 +6,67 @@ file and passing ResourceManager-validated values to the real V1 providers.
 
 Provider construction is deferred to the ``JobExecutor`` thread. Constructing
 ``KRDICTProvider`` opens a thread-affine SQLite connection that must be closed
-on the same thread, and keeping PaddleOCR's import lazy lets clients import
-this package without the native Paddle stack installed.
+on the same thread, and keeping each OCR library's import lazy lets clients
+import this package without the native OCR stack installed.
+
+``ocr_backend`` selects which OCR adapter a configuration composes. The engine
+seam is unchanged either way: both adapters are plain ``OCRProvider``
+implementations and neither is visible to ``LookupPipeline``.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
 from hanly import LookupResult
+from hanly.easyocr_provider import EasyOCRConfig, EasyOCRProvider
 from hanly.kiwi_provider import KiwiProvider
 from hanly.krdict_provider import KRDICTProvider
-from hanly.paddleocr_provider import PaddleOCRConfig, PaddleOCRProvider
+from hanly.paddleocr_provider import (
+    PaddleOCRConfig,
+    PaddleOCRProvider,
+    PaddleTextRecognitionProvider,
+)
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
 
-from .composition import LookupWorker, ResolverFactory
+from .composition import (
+    LookupWorker,
+    OCRProviderFactory,
+    ResolverFactory,
+    TextRecognitionProviderFactory,
+)
 from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
 from .composition import create_lookup_controller as _create_lookup_controller
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from .runtime_trace import RuntimeTraceSink
 
 
 class RuntimeConfigError(ValueError):
     """Raised when a runtime configuration file cannot be composed."""
+
+
+class OCRBackend(str, Enum):
+    """The OCR adapter a runtime configuration selects."""
+
+    PADDLE = "paddle"
+    EASYOCR = "easyocr"
+
+    @property
+    def runtime_module(self) -> str:
+        """The import whose native libraries must be loaded before Qt starts."""
+
+        return "paddleocr" if self is OCRBackend.PADDLE else "easyocr"
+
+    @property
+    def display_name(self) -> str:
+        """The provider name the Control Center shows for this backend."""
+
+        return "PaddleOCR" if self is OCRBackend.PADDLE else "EasyOCR"
 
 
 _REQUIRED_RESOURCE_IDS = {
@@ -62,6 +97,16 @@ _PADDLE_FIELDS = frozenset(
     }
 )
 
+_EASYOCR_FIELDS = frozenset(
+    {
+        "languages",
+        "model_storage_directory",
+        "user_network_directory",
+        "download_enabled",
+        "cpu_threads",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class HanlyRuntime:
@@ -69,21 +114,65 @@ class HanlyRuntime:
 
     The runtime stores only immutable-ish configuration values and validated
     paths. Provider instances are local to the worker returned by
-    :meth:`create_worker_factory`; callers cannot accidentally share a Paddle,
-    Kiwi, or SQLite object across threads.
+    :meth:`create_worker_factory`; callers cannot accidentally share an OCR,
+    Kiwi, or SQLite object across threads. Exactly one OCR configuration is
+    populated, the one ``ocr_backend`` names.
     """
 
     config_path: Path
     resource_manager: ResourceManager
-    paddle_config: PaddleOCRConfig
     krdict_path: Path
+    ocr_backend: OCRBackend = OCRBackend.EASYOCR
+    paddle_config: PaddleOCRConfig | None = None
+    easyocr_config: EasyOCRConfig | None = None
     confidence_threshold: float | None = None
+    skip_flat_rois: bool = False
+
+    def require_paddle_config(self) -> PaddleOCRConfig:
+        """Return the Paddle options, rejecting a differently backed runtime.
+
+        Paddle-specific tooling asks for its configuration through this method
+        so that pointing it at, say, an EasyOCR runtime fails with a clear
+        message instead of a ``None`` dereference.
+        """
+
+        if self.ocr_backend is not OCRBackend.PADDLE or self.paddle_config is None:
+            raise RuntimeConfigError(
+                f"{self.config_path} selects the {self.ocr_backend.value} OCR "
+                "backend and carries no PaddleOCR configuration"
+            )
+        return self.paddle_config
+
+    def _ocr_factories(
+        self,
+    ) -> tuple[OCRProviderFactory, TextRecognitionProviderFactory | None]:
+        """Return the OCR provider factory and any hover fast-path companion.
+
+        Only PaddleOCR exposes a geometry-free recognition module, so it is the
+        only backend that supplies the hover fast path. EasyOCR returns ``None``
+        and the worker uses the ordinary provider seam for every lookup.
+        """
+
+        if self.ocr_backend is OCRBackend.PADDLE:
+            paddle_config = self.require_paddle_config()
+            return (
+                lambda: PaddleOCRProvider(config=paddle_config),
+                lambda: PaddleTextRecognitionProvider(config=paddle_config),
+            )
+
+        easyocr_config = self.easyocr_config
+        if easyocr_config is None:
+            raise RuntimeConfigError(
+                f"{self.config_path} carries no EasyOCR configuration"
+            )
+        return lambda: EasyOCRProvider(config=easyocr_config), None
 
     def create_worker_factory(
         self,
         *,
         word_resolver_factory: ResolverFactory | None = None,
         confidence_threshold: float | None = None,
+        trace_sink: RuntimeTraceSink | None = None,
     ) -> Callable[[], LookupWorker]:
         """Build a worker factory whose providers are created on invocation."""
 
@@ -93,15 +182,19 @@ class HanlyRuntime:
             else confidence_threshold
         )
         _validate_confidence_threshold(threshold)
+        ocr_provider_factory, text_recognition_factory = self._ocr_factories()
 
         # Construct nothing here: JobExecutor calls this factory on its own
-        # thread, so each lambda below belongs to that worker's lifecycle.
+        # thread, so each factory below belongs to that worker's lifecycle.
         return _build_lookup_worker_factory(
-            lambda: PaddleOCRProvider(config=self.paddle_config),
+            ocr_provider_factory,
             KiwiProvider,
             lambda: KRDICTProvider(self.krdict_path),
+            hover_text_recognition_provider_factory=text_recognition_factory,
             word_resolver_factory=word_resolver_factory,
             confidence_threshold=threshold,
+            skip_flat_rois=self.skip_flat_rois,
+            trace_sink=trace_sink,
         )
 
 
@@ -114,6 +207,7 @@ class HanlyRuntime:
         on_error: Callable[[LookupRequest, BaseException], None] | None = None,
         result_dispatcher: ResultDispatcher | None = None,
         thread_name: str | None = None,
+        trace_sink: RuntimeTraceSink | None = None,
     ) -> LookupController:
         """Compose the existing bounded controller with real V1 factories."""
 
@@ -123,16 +217,19 @@ class HanlyRuntime:
             else confidence_threshold
         )
         _validate_confidence_threshold(threshold)
+        ocr_provider_factory, text_recognition_factory = self._ocr_factories()
         return _create_lookup_controller(
-            lambda: PaddleOCRProvider(config=self.paddle_config),
+            ocr_provider_factory,
             KiwiProvider,
             lambda: KRDICTProvider(self.krdict_path),
             on_result,
+            hover_text_recognition_provider_factory=text_recognition_factory,
             word_resolver_factory=word_resolver_factory,
             confidence_threshold=threshold,
             on_error=on_error,
             result_dispatcher=result_dispatcher,
             thread_name=thread_name,
+            trace_sink=trace_sink,
         )
 
 
@@ -147,39 +244,22 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
     path = Path(config_path).expanduser()
     raw = _load_runtime_payload(path)
     root = path.resolve().parent
+    krdict_id = _REQUIRED_RESOURCE_IDS["krdict"]
     try:
-        paddle_values = _paddle_values(raw)
+        backend = _ocr_backend(raw)
         manager = _resource_manager_from_payload(raw, root)
-        detection_id = _REQUIRED_RESOURCE_IDS["detection"]
-        recognition_id = _REQUIRED_RESOURCE_IDS["recognition"]
-        krdict_id = _REQUIRED_RESOURCE_IDS["krdict"]
-        metadata = manager.validate()
-        invalid = []
-        for resource_id, resource_metadata in metadata.items():
-            if resource_metadata.status.value != "VALID":
-                diagnostics = "; ".join(manager.diagnostics(resource_id))
-                invalid.append(
-                    f"{resource_id} is {resource_metadata.status.value.lower()}"
-                    + (f": {diagnostics}" if diagnostics else "")
-                )
-        if invalid:
-            raise RuntimeConfigError(
-                "runtime resource validation failed: " + "; ".join(invalid)
-            )
-        _require_model_files_at_root(manager, (detection_id, recognition_id))
+        _require_valid_resources(manager)
 
-        paddle_config = _paddle_config(
-            paddle_values,
-            detection_path=manager.validated_path(detection_id),
-            recognition_path=manager.validated_path(recognition_id),
-            detection_name=_configuration_string(
-                manager.configuration(detection_id), "model_name", detection_id
-            ),
-            recognition_name=_configuration_string(
-                manager.configuration(recognition_id), "model_name", recognition_id
-            ),
-        )
-        confidence_threshold = _confidence_threshold(raw, paddle_values)
+        paddle_config: PaddleOCRConfig | None = None
+        easyocr_config: EasyOCRConfig | None = None
+        if backend is OCRBackend.PADDLE:
+            paddle_config = _validated_paddle_config(raw, manager)
+            backend_values = _paddle_values(raw)
+        else:
+            easyocr_config = _easyocr_config(raw, root)
+            backend_values = _easyocr_values(raw)
+        confidence_threshold = _confidence_threshold(raw, backend_values)
+        skip_flat_rois = _skip_flat_rois(raw)
     except RuntimeConfigError:
         raise
     except (TypeError, ValueError, KeyError) as exc:
@@ -188,9 +268,93 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
     return HanlyRuntime(
         config_path=path.resolve(),
         resource_manager=manager,
-        paddle_config=paddle_config,
         krdict_path=manager.validated_path(krdict_id),
+        ocr_backend=backend,
+        paddle_config=paddle_config,
+        easyocr_config=easyocr_config,
         confidence_threshold=confidence_threshold,
+        skip_flat_rois=skip_flat_rois,
+    )
+
+
+def _skip_flat_rois(raw: Mapping[str, object]) -> bool:
+    """Read the opt-in that lets a flat ROI bypass OCR entirely.
+
+    It is off by default because a wrong "there is no text here" decision makes
+    the popup silently stop working, which is worse than the OCR call it saves.
+    """
+
+    value = raw.get("skip_flat_rois", False)
+    if not isinstance(value, bool):
+        raise ValueError("skip_flat_rois must be a boolean")
+    return value
+
+
+def read_ocr_backend(config_path: str | Path) -> OCRBackend:
+    """Read only the OCR backend a configuration selects.
+
+    Process bootstrap must import the configured OCR library before Qt starts,
+    which is earlier than resources can be validated, so this deliberately
+    inspects nothing else.
+    """
+
+    path = Path(config_path).expanduser()
+    try:
+        return _ocr_backend(_load_runtime_payload(path))
+    except RuntimeConfigError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise RuntimeConfigError(f"invalid runtime config {path}: {exc}") from exc
+
+
+def _ocr_backend(raw: Mapping[str, object]) -> OCRBackend:
+    value = raw.get("ocr_backend", OCRBackend.EASYOCR.value)
+    if isinstance(value, str):
+        try:
+            return OCRBackend(value)
+        except ValueError:
+            pass
+    supported = ", ".join(backend.value for backend in OCRBackend)
+    raise ValueError(f"ocr_backend must be one of: {supported}")
+
+
+def _require_valid_resources(manager: ResourceManager) -> None:
+    """Reject startup while any declared resource is not usable."""
+
+    invalid = []
+    for resource_id, resource_metadata in manager.validate().items():
+        if resource_metadata.status.value == "VALID":
+            continue
+        diagnostics = "; ".join(manager.diagnostics(resource_id))
+        invalid.append(
+            f"{resource_id} is {resource_metadata.status.value.lower()}"
+            + (f": {diagnostics}" if diagnostics else "")
+        )
+    if invalid:
+        raise RuntimeConfigError(
+            "runtime resource validation failed: " + "; ".join(invalid)
+        )
+
+
+def _validated_paddle_config(
+    raw: Mapping[str, object], manager: ResourceManager
+) -> PaddleOCRConfig:
+    """Build Paddle options from the manifest's validated model resources."""
+
+    detection_id = _REQUIRED_RESOURCE_IDS["detection"]
+    recognition_id = _REQUIRED_RESOURCE_IDS["recognition"]
+    _require_model_files_at_root(manager, (detection_id, recognition_id))
+
+    return _paddle_config(
+        _paddle_values(raw),
+        detection_path=manager.validated_path(detection_id),
+        recognition_path=manager.validated_path(recognition_id),
+        detection_name=_configuration_string(
+            manager.configuration(detection_id), "model_name", detection_id
+        ),
+        recognition_name=_configuration_string(
+            manager.configuration(recognition_id), "model_name", recognition_id
+        ),
     )
 
 
@@ -251,37 +415,42 @@ def _load_runtime_payload(path: Path) -> Mapping[str, object]:
 def _resource_manager_from_payload(
     raw: Mapping[str, object], root: Path
 ) -> ResourceManager:
-    paddle_values = _paddle_values(raw)
     resources_value = raw.get("resources")
     if not isinstance(resources_value, Mapping):
         raise ValueError("resources is required and must be a JSON object")
 
     resource_values = dict(resources_value)
-    detection_id = _REQUIRED_RESOURCE_IDS["detection"]
-    recognition_id = _REQUIRED_RESOURCE_IDS["recognition"]
     krdict_id = _REQUIRED_RESOURCE_IDS["krdict"]
-    for resource_id in (detection_id, recognition_id, krdict_id):
-        if resource_id not in resource_values:
-            raise ValueError(f"resources.{resource_id} is required")
-    detection_value = resource_values[detection_id]
-    recognition_value = resource_values[recognition_id]
-    krdict_value = resource_values[krdict_id]
+    required_configurations: dict[str, Mapping[str, object]] = {}
+    required_kinds = {krdict_id: "krdict"}
 
-    _configured_model_dir(paddle_values, "detection", root, detection_value)
-    _configured_model_dir(paddle_values, "recognition", root, recognition_value)
-    _resource_path(krdict_value, root, "krdict")
+    # EasyOCR resolves its own model files through EasyOCR's storage
+    # directory, so a runtime backed by it declares no managed model resource.
+    if _ocr_backend(raw) is OCRBackend.PADDLE:
+        paddle_values = _paddle_values(raw)
+        detection_id = _REQUIRED_RESOURCE_IDS["detection"]
+        recognition_id = _REQUIRED_RESOURCE_IDS["recognition"]
+        for resource_id in (detection_id, recognition_id):
+            if resource_id not in resource_values:
+                raise ValueError(f"resources.{resource_id} is required")
+        _configured_model_dir(paddle_values, "detection", root, resource_values[detection_id])
+        _configured_model_dir(
+            paddle_values, "recognition", root, resource_values[recognition_id]
+        )
+        required_configurations = {
+            detection_id: {"model_name": _model_name(paddle_values, "detection")},
+            recognition_id: {"model_name": _model_name(paddle_values, "recognition")},
+        }
+        required_kinds |= {detection_id: "directory", recognition_id: "directory"}
+
+    if krdict_id not in resource_values:
+        raise ValueError(f"resources.{krdict_id} is required")
+    _resource_path(resource_values[krdict_id], root, "krdict")
 
     specs = _resource_specs(
         resource_values,
-        required_configurations={
-            detection_id: {"model_name": _model_name(paddle_values, "detection")},
-            recognition_id: {"model_name": _model_name(paddle_values, "recognition")},
-        },
-        required_kinds={
-            detection_id: "directory",
-            recognition_id: "directory",
-            krdict_id: "krdict",
-        },
+        required_configurations=required_configurations,
+        required_kinds=required_kinds,
     )
     return ResourceManager(ResourceManifest(specs), base_path=root)
 
@@ -295,6 +464,7 @@ def create_lookup_controller_from_config(
     on_error: Callable[[LookupRequest, BaseException], None] | None = None,
     result_dispatcher: ResultDispatcher | None = None,
     thread_name: str | None = None,
+    trace_sink: RuntimeTraceSink | None = None,
 ) -> LookupController:
     """Load a runtime config and compose its worker-owned controller."""
 
@@ -305,6 +475,7 @@ def create_lookup_controller_from_config(
         on_error=on_error,
         result_dispatcher=result_dispatcher,
         thread_name=thread_name,
+        trace_sink=trace_sink,
     )
 
 
@@ -313,12 +484,14 @@ def create_worker_factory_from_config(
     *,
     word_resolver_factory: ResolverFactory | None = None,
     confidence_threshold: float | None = None,
+    trace_sink: RuntimeTraceSink | None = None,
 ) -> Callable[[], LookupWorker]:
     """Return a deferred real-provider worker factory for a runtime config."""
 
     return load_runtime(config_path).create_worker_factory(
         word_resolver_factory=word_resolver_factory,
         confidence_threshold=confidence_threshold,
+        trace_sink=trace_sink,
     )
 
 
@@ -327,6 +500,50 @@ def _paddle_values(raw: Mapping[str, object]) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError("paddle must be a JSON object")
     return dict(value)
+
+
+def _easyocr_values(raw: Mapping[str, object]) -> dict[str, object]:
+    """Read the optional EasyOCR section; its defaults are already usable."""
+
+    value = raw.get("easyocr", {})
+    if not isinstance(value, Mapping):
+        raise ValueError("easyocr must be a JSON object")
+    return dict(value)
+
+
+def _easyocr_config(raw: Mapping[str, object], root: Path) -> EasyOCRConfig:
+    """Build EasyOCR options, rooting any model directory at the config file."""
+
+    values = _easyocr_values(raw)
+    options: dict[str, Any] = {}
+
+    languages = values.get("languages")
+    if languages is not None:
+        if isinstance(languages, str) or not isinstance(languages, Sequence):
+            raise ValueError("easyocr.languages must be a JSON array of language codes")
+        options["languages"] = tuple(languages)
+
+    for field_name in ("model_storage_directory", "user_network_directory"):
+        directory = values.get(field_name)
+        if directory is not None:
+            options[field_name] = _resolve_path(root, directory, f"easyocr {field_name}")
+
+    for field_name in ("download_enabled", "cpu_threads"):
+        value = values.get(field_name)
+        if value is not None:
+            options[field_name] = value
+
+    # Unknown keys pass through as constructor options, matching how the paddle
+    # section forwards library options it does not model itself.
+    options["extra_options"] = {
+        key: value
+        for key, value in values.items()
+        if key not in _EASYOCR_FIELDS | {"confidence_threshold"}
+    }
+    try:
+        return EasyOCRConfig(**options)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid easyocr options: {exc}") from exc
 
 
 def _configured_model_dir(
@@ -559,9 +776,11 @@ def _paddle_config(
 
 
 def _confidence_threshold(
-    raw: Mapping[str, object], paddle: Mapping[str, object]
+    raw: Mapping[str, object], backend_values: Mapping[str, object]
 ) -> float | None:
-    value = raw.get("confidence_threshold", paddle.get("confidence_threshold"))
+    """Read the threshold from the top level or the selected backend section."""
+
+    value = raw.get("confidence_threshold", backend_values.get("confidence_threshold"))
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -627,9 +846,11 @@ def _configuration_string(
 
 __all__ = [
     "HanlyRuntime",
+    "OCRBackend",
     "RuntimeConfigError",
     "create_lookup_controller_from_config",
     "create_worker_factory_from_config",
     "load_resource_manager",
     "load_runtime",
+    "read_ocr_backend",
 ]

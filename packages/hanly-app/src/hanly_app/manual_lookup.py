@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import RLock, Thread
-from typing import TYPE_CHECKING, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from hanly import HanlyError, LookupResult, LookupStatus, Point
 
@@ -29,6 +29,7 @@ from .hover_controller import HoverScheduler
 from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
+from .runtime_trace import RuntimeTraceSink
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
@@ -414,13 +415,15 @@ def create_manual_lookup(
     app_config: AppConfig | None = None,
     hover_listener_factory: MouseListenerFactory | None = None,
     hover_on_error: HoverErrorHandler | None = None,
+    trace_sink: RuntimeTraceSink | None = None,
 ) -> ManualLookupRuntime:
     """Compose a manual path from the existing runtime and desktop seams."""
 
-    controller = runtime.create_lookup_controller(
+    controller = _create_runtime_controller(
+        runtime,
         _as_result_handler(popup),
-        result_dispatcher=dispatcher,
-        thread_name="hanly-manual-lookup",
+        dispatcher,
+        trace_sink=trace_sink,
     )
     configured_capture = (
         capture_service
@@ -450,6 +453,8 @@ def create_manual_lookup(
                 dispatcher=dispatcher,
                 listener_factory=hover_listener_factory,
                 on_error=hover_on_error,
+                on_invalidate=clear_popup or close_popup,
+                trace_sink=trace_sink,
             )
         )
     if app_config is not None:
@@ -471,6 +476,7 @@ def create_qt_manual_lookup(
     app_config: AppConfig | None = None,
     hover_listener_factory: MouseListenerFactory | None = None,
     hover_on_error: HoverErrorHandler | None = None,
+    trace_sink: RuntimeTraceSink | None = None,
 ) -> ManualLookupRuntime:
     """Build the real Qt alpha composition on the caller's UI thread.
 
@@ -488,11 +494,21 @@ def create_qt_manual_lookup(
     dispatcher = QtResultDispatcher(parent)
     view = QtPopupView(parent)
     popup_controller = PopupController(view, popup_size=view.popup_size)
-    popup_trigger = QtPopupTrigger(popup_controller)
-    controller = runtime.create_lookup_controller(
-        _as_result_handler(popup_trigger.open),
-        result_dispatcher=dispatcher,
-        thread_name="hanly-manual-lookup",
+    popup_trigger = QtPopupTrigger(popup_controller, trace_sink=trace_sink)
+
+    controller: LookupController
+
+    def present_result(result: LookupResult) -> object:
+        return popup_trigger.open(
+            result,
+            lookup_request_id=controller.current_request_id,
+        )
+
+    controller = _create_runtime_controller(
+        runtime,
+        _as_result_handler(present_result),
+        dispatcher,
+        trace_sink=trace_sink,
     )
 
     def current_cursor() -> Point:
@@ -529,6 +545,8 @@ def create_qt_manual_lookup(
                 dispatcher=dispatcher,
                 listener_factory=hover_listener_factory,
                 on_error=hover_on_error,
+                on_invalidate=popup_controller.clear,
+                trace_sink=trace_sink,
             )
         )
     if app_config is not None:
@@ -557,6 +575,30 @@ def _as_result_handler(popup: PopupPresenter) -> ResultHandler:
         popup(result)
 
     return deliver
+
+
+def _create_runtime_controller(
+    runtime: RuntimeComposition,
+    on_result: ResultHandler,
+    dispatcher: ResultDispatcher,
+    *,
+    trace_sink: RuntimeTraceSink | None,
+) -> LookupController:
+    """Pass tracing only when enabled, preserving narrow custom runtimes."""
+
+    if trace_sink is None:
+        return runtime.create_lookup_controller(
+            on_result,
+            result_dispatcher=dispatcher,
+            thread_name="hanly-manual-lookup",
+        )
+    traced_creator = cast(Any, runtime.create_lookup_controller)
+    return traced_creator(
+        on_result,
+        result_dispatcher=dispatcher,
+        thread_name="hanly-manual-lookup",
+        trace_sink=trace_sink,
+    )
 
 
 def _create_hotkey(

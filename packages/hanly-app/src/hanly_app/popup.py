@@ -201,11 +201,14 @@ class PopupController:
         result: LookupResult,
         cursor: Point,
         screen: ScreenGeometry,
-    ) -> PopupPosition:
-        """Open the V1 popup trigger or update its visible result."""
+    ) -> PopupPosition | None:
+        """Show a useful dictionary result and suppress normal non-success."""
 
         if not isinstance(result, LookupResult):
             raise TypeError("result must be a LookupResult")
+        if result.status is not LookupStatus.SUCCESS:
+            self.clear()
+            return None
         position = self.position_for(cursor, screen)
 
         if self._visible:
@@ -222,7 +225,7 @@ class PopupController:
         result: LookupResult,
         cursor: Point,
         screen: ScreenGeometry,
-    ) -> PopupPosition:
+    ) -> PopupPosition | None:
         """Update the result, opening the view when it is currently hidden."""
 
         return self.open(result, cursor, screen)

@@ -258,9 +258,7 @@ def test_superseded_manual_lookup_result_is_not_presented() -> None:
         if queue.pending:
             break
         Event().wait(0.01)
-    assert len(queue.pending) == 2
-    queue.drain_one()
-    assert popup.results == []
+    assert len(queue.pending) == 1
     queue.drain_one()
     assert popup.results == [_success()]
     composition.shutdown()

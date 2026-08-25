@@ -71,6 +71,7 @@ from .runtime import (
     create_worker_factory_from_config,
     load_runtime,
 )
+from .runtime_trace import RuntimeTraceSink, emit_trace
 from .signal_bridge import QtSignalBridge
 from .tray import TrayService, TrayState, TrayStatus
 from .update_coordinator import UpdateCoordinator
@@ -135,6 +136,7 @@ __all__ = [
     "ResultDispatcher",
     "ResultHandler",
     "RuntimeConfigError",
+    "RuntimeTraceSink",
     "QtSignalBridge",
     "RemoteManifest",
     "RemoteResource",
@@ -161,6 +163,7 @@ __all__ = [
     "create_worker_factory_from_config",
     "default_app_config_path",
     "format_lookup_result",
+    "emit_trace",
     "load_runtime",
     "load_update_service",
     "load_control_center_assets",

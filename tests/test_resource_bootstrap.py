@@ -21,6 +21,7 @@ from hanly_app.update_service import (
     RemoteManifest,
     RemoteResource,
     UpdateService,
+    UpdateServiceError,
 )
 
 
@@ -148,25 +149,15 @@ def test_first_run_writes_production_config_and_installs_required_resources(
         "tag": "latest",
         "manifest_asset": "hanly-resources.json",
     }
-    assert set(payload["resources"]) == {
-        "paddle_detection_model",
-        "paddle_recognition_model",
-        "krdict",
-    }
-    assert fetcher.downloads == [
-        "paddle_detection_model",
-        "paddle_recognition_model",
-        "krdict",
-    ]
+    # EasyOCR resolves its own models, so a first run provisions only KRDICT.
+    assert payload["ocr_backend"] == "easyocr"
+    assert set(payload["resources"]) == {"krdict"}
+    assert fetcher.downloads == ["krdict"]
     payload_versions = {
         resource_id: value["installed_version"]
         for resource_id, value in payload["resources"].items()
     }
-    assert payload_versions == {
-        "paddle_detection_model": "2026.08",
-        "paddle_recognition_model": "v3.2.1",
-        "krdict": "2025-12",
-    }
+    assert payload_versions == {"krdict": "2025-12"}
     runtime = load_runtime(config)
     assert runtime.resource_manager.all_valid
     assert all(
@@ -203,7 +194,35 @@ def test_missing_release_resource_reports_repository_and_resource(tmp_path: Path
 
 
 def test_partial_provisioning_records_each_prior_activation_for_retry(tmp_path: Path) -> None:
+    # Partial provisioning needs a backend that installs several resources;
+    # the shipped EasyOCR configuration provisions KRDICT alone.
     config = tmp_path / "runtime.json"
+    config.write_text(
+        json.dumps(
+            {
+                "manifest_version": 1,
+                "ocr_backend": "paddle",
+                "resources": {
+                    "paddle_detection_model": {
+                        "kind": "directory",
+                        "path": "resources/models/det",
+                    },
+                    "paddle_recognition_model": {
+                        "kind": "directory",
+                        "path": "resources/models/rec",
+                    },
+                    "krdict": {"kind": "krdict", "path": "krdict/krdict.sqlite3"},
+                },
+                "paddle": {
+                    "text_detection_model_name": "det",
+                    "text_detection_model_dir": "resources/models/det",
+                    "text_recognition_model_name": "rec",
+                    "text_recognition_model_dir": "resources/models/rec",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     interrupted = _fetcher(fail_resource="krdict")
 
     with pytest.raises(RuntimeBootstrapError, match="krdict"):
@@ -278,3 +297,20 @@ def test_an_invalid_extra_resource_fails_bootstrap_rather_than_startup(
         bootstrap_runtime_config(config, fetcher=offline)
 
     assert offline.fetch_count == 0
+
+
+def test_an_unreachable_release_channel_points_at_the_local_alternative(
+    tmp_path: Path,
+) -> None:
+    """Before any release exists, a bare launch cannot provision. The failure
+    should name the way out rather than read as a broken application."""
+
+    class _Unreachable:
+        def fetch_manifest(self) -> RemoteManifest:
+            raise UpdateServiceError("could not read remote metadata: HTTP Error 404")
+
+        def download(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("nothing should be downloaded")
+
+    with pytest.raises(RuntimeBootstrapError, match="--runtime-config"):
+        bootstrap_runtime_config(tmp_path / "runtime.json", fetcher=_Unreachable())

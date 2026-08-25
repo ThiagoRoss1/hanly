@@ -292,3 +292,84 @@ def test_capture_reports_a_real_failure_when_no_monitor_exists() -> None:
 
     with pytest.raises(CaptureError, match="no monitor is available"):
         _service(backend).capture_at_cursor(Point(10, 10))
+
+
+def test_roi_grid_snaps_nearby_cursors_onto_one_identical_region() -> None:
+    """Grid snapping is what lets the worker's OCR cache ever hit: several
+    nearby cursor positions must capture byte-identical pixels."""
+
+    backend = FakeBackend((_monitor(width=400, height=300),), pixels=bytes(200 * 100 * 3))
+    service = CaptureService(backend=backend, roi_size=(200, 100), roi_grid=32)
+
+    regions = {
+        service.capture_at_cursor(Point(200 + offset, 150)).region
+        for offset in range(0, 12)
+    }
+
+    assert len(regions) == 1
+    region = regions.pop()
+    assert region.left % 32 == 0 and region.top % 32 == 0
+
+
+def test_roi_grid_never_pushes_the_cursor_out_of_a_small_roi() -> None:
+    """A grid tuned for the 200x100 ROI must stay safe on a much smaller one."""
+
+    backend = FakeBackend((_monitor(width=400, height=300),), pixels=bytes(40 * 20 * 3))
+    service = CaptureService(backend=backend, roi_size=(40, 20), roi_grid=32)
+
+    for cursor_x in range(180, 220):
+        result = service.capture_at_cursor(Point(cursor_x, 150))
+        assert 0 <= result.target.x < 40
+        assert 0 <= result.target.y < 20
+
+
+def test_roi_grid_defaults_to_exact_centering() -> None:
+    backend = FakeBackend((_monitor(),), pixels=bytes(40 * 20 * 3))
+
+    result = _service(backend).capture_at_cursor(Point(100, 60))
+
+    assert result.region == ScreenRect(80, 50, 40, 20)
+
+
+class _MarkerBackend(FakeBackend):
+    """Paints one identifiable pixel at a fixed screen position."""
+
+    marker: tuple[int, int] = (0, 0)
+
+    def grab(self, region: ScreenRect) -> BackendCapture:
+        self.last_region = region
+        buffer = bytearray(region.width * region.height * 3)
+        marker_x, marker_y = self.marker
+        if region.left <= marker_x < region.right and region.top <= marker_y < region.bottom:
+            offset = (
+                (marker_y - region.top) * region.width + (marker_x - region.left)
+            ) * 3
+            buffer[offset : offset + 3] = b"\xff\xff\xff"
+        return BackendCapture(region.width, region.height, bytes(buffer))
+
+
+def _marked_pixel(image: ROIImage) -> tuple[int, int] | None:
+    for index in range(0, len(image.data), 3):
+        if image.data[index] == 255:
+            pixel = index // 3
+            return pixel % image.width, pixel // image.width
+    return None
+
+
+@pytest.mark.parametrize("grid", [1, 32])
+@pytest.mark.parametrize(
+    "cursor", [(500, 400), (501, 400), (515, 400), (516, 400), (531, 412), (532, 413)]
+)
+def test_the_reported_target_is_where_the_cursor_pixel_actually_landed(
+    grid: int, cursor: tuple[int, int]
+) -> None:
+    """Grid snapping moves the captured region but must not move the cursor
+    relative to it: the popup answers for whatever sits under that point."""
+
+    backend = _MarkerBackend((_monitor(width=1920, height=1080),))
+    backend.marker = cursor
+    service = CaptureService(backend=backend, roi_size=(200, 100), roi_grid=grid)
+
+    result = service.capture_at_cursor(Point(float(cursor[0]), float(cursor[1])))
+
+    assert _marked_pixel(result.image) == (int(result.target.x), int(result.target.y))

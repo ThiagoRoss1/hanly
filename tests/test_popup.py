@@ -105,7 +105,7 @@ def test_popup_show_update_hide_and_close_lifecycle() -> None:
     screen = ScreenGeometry(0, 0, 500, 500)
 
     first_position = controller.open(_success(), Point(10, 10), screen)
-    second_result = _non_success(LookupStatus.NOT_FOUND)
+    second_result = _success()
     controller.open(second_result, Point(20, 20), screen)
     controller.hide()
     controller.close()
@@ -114,6 +114,31 @@ def test_popup_show_update_hide_and_close_lifecycle() -> None:
     assert [event[0] for event in view.events] == ["show", "update", "hide", "close"]
     assert controller.visible is False
     assert controller.result is second_result
+
+
+@pytest.mark.parametrize(
+    "status",
+    (
+        LookupStatus.EMPTY,
+        LookupStatus.NOT_FOUND,
+        LookupStatus.UNUSABLE,
+        LookupStatus.ERROR,
+    ),
+)
+def test_popup_suppresses_non_success_and_clears_a_visible_success(
+    status: LookupStatus,
+) -> None:
+    view = _RecordingView([])
+    controller = PopupController(view)
+    screen = ScreenGeometry(0, 0, 500, 500)
+    controller.open(_success(), Point(10, 10), screen)
+
+    position = controller.open(_non_success(status), Point(20, 20), screen)
+
+    assert position is None
+    assert controller.visible is False
+    assert controller.result is None
+    assert [event[0] for event in view.events] == ["show", "hide"]
 
 
 def test_popup_requires_normalized_lookup_result() -> None:
@@ -181,8 +206,11 @@ def test_clear_hides_the_popup_and_drops_the_result_it_was_showing() -> None:
     view = _RecordingView(events)
     controller = PopupController(view, popup_size=PopupSize(200, 120))
 
-    controller.open(_non_success(LookupStatus.ERROR), Point(10, 10),
-                    ScreenGeometry(0, 0, 800, 600))
+    controller.open(
+        _success(),
+        Point(10, 10),
+        ScreenGeometry(0, 0, 800, 600),
+    )
     assert controller.visible is True
 
     controller.clear()

@@ -21,8 +21,8 @@ from typing import Any, Protocol, cast
 from hanly.resource_manager import ResourceManager
 
 from .bootstrap import preload_ocr_runtime
-from .capture import CaptureService
-from .config import ConfigManager
+from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
+from .config import CaptureMode, ConfigManager
 from .control_center import (
     ControlCenterBridge,
     ControlCenterHost,
@@ -32,7 +32,7 @@ from .control_center import (
 from .desktop_controller import DesktopController, DesktopState
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
 from .resource_bootstrap import RuntimeBootstrapError, bootstrap_runtime_config
-from .runtime import RuntimeConfigError, load_runtime
+from .runtime import RuntimeConfigError, load_runtime, read_ocr_backend
 from .signal_bridge import QtSignalBridge
 from .tray import TrayService
 from .update_coordinator import UpdateCoordinator
@@ -241,11 +241,32 @@ def run_desktop(
     runtime_config: str | Path,
     *,
     app_config: str | Path | None = None,
+    initial_capture_mode: CaptureMode | None = None,
+    initial_capture_region: ScreenRect | None = None,
+    roi_size: tuple[int, int] | None = None,
 ) -> int:
     """Compose and run the production desktop path from explicit configuration."""
 
+    if initial_capture_mode is None:
+        if initial_capture_region is not None:
+            raise ValueError("an initial capture region requires region mode")
+    elif not isinstance(initial_capture_mode, CaptureMode):
+        raise TypeError("initial_capture_mode must be a CaptureMode or None")
+    elif initial_capture_mode is CaptureMode.REGION:
+        if not isinstance(initial_capture_region, ScreenRect):
+            raise ValueError("initial region mode requires a capture region")
+    elif initial_capture_region is not None:
+        raise ValueError("whole-monitor mode cannot carry a capture region")
+
     diagnostics = DiagnosticLog()
-    preload_ocr_runtime(on_diagnostic=diagnostics.add)
+    runtime_path = Path(runtime_config).expanduser().resolve()
+    # The configured backend decides which native OCR stack must load before
+    # Qt, so the backend is read from the configuration first and nothing else
+    # about it is inspected until the full runtime is validated below.
+    preload_ocr_runtime(
+        module_name=read_ocr_backend(runtime_path).runtime_module,
+        on_diagnostic=diagnostics.add,
+    )
 
     try:
         prepare_control_center_qt()
@@ -261,7 +282,6 @@ def run_desktop(
         QtApplication,
         QApplication.instance() or QApplication(sys.argv),
     )
-    runtime_path = Path(runtime_config).expanduser().resolve()
     runtime = load_runtime(runtime_path)
     settings = ConfigManager(
         Path(app_config).expanduser().resolve()
@@ -271,15 +291,26 @@ def run_desktop(
     settings.load()
 
     def build_manual(current_runtime: RuntimeComposition) -> ManualLookupRuntime:
-        capture = CaptureService()
+        capture = (
+            CaptureService(roi_grid=DEFAULT_ROI_GRID, roi_size=roi_size)
+            if roi_size is not None
+            else CaptureService(roi_grid=DEFAULT_ROI_GRID)
+        )
         try:
-            return create_qt_manual_lookup(
+            manual_runtime = create_qt_manual_lookup(
                 current_runtime,
                 capture,
                 hotkey=settings.config.hotkey,
                 app_config=settings.config,
                 hover_on_error=lambda stage, error: diagnostics.report(stage, error),
             )
+            if initial_capture_mode is not None:
+                manual_runtime.set_capture_preferences(
+                    capture_mode=initial_capture_mode,
+                    monitor=None,
+                    region=initial_capture_region,
+                )
+            return manual_runtime
         except Exception:
             capture.close()
             raise
@@ -344,6 +375,7 @@ def run_desktop(
         update_coordinator=update_coordinator,
         diagnostics=diagnostics.snapshot,
         on_lifecycle_changed=lambda: tray_ref[0].refresh() if tray_ref else None,
+        ocr_provider=runtime.ocr_backend.display_name,
     )
     bridge_ref.append(bridge)
     control_center = ControlCenterHost(bridge)
@@ -550,6 +582,17 @@ def _github_fetcher(updates: Mapping[str, Any]) -> GitHubReleaseFetcher:
     )
 
 
+def parse_roi_size(value: str) -> tuple[int, int]:
+    """Parse a ``WIDTHxHEIGHT`` capture size from the command line."""
+
+    width, separator, height = value.lower().partition("x")
+    if not separator or not width.isdigit() or not height.isdigit():
+        raise argparse.ArgumentTypeError("ROI size must look like 200x100")
+    if int(width) <= 0 or int(height) <= 0:
+        raise argparse.ArgumentTypeError("ROI dimensions must be positive")
+    return int(width), int(height)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Hanly Desktop V1")
     parser.add_argument(
@@ -565,15 +608,28 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="optional desktop preferences JSON path",
     )
+    parser.add_argument(
+        "--roi",
+        type=parse_roi_size,
+        dest="roi_size",
+        help="capture ROI as WIDTHxHEIGHT, for comparing detection areas",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    arguments = list(argv) if argv is not None else sys.argv[1:]
+    if arguments[:1] == ["run"]:
+        return _run_cli(arguments)
+    args = _build_parser().parse_args(arguments)
 
     try:
         runtime_config = _resolve_runtime_config(args.runtime_config)
-        return run_desktop(runtime_config, app_config=args.app_config)
+        return run_desktop(
+            runtime_config,
+            app_config=args.app_config,
+            roi_size=args.roi_size,
+        )
     except (
         DesktopApplicationError,
         RuntimeBootstrapError,
@@ -583,6 +639,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     ) as error:
         _report_startup_error(error)
         return 2
+
+
+def _run_cli(argv: Sequence[str]) -> int:
+    """Resolve the optional terminal workflow without changing normal startup."""
+
+    from .cli import main as cli_main
+
+    return cli_main(argv)
 
 
 def _resolve_runtime_config(explicit: Path | None) -> Path:
