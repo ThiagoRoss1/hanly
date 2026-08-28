@@ -11,7 +11,7 @@ this worker context, so it is `UNVERIFIED` (no fallback is inferred).
 
 ## Owned files changed
 
-- `spikes/han3_packaging_feasibility.py`
+- `spikes/packaging_feasibility.py`
 - `docs/execution/reports/han-3-packaging-feasibility-spike.md`
 - `.superpowers/sdd/05-execution-plan/han-3-task-report.md`
 
@@ -108,7 +108,7 @@ temporary directory was removed after capture; no release artifact remains.
   --distpath C:\Users\Thiago\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\dist `
   --workpath C:\Users\Thiago\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\work `
   --specpath C:\Users\Thiago\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\spec `
-  .\spikes\han3_packaging_feasibility.py
+  .\spikes\packaging_feasibility.py
 ```
 
 Recorded wrapper/build/launch output and statuses:
@@ -140,7 +140,7 @@ that collection scope must be designed deliberately.
 Compile-only syntax check (no `.pyc` write):
 
 ```powershell
-& .\.venv\Scripts\python.exe -c "from pathlib import Path; compile(Path('spikes/han3_packaging_feasibility.py').read_text(encoding='utf-8'), 'spikes/han3_packaging_feasibility.py', 'exec'); print('compile_ok')"
+& .\.venv\Scripts\python.exe -c "from pathlib import Path; compile(Path('spikes/packaging_feasibility.py').read_text(encoding='utf-8'), 'spikes/packaging_feasibility.py', 'exec'); print('compile_ok')"
 compile_ok
 compile_exit=0
 ```
@@ -148,7 +148,7 @@ compile_exit=0
 Focused Ruff check:
 
 ```powershell
-& .\.venv\Scripts\python.exe -m ruff check .\spikes\han3_packaging_feasibility.py
+& .\.venv\Scripts\python.exe -m ruff check .\spikes\packaging_feasibility.py
 All checks passed!
 ruff_exit=0
 ```
@@ -156,7 +156,7 @@ ruff_exit=0
 Harness command and complete observed output (exit 0):
 
 ```text
-& .\.venv\Scripts\python.exe .\spikes\han3_packaging_feasibility.py
+& .\.venv\Scripts\python.exe .\spikes\packaging_feasibility.py
 HAN-3 PACKAGING FEASIBILITY SPIKE
 scope=local-only observation; harness does not create packaging artifacts, install, download, or run CI
 platform=Windows release=10 python=3.13.11 executable=C:\Hanly\.venv\Scripts\python.exe

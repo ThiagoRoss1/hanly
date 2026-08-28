@@ -1,4 +1,5 @@
 """UI-free image-to-LookupResult validation for the Hanly engine."""
+# ruff: noqa: E501 -- literal official-shape XML is intentionally unwrapped.
 
 from __future__ import annotations
 
@@ -19,15 +20,16 @@ from hanly import (
     ROIImage,
 )
 from hanly.kiwi_provider import KiwiProvider
-from hanly.krdict_build import build_krdict_database
 from hanly.krdict_provider import KRDICTProvider
 from hanly.providers import OCRProvider
 from hanly.word_resolver import WordResolver
-from hanly_fixtures.korean import KOREAN_OCR_RESULTS
+
+from tests.hanly_fixtures.korean import KOREAN_OCR_RESULTS
+from tests.hanly_fixtures.krdict import build_krdict_database
 
 _IMAGE = ROIImage(
     # These dimensions match the committed Korean ROI fixture.  The real
-    # PaddleOCR path has already been verified against its PNG; this ordinary
+    # OCR path has already been verified against its PNG; this ordinary
     # E2E test keeps OCR deterministic by injecting the provider seam.
     width=192,
     height=48,
@@ -58,29 +60,24 @@ class _DeterministicOCR:
         return self.results
 
 
-def _write_deterministic_krdict_source(path: Path) -> None:
-    path.write_text(
-        """<?xml version="1.0" encoding="utf-8"?>
-<dictionary>
-  <entry>
-    <headword>읽다</headword>
-    <part_of_speech>동사</part_of_speech>
-    <sense>
-      <translation><language>English</language><trans_dfn>to read</trans_dfn></translation>
-    </sense>
-  </entry>
-</dictionary>
-""",
-        encoding="utf-8",
-    )
+# Deliberately smaller than the shared fixture: the not-found case needs a
+# dictionary that recognizes the verb but not the noun in the OCR line.
+_VERB_ONLY_XML = """<?xml version="1.0" encoding="utf-8"?>
+<LexicalResource><Lexicon>
+  <LexicalEntry att="id" val="1">
+    <feat att="lexicalUnit" val="단어" /><feat att="partOfSpeech" val="동사" />
+    <Lemma><feat att="writtenForm" val="읽다" /></Lemma>
+    <Sense att="id" val="11"><feat att="definition" val="글을 보고 뜻을 이해하다." />
+      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="read" /><feat att="definition" val="to read" /></Equivalent>
+    </Sense>
+  </LexicalEntry>
+</Lexicon></LexicalResource>
+"""
 
 
 @pytest.fixture
 def krdict_database(tmp_path: Path) -> Path:
-    source = tmp_path / "krdict.xml"
-    database = tmp_path / "krdict.sqlite3"
-    _write_deterministic_krdict_source(source)
-    return build_krdict_database(source, database)
+    return build_krdict_database(tmp_path, _VERB_ONLY_XML)
 
 
 @pytest.fixture(scope="module")

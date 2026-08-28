@@ -8,11 +8,10 @@ version = "0.1.0"
 description = "Hanly desktop application"
 readme = {text = "Hanly desktop application package.", content-type = "text/plain"}
 requires-python = ">=3.10"
-dependencies = ["hanly==0.1.0"]
+dependencies = ["hanly==0.1.0", "zstandard>=0.23,<1"]
 
 [project.scripts]
 hanly = "hanly_app.cli:main"
-hanly-desktop = "hanly_app.application:main"
 
 [project.optional-dependencies]
 runtime = [

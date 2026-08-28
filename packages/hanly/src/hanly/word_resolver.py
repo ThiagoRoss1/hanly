@@ -40,7 +40,7 @@ class WordResolver:
     caller supplies a point in the same normalized coordinate space as the
     OCR quads. A point must be inside the actual quadrilateral: the derived
     integer bounding box is useful for coarse consumers but cannot decide a
-    hit for tilted text. PaddleOCR commonly returns one line-level quad, so a
+    hit for tilted text. OCR commonly returns one line-level quad, so a
     second, local hit test maps the target's position along that quad to the
     whitespace-delimited word inside the recognized text.
 

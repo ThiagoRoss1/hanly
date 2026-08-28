@@ -1,8 +1,8 @@
 name: Release Hanly Desktop
 
-# Publication stays a deliberate dispatch: resource archives are produced and
-# versioned outside this repository, so a tag alone cannot supply them. The
-# application build is found from the tag rather than a copied run id.
+# Publication stays a deliberate dispatch. The independently versioned KRDICT
+# resource is produced by build-krdict-resource.yml and selected by its run id;
+# the application build is found from the tag rather than a copied run id.
 on:
   workflow_dispatch:
     inputs:
@@ -11,13 +11,8 @@ on:
         required: true
         type: string
       resource_run_id:
-        description: "Successful resource build run id containing explicit resource archives"
+        description: "Successful build-krdict-resource run id"
         required: true
-        type: string
-      resource_pattern:
-        description: "Artifact name pattern for explicit resource archives"
-        required: true
-        default: "hanly-resources-*"
         type: string
 
 permissions:
@@ -28,6 +23,9 @@ jobs:
   release:
     name: Publish release assets
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RESOURCE_RUN_ID: ${{ inputs.resource_run_id }}
     steps:
       - name: Check out release tooling
         uses: actions/checkout@v7
@@ -44,7 +42,17 @@ jobs:
           python -m pip install --editable packages/hanly-app
 
       - name: Verify the tag matches the product version
-        run: python tools/release_version.py --tag "${{ inputs.tag }}"
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "tag must be vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          }
+          [[ "$RESOURCE_RUN_ID" =~ ^[0-9]+$ ]] || {
+            echo "resource_run_id must be a decimal run id" >&2
+            exit 1
+          }
+          python tools/release_version.py --tag "$RELEASE_TAG"
 
       # The build workflow runs on the tag itself, so selecting its run by tag
       # ties the published binaries to the commit that tag names without asking
@@ -77,12 +85,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.resource_run_id }}
-          pattern: ${{ inputs.resource_pattern }}
+          run-id: ${{ env.RESOURCE_RUN_ID }}
+          name: hanly-krdict-resource
           path: release-inputs/resources
           merge-multiple: false
 
-      - name: Build checksummed resource manifest
+      - name: Validate and stage the producer resource manifest
         id: manifest
         shell: bash
         env:
@@ -91,9 +99,6 @@ jobs:
           set -euo pipefail
           mkdir -p release-output
 
-          # Resource IDs and kinds are deliberately explicit. ResourceManager
-          # remains the local authority; this workflow only maps staged release
-          # artifacts to the approved remote UpdateService contract.
           find_resource() {
             local pattern="$1"
             mapfile -t matches < <(find release-inputs/resources -type f -name "$pattern" -print | sort)
@@ -105,22 +110,73 @@ jobs:
             printf '%s' "${matches[0]}"
           }
 
-          detection="$(find_resource 'hanly-resources-paddle_detection_model*')"
-          recognition="$(find_resource 'hanly-resources-paddle_recognition_model*')"
-          krdict="$(find_resource 'hanly-resources-krdict*')"
+          krdict="$(find_resource 'krdict-*.sqlite3.zst')"
+          producer_manifest="$(find_resource '*.resource.json')"
+          cp "$producer_manifest" release-output/hanly-resources.json
 
-          python tools/build_release_manifest.py \
-            --release "$RELEASE_TAG" \
-            --release-base-url "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG" \
-            --output release-output/hanly-resources.json \
-            --resource-from-name "paddle_detection_model|directory|$detection" \
-            --resource-from-name "paddle_recognition_model|directory|$recognition" \
-            --resource-from-name "krdict|krdict|$krdict"
+          python - "$krdict" release-output/hanly-resources.json <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+
+          from hanly_app.update_service import RemoteManifest, RemoteManifestError
+
+          artifact = pathlib.Path(sys.argv[1])
+          payload = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+          assert isinstance(payload, dict)
+          assert set(payload) == {"manifest_version", "resources"}
+          assert type(payload["manifest_version"]) is int
+          assert payload["manifest_version"] == 1
+          resources = payload["resources"]
+          assert isinstance(resources, dict) and set(resources) == {"krdict"}
+          resource = resources["krdict"]
+          assert isinstance(resource, dict)
+          expected_fields = {
+              "asset_name",
+              "checksum",
+              "expected_entry_count",
+              "kind",
+              "schema_version",
+              "size",
+              "source_date",
+              "version",
+          }
+          assert set(resource) == expected_fields
+          assert "url" not in resource
+          assert isinstance(resource["asset_name"], str)
+          assert isinstance(resource["checksum"], str)
+          assert isinstance(resource["kind"], str)
+          assert resource["kind"] == "krdict"
+          assert isinstance(resource["version"], str)
+          assert re.fullmatch(r"[A-Za-z0-9._-]+", resource["version"])
+          assert resource["asset_name"] == f"krdict-{resource['version']}.sqlite3.zst"
+          assert re.fullmatch(r"krdict-[A-Za-z0-9._-]+\.sqlite3\.zst", resource["asset_name"])
+          assert re.fullmatch(r"sha256:[0-9a-f]{64}", resource["checksum"])
+          assert type(resource["schema_version"]) is int and resource["schema_version"] == 1
+          assert type(resource["expected_entry_count"]) is int
+          assert resource["expected_entry_count"] > 0
+          assert type(resource["size"]) is int and resource["size"] > 0
+          assert isinstance(resource["source_date"], str)
+          assert re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", resource["source_date"])
+          try:
+              parsed = RemoteManifest.from_payload(payload)
+          except (RemoteManifestError, ValueError) as exc:
+              raise AssertionError(f"producer manifest is not consumable: {exc}") from exc
+          assert len(tuple(parsed)) == 1
+          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+          assert resource["asset_name"] == artifact.name
+          assert resource["checksum"] == f"sha256:{digest}"
+          assert resource["size"] == artifact.stat().st_size
+          assert resource["kind"] == "krdict"
+          for field in ("version", "schema_version", "expected_entry_count", "source_date"):
+              assert resource[field]
+          PY
 
           mapfile -t app_assets < <(find release-inputs/app -type f \( -name 'hanly-desktop-*.zip' -o -name 'hanly-desktop-*.tar.gz' \) -print | sort)
           ((${#app_assets[@]} > 0)) || { echo 'missing hanly-desktop application archives' >&2; exit 1; }
-          mapfile -t resource_assets < <(find release-inputs/resources -type f \( -name 'hanly-resources-*.zip' -o -name 'hanly-resources-*.tar.gz' -o -name 'hanly-resources-*.sqlite3' \) -print | sort)
-          ((${#resource_assets[@]} == 3)) || { echo 'expected three resource archives' >&2; exit 1; }
+          resource_assets=("$krdict")
 
           # Checksums are recorded under the published asset names so a
           # consumer can verify downloaded files directly, not under the

@@ -8,7 +8,6 @@ from .application import (
     load_update_service,
     run_desktop,
 )
-from .bootstrap import preload_ocr_runtime
 from .capture import (
     CaptureBackend,
     CaptureBackendError,
@@ -55,6 +54,7 @@ from .manual_lookup import (
     create_qt_manual_lookup,
 )
 from .mouse_observer import MouseObserver
+from .ocr_preload import preload_ocr_runtime
 from .popup import (
     PopupContent,
     PopupController,

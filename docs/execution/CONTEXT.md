@@ -23,7 +23,7 @@ Otherwise the constraints below are sufficient.
 ## The three rules that break the project silently
 
 1. `hanly-app → hanly`. `hanly` must **never** import `hanly-app`.
-2. Library objects (PaddleOCR, Kiwi, SQLite) never cross a provider seam. Normalize
+2. Library objects (EasyOCR, Kiwi, SQLite) never cross a provider seam. Normalize
    to `ROIImage` in and `OCRResult` / `TokenAnalysis` / `DictionaryEntry` out first.
    OCR geometry is a `Quad` of four float points; `BoundingBox` is derived from it.
 3. Heavy processing never runs on the UI thread.
@@ -34,12 +34,12 @@ Otherwise the constraints below are sufficient.
 - **RF-INV-02** Capture happens before OCR.
 - **RF-INV-03** Morphology and dictionary lookup happen before popup presentation.
 - **RF-INV-04** The popup receives an already processed, UI-independent `LookupResult`.
-- **RF-INV-05** PaddleOCR, Kiwi, KRDICT are adapters behind provider interfaces, never direct `LookupPipeline` dependencies.
+- **RF-INV-05** EasyOCR, Kiwi, KRDICT are adapters behind provider interfaces, never direct `LookupPipeline` dependencies.
 - **RF-INV-06** Heavy processing does not run on the UI thread.
 - **RF-INV-07** Superseded request results may be discarded after cursor movement.
 - **RF-INV-08** Hanly does not visually modify the target app except via popup and region-selection overlays.
 - **RF-INV-09** Full-monitor mode is not continuous full-screen OCR; hover prefers a cursor ROI.
-- **RF-INV-10** `PaddleOCRProvider` is the V1 implementation; `LookupPipeline` couples only to `OCRProvider`.
+- **RF-INV-10** `EasyOCRProvider` is the only V1 implementation; `LookupPipeline` couples only to `OCRProvider`, the one provider seam.
 - **RF-INV-11** Desktop lookup is bounded / latest-wins; final request-currency validation is mandatory.
 - **RF-INV-12** `LookupResult` models success, normal non-success, and error without exceptions for non-success.
 
@@ -48,7 +48,7 @@ Otherwise the constraints below are sufficient.
 - **CA-INV-01** `hanly-app` may depend on `hanly`.
 - **CA-INV-02** `hanly` must never depend on `hanly-app`.
 - **CA-INV-03** The engine contains no UI or desktop-lifecycle logic.
-- **CA-INV-04** UI modules never depend directly on PaddleOCR, Kiwi, KRDICT, or SQLite.
+- **CA-INV-04** UI modules never depend directly on EasyOCR, Kiwi, KRDICT, or SQLite.
 - **CA-INV-05** `LookupPipeline` depends on interfaces and normalized contracts only.
 - **CA-INV-06** Heavy processing runs through `JobExecutor` / a worker.
 - **CA-INV-07** `ResourceManager` owns local resource state, not remote update UX.
@@ -70,7 +70,7 @@ Otherwise the constraints below are sufficient.
 - **DAG-INV-11** Nodes are capabilities, not files or exhaustive task lists.
 - **DAG-INV-16** Korean fixtures are small deterministic test inputs, not the HanlyOCR benchmark.
 - **DAG-INV-17** The lifecycle and packaging spikes are non-blocking risk discovery.
-- **DAG-INV-18** HAN-15 owns the official ResourceManager-backed PaddleOCR + Kiwi + KRDICT runtime composition before desktop interaction capabilities consume it; update/distribution remains later.
+- **DAG-INV-18** HAN-15 owns the official ResourceManager-backed EasyOCR + Kiwi + KRDICT runtime composition before desktop interaction capabilities consume it; update/distribution remains later.
 
 ## Current V1 ownership boundary
 

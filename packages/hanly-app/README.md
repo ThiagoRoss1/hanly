@@ -1,70 +1,47 @@
 # Hanly desktop application
 
-## Optional runtime dependencies
+Installing and launching are in the root `README.md`; what each module does is
+in `docs/CODE-MAP.md`. This file covers only what is specific to consuming this
+package.
 
-The desktop package keeps the native OCR stack optional, so installing it for
-lightweight CI does not pull PaddlePaddle. Install the `runtime` extra only on a
-machine that has the PaddleOCR models and native runtime available:
+## Extras
+
+The native OCR stack is optional, so a lightweight CI install does not pull
+Torch. `runtime` is what a machine that actually runs the desktop needs; `dev`
+adds what the repository's developer rigs use on top of it.
 
 ```powershell
-python -m pip install -e "packages/hanly[concrete]"
+python -m pip install -e packages/hanly
 python -m pip install -e "packages/hanly-app[runtime]"
 ```
 
-The `dev` extra adds what the repository's developer rigs need on top of that:
+The engine must go first: `hanly-app` depends on `hanly==0.1.0`, which exists
+only in this checkout, so installing `hanly-app` on its own sends pip looking
+for a package index that does not have it.
 
-```powershell
-python -m pip install -e "packages/hanly-app[dev]"
-```
-
-## Runtime configuration
+## Using the runtime as a library
 
 `hanly_app.runtime` is the composition root that turns a JSON runtime
-configuration file into the real provider stack. It reads the file, asks
+configuration into the real provider stack. It reads the file, asks
 `ResourceManager` to validate every local resource the file names, and returns a
-`HanlyRuntime` whose factories construct `PaddleOCRProvider`, `KiwiProvider`, and
+`HanlyRuntime` whose factories construct `EasyOCRProvider`, `KiwiProvider`, and
 `KRDICTProvider` on the worker thread that will later close them.
 
 ```python
 from hanly_app import load_runtime
 
-runtime = load_runtime("resources/dev/runtime.json")
+runtime = load_runtime("path/to/runtime-config.json")
 controller = runtime.create_lookup_controller(on_result)
 ```
 
-Relative paths in the file resolve against the directory containing it, never
-against the process working directory. See `resources/dev/runtime.json` for the
-canonical shape and `tools/README.md` for running a real lookup end to end.
+Relative paths inside that JSON resolve against the directory containing it,
+never against the process working directory. `tools/README.md` has the
+configuration shape and a rig that runs one real lookup end to end.
 
-## Desktop V1 entry point
+## Optional remote resource delivery
 
-The shipped desktop composition is available through either equivalent command:
-
-```powershell
-hanly-desktop --runtime-config path/to/runtime.json
-python -m hanly_app --runtime-config path/to/runtime.json
-```
-
-For a terminal-first launch, select the session capture area and start that
-same desktop runtime with one command:
-
-```powershell
-hanly run
-```
-
-The selector offers the monitor under the cursor or a dragged region contained
-within one monitor. Cancelling exits without provisioning resources or starting
-background capture. The selection lasts for this process only; it does not
-silently replace saved preferences. `--runtime-config` and `--app-config` may
-follow `hanly run` when explicit paths are needed.
-
-Use `--app-config` to override the per-user preferences path. Startup preloads
-PaddleOCR before importing Qt on Windows, then composes the worker-owned lookup
-runtime, Control Center, background update coordinator, system tray, live
-settings, and graceful SIGINT/shutdown lifecycle.
-
-Remote resource delivery is optional. A runtime may configure the represented
-GitHub Releases adapter without making the engine depend on it:
+Updates stay off until the configuration declares an `updates` block. A build
+without one never contacts GitHub, and the engine never depends on the adapter:
 
 ```json
 {

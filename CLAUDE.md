@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hanly is a Korean OCR popup-dictionary desktop app (hover over Korean text anywhere on screen → dictionary popup). The repository contains the minimal Wave 0 Python foundation: root tooling configuration, independently installable `hanly` and `hanly-app` packages, baseline tests, and CI.
 
-Architecture V1 lives in `docs/architecture/`, and `docs/execution/05-execution-plan.md` is the operational execution manual; read both before executing Hanly V1 work. Linear is the live operational source for issue status, blockers, priorities, milestones / waves, and `READY` work, while the repository and tests remain the implemented and verifiable state. Execution may use one issue or a dynamically derived, human-authorized bundle as defined in `05`; Linear issues and acceptance criteria remain granular.
+`docs/CODE-MAP.md` maps entry points, the lookup pipeline, the provider
+seams, and the KRDICT build/read/deliver paths onto real files; read it
+first when you need to find something. Architecture V1 lives in
+`docs/architecture/`, and `docs/execution/05-execution-plan.md` is the
+operational execution manual; read both before executing Hanly V1 work. Linear is the live operational source for issue status, blockers, priorities, milestones / waves, and `READY` work, while the repository and tests remain the implemented and verifiable state. Execution may use one issue or a dynamically derived, human-authorized bundle as defined in `05`; Linear issues and acceptance criteria remain granular.
 
 ## Execution workflow precedence
 
@@ -40,14 +44,32 @@ python -m ruff check packages packaging tests tools benchmarks
 python -m mypy packages packaging tests tools benchmarks
 ```
 
-Run the desktop from a checkout with an explicit configuration, which skips
-first-run provisioning against the (not yet published) release channel:
+Run the desktop the way a user does:
 
 ```bash
-python -m hanly_app.cli run --runtime-config resources/dev/runtime-easyocr.json
+hanly            # or: python -m hanly_app
 ```
 
-The venv (`.venv/`, gitignored) runs Python 3.13 and already has `easyocr`, `torch`, `paddleocr`, `paddlepaddle`, `kiwipiepy`, `pillow`, `numpy`. The architecture targets Python **3.10+**, so don't rely on 3.13-only syntax.
+A first launch writes `%LOCALAPPDATA%/Hanly/runtime.json` and provisions
+`krdict`. Until the GitHub release exists, that comes from an already-built
+local database: `HANLY_KRDICT_DB`, or `data/generated/krdict.sqlite3` in a
+source checkout. Build one with the commands in `data/README.md`.
+`resources/dev/` is benchmark-only configuration; `--runtime-config` points
+the desktop at one.
+
+**There is one entry point.** `hanly_app.cli:main` is it. The installed `hanly`
+script, `python -m hanly_app`, and the packaged executable all call that one
+function, and `tests/test_packaging.py` fails if a
+second way to start the desktop appears. `application.py` owns `run_desktop`
+and the composition; it is not an entry point. `ocr_preload` imports EasyOCR
+before Qt; `first_run` provisions resources on a launch with no configuration.
+
+Developer-only benchmark instrumentation lives under `benchmarks/dev/`,
+including its tests (`benchmarks/dev/tests/`, collected by pytest) and the
+unwired hover HUD widgets (`benchmarks/dev/hud/`). Nothing dev-only
+belongs in `packages/`.
+
+The venv (`.venv/`, gitignored) runs Python 3.13 and already has `easyocr`, `torch`, `kiwipiepy`, `pillow`, `numpy`. The architecture targets Python **3.10+**, so don't rely on 3.13-only syntax.
 
 ## Architecture
 
@@ -55,7 +77,7 @@ Read `docs/architecture/01`–`04` before changing anything structural. The big 
 
 **Two packages, one direction.** `hanly-app → hanly`; `hanly` must *never* import `hanly-app`. `hanly` is the reusable, client-independent engine (OCR orchestration, Korean linguistics, dictionary lookup, resource validation, contracts), intended for direct consumption and independent distribution as a Python package, including through PyPI. Hanly Desktop V1 is its first client; `hanly-app` owns everything desktop: OS integration, capture, hotkeys, tray, PyQt6 popup, pywebview Control Center, worker execution, updates. Keep future client and transport concerns outside the engine, do not turn possible consumers into V1 scope or a generic plugin framework, and treat Python as the initial environment rather than a permanent implementation constraint.
 
-**External libraries live behind provider seams.** `OCRProvider`, `MorphologyProvider`, `DictionaryProvider` are engine interfaces; `PaddleOCRProvider`, `KiwiProvider`, `KRDICTProvider` are the V1 adapters. Library-specific objects must be normalized (`OCRResult`, `TokenAnalysis`, `DictionaryEntry`) before crossing a seam. `LookupPipeline` knows only the interfaces — never PaddleOCR, Kiwi, SQLite, or `ResourceManager`.
+**External libraries live behind provider seams.** `OCRProvider`, `MorphologyProvider`, `DictionaryProvider` are engine interfaces; `EasyOCRProvider`, `KiwiProvider`, `KRDICTProvider` are the V1 adapters. Library-specific objects must be normalized (`OCRResult`, `TokenAnalysis`, `DictionaryEntry`) before crossing a seam. `LookupPipeline` knows only the interfaces — never EasyOCR, Kiwi, SQLite, or `ResourceManager`.
 
 **Four boundaries that are easy to blur:**
 
@@ -70,14 +92,13 @@ Read `docs/architecture/01`–`04` before changing anything structural. The big 
 
 ## OCR backend
 
-**EasyOCR is the V1 backend.** A runtime configuration naming no backend means
-EasyOCR, a first launch provisions only `krdict`, and the desktop constructs
-`EasyOCRProvider`. This supersedes the earlier decision that Paddle was V1's
-only OCR implementation; do not restore that text from an older revision.
-
-`PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`
-(see `resources/dev/runtime.json`), together with its recognition-first hover
-fast path, which only Paddle supplies. Neither is on the default path.
+**EasyOCR is the only OCR backend (2026-08-26).** PaddleOCR was removed at the
+human's direction: the adapter, its recognition-first hover fast path, the
+`ocr_backend` selector, and the two managed model resources are gone. A first
+launch provisions only `krdict`, and the desktop constructs `EasyOCRProvider`.
+Do not reintroduce a backend-selection seam or restore Paddle from an older
+revision; `OCRProvider` remains the abstraction if a second adapter is ever
+wanted again.
 
 Measurements, the diagnosed defects behind the swap, and the deferred items are
 in `docs/execution/reports/ocr-latency-and-roadmap.md`. Read it before changing

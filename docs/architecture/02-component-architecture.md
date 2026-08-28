@@ -33,7 +33,7 @@ Reusable does not mean generic for every possible use case and does not require 
 
 The engine owns shared conceptual models. They contain no UI logic and no external-library objects:
 
-- `ROIImage` / `PixelFormat`: normalized, library-independent OCR input. Raw bytes plus an explicit format, so no PIL, NumPy, Qt, or Paddle object crosses the seam.
+- `ROIImage` / `PixelFormat`: normalized, library-independent OCR input. Raw bytes plus an explicit format, so no PIL, NumPy, Qt, or EasyOCR object crosses the seam.
 - `Point` / `Quad`: OCR geometry as four float corner points, preserving tilted and rotated text.
 - `BoundingBox`: axis-aligned rectangle derived from a `Quad` when a rectangle suffices.
 - `OCRResult`: normalized recognized text, confidence, and quadrilateral geometry.
@@ -50,13 +50,13 @@ Each provider interface is an engine seam. Concrete adapters satisfy those inter
 
 | Provider interface | Contract | Initial adapter(s) | External dependency |
 | --- | --- | --- | --- |
-| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `EasyOCRProvider` (V1), `PaddleOCRProvider` (selectable) | EasyOCR, PaddleOCR |
+| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `EasyOCRProvider` (V1) | EasyOCR |
 | `MorphologyProvider` | Korean text in; `TokenAnalysis` out | `KiwiProvider` | Kiwi / kiwipiepy |
 | `DictionaryProvider` | Dictionary-form lookup in; normalized `DictionaryEntry` data out | `KRDICTProvider` | Processed KRDICT in local, read-only SQLite |
 
-> **Decision update (2026-08-24):** `EasyOCRProvider` is V1's OCR implementation. `PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`, but it is off the default path — it was measurably slower and heavier, not less accurate. Rationale: `DECISION-2026-08-24-ocr-backend.md`. `OCRProvider` remains an abstraction and provider configurability remains available.
+> **Current OCR decision (2026-08-26):** `EasyOCRProvider` is V1's only OCR implementation. The Paddle adapter, backend selector, managed Paddle model resources, and Paddle-only recognition-first hover fast path were removed at the human's direction. First launch provisions only `krdict`; EasyOCR owns its model storage. `OCRProvider` remains the one provider seam for a future approved second adapter. The 2026-08-24 decision and its operational snapshot are historical and superseded.
 
-Provider selection remains configurable as an architectural concept for possible future implementations. `LookupPipeline` knows only `OCRProvider`, not the concrete OCR implementation. Likewise, it does not know Kiwi, KRDICT, or SQLite.
+The provider seam remains available for a future approved implementation, but V1 composition constructs `EasyOCRProvider` directly and has no backend selector. `LookupPipeline` knows only `OCRProvider`, not the concrete OCR implementation. Likewise, it does not know Kiwi, KRDICT, or SQLite.
 
 ### WordResolver
 
@@ -91,7 +91,7 @@ Its interface hides concrete OCR, morphology, dictionary, database, and UI imple
 
 Application/composition wiring obtains validated resource paths and configuration from `ResourceManager` and supplies each concrete provider with the explicit resources it requires during construction or configuration. Providers therefore do not need to depend directly on `ResourceManager`. `LookupPipeline` remains unaware of resource location and depends only on provider interfaces and normalized contracts.
 
-The V1 plan distinguishes four ownership layers: provider and engine implementations live in `hanly`; HAN-15 establishes the official ResourceManager-backed PaddleOCR + Kiwi + KRDICT runtime composition in application wiring; later desktop capabilities consume that runtime for interaction and presentation; and still-later update/distribution capabilities acquire and deliver resources. Concrete composition does not move provider policy into UI code or pull remote resource delivery forward.
+The V1 plan distinguishes four ownership layers: provider and engine implementations live in `hanly`; HAN-15 establishes the official ResourceManager-backed EasyOCR + Kiwi + KRDICT runtime composition in application wiring; later desktop capabilities consume that runtime for interaction and presentation; and still-later update/distribution capabilities acquire and deliver resources. Concrete composition does not move provider policy into UI code or pull remote resource delivery forward.
 
 `ResourceManager` has no UI, GitHub Actions, download-progress, or update-UX responsibility. This composition responsibility does not prescribe a dependency-injection framework or introduce a new facade.
 
@@ -101,7 +101,7 @@ The V1 plan distinguishes four ownership layers: provider and engine implementat
 
 `DesktopController` coordinates desktop lifecycle only: startup, shutdown, starting capture, pausing / resuming capture, opening the Control Center, and quitting. It contains no linguistic logic.
 
-`ConfigManager` owns desktop / client configuration such as hotkeys, hover delay, capture mode, monitor / region selection, OCR-provider selection, theme, popup preferences, and update preferences. Application configuration remains distinct from engine-processing configuration; the engine receives only the processing values it needs.
+`ConfigManager` owns desktop / client configuration such as hotkeys, hover delay, capture mode, monitor / region selection, OCR implementation status, theme, popup preferences, and update preferences. Application configuration remains distinct from engine-processing configuration; the engine receives only the processing values it needs.
 
 ### Input and capture
 
@@ -123,8 +123,8 @@ LookupController → JobExecutor / Worker → LookupPipeline
 ### User interface
 
 - `PopupController` receives a completed `LookupResult`, decides placement, and owns popup lifecycle.
-- The PyQt6 popup renders successful and normal non-success result states. It knows nothing about PaddleOCR, Kiwi, or KRDICT.
-- The Control Center uses pywebview with HTML, CSS, and JavaScript. It exposes capture start / stop, target / region selection, settings, application and resource status, dictionary / model status, current OCR provider, update controls, diagnostics, preferences, hover delay, and hotkeys. JavaScript contains no linguistic logic and talks to Python through the pywebview bridge.
+- The PyQt6 popup renders successful and normal non-success result states. It knows nothing about EasyOCR, Kiwi, or KRDICT.
+- The Control Center uses pywebview with HTML, CSS, and JavaScript. It exposes capture start / stop, target / region selection, settings, application and resource status, dictionary status, OCR implementation status, update controls, diagnostics, preferences, hover delay, and hotkeys. JavaScript contains no linguistic logic and talks to Python through the pywebview bridge.
 - `TrayService`, initially using pystray, exposes application status, pause / resume, opening the Control Center, and quit.
 
 ### Resource delivery
@@ -164,13 +164,13 @@ The engine must function without GitHub Releases. `ResourceManager` does not own
 
 ### UI boundary
 
-UI code consumes normalized contracts, chiefly `LookupResult` and resource/update state. It must not depend directly on PaddleOCR, Kiwi, KRDICT, or SQLite, and library-specific objects must not leak into it.
+UI code consumes normalized contracts, chiefly `LookupResult` and resource/update state. It must not depend directly on EasyOCR, Kiwi, KRDICT, or SQLite, and library-specific objects must not leak into it.
 
 ## External dependency ownership
 
 | External dependency | Owning adapter / module |
 | --- | --- |
-| PaddleOCR | `PaddleOCRProvider` |
+| EasyOCR | `EasyOCRProvider` |
 | Kiwi / kiwipiepy | `KiwiProvider` |
 | KRDICT | `KRDICTProvider` |
 | SQLite (local, read-only at runtime) | `KRDICTProvider` |
@@ -184,7 +184,7 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 - **CA-INV-01 (diagram invariant 1):** `hanly-app` may depend on `hanly`.
 - **CA-INV-02 (diagram invariant 2):** `hanly` must never depend on `hanly-app`.
 - **CA-INV-03 (diagram invariant 3):** The engine contains no UI-specific or desktop-lifecycle logic.
-- **CA-INV-04 (diagram invariant 4):** UI modules never depend directly on PaddleOCR, Kiwi, KRDICT, or SQLite.
+- **CA-INV-04 (diagram invariant 4):** UI modules never depend directly on EasyOCR, Kiwi, KRDICT, or SQLite.
 - **CA-INV-05 (diagram invariant 5):** `LookupPipeline` depends on provider interfaces and normalized contracts, not concrete external libraries.
 - **CA-INV-06 (diagram invariant 6):** Heavy processing runs through `JobExecutor` / a worker, never on the UI thread.
 - **CA-INV-07 (diagram invariant 7):** `ResourceManager` owns local resource state and compatibility, not remote update UX.

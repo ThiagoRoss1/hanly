@@ -6,7 +6,6 @@ import json
 import threading
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import hanly_app.runtime as runtime_module
 import pytest
@@ -21,30 +20,20 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly.easyocr_provider import EasyOCRConfig
-from hanly.krdict_build import build_krdict_database
 from hanly_app.lookup_controller import LookupRequest
 from hanly_app.runtime import (
-    OCRBackend,
     RuntimeConfigError,
     load_runtime,
-    read_ocr_backend,
 )
+
+from tests.hanly_fixtures.krdict import build_fixture_krdict
 
 _IMAGE = ROIImage(width=1, height=1, pixel_format=PixelFormat.RGB_888, data=b"\x00\x00\x00")
 _TARGET = Point(0.5, 0.5)
 
 
 def _krdict_database(path: Path) -> Path:
-    source = path.with_suffix(".xml")
-    source.write_text(
-        """<dictionary>
-  <entry><headword>책</headword><part_of_speech>명사</part_of_speech>
-    <definition lang=\"en\">book</definition></entry>
-</dictionary>""",
-        encoding="utf-8",
-    )
-    build_krdict_database(source, path)
-    return path
+    return build_fixture_krdict(path.parent, path.name)
 
 
 def _easyocr_config(tmp_path: Path, **easyocr: object) -> Path:
@@ -86,13 +75,6 @@ class _FakeEasyOCR:
         )
 
 
-class _ForbiddenPaddle:
-    """Fails loudly if the EasyOCR runtime ever reaches a Paddle constructor."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        raise AssertionError("PaddleOCR must not be constructed by an EasyOCR runtime")
-
-
 class _FakeKiwi:
     def analyze(self, text: str) -> Sequence[TokenAnalysis]:
         assert text == "책"
@@ -118,59 +100,17 @@ def easyocr_providers(monkeypatch: pytest.MonkeyPatch) -> type[_FakeEasyOCR]:
     _FakeEasyOCR.constructions = []
     _FakeEasyOCR.prewarms = []
     monkeypatch.setattr(runtime_module, "EasyOCRProvider", _FakeEasyOCR)
-    monkeypatch.setattr(runtime_module, "PaddleOCRProvider", _ForbiddenPaddle)
-    monkeypatch.setattr(runtime_module, "PaddleTextRecognitionProvider", _ForbiddenPaddle)
     monkeypatch.setattr(runtime_module, "KiwiProvider", _FakeKiwi)
     monkeypatch.setattr(runtime_module, "KRDICTProvider", _FakeKRDICT)
     return _FakeEasyOCR
 
 
-def test_a_configuration_without_a_backend_selects_the_shipped_backend(tmp_path: Path) -> None:
-    path = tmp_path / "runtime.json"
-    path.write_text(json.dumps({"resources": {}}), encoding="utf-8")
-
-    assert read_ocr_backend(path) is OCRBackend.EASYOCR
-    assert OCRBackend.EASYOCR.runtime_module == "easyocr"
-    # PaddleOCR stays selectable; it is simply no longer what a bare
-    # configuration means.
-    assert OCRBackend.PADDLE.runtime_module == "paddleocr"
-
-
-def test_the_selected_backend_names_the_module_to_preload_before_qt(
-    tmp_path: Path,
-) -> None:
-    config = _easyocr_config(tmp_path)
-
-    assert read_ocr_backend(config) is OCRBackend.EASYOCR
-    assert OCRBackend.EASYOCR.runtime_module == "easyocr"
-    assert OCRBackend.EASYOCR.display_name == "EasyOCR"
-
-
-def test_an_unsupported_backend_name_is_rejected(tmp_path: Path) -> None:
-    path = tmp_path / "runtime.json"
-    path.write_text(json.dumps({"ocr_backend": "tesseract"}), encoding="utf-8")
-
-    with pytest.raises(RuntimeConfigError):
-        read_ocr_backend(path)
-
-
-def test_an_easyocr_runtime_needs_no_paddle_model_resources(tmp_path: Path) -> None:
+def test_an_easyocr_runtime_declares_only_the_krdict_resource(tmp_path: Path) -> None:
     runtime = load_runtime(_easyocr_config(tmp_path))
 
-    assert runtime.ocr_backend is OCRBackend.EASYOCR
-    assert runtime.paddle_config is None
     assert runtime.easyocr_config == EasyOCRConfig()
     assert set(runtime.resource_manager.validate()) == {"krdict"}
     assert runtime.krdict_path == (tmp_path / "data" / "krdict.sqlite3").resolve()
-
-
-def test_paddle_specific_tooling_is_refused_a_differently_backed_runtime(
-    tmp_path: Path,
-) -> None:
-    runtime = load_runtime(_easyocr_config(tmp_path))
-
-    with pytest.raises(RuntimeConfigError):
-        runtime.require_paddle_config()
 
 
 def test_easyocr_options_are_validated_and_rooted_at_the_config_file(
@@ -206,7 +146,7 @@ def test_invalid_easyocr_options_are_reported_as_a_runtime_config_error(
         load_runtime(config)
 
 
-def test_the_worker_uses_easyocr_and_never_constructs_paddle(
+def test_the_worker_composes_easyocr_kiwi_and_krdict(
     tmp_path: Path, easyocr_providers: type[_FakeEasyOCR]
 ) -> None:
     runtime = load_runtime(_easyocr_config(tmp_path, cpu_threads=2))
@@ -233,10 +173,10 @@ def test_easyocr_is_warmed_during_worker_construction_before_ready(
     assert easyocr_providers.prewarms == [threading.get_ident()]
 
 
-def test_a_hover_request_takes_the_ordinary_provider_path_without_a_fast_path(
+def test_a_hover_request_takes_the_ordinary_provider_path(
     tmp_path: Path, easyocr_providers: type[_FakeEasyOCR]
 ) -> None:
-    """No Paddle recognition-first crop runs: the hover request uses OCRProvider."""
+    """Hover and manual lookups share one OCR seam."""
 
     runtime = load_runtime(_easyocr_config(tmp_path))
 

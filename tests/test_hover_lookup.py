@@ -558,7 +558,7 @@ def test_fatal_lookup_failure_stops_hover_instead_of_capturing_forever() -> None
     screen for results that can never arrive."""
 
     def failing_factory() -> object:
-        raise RuntimeError("PaddleOCR is unavailable: model files are missing")
+        raise RuntimeError("OCR is unavailable: model files are missing")
 
     events: list[tuple[str, str]] = []
     scheduler = _Scheduler()

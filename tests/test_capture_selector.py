@@ -9,13 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import hanly_app.application as application_module
 import hanly_app.capture_selector as capture_selector
 import pytest
-from hanly_app.application import parse_roi_size
 from hanly_app.capture import ScreenRect
 from hanly_app.capture_selector import CaptureSelection, CaptureSelectorError
-from hanly_app.cli import run_selected_desktop
+from hanly_app.cli import build_parser, parse_roi_size, run_selected_desktop
 from hanly_app.config import CaptureMode
 
 
@@ -43,7 +41,7 @@ def test_hanly_run_applies_selected_region_to_the_same_desktop_runtime() -> None
 
     result = run_selected_desktop(
         ["--runtime-config", str(runtime_path)],
-        selector=lambda _module: selected,
+        selector=lambda: selected,
         runtime_resolver=lambda explicit: explicit or runtime_path,
         desktop_runner=desktop_runner,
     )
@@ -71,7 +69,7 @@ def test_hanly_run_cancel_is_a_clean_noop_before_bootstrap() -> None:
 
     result = run_selected_desktop(
         [],
-        selector=lambda _module: None,
+        selector=lambda: None,
         runtime_resolver=resolve,
         desktop_runner=lambda *_args, **_kwargs: pytest.fail("desktop must not start"),
     )
@@ -80,24 +78,20 @@ def test_hanly_run_cancel_is_a_clean_noop_before_bootstrap() -> None:
     assert resolved == []
 
 
-def test_desktop_executable_dispatches_run_without_changing_normal_parser(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    forwarded: list[list[str]] = []
+def test_launching_with_no_arguments_is_the_same_as_run() -> None:
+    """The packaged executable is launched by double-clicking it, with no
+    arguments at all. That must be the one command, not a second path."""
 
-    def run_cli(argv: list[str]) -> int:
-        forwarded.append(list(argv))
-        return 9
+    args = build_parser().parse_args([])
 
-    monkeypatch.setattr(
-        application_module,
-        "_run_cli",
-        run_cli,
-    )
+    assert args.command == "run"
+    assert (args.runtime_config, args.app_config, args.roi_size) == (None, None, None)
+    assert build_parser().parse_args(["run"]).command == "run"
 
-    assert application_module.main(["run", "--app-config", "config.json"]) == 9
-    assert forwarded == [["run", "--app-config", "config.json"]]
 
+def test_there_is_no_second_command() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["desktop"])
 
 
 def test_hanly_run_forwards_an_explicit_capture_roi_size() -> None:
@@ -109,7 +103,7 @@ def test_hanly_run_forwards_an_explicit_capture_roi_size() -> None:
 
     run_selected_desktop(
         ["--roi", "260x64"],
-        selector=lambda _module: CaptureSelection.whole_monitor(),
+        selector=lambda: CaptureSelection.whole_monitor(),
         runtime_resolver=lambda _explicit: Path("runtime.json"),
         desktop_runner=desktop_runner,
     )
@@ -123,53 +117,27 @@ def test_a_malformed_capture_roi_size_is_rejected(value: str) -> None:
         parse_roi_size(value)
 
 
-def test_the_selector_prepares_the_backend_the_session_will_actually_use(
-    tmp_path: Path,
-) -> None:
-    """Preparing the wrong OCR stack loads a second set of native libraries for
-    nothing, which shows up as startup delay and retained memory."""
+def test_the_selector_prepares_the_ocr_runtime_before_qt(tmp_path: Path) -> None:
+    """Windows resolves native libraries differently after Qt initializes, so
+    the OCR stack has to load first."""
 
-    config = tmp_path / "runtime-easyocr.json"
-    config.write_text('{"ocr_backend": "easyocr"}', encoding="utf-8")
-    modules: list[str] = []
+    config = tmp_path / "runtime.json"
+    config.write_text('{"resources": {}}', encoding="utf-8")
+    order: list[str] = []
 
-    def record(module: str) -> None:
-        modules.append(module)
+    def record() -> None:
+        order.append("selector")
         return None
 
-    run_selected_desktop(
+    result = run_selected_desktop(
         ["--runtime-config", str(config)],
         selector=record,
         runtime_resolver=lambda explicit: explicit or config,
         desktop_runner=lambda *_a, **_k: 0,
     )
 
-    assert modules == ["easyocr"]
-
-
-def test_an_unreadable_configuration_falls_back_to_the_default_backend(
-    tmp_path: Path,
-) -> None:
-    """The pre-Qt preload is an ordering optimization. A bad configuration must
-    still fail from normal startup, not by refusing to open the chooser."""
-
-    broken = tmp_path / "runtime.json"
-    broken.write_text("{ not json", encoding="utf-8")
-    modules: list[str] = []
-
-    def record(module: str) -> None:
-        modules.append(module)
-        return None
-
-    result = run_selected_desktop(
-        ["--runtime-config", str(broken)],
-        selector=record,
-        runtime_resolver=lambda explicit: explicit or broken,
-        desktop_runner=lambda *_a, **_k: 0,
-    )
-
     assert result == 0
-    assert modules == ["easyocr"]
+    assert order == ["selector"]
 
 
 def test_one_qapplication_is_shared_across_selection_and_startup() -> None:
@@ -245,7 +213,6 @@ def test_a_missing_control_center_runtime_does_not_block_area_selection(
     capture_selector._prepare_web_engine()
 
 
-
 def test_a_missing_qt_runtime_is_a_startup_condition_not_a_crash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,17 +228,18 @@ def test_a_missing_qt_runtime_is_a_startup_condition_not_a_crash(
         capture_selector._import_qt_widgets()
 
 
-def test_the_module_entry_point_runs_the_same_cli(tmp_path: Path) -> None:
-    """`python -m hanly_app.cli` is the documented way to start from a
-    checkout, so the module's __main__ guard is exercised rather than excluded
-    from coverage."""
+@pytest.mark.parametrize("module", ["hanly_app", "hanly_app.cli"])
+def test_every_module_entry_point_is_the_same_command(module: str, tmp_path: Path) -> None:
+    """`hanly`, `python -m hanly_app`, and the packaged executable all call one
+    function. Each module guard is exercised here so a second entry point
+    cannot reappear unnoticed."""
 
     completed = subprocess.run(
-        [sys.executable, "-m", "hanly_app.cli", "--help"],
+        [sys.executable, "-m", module, "--help"],
         capture_output=True,
         text=True,
         cwd=tmp_path,
     )
 
     assert completed.returncode == 0
-    assert "run" in completed.stdout
+    assert completed.stdout.startswith("usage: hanly ")

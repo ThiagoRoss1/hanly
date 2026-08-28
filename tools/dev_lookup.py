@@ -1,6 +1,6 @@
 """Development rig: run one real Hanly lookup and print the result as JSON.
 
-Exercises the real ``image -> PaddleOCR -> Kiwi -> KRDICT -> LookupResult``
+Exercises the real ``image -> EasyOCR -> Kiwi -> KRDICT -> LookupResult``
 path through the actual ``LookupController``, without the desktop UI. Setup and
 usage live in ``tools/README.md``.
 """

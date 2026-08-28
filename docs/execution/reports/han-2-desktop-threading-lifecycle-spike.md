@@ -19,7 +19,7 @@ in the current interpreter.
 
 ## Owned files changed
 
-- `spikes/han2_desktop_threading_lifecycle.py`
+- `spikes/desktop_threading_lifecycle.py`
 - `docs/execution/reports/han-2-desktop-threading-lifecycle-spike.md`
 - `.superpowers/sdd/05-execution-plan/han-2-task-report.md` (superseded; see the artifact budget in `05-execution-plan.md`)
 
@@ -28,7 +28,7 @@ in the current interpreter.
 Command (PowerShell, repository root; human-preinstalled `.venv`):
 
 ```text
-.\.venv\Scripts\python.exe spikes\han2_desktop_threading_lifecycle.py
+.\.venv\Scripts\python.exe spikes\desktop_threading_lifecycle.py
 ```
 
 Observed output (exit status `0`):
@@ -81,7 +81,7 @@ run.
 Syntax check:
 
 ```text
-.\.venv\Scripts\python.exe -m py_compile spikes\han2_desktop_threading_lifecycle.py
+.\.venv\Scripts\python.exe -m py_compile spikes\desktop_threading_lifecycle.py
 ```
 
 Observed result: no output, exit status `0`.
@@ -89,7 +89,7 @@ Observed result: no output, exit status `0`.
 Focused Ruff check:
 
 ```text
-.\.venv\Scripts\python.exe -m ruff check --isolated --select E,F,I,UP --target-version py310 spikes\han2_desktop_threading_lifecycle.py
+.\.venv\Scripts\python.exe -m ruff check --isolated --select E,F,I,UP --target-version py310 spikes\desktop_threading_lifecycle.py
 ```
 
 Observed output (exit status `0`):
@@ -103,7 +103,7 @@ All checks passed!
 Command:
 
 ```text
-.\.venv\Scripts\python.exe spikes\han2_desktop_threading_lifecycle.py
+.\.venv\Scripts\python.exe spikes\desktop_threading_lifecycle.py
 ```
 
 Threading — every observation can now be false:

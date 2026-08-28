@@ -195,7 +195,7 @@ records the requirement and now states that startup enforces it.
 
 ### 2. Bootstrap ignores a user-configured release channel — DEFERRED
 
-`bootstrap_runtime_config` builds its `GitHubReleaseFetcher` from the module
+`provision_runtime_config` builds its `GitHubReleaseFetcher` from the module
 constants, not from the `updates.github` block of the configuration it just
 loaded. On a genuine first run these agree, because bootstrap wrote both. On a
 *repeat* run where resources went invalid and the user has since pointed
@@ -213,7 +213,7 @@ has a second channel. Revisit if a non-default channel is ever supported.
 finds one there, `_persist_resource_versions` writes `installed_version` back to
 that same path. In a per-machine install (`Program Files`, `/opt`) that path is
 not user-writable, so a successful download would be followed by
-`RuntimeBootstrapError` from the version write — after the bytes were already
+`FirstRunError` from the version write — after the bytes were already
 activated. The next launch revalidates and recovers, so this is a confusing
 error rather than data loss.
 
@@ -272,7 +272,7 @@ harness across zero-match, two-match, and one-match cases.
 
 - `installed_version` is a real `ResourceSpec` field consumed by
   `ResourceManager` (`resource_manager.py:413,428`), not invented metadata.
-- `metadata[resource_id]` in `bootstrap_runtime_config` cannot raise `KeyError`:
+- `metadata[resource_id]` in `provision_runtime_config` cannot raise `KeyError`:
   `_resource_manager_from_payload` already requires all three ids and its
   `RuntimeConfigError` is caught and wrapped.
 - `preload_ocr_runtime` on the failure path is idempotent — it is an
@@ -316,7 +316,7 @@ A follow-up review ran on human authorization over the same uncommitted tree.
 It settled the one open decision above and applied four further changes. No
 security property, architecture boundary, or approved engine contract moved.
 
-### 9. `bootstrap_runtime_config` mixed five responsibilities — FIXED
+### 9. `provision_runtime_config` mixed five responsibilities — FIXED
 
 The function ran to roughly ninety lines covering config creation, manager
 loading, target selection, fetcher construction, manifest compatibility checks,
@@ -367,7 +367,7 @@ Removed, which matches `ResourceSpec.__post_init__` in the engine — it calls
 - Model layout: wrapper-nested archive and empty model directory both rejected
   at startup (`test_runtime.py`).
 - A release manifest advertising the wrong `kind` for a required resource is
-  refused before any download (`test_resource_bootstrap.py`).
+  refused before any download (`test_first_run.py`).
 - An invalid *extra* declared resource fails bootstrap with the pre-provisioning
   message and without constructing a fetcher — locking in finding 4's dismissal
   as deliberate behaviour rather than an accident.
@@ -382,7 +382,7 @@ Removed, which matches `ResourceSpec.__post_init__` in the engine — it calls
   calling it outside its own `try` cannot escape `main`'s handler.
 - An offline first run is reported with context, not as a bare `URLError`:
   `GitHubReleaseFetcher._json` wraps `OSError` in `RemoteManifestError`, which
-  `_install_resources` turns into a `RuntimeBootstrapError` naming the channel.
+  `_install_resources` turns into a `FirstRunError` naming the channel.
 - `_persist_resource_version` skipping an entry that pins `version` is required,
   not cosmetic: `ResourceSpec.required_version` is compared against the observed
   version, so writing a release identity into a pinned entry would mark the

@@ -76,7 +76,7 @@ def test_build_command_uses_spec_and_platform_scoped_dist(tmp_path: Path) -> Non
 def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:
     source = SPEC.read_text(encoding="utf-8")
 
-    for package_name in ("hanly", "hanly_app", "paddle", "paddleocr", "paddlex"):
+    for package_name in ("hanly", "hanly_app", "easyocr", "torch"):
         assert package_name in source
     assert "assets/control_center" in source
     assert "collect_dynamic_libs" in source
@@ -85,31 +85,38 @@ def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:
     for backend in ("_win32", "_darwin", "_xorg"):
         assert backend in source
     assert "resources/dev" not in source
-    assert ".paddlex" not in source
+    assert "paddle" not in source
 
 
-def test_runtime_hook_preloads_paddleocr_without_importing_qt() -> None:
+def test_runtime_hook_preloads_the_ocr_runtime_without_importing_qt() -> None:
     source = RUNTIME_HOOK.read_text(encoding="utf-8")
 
-    assert "paddleocr" in source
-    assert "PyQt6" not in source
     assert "preload_ocr_runtime" in source
-    # Hanly has no torch dependency; stale search paths hide real gaps.
-    assert "torch" not in source
+    assert "PyQt6" not in source
 
 
-def test_windows_package_includes_the_one_line_hanly_command() -> None:
-    spec = (ROOT / "packaging" / "hanly-desktop.spec").read_text(encoding="utf-8")
-    wrapper = (ROOT / "packaging" / "hanly.cmd").read_text(encoding="utf-8")
-    app_project = (
-        ROOT / "packages" / "hanly-app" / "pyproject.toml"
-    ).read_text(
+def test_there_is_exactly_one_way_to_start_hanly() -> None:
+    """One command, one entry function. The packaged executable,
+    `python -m hanly_app`, and the installed script all reach
+    `hanly_app.cli:main`, and no launcher script is shipped beside the
+    executable."""
+
+    app_project = (ROOT / "packages" / "hanly-app" / "pyproject.toml").read_text(
         encoding="utf-8"
     )
+    entrypoint = (ROOT / "packaging" / "entrypoint.py").read_text(encoding="utf-8")
+    module_main = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "__main__.py"
+    ).read_text(encoding="utf-8")
+    spec = (ROOT / "packaging" / "hanly-desktop.spec").read_text(encoding="utf-8")
 
-    assert 'ROOT / "packaging" / "hanly.cmd"' in spec
-    assert '"%~dp0hanly-desktop.exe" %*' in wrapper
-    assert 'hanly = "hanly_app.cli:main"' in app_project
+    scripts = app_project.split("[project.scripts]", 1)[1].split("[", 1)[0]
+    assert scripts.strip() == 'hanly = "hanly_app.cli:main"'
+
+    assert "from hanly_app.cli import main" in entrypoint
+    assert "from .cli import main" in module_main
+    assert "hanly.cmd" not in spec
+    assert not (ROOT / "packaging" / "hanly.cmd").exists()
 
 
 def test_host_platform_rejects_an_unsupported_system_by_name() -> None:

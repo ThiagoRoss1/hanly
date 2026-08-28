@@ -8,7 +8,7 @@ This is the master implementation plan for Hanly Desktop V1. It defines implemen
 
 An edge in this DAG represents a real implementation blocker unless documented as a deliberate project gate.
 
-The deliberate gate that validates the engine independently before desktop work must be preserved. A separate concrete-runtime gate then turns the implemented provider capabilities into the official repository-owned PaddleOCR + Kiwi + KRDICT runtime before desktop interaction capabilities consume it. Absence of an edge means work may be parallelized when its stated inputs are available; it does not make the work mandatory to parallelize.
+The deliberate gate that validates the engine independently before desktop work must be preserved. A separate concrete-runtime gate then turns the implemented provider capabilities into the official repository-owned EasyOCR + Kiwi + KRDICT runtime before desktop interaction capabilities consume it. Absence of an edge means work may be parallelized when its stated inputs are available; it does not make the work mandatory to parallelize.
 
 ## Wave 0 — Repository Foundation
 
@@ -36,7 +36,7 @@ The deliberate gate that validates the engine independently before desktop work 
 
 ### Packaging feasibility spike
 
-- **Goal:** Prove that a minimal PaddleOCR / PaddlePaddle application can be packaged sufficiently to reveal major Windows, macOS, and Linux constraints early.
+- **Goal:** Prove that a minimal EasyOCR / PyTorch application can be packaged sufficiently to reveal major Windows, macOS, and Linux constraints early.
 - **Dependencies:** `Repository Foundation`.
 - **Blocks:** Nothing by default; this is explicitly non-blocking risk discovery and not production packaging.
 - **Parallelism:** May run early beside the engine waves and before Wave 10 becomes expensive.
@@ -62,7 +62,7 @@ The deliberate gate that validates the engine independently before desktop work 
 - **Dependencies:** `Repository Foundation`; contract-shaped fixtures align with `Core Contracts` as those contracts stabilize.
 - **Blocks:** Nothing. This is implementation support, not a critical-path subsystem.
 - **Parallelism:** May be assembled alongside `Core Contracts` and extended narrowly as Wave 2 tests require.
-- **Convergence:** Supports early validation of `PaddleOCR Provider`, `Kiwi Morphology Provider`, the KRDICT processing / provider branch, and `Word Resolver`.
+- **Convergence:** Supports early validation of `EasyOCR Provider`, `Kiwi Morphology Provider`, the KRDICT processing / provider branch, and `Word Resolver`.
 - **Acceptance criteria:** Representative deterministic fixture inputs exist; ordinary automated tests under `tests/` can consume them; they cover the main engine/provider seams sufficiently for early development; and they are not intended to measure production OCR accuracy.
 
 Keep the fixture count intentionally small. This capability adds no dataset-management infrastructure, fixture-generation pipeline, or testing framework. It is not the future HanlyOCR benchmark dataset and does not replace or block that research track.
@@ -71,16 +71,16 @@ Keep the fixture count intentionally small. This capability adds no dataset-mana
 
 Wave 2 branches A–E share `Core Contracts` and have no approved dependencies on one another. They may run in parallel.
 
-### A — PaddleOCR Provider
+### A — EasyOCR Provider
 
 - **Goal:** Implement the primary V1 OCR adapter from `ROIImage` input to normalized `OCRResult[]` in reading order.
 - **Dependencies:** `Core Contracts`.
 - **Blocks:** `LookupPipeline`.
 - **Parallelism:** May run in parallel with B–E.
 - **Convergence:** `LookupPipeline`.
-- **Acceptance criteria:** OCR results are normalized and no PaddleOCR objects leak through the `OCRProvider` seam.
+- **Acceptance criteria:** OCR results are normalized and no EasyOCR objects leak through the `OCRProvider` seam.
 
-> **Decision update (2026-08-24):** `EasyOCRProvider` is V1's OCR implementation. `PaddleOCRProvider` is retained and selectable through `"ocr_backend": "paddle"`, but it is off the default path — it was measurably slower and heavier, not less accurate. Rationale: `DECISION-2026-08-24-ocr-backend.md`. `OCRProvider` remains an abstraction and provider configurability remains available.
+> **Current OCR decision (2026-08-26):** `EasyOCRProvider` is V1's only OCR implementation. The Paddle adapter, backend selector, managed Paddle model resources, and Paddle-only recognition-first hover fast path were removed at the human's direction. `OCRProvider` remains the one provider seam for a future approved second adapter; the 2026-08-24 decision and its operational snapshot are historical and superseded.
 
 ### B — Kiwi Morphology Provider
 
@@ -132,11 +132,11 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 ### LookupPipeline
 
 - **Goal:** Orchestrate `OCRProvider → WordResolver → MorphologyProvider → DictionaryProvider → LookupResult`.
-- **Dependencies:** `Core Contracts`, `PaddleOCR Provider`, `Kiwi Morphology Provider`, the completed KRDICT provider branch, and `Word Resolver`.
+- **Dependencies:** `Core Contracts`, `EasyOCR Provider`, `Kiwi Morphology Provider`, the completed KRDICT provider branch, and `Word Resolver`.
 - **Blocks:** `Engine E2E Validation` and the desktop lookup vertical slices.
 - **Parallelism:** This is the engine convergence point; its inputs may be built in parallel, but the integrated pipeline waits for them.
 - **Convergence:** A + B + C + D + contracts.
-- **Acceptance criteria:** The pipeline produces a UI-independent `LookupResult` and depends on abstractions rather than PaddleOCR, Kiwi, SQLite, or `ResourceManager`.
+- **Acceptance criteria:** The pipeline produces a UI-independent `LookupResult` and depends on abstractions rather than EasyOCR, Kiwi, SQLite, or `ResourceManager`.
 
 ### Engine E2E Validation
 
@@ -155,7 +155,7 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 - **Dependencies:** `Engine E2E Validation`.
 - **Blocks:** `Concrete Hanly V1 Engine Integration`, Wave 5 desktop capabilities, `UpdateService / ResourceFetcher`, and later desktop integration.
 - **Parallelism:** This shared foundation unlocks the concrete-runtime gate and the later desktop branches according to their explicit dependencies.
-- **Convergence:** Establishes bounded worker execution and the application composition boundary; it does not yet supply the official real PaddleOCR + Kiwi + KRDICT runtime.
+- **Convergence:** Establishes bounded worker execution and the application composition boundary; it does not yet supply the official real EasyOCR + Kiwi + KRDICT runtime.
 - **Acceptance criteria:** Basic app lifecycle works, `hanly-app` depends on `hanly` only in the allowed direction, and heavy processing does not run on the UI thread. `LookupController` and `JobExecutor` enforce a bounded / latest-wins policy so stale hover jobs cannot accumulate without bound; superseded work is cancelled or suppressed where reasonably possible, while final request-currency validation remains mandatory.
 
 ## Wave 5 — Concrete Runtime + Desktop Capabilities
@@ -165,11 +165,11 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 ### A — Concrete Hanly V1 Engine Integration
 
 - **Goal:** Turn the already-implemented provider and engine capabilities into the first official, repository-owned concrete Hanly V1 runtime.
-- **Dependencies:** `Desktop Foundation`, `ResourceManager Core`, `LookupPipeline`, and the completed PaddleOCR, Kiwi, and KRDICT provider branches.
+- **Dependencies:** `Desktop Foundation`, `ResourceManager Core`, `LookupPipeline`, and the completed EasyOCR, Kiwi, and KRDICT provider branches.
 - **Blocks:** `Capture Service`, `Basic Popup`, `Hotkey Service`, `Basic Control Center`, and `Manual Hotkey Lookup`.
 - **Parallelism:** This is a convergence gate, not a parallel desktop branch.
-- **Convergence:** `PaddleOCRProvider` + `KiwiProvider` + `KRDICTProvider` + `ResourceManager` + the worker-owned hanly-app composition layer.
-- **Acceptance criteria:** A repository-owned composition root constructs the real providers from ResourceManager-validated current local paths/configuration; supported development dependencies are wired; an official minimal entrypoint/harness runs a real Korean `image/ROI → PaddleOCR → Kiwi → KRDICT → LookupResult` path without disposable review scripts or test-only manual provider construction.
+- **Convergence:** `EasyOCRProvider` + `KiwiProvider` + `KRDICTProvider` + `ResourceManager` + the worker-owned hanly-app composition layer.
+- **Acceptance criteria:** A repository-owned composition root constructs the real providers from ResourceManager-validated current local paths/configuration; supported development dependencies are wired; an official minimal entrypoint/harness runs a real Korean `image/ROI → EasyOCR → Kiwi → KRDICT → LookupResult` path without disposable review scripts or test-only manual provider construction.
 
 This capability integrates only behavior already implemented by the current provider APIs. A small local/development resource path is sufficient. It does not own capture, popup, hotkeys, hover, target-point-to-token correction, production resource acquisition/update/distribution, packaging, or future provider capabilities.
 
@@ -202,12 +202,12 @@ This capability integrates only behavior already implemented by the current prov
 
 ### E — Basic Control Center
 
-- **Goal:** Establish the pywebview HTML/CSS/JavaScript interface for capture start / stop, target / region selection, basic settings and app state, local resource status, current OCR provider, update controls, hover delay, and hotkeys.
+- **Goal:** Establish the pywebview HTML/CSS/JavaScript interface for capture start / stop, target / region selection, basic settings and app state, local resource status, OCR implementation status, update controls, hover delay, and hotkeys.
 - **Dependencies:** `Concrete Hanly V1 Engine Integration`, `Desktop Foundation`, and `ResourceManager Core`.
 - **Blocks:** Final `Hover Lookup Integration` and `Resource / Update UI Integration`.
 - **Parallelism:** May run beside B–D once all of its dependencies are satisfied. It is the inserted planning capability after Hotkey Service, tracked operationally as HAN-34.
 - **Convergence:** With the hover runtime before final hover integration; with `UpdateService / ResourceFetcher` and `ResourceManager Core` at `Resource / Update UI Integration`.
-- **Acceptance criteria:** The Control Center shows real resource availability, model / dictionary version and compatibility state; it contains no linguistic logic.
+- **Acceptance criteria:** The Control Center shows real resource availability, dictionary version and compatibility state, and the fixed V1 OCR implementation; it contains no linguistic logic.
 
 ## Wave 6 — Manual Hotkey Lookup
 
@@ -277,7 +277,7 @@ This wave may run in parallel with Wave 7 once its own inputs exist.
 
 ### UpdateService / ResourceFetcher
 
-- **Goal:** Query remote metadata, check for updates, download model / dictionary resources, report progress, and hand resources to `ResourceManager`.
+- **Goal:** Query remote metadata, check for updates, download dictionary and other approved runtime resources, report progress, and hand resources to `ResourceManager`.
 - **Dependencies:** `ResourceManager Core` and `Desktop Foundation`. It has no UI dependency.
 - **Blocks:** `Resource / Update UI Integration`.
 - **Parallelism:** May run beside Wave 7 and does not wait for the Control Center.
@@ -422,16 +422,16 @@ HanlyOCR is a separate, future, non-blocking research track. It runs beside the 
 The evidence-driven sequence is:
 
 1. Build a representative Korean OCR benchmark dataset.
-2. Measure the PaddleOCR baseline.
+2. Measure the EasyOCR baseline.
 3. Study OCR detection and recognition behavior.
 4. Experiment with existing models.
 5. Fine-tune a candidate model where justified.
 6. Benchmark accuracy, latency, and model size.
-7. Decide whether the result is sufficiently better to replace PaddleOCR.
-   - **No:** continue using PaddleOCR.
+7. Decide whether the result is sufficiently better to improve on EasyOCR.
+   - **No:** continue using EasyOCR.
    - **Yes:** introduce `HanlyOCRProvider`, optionally as the primary adapter in a future release.
 
-PaddleOCR alone unblocks V1. `HanlyOCRProvider` is not a V1 dependency.
+EasyOCR alone unblocks V1. `HanlyOCRProvider` is not a V1 dependency.
 
 ## Linear materialization model
 
@@ -466,16 +466,16 @@ Detailed implementation plans are created just in time when a capability becomes
 - **DAG-INV-06 (diagram rule 6):** Basic Control Center exists before final hover integration.
 - **DAG-INV-07 (diagram rule 7):** `ResourceManager Core` is mandatory and developed early.
 - **DAG-INV-08 (diagram rule 8):** `UpdateService / ResourceFetcher` is separate from `ResourceManager` and never depends on UI.
-- **DAG-INV-09 (diagram rule 9):** PaddleOCR is sufficient to unblock V1.
+- **DAG-INV-09 (diagram rule 9):** EasyOCR is sufficient to unblock V1.
 - **DAG-INV-10 (diagram rule 10):** HanlyOCR research never blocks the V1 critical path.
 - **DAG-INV-11 (diagram rule 11):** Nodes represent capabilities and milestones, not source files or exhaustive task lists.
 - **DAG-INV-12 (diagram rule 12):** Nodes without dependency relationships communicate potential parallel execution.
 
 > **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
 
-- **DAG-INV-13:** `OCRProvider` remains abstract, `EasyOCRProvider` is the V1 OCR implementation with `PaddleOCRProvider` retained and selectable, and provider configurability remains available for possible future implementations.
+- **DAG-INV-13:** `OCRProvider` remains abstract, `EasyOCRProvider` is the only V1 OCR implementation, and a future approved second adapter would enter behind the same provider seam.
 - **DAG-INV-14:** Application/composition wiring injects validated resource paths and configuration into concrete providers; neither providers nor `LookupPipeline` depend directly on `ResourceManager`.
 - **DAG-INV-15:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation required before presentation.
 - **DAG-INV-16:** Korean Test Fixtures are small deterministic inputs for ordinary automated tests, distinct from the non-blocking HanlyOCR benchmark dataset.
 - **DAG-INV-17:** The desktop lifecycle and packaging feasibility spikes are non-blocking risk-discovery capabilities unless their evidence leads to a later human-approved DAG change.
-- **DAG-INV-18:** The official concrete PaddleOCR + Kiwi + KRDICT runtime is composed through ResourceManager-backed application wiring before capture, popup, hotkey, and manual-lookup capabilities consume it; later update/distribution work remains separate.
+- **DAG-INV-18:** The official concrete EasyOCR + Kiwi + KRDICT runtime is composed through ResourceManager-backed application wiring before capture, popup, hotkey, and manual-lookup capabilities consume it; later update/distribution work remains separate.

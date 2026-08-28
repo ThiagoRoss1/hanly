@@ -9,10 +9,11 @@ dev = [
     "ruff>=0.6",
     "types-pynput>=1.8",
     "types-PyYAML>=6.0",
+    "zstandard>=0.23,<1",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "benchmarks/dev/tests"]
 pythonpath = ["."]
 
 [tool.ruff]
@@ -35,7 +36,6 @@ files = ["benchmarks", "packages", "packaging", "tests", "tools", "spikes"]
 
 [[tool.mypy.overrides]]
 module = [
-    "paddleocr.*",
     "easyocr.*",
     "torch.*",
     "kiwipiepy.*",

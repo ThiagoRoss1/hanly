@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import urllib.parse
 import urllib.request
@@ -25,6 +26,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+import zstandard
+from hanly.krdict_schema import (
+    KRDICT_SCHEMA_VERSION,
+    KRDICTSchemaError,
+    validate_krdict_connection,
+)
 from hanly.resource_manager import (
     ResourceManager,
     ResourceManifest,
@@ -55,6 +62,10 @@ class RemoteResource:
     checksum: str | None = None
     kind: str = "file"
     asset_name: str | None = None
+    size: int | None = None
+    schema_version: int | None = None
+    expected_entry_count: int | None = None
+    source_date: str | None = None
 
     def __post_init__(self) -> None:
         if not self.resource_id.strip():
@@ -67,6 +78,12 @@ class RemoteResource:
             _require_https(self.url)
         if self.kind not in {"file", "directory", "sqlite", "krdict"}:
             raise ValueError("remote resource kind must be file, directory, sqlite, or krdict")
+        for field_name in ("size", "schema_version", "expected_entry_count"):
+            value = getattr(self, field_name)
+            if value is not None and (isinstance(value, bool) or value <= 0):
+                raise ValueError(f"remote resource {field_name} must be a positive integer")
+        if self.source_date is not None and not self.source_date.strip():
+            raise ValueError("remote resource source_date must not be empty")
 
 
 @dataclass(frozen=True)
@@ -128,6 +145,15 @@ class RemoteManifest:
             if not isinstance(kind, str):
                 raise RemoteManifestError(f"manifest resource {resource_id} kind must be a string")
             try:
+                optional_integers = {
+                    field_name: _optional_integer(raw.get(field_name), resource_id, field_name)
+                    for field_name in ("size", "schema_version", "expected_entry_count")
+                }
+                source_date = raw.get("source_date")
+                if source_date is not None and not isinstance(source_date, str):
+                    raise RemoteManifestError(
+                        f"manifest resource {resource_id} source_date must be a string"
+                    )
                 resources.append(
                     RemoteResource(
                         resource_id=resource_id,
@@ -136,6 +162,10 @@ class RemoteManifest:
                         checksum=checksum,
                         kind=kind,
                         asset_name=asset_name,
+                        size=optional_integers["size"],
+                        schema_version=optional_integers["schema_version"],
+                        expected_entry_count=optional_integers["expected_entry_count"],
+                        source_date=source_date,
                     )
                 )
             except ValueError as exc:
@@ -326,7 +356,11 @@ class GitHubReleaseFetcher:
 class UpdateService:
     """Obtain, validate, and safely activate remote resources."""
 
-    def __init__(self, resource_manager: ResourceManager, fetcher: ResourceFetcher) -> None:
+    def __init__(
+        self,
+        resource_manager: ResourceManager,
+        fetcher: ResourceFetcher,
+    ) -> None:
         self._resource_manager = resource_manager
         self._fetcher = fetcher
         self._manifest: RemoteManifest | None = None
@@ -336,7 +370,7 @@ class UpdateService:
 
         A release serves every backend, so its manifest can advertise
         resources the local configuration never declared, and an EasyOCR install
-        has no use for PaddleOCR model files. Offering those would also offer
+        has no use for resources it never declared. Offering those would also offer
         something that cannot be acted on: ``install`` resolves a destination
         from the local manifest and refuses an id that is not in it.
         """
@@ -395,18 +429,27 @@ class UpdateService:
             self._fetcher.download(resource, stage_file, on_progress)
             # Always verify the delivered bytes before anything unpacks or
             # activates them; for a directory this covers the whole archive.
+            _emit(on_progress, DownloadProgress(resource_id, "verifying"))
+            if resource.size is not None and stage_file.stat().st_size != resource.size:
+                raise ResourceUpdateError(
+                    f"downloaded artifact size does not match the manifest for {resource_id}"
+                )
             _verify_checksum(stage_file, resource.checksum)
 
+            compressed = resource.kind == "krdict" and _is_zstd_resource(resource)
             if resource.kind == "directory":
                 stage_path = _extract_directory(stage_file, destination.parent, resource_id)
+            elif compressed:
+                stage_path = _decompress_zstd(stage_file, destination.parent, resource_id)
 
-            _emit(on_progress, DownloadProgress(resource_id, "validating"))
+            _emit(on_progress, DownloadProgress(resource_id, "installing"))
             validation = self._validate_staged(
                 resource_id,
                 stage_path,
                 spec,
-                expected_version=resource.version,
+                resource=resource,
                 expected_checksum=(resource.checksum if resource.kind != "directory" else None),
+                compressed=compressed,
             )
             backup_path = _activate(stage_path, destination)
             activated = True
@@ -493,8 +536,9 @@ class UpdateService:
         path: Path,
         spec: ResourceSpec,
         *,
-        expected_version: str,
+        resource: RemoteResource,
         expected_checksum: str | None,
+        compressed: bool,
     ) -> ResourceMetadata:
         # Validate through a fresh engine manager whose manifest points at the
         # staged artifact. This preserves the engine/app boundary without
@@ -503,11 +547,11 @@ class UpdateService:
             replace(
                 candidate,
                 path=path,
-                version=expected_version,
+                version=resource.version,
                 expected_version=None,
-                installed_version=expected_version,
+                installed_version=resource.version,
                 version_file=None,
-                checksum=expected_checksum or spec.checksum,
+                checksum=None if compressed else expected_checksum,
             )
             if candidate.resource_id == resource_id
             else candidate
@@ -527,6 +571,35 @@ class UpdateService:
             raise ResourceUpdateError(f"staged resource validation omitted {resource_id}")
         if result.status.value.upper() != "VALID":
             raise ResourceUpdateError(f"staged resource is not valid: {result.status.value}")
+        if resource.kind == "krdict":
+            if (
+                resource.schema_version is not None
+                and resource.schema_version != KRDICT_SCHEMA_VERSION
+            ):
+                raise ResourceUpdateError(
+                    "staged KRDICT schema_version does not match the runtime"
+                )
+            connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                try:
+                    metadata = validate_krdict_connection(
+                        connection,
+                        expected_entry_count=resource.expected_entry_count,
+                        expected_resource_version=resource.version,
+                    )
+                except (sqlite3.Error, KRDICTSchemaError) as exc:
+                    raise ResourceUpdateError(
+                        f"staged KRDICT metadata validation failed: {exc}"
+                    ) from exc
+            finally:
+                connection.close()
+            if (
+                resource.source_date is not None
+                and metadata["source_date"] != resource.source_date
+            ):
+                raise ResourceUpdateError(
+                    "staged KRDICT source_date does not match the manifest"
+                )
         return result
 
 
@@ -611,6 +684,43 @@ def _extract_directory(archive: Path, parent: Path, resource_id: str) -> Path:
     except (OSError, zipfile.BadZipFile) as exc:
         _remove_path(target)
         raise ResourceUpdateError(f"could not unpack directory resource: {exc}") from exc
+
+
+def _optional_integer(value: Any, resource_id: str, field_name: str) -> int | None:
+    """Accept a missing manifest integer, but never a string or a bool."""
+
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+        raise RemoteManifestError(
+            f"manifest resource {resource_id} {field_name} must be an integer"
+        )
+    return value
+
+
+def _is_zstd_resource(resource: RemoteResource) -> bool:
+    name = resource.asset_name
+    if name is None and resource.url is not None:
+        name = Path(urllib.parse.urlsplit(resource.url).path).name
+    return bool(name and name.casefold().endswith(".zst"))
+
+
+def _decompress_zstd(archive: Path, parent: Path, resource_id: str) -> Path:
+    target = _temporary_file(
+        prefix=f".{resource_id}.", suffix=".install", directory=parent
+    )
+    try:
+        with archive.open("rb") as source, target.open("wb") as output:
+            zstandard.ZstdDecompressor().copy_stream(source, output)
+        if target.stat().st_size == 0:
+            raise ResourceUpdateError("Zstandard resource decompressed to an empty file")
+    except Exception as exc:
+        # Every failure leaves the partially written output behind, including
+        # the empty-frame rejection raised just above. The caller's cleanup
+        # only knows the paths it was handed, so this one is removed here.
+        _remove_path(target)
+        if isinstance(exc, ResourceUpdateError):
+            raise
+        raise ResourceUpdateError(f"could not decompress Zstandard resource: {exc}") from exc
+    return target
 
 
 def _activate(stage: Path, destination: Path) -> Path | None:

@@ -1,28 +1,17 @@
-"""Focused HAN-9 tests for the read-only KRDICT provider."""
+"""Focused tests for the read-only KRDICT provider."""
 
 import sqlite3
 import threading
 
 import pytest
 from hanly import DictionaryEntry, DictionaryProvider, ProviderError
-from hanly.krdict_build import build_krdict_database
 from hanly.krdict_provider import KRDICTProvider, KRDICTProviderError
+
+from tests.hanly_fixtures.krdict import build_fixture_krdict
 
 
 def _database(tmp_path):
-    source = tmp_path / "krdict.xml"
-    source.write_text(
-        """<dictionary>
-  <entry><headword>먹다</headword><part_of_speech>동사</part_of_speech>
-    <definition lang="en">to eat</definition></entry>
-  <entry><headword>책</headword><part_of_speech>명사</part_of_speech>
-    <definition lang="en">a book</definition><definition lang="en">book</definition></entry>
-</dictionary>""",
-        encoding="utf-8",
-    )
-    database = tmp_path / "krdict.sqlite3"
-    build_krdict_database(source, database)
-    return database
+    return build_fixture_krdict(tmp_path)
 
 
 def test_cross_thread_lookup_reports_thread_affinity_not_an_unreadable_file(

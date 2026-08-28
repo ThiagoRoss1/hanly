@@ -80,7 +80,7 @@ def _bridge(tmp_path: Path) -> tuple[ControlCenterBridge, _Runtime, ConfigManage
         ResourceManifest(
             (
                 ResourceSpec(
-                    "paddle_detection_model",
+                    "detection_model",
                     model,
                     version="v1",
                     installed_version="v1",
@@ -106,7 +106,7 @@ def _bridge(tmp_path: Path) -> tuple[ControlCenterBridge, _Runtime, ConfigManage
             config_manager=config,
             desktop_controller=controller,
             resource_manager=manager,
-            ocr_provider="PaddleOCR",
+            ocr_provider="EasyOCR",
         ),
         runtime,
         config,
@@ -120,10 +120,10 @@ def test_bridge_snapshot_contains_real_resources_and_desktop_preferences(tmp_pat
 
     assert state["app"]["state"] == "new"
     assert state["app"]["capture_mode"] == "full_monitor"
-    assert state["runtime"]["ocr_provider"] == "PaddleOCR"
+    assert state["runtime"]["ocr_provider"] == "EasyOCR"
     assert state["runtime"]["resources"] == [
         {
-            "id": "paddle_detection_model",
+            "id": "detection_model",
             "kind": "directory",
             "status": "VALID",
             "version": "v1",

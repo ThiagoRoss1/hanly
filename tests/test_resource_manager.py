@@ -16,6 +16,8 @@ from hanly.resource_manager import (
     SchemaSpec,
 )
 
+from tests.hanly_fixtures.krdict import build_fixture_krdict
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -194,7 +196,7 @@ def test_krdict_schema_is_validated_locally(tmp_path: Path) -> None:
     database = tmp_path / "krdict.sqlite"
     _create_krdict_database(database)
     manager = ResourceManager(
-        (ResourceSpec("krdict", database, version="1", kind="krdict"),)
+        (ResourceSpec("krdict", database, version="fixture-v1", kind="krdict"),)
     )
 
     metadata = manager.validate()
@@ -285,30 +287,5 @@ def test_resource_compatibility_requirements_are_normalized(tmp_path: Path) -> N
 
 
 def _create_krdict_database(path: Path) -> None:
-    connection = sqlite3.connect(path)
-    connection.executescript(
-        """
-        PRAGMA user_version = 1;
-        CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE entries (
-            id INTEGER PRIMARY KEY,
-            headword TEXT NOT NULL,
-            part_of_speech TEXT
-        );
-        CREATE TABLE definitions (
-            entry_id INTEGER NOT NULL,
-            ordinal INTEGER NOT NULL,
-            definition TEXT NOT NULL,
-            PRIMARY KEY (entry_id, ordinal)
-        );
-        CREATE INDEX idx_entries_headword ON entries(headword);
-        INSERT INTO metadata(key, value) VALUES
-            ('schema_name', 'hanly.krdict'),
-            ('schema_version', '1'),
-            ('schema_marker', 'hanly.krdict-sqlite-v1'),
-            ('source_language', 'ko'),
-            ('target_language', 'en');
-        """
-    )
-    connection.commit()
-    connection.close()
+    built = build_fixture_krdict(path.parent)
+    built.replace(path)

@@ -10,11 +10,7 @@ from pathlib import Path
 
 from .contracts import DictionaryEntry
 from .errors import ProviderError
-from .krdict_build import (
-    KRDICT_SCHEMA_MARKER,
-    KRDICT_SCHEMA_NAME,
-    KRDICT_SCHEMA_VERSION,
-)
+from .krdict_schema import validate_krdict_connection
 
 
 class KRDICTProviderError(ProviderError):
@@ -66,55 +62,13 @@ class KRDICTProvider:
     @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
         try:
-            table_names = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
+            validate_krdict_connection(connection)
         except sqlite3.Error as exc:
             raise KRDICTProviderError("KRDICT database is unreadable") from exc
-
-        required_tables = {"metadata", "entries", "definitions"}
-        if not required_tables.issubset(table_names):
-            raise KRDICTProviderError(
-                "KRDICT database is incompatible: required tables are missing"
-            )
-
-        try:
-            metadata = dict(
-                connection.execute("SELECT key, value FROM metadata").fetchall()
-            )
-            user_version = connection.execute("PRAGMA user_version").fetchone()[0]
-            entry_columns = {
-                row[1] for row in connection.execute("PRAGMA table_info(entries)")
-            }
-            definition_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(definitions)")
-            }
-            index_names = {
-                row[1] for row in connection.execute("PRAGMA index_list('entries')")
-            }
-        except sqlite3.Error as exc:
-            raise KRDICTProviderError(
-                "KRDICT database is unreadable while checking its schema"
-            ) from exc
-
-        if (
-            metadata.get("schema_name") != KRDICT_SCHEMA_NAME
-            or metadata.get("schema_marker") != KRDICT_SCHEMA_MARKER
-            or metadata.get("schema_version") != str(KRDICT_SCHEMA_VERSION)
-            or metadata.get("source_language") != "ko"
-            or metadata.get("target_language") != "en"
-            or user_version != KRDICT_SCHEMA_VERSION
-            or not {"id", "headword", "part_of_speech"}.issubset(entry_columns)
-            or not {"entry_id", "ordinal", "definition"}.issubset(definition_columns)
-            or "idx_entries_headword" not in index_names
-        ):
+        except ValueError as exc:
             raise KRDICTProviderError(
                 "KRDICT database is incompatible with the Hanly KRDICT schema"
-            )
+            ) from exc
 
     def _require_connection(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -134,14 +88,22 @@ class KRDICTProvider:
         try:
             rows = connection.execute(
                 """
-                SELECT e.id AS entry_id, e.headword, e.part_of_speech,
-                       d.ordinal, d.definition
-                FROM entries AS e
-                JOIN definitions AS d ON d.entry_id = e.id
-                WHERE e.headword = ?
-                ORDER BY e.id, d.ordinal
+                WITH candidates(entry_id) AS (
+                    SELECT entry_id FROM lemmas WHERE written_form = ?
+                    UNION
+                    SELECT entry_id FROM word_forms WHERE written_form = ?
+                )
+                SELECT e.id AS entry_id, l.written_form AS headword,
+                       e.part_of_speech, s.sense_order, t.id AS translation_id,
+                       t.definition
+                FROM candidates AS c
+                JOIN entries AS e ON e.id = c.entry_id
+                JOIN lemmas AS l ON l.entry_id = e.id AND l.is_primary = 1
+                JOIN senses AS s ON s.entry_id = e.id
+                JOIN translations AS t ON t.sense_id = s.id AND t.language = 'en'
+                ORDER BY e.id, s.sense_order, t.id
                 """,
-                (normalized_lemma,),
+                (normalized_lemma, normalized_lemma),
             ).fetchall()
         except sqlite3.ProgrammingError as exc:
             # A SQLite connection belongs to the thread that opened it. Without

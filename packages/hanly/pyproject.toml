@@ -11,14 +11,13 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-paddle = [
+easyocr = [
     "numpy>=1.24,<3",
-    "paddleocr>=3.7,<4",
-    "paddlepaddle>=3.3,<4",
+    "easyocr>=1.7,<2",
 ]
 kiwi = ["kiwipiepy>=0.23.2,<0.24"]
 concrete = [
-    "hanly[paddle]",
+    "hanly[easyocr]",
     "hanly[kiwi]",
 ]
 

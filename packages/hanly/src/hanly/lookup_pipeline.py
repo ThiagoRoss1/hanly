@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from math import isfinite
+from unicodedata import category
 
 from .contracts import (
     LookupContext,
@@ -109,10 +110,13 @@ class LookupPipeline:
         # Hanly's downstream language services are Korean-only. OCR must run
         # before we can know what the pixels contain, but Latin text, numbers,
         # and punctuation must not wake Kiwi or KRDICT.
-        if not _contains_hangul(text):
+        if not _is_korean_segment(text):
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
-                diagnostics=("Resolved OCR target contains no Hangul",),
+                diagnostics=(
+                    "Resolved OCR target must contain Hangul and may otherwise "
+                    "contain only whitespace or punctuation",
+                ),
                 context=context,
             )
 
@@ -232,16 +236,26 @@ def _abort_if_cancelled(cancelled: Callable[[], bool] | None) -> None:
         raise LookupCancelled("lookup was superseded")
 
 
-def _contains_hangul(text: str) -> bool:
-    """Return whether text contains a modern or compatibility Hangul codepoint."""
+def _is_korean_segment(text: str) -> bool:
+    """Accept Hangul text with whitespace/punctuation, rejecting other scripts."""
 
-    return any(
+    return any(_is_hangul_character(character) for character in text) and all(
+        _is_hangul_character(character)
+        or character.isspace()
+        or category(character).startswith("P")
+        for character in text
+    )
+
+
+def _is_hangul_character(character: str) -> bool:
+    """Return whether a character belongs to a supported Hangul codepoint range."""
+
+    return (
         "\u1100" <= character <= "\u11ff"
         or "\u3130" <= character <= "\u318f"
         or "\ua960" <= character <= "\ua97f"
         or "\uac00" <= character <= "\ud7a3"
         or "\ud7b0" <= character <= "\ud7ff"
-        for character in text
     )
 
 

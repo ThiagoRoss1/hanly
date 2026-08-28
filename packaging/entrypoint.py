@@ -1,6 +1,9 @@
-"""Frozen executable entry point for the production desktop composition."""
+"""Frozen executable entry point.
 
-from hanly_app.application import main
+The packaged application runs the same command as an installed ``hanly``.
+"""
+
+from hanly_app.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

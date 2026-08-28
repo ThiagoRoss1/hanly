@@ -37,8 +37,8 @@
 - `tests/test_provider_interfaces.py`
 - `tests/test_korean_fixtures.py`
 - `tests/fixtures/`
-- `spikes/han2_desktop_threading_lifecycle.py`
-- `spikes/han3_packaging_feasibility.py`
+- `spikes/desktop_threading_lifecycle.py`
+- `spikes/packaging_feasibility.py`
 - `docs/execution/reports/han-2-desktop-threading-lifecycle-spike.md`
 - `docs/execution/reports/han-3-packaging-feasibility-spike.md`
 

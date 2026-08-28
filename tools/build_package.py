@@ -70,7 +70,7 @@ class PackageLayout:
 
     @property
     def application_archive(self) -> Path:
-        """The archive path reserved for HAN-29 release metadata."""
+        """The archive path reserved for release metadata."""
 
         extension = ".zip" if self.platform_name == "windows" else ".tar.gz"
         return self.repo_root / "dist" / f"{APPLICATION_STEM}-{self.platform_name}{extension}"

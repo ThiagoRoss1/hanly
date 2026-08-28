@@ -221,23 +221,63 @@ def test_single_token_segment_reports_no_reduction_diagnostic() -> None:
     assert result.diagnostics == ()
 
 
-def test_non_hangul_target_stops_before_morphology_and_dictionary() -> None:
+@pytest.mark.parametrize("text", ["hello", "hello책", "책2"])
+def test_non_korean_target_stops_before_morphology_and_dictionary(text: str) -> None:
     events: list[str] = []
-    latin = OCRResult(
-        text="English",
+    target_segment = OCRResult(
+        text=text,
         confidence=0.99,
         quad=Quad.from_bounding_box(
             BoundingBox(left=0, top=0, right=10, bottom=10)
         ),
     )
 
-    result = _pipeline(events, ocr_results=(latin,)).lookup(_IMAGE, _TARGET)
+    result = _pipeline(events, ocr_results=(target_segment,)).lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.UNUSABLE
     assert result.context is not None
-    assert result.context.text == "English"
+    assert result.context.text == text
     assert events == ["ocr", "resolver"]
     assert any("Hangul" in diagnostic for diagnostic in result.diagnostics)
+
+
+def test_korean_target_with_spaces_and_punctuation_reaches_morphology_and_dictionary() -> None:
+    events: list[str] = []
+    line = OCRResult(
+        text="책을 읽습니다.",
+        confidence=0.99,
+        quad=Quad.from_bounding_box(BoundingBox(left=0, top=0, right=192, bottom=48)),
+    )
+
+    class _WholeRegionResolver:
+        def resolve_target(
+            self,
+            ocr_results: Sequence[OCRResult] | None,
+            target: Point | None,
+        ) -> tuple[OCRResult, str] | None:
+            del ocr_results, target
+            events.append("resolver")
+            return line, line.text
+
+    class _AnyTextMorphology:
+        def analyze(self, text: str) -> Sequence[TokenAnalysis]:
+            assert text == line.text
+            events.append("morphology")
+            return (TokenAnalysis(token="책", lemma="책", part_of_speech="명사"),)
+
+    from hanly.lookup_pipeline import LookupPipeline
+
+    pipeline = LookupPipeline(
+        ocr_provider=_OCR(events, (line,)),
+        morphology_provider=_AnyTextMorphology(),
+        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+        word_resolver=_WholeRegionResolver(),
+    )
+
+    result = pipeline.lookup(_IMAGE, _TARGET)
+
+    assert result.status is LookupStatus.SUCCESS
+    assert events == ["ocr", "resolver", "morphology", "dictionary"]
 
 
 def test_error_diagnostic_does_not_repeat_the_stage_prefix() -> None:

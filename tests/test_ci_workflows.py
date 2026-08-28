@@ -33,7 +33,9 @@ def _steps(workflow: dict[str, Any], job: str) -> list[dict[str, Any]]:
     return list(workflow["jobs"][job]["steps"])
 
 
-@pytest.mark.parametrize("name", ["ci.yml", "build.yml", "release.yml"])
+@pytest.mark.parametrize(
+    "name", ["ci.yml", "build.yml", "build-krdict-resource.yml", "release.yml"]
+)
 def test_every_workflow_is_parseable_and_declares_jobs(name: str) -> None:
     workflow = _workflow(name)
 
@@ -127,6 +129,65 @@ def test_build_workflow_does_not_publish_releases() -> None:
     assert _workflow("build.yml")["permissions"] == {"contents": "read"}
 
 
+def test_krdict_producer_is_manual_read_only_and_verifies_an_https_source() -> None:
+    workflow = _workflow("build-krdict-resource.yml")
+    inputs = _triggers(workflow)["workflow_dispatch"]["inputs"]
+
+    assert set(_triggers(workflow)) == {"workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read"}
+    assert {"source_url", "source_sha256"} <= set(inputs)
+    assert not {"source_run_id", "source_artifact", "source_zip_name"} & set(inputs)
+    assert all(inputs[name]["required"] for name in inputs)
+
+    steps = _steps(workflow, "build-resource")
+    validation = next(step for step in steps if step.get("name") == "Validate producer inputs")
+    validation_command = validation["run"]
+    assert '[[ "$SOURCE_URL" == https://* ]]' in validation_command
+    assert '[[ "$RESOURCE_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]' in validation_command
+    assert '[[ "$SOURCE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]' in validation_command
+    assert '[[ "$BUILD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]' in validation_command
+    assert '[[ "$SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]' in validation_command
+    download = next(
+        step
+        for step in steps
+        if step.get("name") == "Download and verify approved official source"
+    )
+    command = download["run"]
+    assert "curl --fail --location --proto '=https' --proto-redir '=https'" in command
+    assert 'source_path="$RUNNER_TEMP/krdict-source.zip"' in command
+    assert "sha256sum --check --status -" in command
+    assert steps.index(validation) < steps.index(download)
+    assert steps.index(download) < next(
+        index for index, step in enumerate(steps) if "build_seed.py" in step.get("run", "")
+    )
+
+
+def test_krdict_producer_builds_validates_packages_and_uploads_only_review_artifacts() -> None:
+    workflow = _workflow("build-krdict-resource.yml")
+    steps = _steps(workflow, "build-resource")
+    commands = [step.get("run", "") for step in steps]
+    joined = "\n".join(commands)
+
+    assert "tools/krdict/build_seed.py" in joined
+    assert "tools/krdict/validate_seed.py" in joined
+    assert "tools/krdict/package_resource.py" in joined
+    assert joined.index("build_seed.py") < joined.index("validate_seed.py") < joined.index(
+        "package_resource.py"
+    )
+    assert all("${{ inputs." not in command for command in commands)
+
+    upload = next(step for step in steps if "upload-artifact" in step.get("uses", ""))
+    assert upload["with"]["path"] == "producer-output/"
+    assert upload["with"]["name"] == "hanly-krdict-resource"
+    assert upload["with"]["if-no-files-found"] == "error"
+    rendered = "\n".join(str(step) for step in steps)
+    assert "krdict-source.zip" not in upload["with"]["path"]
+    assert "$RUNNER_TEMP" not in upload["with"]["path"]
+    assert "actions/download-artifact" not in rendered
+    assert "gh release" not in rendered
+    assert "action-gh-release" not in rendered
+
+
 def test_release_is_manual_only_and_never_asks_for_the_application_run_id() -> None:
     """Resource archives are produced outside this repository, so publication
     stays a dispatch; the application build is resolved from the tag instead."""
@@ -139,6 +200,7 @@ def test_release_is_manual_only_and_never_asks_for_the_application_run_id() -> N
     assert {"tag", "resource_run_id"} <= set(inputs)
     assert "run_id" not in inputs
     assert all(inputs[name]["required"] for name in ("tag", "resource_run_id"))
+    assert set(inputs) == {"tag", "resource_run_id"}
     assert workflow["permissions"]["contents"] == "write"
     assert workflow["permissions"]["actions"] == "read"
 
@@ -149,8 +211,20 @@ def test_release_is_manual_only_and_never_asks_for_the_application_run_id() -> N
     ]
     assert downloads == [
         "${{ steps.build.outputs.run_id }}",
-        "${{ inputs.resource_run_id }}",
+        "${{ env.RESOURCE_RUN_ID }}",
     ]
+    assert workflow["jobs"]["release"]["env"] == {
+        "RELEASE_TAG": "${{ inputs.tag }}",
+        "RESOURCE_RUN_ID": "${{ inputs.resource_run_id }}",
+    }
+    resource_download = _steps(workflow, "release")[
+        next(
+            index
+            for index, step in enumerate(_steps(workflow, "release"))
+            if step.get("name") == "Download resource artifacts"
+        )
+    ]
+    assert resource_download["with"]["name"] == "hanly-krdict-resource"
 
 
 def test_release_resolves_its_application_build_from_the_tag() -> None:
@@ -177,7 +251,11 @@ def test_both_workflows_refuse_a_tag_that_disagrees_with_the_product_version() -
     dispatch_check = next(
         step for step in release if "release_version.py" in step.get("run", "")
     )
-    assert "${{ inputs.tag }}" in dispatch_check["run"]
+    assert '[[ "$RELEASE_TAG" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]' in dispatch_check["run"]
+    assert _workflow("release.yml")["jobs"]["release"]["env"]["RELEASE_TAG"] == (
+        "${{ inputs.tag }}"
+    )
+    assert '"${{ inputs.tag }}"' not in dispatch_check["run"]
 
     # The check must precede anything that produces or publishes an artifact.
     build_names = [step.get("name", "") for step in build]
@@ -238,3 +316,38 @@ def test_release_checksums_reference_published_asset_names() -> None:
     # Hashing the staging path would emit checksum lines a downloader cannot
     # verify against the assets it actually receives.
     assert 'basename "$asset"' in manifest["run"]
+
+
+def test_release_consumes_the_single_krdict_zstd_and_producer_manifest() -> None:
+    manifest = next(
+        step for step in _steps(_workflow("release.yml"), "release") if step.get("id") == "manifest"
+    )
+
+    assert "krdict-*.sqlite3.zst" in manifest["run"]
+    assert "*.resource.json" in manifest["run"]
+    assert "hanly-resources.json" in manifest["run"]
+    assert "paddle_detection_model" not in manifest["run"]
+    assert "paddle_recognition_model" not in manifest["run"]
+
+
+def test_release_rejects_a_noncanonical_producer_manifest() -> None:
+    manifest = next(
+        step for step in _steps(_workflow("release.yml"), "release") if step.get("id") == "manifest"
+    )
+    command = manifest["run"]
+
+    assert 'assert isinstance(payload, dict)' in command
+    assert 'assert payload["manifest_version"] == 1' in command
+    assert 'assert isinstance(resources, dict) and set(resources) == {"krdict"}' in command
+    assert 'assert isinstance(resource, dict)' in command
+    assert 'assert set(resource) == expected_fields' in command
+    assert 'assert "url" not in resource' in command
+    assert 'assert isinstance(resource["asset_name"], str)' in command
+    assert (
+        'assert resource["asset_name"] == f"krdict-{resource[\'version\']}.sqlite3.zst"'
+        in command
+    )
+    assert 'assert isinstance(resource["checksum"], str)' in command
+    assert 're.fullmatch(r"sha256:[0-9a-f]{64}", resource["checksum"])' in command
+    assert 'assert isinstance(resource["kind"], str)' in command
+    assert 'assert isinstance(resource["version"], str)' in command

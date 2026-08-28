@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from threading import Event
 
 import hanly_app.composition as composition_module
-import pytest
 from hanly import (
     BoundingBox,
     DictionaryEntry,
@@ -20,18 +19,16 @@ from hanly import (
     ROIImage,
     TokenAnalysis,
 )
-from hanly.errors import LookupCancelled
-from hanly.krdict_build import build_krdict_database
 from hanly.krdict_provider import KRDICTProvider
-from hanly.paddleocr_provider import TextRecognitionResult
 from hanly_app.composition import (
     LookupWorker,
-    _crop_hover_roi,
     create_lookup_controller,
     create_lookup_worker_factory,
 )
 from hanly_app.job_executor import JobExecutor
 from hanly_app.lookup_controller import LookupRequest
+
+from tests.hanly_fixtures.krdict import build_fixture_krdict
 
 _IMAGE = ROIImage(1, 1, PixelFormat.GRAYSCALE_8, b"\x00")
 _TARGET = Point(3, 4)
@@ -147,22 +144,7 @@ def test_provider_factories_and_close_run_on_executor_thread_and_point_is_exact(
 
 
 def test_real_krdict_connection_is_owned_by_the_lookup_worker(tmp_path: Path) -> None:
-    source = tmp_path / "krdict.xml"
-    source.write_text(
-        """<?xml version="1.0" encoding="utf-8"?>
-<dictionary>
-  <entry>
-    <headword>책</headword>
-    <part_of_speech>명사</part_of_speech>
-    <sense>
-      <translation><language>English</language><trans_dfn>book</trans_dfn></translation>
-    </sense>
-  </entry>
-</dictionary>
-""",
-        encoding="utf-8",
-    )
-    database = build_krdict_database(source, tmp_path / "krdict.sqlite3")
+    database = build_fixture_krdict(tmp_path)
     results = []
     received = Event()
 
@@ -184,7 +166,7 @@ def test_real_krdict_connection_is_owned_by_the_lookup_worker(tmp_path: Path) ->
     controller.stop()
 
     assert results[0].status is LookupStatus.SUCCESS
-    assert results[0].entries[0].definitions == ("book",)
+    assert results[0].entries[0].definitions == ("a book", "book")
 
 
 def test_lookup_worker_reuses_exact_success_but_changed_pixels_rerun_ocr() -> None:
@@ -245,372 +227,6 @@ def _large_roi(width: int = 200, height: int = 100) -> ROIImage:
         PixelFormat.GRAYSCALE_8,
         bytes(index % 256 for index in range(width * height)),
     )
-
-
-def test_hover_crop_preserves_exact_pixels_and_marks_shifted_edges_unreliable() -> None:
-    image = _large_roi()
-
-    centered = _crop_hover_roi(image, Point(100.0, 50.0))
-    left = _crop_hover_roi(image, Point(2.0, 50.0))
-    top = _crop_hover_roi(image, Point(100.0, 2.0))
-    right = _crop_hover_roi(image, Point(198.0, 50.0))
-    bottom = _crop_hover_roi(image, Point(100.0, 98.0))
-
-    assert (centered.image.width, centered.image.height) == (96, 32)
-    assert centered.target == Point(48.0, 16.0)
-    assert centered.cursor_centered is True
-    expected = b"".join(
-        image.data[row * image.width + 52 : row * image.width + 148]
-        for row in range(34, 66)
-    )
-    assert centered.image.data == expected
-    assert [crop.cursor_centered for crop in (left, top, right, bottom)] == [
-        False,
-        False,
-        False,
-        False,
-    ]
-    assert left.target.x == 2.0
-    assert top.target.y == 2.0
-    assert right.target.x == 94.0
-    assert bottom.target.y == 30.0
-
-
-class _FastTextProvider(_Provider):
-    def __init__(
-        self,
-        result: TextRecognitionResult | None,
-        calls: list[ROIImage],
-        *,
-        after_recognition: Callable[[], None] | None = None,
-    ) -> None:
-        super().__init__("fast", {})
-        self._result = result
-        self._calls = calls
-        self._after_recognition = after_recognition
-
-    def prewarm(self) -> None:
-        return None
-
-    def recognize_text(self, image: ROIImage) -> TextRecognitionResult | None:
-        self._calls.append(image)
-        if self._after_recognition is not None:
-            self._after_recognition()
-        return self._result
-
-
-def _hover_worker(
-    fast_provider_factory,
-    *,
-    full_calls: list[ROIImage],
-    morphology_calls: list[str] | None = None,
-    dictionary_calls: list[str] | None = None,
-) -> LookupWorker:
-    morphology_log = morphology_calls if morphology_calls is not None else []
-    dictionary_log = dictionary_calls if dictionary_calls is not None else []
-
-    class FullOCR:
-        def recognize(self, image: ROIImage) -> tuple[OCRResult, ...]:
-            full_calls.append(image)
-            return (
-                OCRResult(
-                    "책",
-                    0.99,
-                    Quad.from_bounding_box(BoundingBox(0, 0, image.width, image.height)),
-                ),
-            )
-
-    class Morphology:
-        def analyze(self, text: str) -> tuple[TokenAnalysis, ...]:
-            morphology_log.append(text)
-            return (TokenAnalysis(text, "책"),)
-
-    class Dictionary:
-        def lookup(self, lemma: str) -> tuple[DictionaryEntry, ...]:
-            dictionary_log.append(lemma)
-            return (DictionaryEntry("책", ("book",)),)
-
-    return LookupWorker(
-        FullOCR,
-        Morphology,
-        Dictionary,
-        hover_text_recognition_provider_factory=fast_provider_factory,
-    )
-
-
-def test_clear_hangul_hover_uses_fast_path_without_full_ocr() -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    worker = _hover_worker(
-        lambda: _FastTextProvider(TextRecognitionResult("책", 0.99), fast_calls),
-        full_calls=full_calls,
-    )
-
-    result = worker(LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1))
-    worker.close()
-
-    assert result.status is LookupStatus.SUCCESS
-    assert len(fast_calls) == 1
-    assert (fast_calls[0].width, fast_calls[0].height) == (96, 32)
-    assert full_calls == []
-
-
-def test_non_hangul_fast_result_stops_before_full_ocr_and_downstream() -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    morphology_calls: list[str] = []
-    dictionary_calls: list[str] = []
-    worker = _hover_worker(
-        lambda: _FastTextProvider(TextRecognitionResult("Settings", 0.99), fast_calls),
-        full_calls=full_calls,
-        morphology_calls=morphology_calls,
-        dictionary_calls=dictionary_calls,
-    )
-
-    result = worker(LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1))
-    worker.close()
-
-    assert result.status is LookupStatus.UNUSABLE
-    assert full_calls == []
-    assert morphology_calls == []
-    assert dictionary_calls == []
-
-
-@pytest.mark.parametrize(
-    "fast_result",
-    [
-        TextRecognitionResult("책 학교", 0.99),
-        TextRecognitionResult("책book", 0.99),
-        TextRecognitionResult("책", 0.40),
-    ],
-)
-def test_unreliable_fast_results_fallback_to_full_ocr_once(
-    fast_result: TextRecognitionResult | None,
-) -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    worker = _hover_worker(
-        lambda: _FastTextProvider(fast_result, fast_calls),
-        full_calls=full_calls,
-    )
-
-    result = worker(LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1))
-    worker.close()
-
-    assert result.status is LookupStatus.SUCCESS
-    assert len(fast_calls) == 1
-    assert len(full_calls) == 1
-
-
-@pytest.mark.parametrize(
-    "fast_result",
-    [None, TextRecognitionResult("", 0.0)],
-)
-def test_blank_fast_result_stops_without_fallback_or_downstream(
-    fast_result: TextRecognitionResult | None,
-) -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    morphology_calls: list[str] = []
-    dictionary_calls: list[str] = []
-    worker = _hover_worker(
-        lambda: _FastTextProvider(fast_result, fast_calls),
-        full_calls=full_calls,
-        morphology_calls=morphology_calls,
-        dictionary_calls=dictionary_calls,
-    )
-
-    result = worker(LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1))
-    worker.close()
-
-    assert result.status is LookupStatus.EMPTY
-    assert len(fast_calls) == 1
-    assert full_calls == []
-    assert morphology_calls == []
-    assert dictionary_calls == []
-
-
-def test_cursor_near_roi_edge_bypasses_fast_recognition_and_falls_back_once() -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    worker = _hover_worker(
-        lambda: _FastTextProvider(TextRecognitionResult("책", 0.99), fast_calls),
-        full_calls=full_calls,
-    )
-
-    result = worker(LookupRequest(1, _large_roi(), Point(2, 50), hover_request_id=1))
-    worker.close()
-
-    assert result.status is LookupStatus.SUCCESS
-    assert fast_calls == []
-    assert len(full_calls) == 1
-
-
-def test_hover_cache_reuses_exact_pixels_but_changed_pixels_rerun_fast_ocr() -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    worker = _hover_worker(
-        lambda: _FastTextProvider(
-            TextRecognitionResult("Settings", 0.99), fast_calls
-        ),
-        full_calls=full_calls,
-    )
-    image = _large_roi()
-    changed = ROIImage(
-        image.width,
-        image.height,
-        image.pixel_format,
-        image.data[:-1] + bytes([image.data[-1] ^ 0xFF]),
-    )
-
-    first = worker(LookupRequest(1, image, Point(100, 50), hover_request_id=1))
-    repeated = worker(LookupRequest(2, image, Point(100, 50), hover_request_id=2))
-    changed_result = worker(
-        LookupRequest(3, changed, Point(100, 50), hover_request_id=3)
-    )
-    worker.close()
-
-    assert first.status is LookupStatus.UNUSABLE
-    assert repeated == first
-    assert changed_result.status is LookupStatus.UNUSABLE
-    assert len(fast_calls) == 2
-    assert full_calls == []
-
-
-def test_unsuccessful_hangul_lookup_falls_back_once_and_manual_bypasses_fast() -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-
-    class EmptyDictionary:
-        def lookup(self, _lemma: str) -> tuple[DictionaryEntry, ...]:
-            return ()
-
-    class FullOCR:
-        def recognize(self, image: ROIImage) -> tuple[OCRResult, ...]:
-            full_calls.append(image)
-            return (
-                OCRResult(
-                    "책",
-                    0.99,
-                    Quad.from_bounding_box(
-                        BoundingBox(0, 0, image.width, image.height)
-                    ),
-                ),
-            )
-
-    class Morphology:
-        def analyze(self, text: str) -> tuple[TokenAnalysis, ...]:
-            return (TokenAnalysis(text, "책"),)
-
-    worker = LookupWorker(
-        FullOCR,
-        Morphology,
-        EmptyDictionary,
-        hover_text_recognition_provider_factory=lambda: _FastTextProvider(
-            TextRecognitionResult("책", 0.99), fast_calls
-        ),
-    )
-
-    hover = worker(LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1))
-    manual = worker(LookupRequest(2, _large_roi(), Point(100, 50)))
-    worker.close()
-
-    assert hover.status is LookupStatus.NOT_FOUND
-    assert manual.status is LookupStatus.NOT_FOUND
-    # The manual request bypasses the fast path, and both requests reach the
-    # full provider's answer -- the second is served from the worker's OCR
-    # cache because the ROI bytes are identical.
-    assert len(fast_calls) == 1
-    assert len(full_calls) == 1
-
-
-def test_cancellation_before_fast_ocr_and_after_fast_result_prevents_more_work() -> None:
-    first_fast_calls: list[ROIImage] = []
-    first_full_calls: list[ROIImage] = []
-    first = _hover_worker(
-        lambda: _FastTextProvider(TextRecognitionResult("책", 0.99), first_fast_calls),
-        full_calls=first_full_calls,
-    )
-    cancelled_before = LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1)
-    cancelled_before.cancel()
-
-    with pytest.raises(LookupCancelled):
-        first(cancelled_before)
-    first.close()
-    assert first_fast_calls == []
-    assert first_full_calls == []
-
-    second_fast_calls: list[ROIImage] = []
-    second_full_calls: list[ROIImage] = []
-    cancelled_after = LookupRequest(2, _large_roi(), Point(100, 50), hover_request_id=2)
-    second = _hover_worker(
-        lambda: _FastTextProvider(
-            TextRecognitionResult("책 학교", 0.99),
-            second_fast_calls,
-            after_recognition=cancelled_after.cancel,
-        ),
-        full_calls=second_full_calls,
-    )
-
-    with pytest.raises(LookupCancelled):
-        second(cancelled_after)
-    second.close()
-    assert len(second_fast_calls) == 1
-    assert second_full_calls == []
-
-
-def test_cancellation_during_crop_prevents_fast_recognition(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fast_calls: list[ROIImage] = []
-    full_calls: list[ROIImage] = []
-    request = LookupRequest(1, _large_roi(), Point(100, 50), hover_request_id=1)
-    original_crop = composition_module._crop_hover_roi
-
-    def cancelling_crop(image: ROIImage, target: Point):
-        request.cancel()
-        return original_crop(image, target)
-
-    monkeypatch.setattr(composition_module, "_crop_hover_roi", cancelling_crop)
-    worker = _hover_worker(
-        lambda: _FastTextProvider(TextRecognitionResult("책", 0.99), fast_calls),
-        full_calls=full_calls,
-    )
-
-    with pytest.raises(LookupCancelled):
-        worker(request)
-    worker.close()
-
-    assert fast_calls == []
-    assert full_calls == []
-
-
-def test_fast_inference_prewarm_finishes_before_worker_ready() -> None:
-    prewarm_started = Event()
-    release_prewarm = Event()
-
-    class BlockingFastProvider:
-        def prewarm(self) -> None:
-            prewarm_started.set()
-            assert release_prewarm.wait(timeout=2)
-
-        def recognize_text(self, _image: ROIImage) -> TextRecognitionResult:
-            return TextRecognitionResult("책", 0.99)
-
-    worker_factory = create_lookup_worker_factory(
-        lambda: _OCRProvider("ocr", {}),
-        lambda: _MorphologyProvider("morphology", {}),
-        lambda: _DictionaryProvider("dictionary", {}),
-        hover_text_recognition_provider_factory=BlockingFastProvider,
-    )
-    executor = JobExecutor(worker_factory, lambda _item, _result: None)
-
-    executor.start()
-    assert prewarm_started.wait(timeout=2)
-    assert executor.worker_ready is False
-    release_prewarm.set()
-    assert executor.wait_until_ready(timeout=2)
-    executor.shutdown()
 
 
 def test_ocr_cache_serves_an_identical_roi_and_still_resolves_the_new_target() -> None:

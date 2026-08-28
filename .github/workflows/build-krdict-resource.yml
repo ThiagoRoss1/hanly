@@ -1,0 +1,152 @@
+name: Build KRDICT resource
+
+# The official source archive is supplied by an explicit HTTPS URL and digest.
+# This workflow produces reviewable outputs only; release publication remains
+# the separate, human-dispatched release.yml gate.
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "HTTPS URL of the approved official KRDICT source ZIP"
+        required: true
+        type: string
+      source_sha256:
+        description: "Exact SHA-256 digest of the source ZIP (64 hex characters)"
+        required: true
+        type: string
+      resource_version:
+        description: "Independent KRDICT resource version"
+        required: true
+        default: "20260819-v1"
+        type: string
+      source_date:
+        description: "Official source date (YYYY-MM-DD)"
+        required: true
+        default: "2026-08-19"
+        type: string
+      build_date:
+        description: "Fixed database build date (YYYY-MM-DD)"
+        required: true
+        default: "2026-08-25"
+        type: string
+      expected_entries:
+        description: "Expected LexicalEntry count"
+        required: true
+        default: "56555"
+        type: string
+      expected_senses:
+        description: "Expected Sense count"
+        required: true
+        default: "76833"
+        type: string
+      expected_sanitized_bytes:
+        description: "Expected illegal XML bytes replaced in memory"
+        required: true
+        default: "7"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-resource:
+    name: Build and validate KRDICT resource
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_URL: ${{ inputs.source_url }}
+      SOURCE_SHA256: ${{ inputs.source_sha256 }}
+      RESOURCE_VERSION: ${{ inputs.resource_version }}
+      SOURCE_DATE: ${{ inputs.source_date }}
+      BUILD_DATE: ${{ inputs.build_date }}
+      EXPECTED_ENTRIES: ${{ inputs.expected_entries }}
+      EXPECTED_SENSES: ${{ inputs.expected_senses }}
+      EXPECTED_SANITIZED_BYTES: ${{ inputs.expected_sanitized_bytes }}
+    steps:
+      - name: Check out resource tooling
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install resource build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --editable packages/hanly zstandard
+
+      - name: Validate producer inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_URL" == https://* ]] || {
+            echo "source_url must use HTTPS" >&2
+            exit 1
+          }
+          [[ "$SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "source_sha256 must be exactly 64 lowercase hexadecimal characters" >&2
+            exit 1
+          }
+          [[ "$RESOURCE_VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || {
+            echo "resource_version contains unsafe characters" >&2
+            exit 1
+          }
+          [[ "$SOURCE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+            echo "source_date must be YYYY-MM-DD" >&2
+            exit 1
+          }
+          [[ "$BUILD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+            echo "build_date must be YYYY-MM-DD" >&2
+            exit 1
+          }
+          for count in "$EXPECTED_ENTRIES" "$EXPECTED_SENSES" "$EXPECTED_SANITIZED_BYTES"; do
+            [[ "$count" =~ ^[0-9]+$ ]] || {
+              echo "expected counts must be decimal integers" >&2
+              exit 1
+            }
+          done
+
+      - name: Download and verify approved official source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_path="$RUNNER_TEMP/krdict-source.zip"
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --output "$source_path" "$SOURCE_URL"
+          printf '%s  %s\n' "$SOURCE_SHA256" "$source_path" | sha256sum --check --status -
+
+      - name: Build normalized SQLite resource
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/krdict-source.zip"
+          python tools/krdict/build_seed.py "$RUNNER_TEMP/krdict-source.zip" \
+            --output "$RUNNER_TEMP/krdict.sqlite3" \
+            --source-date "$SOURCE_DATE" \
+            --resource-version "$RESOURCE_VERSION" \
+            --build-date "$BUILD_DATE"
+
+      - name: Validate source and database parity
+        run: |
+          mkdir -p producer-output
+          python tools/krdict/validate_seed.py "$RUNNER_TEMP/krdict.sqlite3" \
+            --source "$RUNNER_TEMP/krdict-source.zip" \
+            --expect-entries "$EXPECTED_ENTRIES" \
+            --expect-senses "$EXPECTED_SENSES" \
+            --expect-sanitized-bytes "$EXPECTED_SANITIZED_BYTES" \
+            --report producer-output/validation-report.json
+
+      - name: Package deterministic Zstandard resource
+        run: |
+          python tools/krdict/package_resource.py "$RUNNER_TEMP/krdict.sqlite3" \
+            --output "producer-output/krdict-${RESOURCE_VERSION}.sqlite3.zst" \
+            --resource-version "$RESOURCE_VERSION" \
+            --source-date "$SOURCE_DATE" \
+            --manifest producer-output/krdict.resource.json
+
+      - name: Upload reviewable KRDICT resource outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: hanly-krdict-resource
+          if-no-files-found: error
+          retention-days: 14
+          path: producer-output/

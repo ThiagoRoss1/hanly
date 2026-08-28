@@ -178,7 +178,7 @@ class ControlCenterBridge:
         diagnostics: Callable[[], Sequence[str]] | None = None,
         on_lifecycle_changed: Callable[[], None] | None = None,
         runtime: HanlyRuntime | None = None,
-        ocr_provider: str = "PaddleOCR",
+        ocr_provider: str = "EasyOCR",
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")

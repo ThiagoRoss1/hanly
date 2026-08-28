@@ -2,7 +2,8 @@
 
 from hanly import BoundingBox, OCRResult, Point, Quad
 from hanly.word_resolver import WordResolver
-from hanly_fixtures.korean import KOREAN_OCR_RESULTS
+
+from tests.hanly_fixtures.korean import KOREAN_OCR_RESULTS
 
 
 def _result(text: str, quad: Quad) -> OCRResult:

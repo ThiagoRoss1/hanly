@@ -45,7 +45,7 @@ takes its ordinary full-provider path for hover requests too.
 - `packages/hanly-app/src/hanly_app/composition.py` (OCR prewarm hook)
 - `packages/hanly-app/src/hanly_app/bootstrap.py`,
   `packages/hanly-app/src/hanly_app/application.py`
-- `benchmarks/han35/{cli,live_runner}.py` (`require_paddle_config`)
+- `benchmarks/dev/{cli,live_runner}.py` (`require_paddle_config`)
 - `resources/dev/runtime-easyocr.json`, `pyproject.toml`
 - `tests/test_easyocr_provider.py`, `tests/test_easyocr_runtime.py`,
   `tests/test_runtime.py`
@@ -83,7 +83,7 @@ takes its ordinary full-provider path for hover requests too.
 - **EasyOCR models are not managed resources.** They resolve through EasyOCR's
   own storage directory (`~/.EasyOCR/model` by default) and, with
   `download_enabled` at its default, EasyOCR may fetch ~99 MB on a machine that
-  lacks them. `ResourceManager`, `UpdateService`, and `resource_bootstrap` are
+  lacks them. `ResourceManager`, `UpdateService`, and `first_run` are
   unchanged and still provision the Paddle manifest for a default first run.
 - **Packaging is unchanged.** `packaging/hanly-desktop.spec` has no EasyOCR or
   Torch hooks; a frozen build of this backend has not been attempted.

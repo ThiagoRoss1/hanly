@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .bootstrap import DEFAULT_OCR_RUNTIME_MODULE
 from .capture import ScreenRect
 from .config import CaptureMode
 
@@ -39,21 +38,16 @@ class CaptureSelection:
         return cls(CaptureMode.REGION, region)
 
 
-def select_capture_area(
-    ocr_module: str = DEFAULT_OCR_RUNTIME_MODULE,
-) -> CaptureSelection | None:
+def select_capture_area() -> CaptureSelection | None:
     """Ask for a whole monitor or a snipping-style region before app startup.
 
-    ``ocr_module`` must name the backend the session will actually use. This
-    runs before Qt, and Hanly's Windows native ordering requires the OCR stack
-    to load first; preparing a backend the session then does not use loads a
-    second native stack for nothing, which is visible as startup delay and
-    retained memory.
+    This runs before Qt: Hanly's Windows native ordering requires the OCR
+    stack to load first.
     """
 
-    from .bootstrap import preload_ocr_runtime
+    from .ocr_preload import preload_ocr_runtime
 
-    preload_ocr_runtime(module_name=ocr_module)
+    preload_ocr_runtime()
     QApplication, QMessageBox = _import_qt_widgets()
 
     _prepare_web_engine()

@@ -1,7 +1,7 @@
 """Production onedir definition for Hanly Desktop.
 
 Only application code, Python package data, and native runtime dependencies
-are collected here. PaddleOCR model directories and the KRDICT database are
+are collected here. The KRDICT database is
 external resource artifacts and must be named by ``--runtime-config``.
 """
 
@@ -49,12 +49,10 @@ datas = collect_data_files(
         "assets/control_center/*.js",
     ],
 )
-if sys.platform == "win32":
-    datas.append((str(ROOT / "packaging" / "hanly.cmd"), "."))
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
-for package_name in ("easyocr", "torch", "torchvision", "paddle", "paddleocr", "paddlex"):
+for package_name in ("easyocr", "torch", "torchvision"):
     try:
         package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
     except Exception:

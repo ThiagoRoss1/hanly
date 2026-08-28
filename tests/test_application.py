@@ -320,30 +320,23 @@ def test_discovery_reports_nothing_rather_than_guessing(tmp_path: Path) -> None:
     assert discover_runtime_config({"LOCALAPPDATA": str(tmp_path / "empty")}, executable) is None
 
 
-def test_explicit_runtime_config_skips_first_run_bootstrap(
+def test_an_explicit_runtime_config_is_used_without_provisioning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = tmp_path / "operator-runtime.json"
-    calls: list[Path] = []
+    """`--runtime-config` is an operator choice: it neither creates files nor
+    reaches the release channel behind the caller's back."""
 
-    def forbidden_bootstrap(path: str | Path) -> Path:
-        calls.append(Path(path))
-        raise AssertionError("explicit runtime config must not bootstrap")
+    config = tmp_path / "explicit.json"
 
-    monkeypatch.setattr(application_module, "bootstrap_runtime_config", forbidden_bootstrap)
-    monkeypatch.setattr(
-        application_module,
-        "run_desktop",
-        lambda runtime_config, **_options: (
-            0 if Path(runtime_config) == config else 1
-        ),
-    )
+    def forbidden(path: str | Path, **_options: object) -> Path:
+        raise AssertionError("explicit runtime config must not provision")
 
-    assert application_module.main(["--runtime-config", str(config)]) == 0
-    assert calls == []
+    monkeypatch.setattr(application_module, "provision_runtime_config", forbidden)
+
+    assert application_module.resolve_runtime_config(config) == config
 
 
-def test_automatic_launch_bootstraps_the_discovered_config(
+def test_automatic_launch_provisions_the_discovered_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     discovered = tmp_path / "runtime.json"
@@ -351,22 +344,18 @@ def test_automatic_launch_bootstraps_the_discovered_config(
 
     monkeypatch.setattr(application_module, "discover_runtime_config", lambda: discovered)
 
-    def bootstrap(path: str | Path) -> Path:
+    def provision(path: str | Path, **options: object) -> Path:
         calls.append(Path(path))
+        assert callable(options["on_status"])
         return discovered
 
-    monkeypatch.setattr(
-        application_module,
-        "bootstrap_runtime_config",
-        bootstrap,
-    )
-    monkeypatch.setattr(application_module, "run_desktop", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(application_module, "provision_runtime_config", provision)
 
-    assert application_module.main([]) == 0
+    assert application_module.resolve_runtime_config(None) == discovered
     assert calls == [discovered]
 
 
-def test_fresh_automatic_launch_bootstraps_the_default_config_path(
+def test_fresh_automatic_launch_provisions_the_default_config_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     default = tmp_path / "Hanly" / "runtime.json"
@@ -375,15 +364,74 @@ def test_fresh_automatic_launch_bootstraps_the_default_config_path(
     monkeypatch.setattr(application_module, "discover_runtime_config", lambda: None)
     monkeypatch.setattr(application_module, "default_runtime_config_path", lambda: default)
 
-    def bootstrap(path: str | Path) -> Path:
+    def provision(path: str | Path, **options: object) -> Path:
         calls.append(Path(path))
+        assert callable(options["on_status"])
         return default
 
-    monkeypatch.setattr(application_module, "bootstrap_runtime_config", bootstrap)
-    monkeypatch.setattr(application_module, "run_desktop", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(application_module, "provision_runtime_config", provision)
 
-    assert application_module.main([]) == 0
+    assert application_module.resolve_runtime_config(None) == default
     assert calls == [default]
+
+
+def test_startup_resource_status_is_visible_on_the_cli(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    application_module._report_startup_status("Checking resources...")
+
+    assert capsys.readouterr().err == "Hanly: Checking resources...\n"
+
+
+def test_update_coordinator_checks_availability_as_soon_as_it_is_exposed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = object()
+    calls: list[str] = []
+    coordinator_options: dict[str, object] = {}
+
+    class _Coordinator:
+        def __init__(self, received: object, **options: object) -> None:
+            assert received is service
+            coordinator_options.update(options)
+
+        def check_for_updates(self) -> dict[str, object]:
+            calls.append("check")
+            return {"status": "checking"}
+
+    monkeypatch.setattr(application_module, "load_update_service", lambda *_args: service)
+    monkeypatch.setattr(application_module, "UpdateCoordinator", _Coordinator)
+    manager = ResourceManager(ResourceManifest(()))
+    config = tmp_path / "runtime.json"
+    config.write_text(
+        json.dumps(
+            {
+                "resources": {
+                    "krdict": {
+                        "kind": "krdict",
+                        "path": "krdict.sqlite3",
+                        "installed_version": "1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = application_module._update_coordinator(config, manager, DiagnosticLog())
+
+    assert result is not None
+    assert calls == ["check"]
+    record_install = coordinator_options["record_install"]
+    assert callable(record_install)
+    record_install(
+        types.SimpleNamespace(
+            resource=types.SimpleNamespace(resource_id="krdict", version="2")
+        )
+    )
+    assert json.loads(config.read_text(encoding="utf-8"))["resources"]["krdict"][
+        "installed_version"
+    ] == "2"
 
 
 def test_windowed_startup_failure_uses_native_error_reporter(
@@ -393,7 +441,7 @@ def test_windowed_startup_failure_uses_native_error_reporter(
     monkeypatch.setattr(application_module.sys, "frozen", True, raising=False)
     monkeypatch.setattr(application_module, "_show_native_startup_error", messages.append)
 
-    application_module._report_startup_error(RuntimeError("resource release unavailable"))
+    application_module.report_startup_error(RuntimeError("resource release unavailable"))
 
     assert messages == ["Hanly Desktop: resource release unavailable"]
     assert "resource release unavailable" in capsys.readouterr().err

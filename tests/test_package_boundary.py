@@ -11,7 +11,11 @@ ROOT = Path(__file__).parents[1]
 ENGINE_SOURCE = ROOT / "packages" / "hanly" / "src" / "hanly"
 
 
-def test_engine_source_does_not_import_hanly_app() -> None:
+def test_engine_source_only_imports_distributable_packages() -> None:
+    """``hanly`` ships independently, so it may not reach into its desktop
+    client or into repository-only tooling that no wheel contains."""
+
+    forbidden = ("hanly_app", "tools")
     violations: list[str] = []
 
     for source_file in ENGINE_SOURCE.rglob("*.py"):
@@ -24,7 +28,11 @@ def test_engine_source_does_not_import_hanly_app() -> None:
             else:
                 continue
 
-            if any(name == "hanly_app" or name.startswith("hanly_app.") for name in imported_names):
+            if any(
+                name == root or name.startswith(f"{root}.")
+                for name in imported_names
+                for root in forbidden
+            ):
                 violations.append(str(source_file))
 
     assert violations == []

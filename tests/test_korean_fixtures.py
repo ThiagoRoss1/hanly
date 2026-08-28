@@ -5,7 +5,8 @@ import struct
 from pathlib import Path
 
 from hanly import BoundingBox, DictionaryEntry, OCRResult, TokenAnalysis
-from hanly_fixtures.korean import (
+
+from tests.hanly_fixtures.korean import (
     KOREAN_DICTIONARY_ENTRIES,
     KOREAN_OCR_RESULTS,
     KOREAN_TEXT,

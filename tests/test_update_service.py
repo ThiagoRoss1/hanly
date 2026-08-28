@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import sqlite3
 import urllib.request
 import zipfile
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import zstandard
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
 from hanly_app.update_service import (
     DownloadProgress,
@@ -20,6 +22,8 @@ from hanly_app.update_service import (
     ResourceUpdateError,
     UpdateService,
 )
+
+from tools.krdict.build_seed import build_database
 
 
 @dataclass
@@ -56,7 +60,7 @@ def _service(
     _create_krdict_database(destination, "known good")
     if payload is None:
         updated = tmp_path / "updated.sqlite"
-        _create_krdict_database(updated, "new")
+        _create_krdict_database(updated, "new", version="2")
         payload = updated.read_bytes()
     spec = ResourceSpec("krdict", destination, version="1", kind="krdict")
     resource = RemoteResource(
@@ -86,6 +90,33 @@ def test_manifest_normalizes_mapping_and_array_forms() -> None:
     assert manifest["ocr-model"].kind == "directory"
 
 
+def test_manifest_preserves_optional_krdict_artifact_validation_fields() -> None:
+    manifest = RemoteManifest.from_payload(
+        {
+            "resources": {
+                "krdict": {
+                    "version": "20260819-v1",
+                    "asset_name": "krdict-20260819-v1.sqlite3.zst",
+                    "checksum": f"sha256:{'1' * 64}",
+                    "kind": "krdict",
+                    "size": 123,
+                    "schema_version": 1,
+                    "expected_entry_count": 56555,
+                    "source_date": "2026-08-19",
+                }
+            }
+        }
+    )
+
+    resource = manifest["krdict"]
+    assert (
+        resource.size,
+        resource.schema_version,
+        resource.expected_entry_count,
+        resource.source_date,
+    ) == (123, 1, 56555, "2026-08-19")
+
+
 def test_manifest_rejects_missing_resources() -> None:
     with pytest.raises(RemoteManifestError, match="resources"):
         RemoteManifest.from_payload({})
@@ -111,19 +142,11 @@ def test_install_validates_staged_artifact_before_atomic_activation_and_keeps_ba
 
     result = service.install("krdict", on_progress=events.append)
 
-    connection = sqlite3.connect(destination)
-    try:
-        assert connection.execute("SELECT headword FROM entries").fetchone()[0] == "new"
-    finally:
-        connection.close()
+    assert _headword(destination) == "new"
     assert result.path == destination.resolve()
     assert result.backup_path == tmp_path / "krdict.sqlite.last-known-good"
-    connection = sqlite3.connect(result.backup_path)
-    try:
-        assert connection.execute("SELECT headword FROM entries").fetchone()[0] == "known good"
-    finally:
-        connection.close()
-    assert any(event.phase == "validating" for event in events)
+    assert _headword(result.backup_path) == "known good"
+    assert any(event.phase == "installing" for event in events)
     assert events[-1].phase == "complete"
     assert list(tmp_path.glob("*.download")) == []
 
@@ -140,6 +163,183 @@ def test_failed_sqlite_validation_is_non_destructive(tmp_path: Path) -> None:
     finally:
         connection.close()
     assert list(tmp_path.glob("*.download")) == []
+
+
+def test_zstd_krdict_is_verified_decompressed_validated_and_activated(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "krdict.sqlite3"
+    _create_krdict_database(destination, "known good")
+    updated = tmp_path / "updated.sqlite3"
+    _create_krdict_database(updated, "new", version="2")
+    payload = zstandard.ZstdCompressor(write_checksum=True).compress(updated.read_bytes())
+    resource = RemoteResource(
+        "krdict",
+        "2",
+        url="https://example.test/krdict-2.sqlite3.zst",
+        checksum=f"sha256:{_sha256(payload)}",
+        kind="krdict",
+        size=len(payload),
+        schema_version=1,
+        expected_entry_count=1,
+        source_date="fixture",
+    )
+    fetcher = FakeFetcher(RemoteManifest((resource,)), {"krdict": payload})
+    manager = ResourceManager(
+        ResourceManifest((ResourceSpec("krdict", destination, version="1", kind="krdict"),))
+    )
+    progress: list[DownloadProgress] = []
+
+    result = UpdateService(manager, fetcher).install("krdict", on_progress=progress.append)
+
+    assert _headword(result.path) == "new"
+    assert _headword(destination.with_name(destination.name + ".last-known-good")) == (
+        "known good"
+    )
+    assert [event.phase for event in progress if event.phase != "downloading"] == [
+        "verifying",
+        "installing",
+        "complete",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("size", "schema_version", "entry_count", "source_date", "message"),
+    [
+        (1, 1, 1, "fixture", "size does not match"),
+        (None, 2, 1, "fixture", "schema_version does not match"),
+        (None, 1, 2, "fixture", "entry_count does not match"),
+        (None, 1, 1, "2099-01-01", "source_date does not match"),
+    ],
+)
+def test_zstd_manifest_mismatches_preserve_the_active_database_and_clean_staging(
+    tmp_path: Path,
+    size: int | None,
+    schema_version: int,
+    entry_count: int,
+    source_date: str,
+    message: str,
+) -> None:
+    destination = tmp_path / "krdict.sqlite3"
+    _create_krdict_database(destination, "known good")
+    updated = tmp_path / "updated.sqlite3"
+    _create_krdict_database(updated, "new", version="2")
+    payload = zstandard.ZstdCompressor(write_checksum=True).compress(updated.read_bytes())
+    resource = RemoteResource(
+        "krdict",
+        "2",
+        url="https://example.test/krdict-2.sqlite3.zst",
+        checksum=f"sha256:{_sha256(payload)}",
+        kind="krdict",
+        size=len(payload) if size is None else size,
+        schema_version=schema_version,
+        expected_entry_count=entry_count,
+        source_date=source_date,
+    )
+    fetcher = FakeFetcher(RemoteManifest((resource,)), {"krdict": payload})
+    manager = ResourceManager(
+        ResourceManifest((ResourceSpec("krdict", destination, version="1", kind="krdict"),))
+    )
+
+    with pytest.raises(ResourceUpdateError, match=message):
+        UpdateService(manager, fetcher).install("krdict")
+
+    assert _headword(destination) == "known good"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "krdict.sqlite3",
+        "krdict.sqlite3.zip",
+        "updated.sqlite3",
+        "updated.sqlite3.zip",
+    ]
+
+
+def test_valid_zstd_wrapping_corrupt_sqlite_is_non_destructive_and_cleans_staging(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "krdict.sqlite3"
+    _create_krdict_database(destination, "known good")
+    payload = zstandard.ZstdCompressor(write_checksum=True).compress(b"not sqlite")
+    resource = RemoteResource(
+        "krdict",
+        "2",
+        url="https://example.test/krdict-2.sqlite3.zst",
+        checksum=f"sha256:{_sha256(payload)}",
+        kind="krdict",
+        size=len(payload),
+        schema_version=1,
+        expected_entry_count=1,
+        source_date="fixture",
+    )
+    fetcher = FakeFetcher(RemoteManifest((resource,)), {"krdict": payload})
+    manager = ResourceManager(
+        ResourceManifest((ResourceSpec("krdict", destination, version="1", kind="krdict"),))
+    )
+
+    with pytest.raises(ResourceUpdateError, match="validation|not valid"):
+        UpdateService(manager, fetcher).install("krdict")
+
+    assert _headword(destination) == "known good"
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "krdict.sqlite3",
+        "krdict.sqlite3.zip",
+    ]
+
+
+def test_corrupt_zstd_is_rejected_without_replacing_active_database(tmp_path: Path) -> None:
+    destination = tmp_path / "krdict.sqlite3"
+    _create_krdict_database(destination, "known good")
+    payload = b"not a zstandard frame"
+    resource = RemoteResource(
+        "krdict",
+        "2",
+        url="https://example.test/krdict-2.sqlite3.zst",
+        checksum=f"sha256:{_sha256(payload)}",
+        kind="krdict",
+        size=len(payload),
+        schema_version=1,
+        expected_entry_count=1,
+        source_date="fixture",
+    )
+    fetcher = FakeFetcher(RemoteManifest((resource,)), {"krdict": payload})
+    manager = ResourceManager(
+        ResourceManifest((ResourceSpec("krdict", destination, version="1", kind="krdict"),))
+    )
+
+    with pytest.raises(ResourceUpdateError, match="decompress|Zstandard"):
+        UpdateService(manager, fetcher).install("krdict")
+
+    assert _headword(destination) == "known good"
+    assert not tuple(tmp_path.glob(".*.install"))
+
+
+def test_an_empty_zstd_frame_is_rejected_and_leaves_no_staged_output(tmp_path: Path) -> None:
+    """A valid frame that decompresses to nothing is a rejection like any other,
+    and must not leave its partially written install file behind."""
+
+    destination = tmp_path / "krdict.sqlite3"
+    _create_krdict_database(destination, "known good")
+    payload = zstandard.ZstdCompressor().compress(b"")
+    resource = RemoteResource(
+        "krdict",
+        "2",
+        url="https://example.test/krdict-2.sqlite3.zst",
+        checksum=f"sha256:{_sha256(payload)}",
+        kind="krdict",
+        size=len(payload),
+        schema_version=1,
+        expected_entry_count=1,
+        source_date="fixture",
+    )
+    fetcher = FakeFetcher(RemoteManifest((resource,)), {"krdict": payload})
+    manager = ResourceManager(
+        ResourceManifest((ResourceSpec("krdict", destination, version="1", kind="krdict"),))
+    )
+
+    with pytest.raises(ResourceUpdateError, match="empty"):
+        UpdateService(manager, fetcher).install("krdict")
+
+    assert _headword(destination) == "known good"
+    assert not tuple(tmp_path.glob(".*.install"))
 
 
 def test_sqlite_install_requires_an_expected_remote_checksum(tmp_path: Path) -> None:
@@ -229,42 +429,87 @@ def test_github_release_fetcher_reads_inline_manifest_and_streams_download(
     assert progress[-1].completed == len(payload)
 
 
+def test_github_release_fetcher_resolves_producer_asset_name(tmp_path: Path) -> None:
+    payload = b"producer artifact"
+    asset_name = "krdict-20260819-v1.sqlite3.zst"
+    manifest = {
+        "manifest_version": 1,
+        "resources": {
+            "krdict": {
+                "asset_name": asset_name,
+                "checksum": f"sha256:{_sha256(payload)}",
+                "expected_entry_count": 1,
+                "kind": "krdict",
+                "schema_version": 1,
+                "size": len(payload),
+                "source_date": "2026-08-19",
+                "version": "20260819-v1",
+            }
+        },
+    }
+    responses = {
+        "https://api.github.com/repos/acme/hanly/releases/latest": _Response(
+            json.dumps(
+                {
+                    "tag_name": "v1.0.0",
+                    "assets": [
+                        {
+                            "name": "hanly-resources.json",
+                            "browser_download_url": "https://download/manifest",
+                        },
+                        {
+                            "name": asset_name,
+                            "browser_download_url": "https://download/krdict",
+                        },
+                    ],
+                }
+            ).encode()
+        ),
+        "https://download/manifest": _Response(json.dumps(manifest).encode()),
+        "https://download/krdict": _Response(payload, {"Content-Length": str(len(payload))}),
+    }
+
+    def opener(url: str, **_kwargs: Any) -> _Response:
+        return responses[url]
+
+    fetcher = GitHubReleaseFetcher("acme", "hanly", opener=opener)
+    remote_manifest = fetcher.fetch_manifest()
+    resource = remote_manifest["krdict"]
+    destination = tmp_path / asset_name
+
+    fetcher.download(resource, destination)
+
+    assert resource.url is None
+    assert resource.asset_name == asset_name
+    assert destination.read_bytes() == payload
+
+
 class _Response(io.BytesIO):
     def __init__(self, payload: bytes, headers: dict[str, str] | None = None) -> None:
         super().__init__(payload)
         self.headers = headers or {}
 
 
-def _create_krdict_database(path: Path, headword: str) -> None:
-    connection = sqlite3.connect(path)
-    connection.executescript(
-        """
-        PRAGMA user_version = 1;
-        CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE entries (
-            id INTEGER PRIMARY KEY,
-            headword TEXT NOT NULL,
-            part_of_speech TEXT
-        );
-        CREATE TABLE definitions (
-            entry_id INTEGER NOT NULL,
-            ordinal INTEGER NOT NULL,
-            definition TEXT NOT NULL,
-            PRIMARY KEY (entry_id, ordinal)
-        );
-        CREATE INDEX idx_entries_headword ON entries(headword);
-        INSERT INTO metadata(key, value) VALUES
-            ('schema_name', 'hanly.krdict'),
-            ('schema_version', '1'),
-            ('schema_marker', 'hanly.krdict-sqlite-v1'),
-            ('source_language', 'ko'),
-            ('target_language', 'en');
-        """
+def _create_krdict_database(path: Path, headword: str, *, version: str = "1") -> None:
+    source = path.with_suffix(path.suffix + ".zip")
+    xml = f"""<LexicalResource><Lexicon>
+<LexicalEntry att="id" val="1">
+ <feat att="lexicalUnit" val="단어"/><Lemma><feat att="writtenForm" val="{headword}"/></Lemma>
+ <Sense att="id" val="1"><feat att="definition" val="definition"/>
+  <Equivalent><feat att="language" val="영어"/>
+   <feat att="lemma" val="definition"/><feat att="definition" val="definition"/>
+  </Equivalent>
+ </Sense>
+</LexicalEntry></Lexicon></LexicalResource>"""
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("fixture.xml", xml)
+    build_database(
+        source,
+        path,
+        source_date="fixture",
+        resource_version=version,
+        build_date="1970-01-01",
     )
-    connection.execute("INSERT INTO entries(id, headword) VALUES (1, ?)", (headword,))
-    connection.execute("INSERT INTO definitions VALUES (1, 1, 'definition')")
-    connection.commit()
-    connection.close()
 
 
 def _directory_service(
@@ -374,7 +619,7 @@ def test_rollback_restores_the_known_good_copy_and_stays_idempotent(tmp_path: Pa
 def _headword(path: Path) -> str:
     connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        return str(connection.execute("SELECT headword FROM entries").fetchone()[0])
+        return str(connection.execute("SELECT written_form FROM lemmas").fetchone()[0])
     finally:
         connection.close()
 

@@ -20,10 +20,10 @@ from typing import Any
 
 from .contracts import ResourceMetadata, ResourceStatus
 from .errors import HanlyError
-from .krdict_build import (
-    KRDICT_SCHEMA_MARKER,
+from .krdict_schema import (
     KRDICT_SCHEMA_NAME,
     KRDICT_SCHEMA_VERSION,
+    validate_krdict_connection,
 )
 
 
@@ -37,59 +37,26 @@ class ResourceUnavailableError(ResourceManagerError):
 
 @dataclass(frozen=True)
 class SchemaSpec:
-    """The local schema contract expected for a SQLite resource.
+    """Names the schema contract a SQLite resource must satisfy.
 
-    ``metadata`` describes rows in a conventional ``metadata(key, value)``
-    table.  A schema name or marker also requires that table so the identity
-    can be checked rather than inferred from the filename.
+    The contract itself is not described here. Each supported schema owns its
+    own validator module, so a spec only has to say which one applies.
     """
 
     name: str
     version: int | str
-    marker: str | None = None
-    required_tables: tuple[str, ...] = ()
-    required_columns: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    required_indexes: tuple[str, ...] = ()
-    metadata: Mapping[str, str] = field(default_factory=dict)
-    user_version: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("schema name must not be empty")
         if not str(self.version).strip():
             raise ValueError("schema version must not be empty")
-        object.__setattr__(self, "required_tables", tuple(self.required_tables))
-        object.__setattr__(self, "required_indexes", tuple(self.required_indexes))
-        object.__setattr__(
-            self,
-            "required_columns",
-            MappingProxyType(
-                {table: tuple(columns) for table, columns in self.required_columns.items()}
-            ),
-        )
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
-KRDICT_SCHEMA = SchemaSpec(
-    name=KRDICT_SCHEMA_NAME,
-    version=KRDICT_SCHEMA_VERSION,
-    marker=KRDICT_SCHEMA_MARKER,
-    required_tables=("metadata", "entries", "definitions"),
-    required_columns={
-        "metadata": ("key", "value"),
-        "entries": ("id", "headword", "part_of_speech"),
-        "definitions": ("entry_id", "ordinal", "definition"),
-    },
-    required_indexes=("idx_entries_headword",),
-    metadata={
-        "schema_name": KRDICT_SCHEMA_NAME,
-        "schema_version": str(KRDICT_SCHEMA_VERSION),
-        "schema_marker": KRDICT_SCHEMA_MARKER,
-        "source_language": "ko",
-        "target_language": "en",
-    },
-    user_version=KRDICT_SCHEMA_VERSION,
-)
+KRDICT_SCHEMA = SchemaSpec(name=KRDICT_SCHEMA_NAME, version=KRDICT_SCHEMA_VERSION)
+
+#: The only SQLite schema the engine knows how to validate, by name.
+_SCHEMA_VALIDATORS = {KRDICT_SCHEMA_NAME: validate_krdict_connection}
 
 
 @dataclass(frozen=True)
@@ -539,68 +506,17 @@ class ResourceManager:
 
     @staticmethod
     def _validate_schema(path: Path, schema: SchemaSpec) -> str:
+        """Run the named schema's own validator and return its resource version."""
+
         if not path.is_file():
             raise ValueError("SQLite schema validation requires a file")
+        validator = _SCHEMA_VALIDATORS.get(schema.name)
+        if validator is None:
+            raise ValueError(f"unsupported schema contract: {schema.name}")
+
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         try:
-            tables = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            missing_tables = set(schema.required_tables) - tables
-            if missing_tables:
-                raise ValueError(f"missing tables: {', '.join(sorted(missing_tables))}")
-
-            for table, required_columns in schema.required_columns.items():
-                if table not in tables:
-                    raise ValueError(f"missing table: {table}")
-                columns = {
-                    row[1] for row in connection.execute(f"PRAGMA table_info({_quote(table)})")
-                }
-                missing_columns = set(required_columns) - columns
-                if missing_columns:
-                    raise ValueError(
-                        f"missing columns in {table}: {', '.join(sorted(missing_columns))}"
-                    )
-
-            indexes = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'index'"
-                )
-            }
-            missing_indexes = set(schema.required_indexes) - indexes
-            if missing_indexes:
-                raise ValueError(f"missing indexes: {', '.join(sorted(missing_indexes))}")
-
-            metadata: dict[str, str] = {}
-            if (
-                schema.metadata
-                or schema.name
-                or schema.marker is not None
-                or "metadata" in schema.required_tables
-            ):
-                metadata = {
-                    str(row[0]): str(row[1])
-                    for row in connection.execute("SELECT key, value FROM metadata")
-                }
-            if metadata.get("schema_name") != schema.name:
-                raise ValueError("metadata schema_name does not match the schema contract")
-            if schema.marker is not None and metadata.get("schema_marker") != schema.marker:
-                raise ValueError("metadata schema_marker does not match the schema contract")
-            for key, expected in schema.metadata.items():
-                if metadata.get(key) != expected:
-                    raise ValueError(f"metadata {key!r} does not match the schema contract")
-            if "schema_version" in metadata and metadata["schema_version"] != str(schema.version):
-                raise ValueError("metadata schema_version does not match the schema contract")
-
-            if schema.user_version is not None:
-                user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-                if user_version != schema.user_version:
-                    raise ValueError("SQLite user_version does not match the schema contract")
-            return metadata.get("schema_version", str(schema.version))
+            return validator(connection)["resource_version"]
         finally:
             connection.close()
 
@@ -629,6 +545,11 @@ class ResourceManager:
                 quick_error = str(exc)
 
             if quick_error is None and quick_rows == ("ok",):
+                foreign_keys = tuple(connection.execute("PRAGMA foreign_key_check"))
+                if foreign_keys:
+                    raise ValueError(
+                        f"PRAGMA foreign_key_check returned {len(foreign_keys)} violation(s)"
+                    )
                 return
 
             integrity_error: str | None = None
@@ -657,12 +578,6 @@ def _format_integrity_rows(rows: tuple[str, ...]) -> str:
     if not rows:
         return "no result"
     return "; ".join(rows)
-
-
-def _quote(identifier: str) -> str:
-    """Quote a SQLite identifier without allowing manifest text as SQL."""
-
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _parse_checksum(value: str) -> tuple[str, str]:

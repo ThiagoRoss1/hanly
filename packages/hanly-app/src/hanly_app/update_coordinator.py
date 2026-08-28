@@ -47,11 +47,14 @@ class UpdateCoordinator:
         executor: Executor | None = None,
         before_install: Callable[[str], None] | None = None,
         after_install: Callable[[str], None] | None = None,
+        record_install: Callable[[UpdateResult], None] | None = None,
     ) -> None:
         if before_install is not None and not callable(before_install):
             raise TypeError("before_install must be callable")
         if after_install is not None and not callable(after_install):
             raise TypeError("after_install must be callable")
+        if record_install is not None and not callable(record_install):
+            raise TypeError("record_install must be callable")
         self._service = update_service
         self._resource_manager = resource_manager
         self._executor = executor or ThreadPoolExecutor(
@@ -61,6 +64,7 @@ class UpdateCoordinator:
         self._owns_executor = executor is None
         self._before_install = before_install
         self._after_install = after_install
+        self._record_install = record_install
         self._lock = Lock()
         self._future: Future[Any] | None = None
         self._state: dict[str, Any] = {
@@ -150,7 +154,10 @@ class UpdateCoordinator:
             self._before_install(resource_id)
             prepared = True
         try:
-            return self._service.install(resource_id, on_progress=self._on_progress)
+            result = self._service.install(resource_id, on_progress=self._on_progress)
+            if self._record_install is not None:
+                self._record_install(result)
+            return result
         finally:
             if prepared and self._after_install is not None:
                 self._after_install(resource_id)
@@ -264,9 +271,12 @@ def _progress_dict(progress: DownloadProgress) -> dict[str, Any]:
 
 
 def _progress_message(progress: DownloadProgress) -> str:
+    # Keys are exactly the phases ``UpdateService.install`` emits; a phase
+    # without a label here would show the raw phase name to the user.
     labels = {
         "downloading": "Downloading resource…",
-        "validating": "Validating resource…",
+        "verifying": "Verifying resource…",
+        "installing": "Installing resource…",
         "complete": "Resource update complete.",
     }
     return labels.get(progress.phase, f"Resource update: {progress.phase}.")

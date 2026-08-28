@@ -21,7 +21,7 @@ Throughout: **Proven** means observed in this repository or a real Actions run.
 | CI | `ci.yml` gates on 3.10–3.13; `build.yml` three-platform matrix on tag push / dispatch |
 | Release | `release.yml` dispatch-only, tag-resolved build, checksummed manifest, `SHA256SUMS` |
 | Versioning | Single product version `0.1.0`, `v{version}` tags, `tools/release_version.py` gate |
-| First-run bootstrap | `resource_bootstrap.py` creates the per-user config and provisions resources |
+| First-run bootstrap | `first_run.py` creates the per-user config and provisions resources |
 | Independent resource versions | Derived from the documented artifact name, not the app tag |
 
 ### Effectively complete
@@ -67,7 +67,7 @@ Everything remaining is external evidence, not code:
 | 6 | Bootstrap ignores `updates.github` | 1 | **Deferred** |
 | 7 | Exe-adjacent writable config | 1 | **Deferred** |
 | 8 | `all_valid` over extra resources | 1 | **Dismissed** |
-| 9 | `bootstrap_runtime_config` mixed five responsibilities | 2 | **Fixed** |
+| 9 | `provision_runtime_config` mixed five responsibilities | 2 | **Fixed** |
 | 10 | "remain invalid after provisioning" without provisioning | 2 | **Fixed** |
 | 11 | `main()` branched twice on the same condition | 2 | **Fixed** |
 | 12 | Finding 2's fix reintroduced dead guards | 2 | **Fixed** |
@@ -124,7 +124,7 @@ function's message shown), two-match (aborts, lists both paths), and one-match
 
 ### 6. Bootstrap ignores a user-configured release channel — deferred
 
-`hanly_app/resource_bootstrap.py:bootstrap_runtime_config` builds its
+`hanly_app/first_run.py:provision_runtime_config` builds its
 `GitHubReleaseFetcher` from the module constants
 (`PUBLIC_REPOSITORY_OWNER`/`NAME`), not from the `updates.github` block of the
 configuration it just loaded. On a genuine first run these agree because
@@ -143,7 +143,7 @@ has a second channel. **Trigger:** any support for a non-default channel.
 finds one there, `_persist_resource_versions` writes `installed_version` back
 to that same path. In a per-machine install (`Program Files`, `/opt`) that path
 is not user-writable, so a successful download would be followed by a
-`RuntimeBootstrapError` from the version write — *after* the bytes were
+`FirstRunError` from the version write — *after* the bytes were
 activated. The next launch revalidates and recovers, so this is a confusing
 error rather than data loss.
 
@@ -162,7 +162,7 @@ startup would then fail is the worse outcome.
 
 - `installed_version` is a real `ResourceSpec` field consumed by
   `ResourceManager` (`resource_manager.py:413,428`) — not invented metadata.
-- `metadata[resource_id]` in `bootstrap_runtime_config` cannot raise
+- `metadata[resource_id]` in `provision_runtime_config` cannot raise
   `KeyError`: `_resource_manager_from_payload` requires all three ids first and
   its `RuntimeConfigError` is caught and wrapped.
 - `preload_ocr_runtime` on the failure path is idempotent — it is an
@@ -285,7 +285,7 @@ precisely the observed symptom.
 The current worktree changes both halves:
 
 1. **No configuration is no longer fatal.** `main()` falls back to
-   `default_runtime_config_path()` and calls `bootstrap_runtime_config()`, which
+   `default_runtime_config_path()` and calls `provision_runtime_config()`, which
    creates `%LOCALAPPDATA%\Hanly\runtime.json` and provisions resources.
    `_missing_runtime_config_message` is gone (finding 3).
 2. **Failures become visible.** `_report_startup_error` prints to stderr *and*,
@@ -353,7 +353,7 @@ extracted release
   -> runtime_hook.py: Windows DLL dirs + preload_ocr_runtime()   [Paddle before Qt]
   -> application.main()
   -> discover_runtime_config() or default_runtime_config_path()
-  -> bootstrap_runtime_config()
+  -> provision_runtime_config()
        - creates runtime.json if absent
        - load_resource_manager() -> validate()
        - all valid?  -> return immediately, no fetcher, no network
@@ -389,7 +389,7 @@ partial failure retains completed work and a retry resumes.
 **Repeat launch.** If all resources validate, bootstrap returns before
 constructing a fetcher — no remote request at all.
 
-**On failure.** `RuntimeBootstrapError` / `RuntimeConfigError` /
+**On failure.** `FirstRunError` / `RuntimeConfigError` /
 `DesktopApplicationError` / `OSError` / `ValueError` are caught, reported, and
 `main()` returns 2. Messages name the exact resource and the underlying cause.
 
@@ -562,7 +562,7 @@ failure, where PyQt6 was installed but could not load (section 5).
 
 Focused suites within the 379: `test_ci_workflows.py`,
 `test_release_manifest.py`, `test_release_version.py`, `test_packaging.py`,
-`test_resource_bootstrap.py`, `test_application.py`, `test_runtime.py`.
+`test_first_run.py`, `test_application.py`, `test_runtime.py`.
 
 **No** PyInstaller build, Actions run, tag operation, dispatch, artifact
 upload, or release publication was performed in this pass.
@@ -576,7 +576,7 @@ upload, or release publication was performed in this pass.
 - [x] **Decide the model archive validation question** (section 3) — decided:
       narrow app-layer invariant applied, five fixtures updated, two tests added.
 - [ ] **Code review** of the uncommitted worktree — the three new files
-      (`resource_bootstrap.py`, `test_resource_bootstrap.py`, the handoff) and
+      (`first_run.py`, `test_first_run.py`, the handoff) and
       the modified files.
 - [ ] **Commit and push** — human authority. Currently on `main`; consider a
       branch.

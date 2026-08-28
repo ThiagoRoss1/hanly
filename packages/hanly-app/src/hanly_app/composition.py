@@ -10,16 +10,12 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from hashlib import blake2b
-from math import floor
 from typing import Protocol
 
 from hanly import (
-    BoundingBox,
     DictionaryEntry,
     DictionaryProvider,
-    LookupContext,
     LookupPipeline,
     LookupResult,
     LookupStatus,
@@ -27,12 +23,10 @@ from hanly import (
     OCRProvider,
     OCRResult,
     Point,
-    Quad,
     ROIImage,
     TokenAnalysis,
 )
 from hanly.errors import LookupCancelled
-from hanly.paddleocr_provider import TextRecognitionResult
 from hanly.word_resolver import TargetResolver, WordResolver
 
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
@@ -51,9 +45,6 @@ _GATE_SAMPLES_PER_ROW = 64
 _GATE_SAMPLE_ROWS = 32
 _GATE_EDGE_DELTA = 32
 _GATE_MIN_TRANSITIONS = 8
-_HOVER_CROP_WIDTH = 96
-_HOVER_CROP_HEIGHT = 32
-_FAST_RECOGNITION_CONFIDENCE = 0.8
 LookupCacheKey = tuple[bool, int, int, str, float, float, bytes]
 _OCRCacheKey = tuple[int, int, str, bytes]  # dimensions, format, ROI digest
 
@@ -77,15 +68,6 @@ MorphologyProviderFactory = Callable[[], MorphologyProvider]
 DictionaryProviderFactory = Callable[[], DictionaryProvider]
 
 
-class TextRecognitionProvider(Protocol):
-    """Geometry-free recognition used only for a trusted cursor crop."""
-
-    def recognize_text(self, image: ROIImage) -> TextRecognitionResult | None:
-        ...
-
-
-TextRecognitionProviderFactory = Callable[[], TextRecognitionProvider]
-
 # The engine exposes ``TargetResolver`` as a structural seam, so a substituted
 # resolver satisfies this alias without inheriting anything and without a cast.
 ResolverFactory = Callable[[], TargetResolver]
@@ -103,8 +85,6 @@ class LookupWorker:
         morphology_provider_factory: MorphologyProviderFactory,
         dictionary_provider_factory: DictionaryProviderFactory,
         *,
-        hover_text_recognition_provider_factory: TextRecognitionProviderFactory
-        | None = None,
         word_resolver_factory: ResolverFactory | None = None,
         confidence_threshold: float | None = None,
         skip_flat_rois: bool = False,
@@ -119,11 +99,6 @@ class LookupWorker:
                 raise TypeError(f"{name} must be callable")
         if word_resolver_factory is not None and not callable(word_resolver_factory):
             raise TypeError("word_resolver_factory must be callable")
-        if hover_text_recognition_provider_factory is not None and not callable(
-            hover_text_recognition_provider_factory
-        ):
-            raise TypeError("hover_text_recognition_provider_factory must be callable")
-
         providers: list[object] = []
         self._trace_wrappers: tuple[object, ...] = ()
         try:
@@ -132,13 +107,6 @@ class LookupWorker:
             # own thread.
             ocr_provider = ocr_provider_factory()
             providers.append(ocr_provider)
-            text_recognition_provider = (
-                hover_text_recognition_provider_factory()
-                if hover_text_recognition_provider_factory is not None
-                else None
-            )
-            if text_recognition_provider is not None:
-                providers.append(text_recognition_provider)
             morphology_provider = morphology_provider_factory()
             providers.append(morphology_provider)
             dictionary_provider = dictionary_provider_factory()
@@ -147,8 +115,6 @@ class LookupWorker:
             # with lazy first-inference cost pays it before the executor
             # reports ready and hover starts capturing.
             _prewarm_provider(ocr_provider, "ocr", trace_sink)
-            if text_recognition_provider is not None:
-                _prewarm_provider(text_recognition_provider, "ocr_fast", trace_sink)
             _prewarm_provider(morphology_provider, "morphology", trace_sink)
             resolver = (
                 word_resolver_factory() if word_resolver_factory is not None else WordResolver()
@@ -164,14 +130,6 @@ class LookupWorker:
                 _TracingOCRProvider(cached_ocr, trace_sink, ocr_path="full")
                 if trace_sink is not None
                 else cached_ocr
-            )
-            traced_text_recognition = (
-                _TracingTextRecognitionProvider(
-                    text_recognition_provider,
-                    trace_sink,
-                )
-                if trace_sink is not None and text_recognition_provider is not None
-                else text_recognition_provider
             )
             traced_morphology = (
                 _TracingMorphologyProvider(morphology_provider, trace_sink)
@@ -195,15 +153,6 @@ class LookupWorker:
                 word_resolver=traced_resolver,
                 confidence_threshold=confidence_threshold,
             )
-            prepared_ocr = _PreparedOCRProvider()
-            self._fast_pipeline = LookupPipeline(
-                ocr_provider=prepared_ocr,
-                morphology_provider=traced_morphology,
-                dictionary_provider=traced_dictionary,
-                word_resolver=traced_resolver,
-                confidence_threshold=confidence_threshold,
-            )
-            self._prepared_ocr = prepared_ocr
             self._sensitive_pipeline = _sensitive_pipeline(
                 ocr_provider,
                 skip_flat_rois=skip_flat_rois,
@@ -212,12 +161,10 @@ class LookupWorker:
                 word_resolver=traced_resolver,
                 confidence_threshold=confidence_threshold,
             )
-            self._text_recognition_provider = traced_text_recognition
             self._trace_wrappers = tuple(
                 component
                 for component in (
                     traced_ocr,
-                    traced_text_recognition,
                     traced_resolver,
                     traced_morphology,
                     traced_dictionary,
@@ -309,11 +256,6 @@ class LookupWorker:
         return result
 
     def _lookup(self, item: LookupRequest) -> LookupResult:
-        if item.hover_request_id is None or self._text_recognition_provider is None:
-            return self._full_lookup(item)
-        return self._hover_lookup(item)
-
-    def _full_lookup(self, item: LookupRequest) -> LookupResult:
         result = self._pipeline.lookup(
             item.image,
             item.target,
@@ -338,65 +280,6 @@ class LookupWorker:
             cancelled=item.is_cancelled,
         )
         return result if _nothing_was_read_at_target(retried) else retried
-
-    def _hover_lookup(self, item: LookupRequest) -> LookupResult:
-        crop = _crop_hover_roi(item.image, item.target)
-        if not crop.cursor_centered:
-            return self._full_lookup(item)
-        if item.is_cancelled():
-            raise LookupCancelled("lookup was superseded before fast OCR")
-
-        provider = self._text_recognition_provider
-        assert provider is not None
-        try:
-            recognition = provider.recognize_text(crop.image)
-        except Exception:
-            if item.is_cancelled():
-                raise LookupCancelled("lookup was superseded after fast OCR")
-            return self._full_lookup(item)
-
-        if item.is_cancelled():
-            raise LookupCancelled("lookup was superseded after fast OCR")
-        if recognition is None or not recognition.text:
-            return LookupResult(
-                status=LookupStatus.EMPTY,
-                diagnostics=("Fast OCR crop returned no text",),
-                context=LookupContext(),
-            )
-
-        ocr_result = OCRResult(
-            text=recognition.text,
-            confidence=recognition.confidence,
-            quad=Quad.from_bounding_box(
-                BoundingBox(0, 0, crop.image.width, crop.image.height)
-            ),
-        )
-        if not _contains_hangul(recognition.text):
-            return LookupResult(
-                status=LookupStatus.UNUSABLE,
-                diagnostics=("Fast OCR crop contains no Hangul",),
-                context=LookupContext(
-                    text=recognition.text,
-                    ocr_results=(ocr_result,),
-                ),
-            )
-        if (
-            recognition.confidence < _FAST_RECOGNITION_CONFIDENCE
-            or not _is_clear_hangul_token(recognition.text)
-        ):
-            return self._full_lookup(item)
-
-        self._prepared_ocr.result = (ocr_result,)
-        result = self._fast_pipeline.lookup(
-            crop.image,
-            crop.target,
-            cancelled=item.is_cancelled,
-        )
-        if item.is_cancelled():
-            raise LookupCancelled("lookup was superseded after fast lookup")
-        if result.status is LookupStatus.SUCCESS:
-            return result
-        return self._full_lookup(item)
 
     def close(self) -> None:
         """Close all close-capable providers exactly once, in reverse order."""
@@ -473,8 +356,6 @@ def create_lookup_worker_factory(
     morphology_provider_factory: MorphologyProviderFactory,
     dictionary_provider_factory: DictionaryProviderFactory,
     *,
-    hover_text_recognition_provider_factory: TextRecognitionProviderFactory
-    | None = None,
     word_resolver_factory: ResolverFactory | None = None,
     confidence_threshold: float | None = None,
     skip_flat_rois: bool = False,
@@ -486,7 +367,6 @@ def create_lookup_worker_factory(
         ocr_provider_factory=ocr_provider_factory,
         morphology_provider_factory=morphology_provider_factory,
         dictionary_provider_factory=dictionary_provider_factory,
-        hover_text_recognition_provider_factory=hover_text_recognition_provider_factory,
         word_resolver_factory=word_resolver_factory,
         confidence_threshold=confidence_threshold,
         skip_flat_rois=skip_flat_rois,
@@ -505,8 +385,6 @@ def create_lookup_controller(
     dictionary_provider_factory: DictionaryProviderFactory,
     on_result: Callable[[LookupResult], None] | None = None,
     *,
-    hover_text_recognition_provider_factory: TextRecognitionProviderFactory
-    | None = None,
     word_resolver_factory: ResolverFactory | None = None,
     confidence_threshold: float | None = None,
     on_error: Callable[[LookupRequest, BaseException], None] | None = None,
@@ -520,7 +398,6 @@ def create_lookup_controller(
         ocr_provider_factory,
         morphology_provider_factory,
         dictionary_provider_factory,
-        hover_text_recognition_provider_factory=hover_text_recognition_provider_factory,
         word_resolver_factory=word_resolver_factory,
         confidence_threshold=confidence_threshold,
         trace_sink=trace_sink,
@@ -588,51 +465,6 @@ def _lookup_cache_key(request: LookupRequest) -> LookupCacheKey:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _HoverCrop:
-    image: ROIImage
-    target: Point
-    cursor_centered: bool
-
-
-def _crop_hover_roi(image: ROIImage, target: Point) -> _HoverCrop:
-    """Return the fixed cursor crop and whether it remained truly centered."""
-
-    width = min(_HOVER_CROP_WIDTH, image.width)
-    height = min(_HOVER_CROP_HEIGHT, image.height)
-    desired_left = floor(target.x) - _HOVER_CROP_WIDTH // 2
-    desired_top = floor(target.y) - _HOVER_CROP_HEIGHT // 2
-    left = min(max(desired_left, 0), image.width - width)
-    top = min(max(desired_top, 0), image.height - height)
-    bytes_per_pixel = image.bytes_per_pixel
-    rows = []
-    for row in range(top, top + height):
-        start = (row * image.width + left) * bytes_per_pixel
-        end = start + width * bytes_per_pixel
-        rows.append(image.data[start:end])
-    crop = ROIImage(width, height, image.pixel_format, b"".join(rows))
-    return _HoverCrop(
-        image=crop,
-        target=Point(target.x - left, target.y - top),
-        cursor_centered=(
-            width == _HOVER_CROP_WIDTH
-            and height == _HOVER_CROP_HEIGHT
-            and left == desired_left
-            and top == desired_top
-        ),
-    )
-
-
-class _PreparedOCRProvider:
-    """Supply one recognition result to the existing downstream pipeline."""
-
-    def __init__(self) -> None:
-        self.result: tuple[OCRResult, ...] = ()
-
-    def recognize(self, _image: ROIImage) -> tuple[OCRResult, ...]:
-        return self.result
-
-
 def _contains_hangul(value: str) -> bool:
     return any(
         "\u1100" <= character <= "\u11ff"
@@ -641,12 +473,6 @@ def _contains_hangul(value: str) -> bool:
         or "\uac00" <= character <= "\ud7ff"
         for character in value
     )
-
-
-def _is_clear_hangul_token(value: str) -> bool:
-    """Accept only a non-empty, whitespace-free token made entirely of Hangul."""
-
-    return bool(value) and all(_contains_hangul(character) for character in value)
 
 
 def _ocr_character_counts(results: Sequence[OCRResult]) -> dict[str, int]:
@@ -786,45 +612,6 @@ class _CachingOCRProvider:
         close = getattr(self._provider, "close", None)
         if callable(close):
             close()
-
-
-class _TracingTextRecognitionProvider:
-    def __init__(
-        self,
-        provider: TextRecognitionProvider,
-        sink: RuntimeTraceSink,
-    ) -> None:
-        self._provider = provider
-        self._sink = sink
-        self._request: LookupRequest | None = None
-
-    def set_request(self, request: LookupRequest) -> None:
-        self._request = request
-
-    def recognize_text(self, image: ROIImage) -> TextRecognitionResult | None:
-        request = self._request
-        started_ns = _trace_clock()
-        try:
-            result = self._provider.recognize_text(image)
-        except BaseException as error:
-            _trace_stage_error(self._sink, "ocr", request, started_ns, error)
-            raise
-        text = result.text if result is not None else ""
-        _trace_stage_completed(
-            self._sink,
-            "ocr",
-            request,
-            started_ns,
-            ocr_path="fast",
-            region_count=1 if result is not None else 0,
-            hangul_region_count=1 if _contains_hangul(text) else 0,
-            ocr_char_count=len(text),
-            hangul_char_count=sum(_contains_hangul(character) for character in text),
-            confidence_min=result.confidence if result is not None else None,
-            confidence_max=result.confidence if result is not None else None,
-            confidence_mean=result.confidence if result is not None else None,
-        )
-        return result
 
 
 class _TracingOCRProvider:

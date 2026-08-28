@@ -1,8 +1,16 @@
 # Decision: EasyOCR replaces PaddleOCR as V1's OCR backend
 
-Date: 2026-08-24. Status: approved by the human owner and implemented.
+> **Historical decision — superseded 2026-08-26.** This file records the
+> initial EasyOCR migration and its measured operational snapshot. The later
+> approved EasyOCR-only cleanup removed the Paddle adapter, backend selector,
+> two managed Paddle model resources, and Paddle-only recognition-first hover
+> fast path. Current authority is `CLAUDE.md` and architecture `01`–`03`;
+> measured history below is preserved for context and is not a current
+> capability statement.
 
-Supersedes the earlier V1 scope decision recorded in `01`, `02`, and `03` that
+Date: 2026-08-24. Status: historical; superseded in scope on 2026-08-26.
+
+At the time, this superseded the earlier V1 scope decision recorded in `01`, `02`, and `03` that
 EasyOCR was out of scope and `PaddleOCRProvider` was V1's only OCR
 implementation. Affects `RF-INV-10` and `DAG-INV-13`.
 
@@ -44,7 +52,7 @@ domain fine-tune on the `HanlyOCR` research track. The measurements, the
 rejected tuning levers, and the deferred items are in
 `docs/execution/reports/ocr-latency-and-roadmap.md`.
 
-## What did not change
+## What did not change (in the 2026-08-24 snapshot)
 
 The provider seam absorbed the swap with **no contract change**. `OCRProvider`,
 `LookupPipeline`, `WordResolver`, the normalized contracts, capture, the popup,
@@ -52,14 +60,23 @@ cancellation, and request-currency validation were all untouched. That the
 backend could be replaced by adding one adapter and one configuration value is
 evidence the seam was drawn in the right place.
 
-`PaddleOCRProvider` is retained, tested, and selectable through
+At that time, `PaddleOCRProvider` was retained, tested, and selectable through
 `"ocr_backend": "paddle"`, together with the recognition-first hover fast path
-that only Paddle supplies. Removing it is not part of this decision.
+that only Paddle supplied. The 2026-08-26 cleanup removed all of those
+compatibility paths; this paragraph is historical only.
 
-## Consequences to carry forward
+## Consequences recorded in the 2026-08-24 snapshot
 
 - Release manifests must carry `krdict`, and may advertise both backends'
   assets; `UpdateService` reports only resources the local manifest declares.
 - Frozen builds now collect Torch **and** Paddle, so package size grows before
   it shrinks. Removing Paddle is the trigger for that reduction.
 - No frozen artifact has been built or run against this backend.
+
+## Current status (2026-08-26)
+
+V1 constructs `EasyOCRProvider` only. First launch provisions only `krdict`;
+EasyOCR model storage is provider-managed. `OCRProvider` remains the one
+provider seam, with no V1 backend selector or managed Paddle model resources.
+Any migration compatibility described above is historical and must not be
+treated as a current capability.

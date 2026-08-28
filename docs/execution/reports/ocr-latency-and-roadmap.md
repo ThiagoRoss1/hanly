@@ -3,6 +3,14 @@
 Status: research report. Not approved architecture. Records measurements taken
 on 2026-08-24 and the plan derived from them.
 
+> **Operational snapshot superseded (2026-08-26).** This report preserves the
+> measured history and the 2026-08-24 migration snapshot. The approved
+> EasyOCR-only cleanup subsequently removed the Paddle adapter, backend
+> selector, managed Paddle model resources, and Paddle-only recognition-first
+> hover fast path. References below to selectable Paddle, dual-backend
+> packaging, or that fast path describe the historical snapshot only; current
+> authority is `CLAUDE.md` and architecture `01`–`03`.
+
 Machine for every number below: Windows 10 `10.0.19045`, 8 logical cores,
 Python 3.13.11, EasyOCR 1.7.2 / Torch 2.13.0+cpu, `torch.set_num_threads(4)`.
 One machine, one fixture. These are engineering measurements, not a benchmark
@@ -398,7 +406,7 @@ accuracy x latency table. This beats a hotkey model-switcher for *choosing* a
 model (no hovering, reproducible, ~90 s); a hotkey switcher is worth building
 only for the *feel* test between two finalists.
 
-`benchmarks/han35/` already provides `prepare_roi`, a run store, and
+`benchmarks/dev/` already provides `prepare_roi`, a run store, and
 statistics; this needs no new benchmark architecture.
 
 ## 9. Future implementations (post-V1)
