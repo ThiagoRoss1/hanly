@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from benchmarks.dev.diagnostics import (
     DiagnosticSnapshot,
     DictionaryDiagnostic,
@@ -125,14 +127,15 @@ def test_missing_facts_are_serialized_as_null_not_guessed_values() -> None:
 def test_renderers_keep_source_unchanged_and_distinguish_target_and_selected_ocr(
     tmp_path: Path,
 ) -> None:
-    image = __import__("PIL.Image", fromlist=["Image"]).new("RGB", (50, 30), "white")
+    pillow = pytest.importorskip("PIL.Image")
+    image = pillow.new("RGB", (50, 30), "white")
     before = image.tobytes()
     output = tmp_path / "diagnostic.png"
 
     render_annotated_png(image, output, _snapshot())
 
     assert image.tobytes() == before
-    rendered = __import__("PIL.Image", fromlist=["Image"]).open(output).convert("RGB")
+    rendered = pillow.open(output).convert("RGB")
     assert rendered.tobytes() != image.tobytes()
     # Selected OCR is yellow and target is magenta; both must be visible.
     pixels = {

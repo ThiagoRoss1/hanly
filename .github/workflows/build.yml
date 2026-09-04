@@ -64,6 +64,7 @@ jobs:
       # version must agree before any artifact is produced under that name.
       - name: Verify the tag matches the product version
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python tools/release_version.py --tag "$RELEASE_TAG"
@@ -75,10 +76,10 @@ jobs:
         run: python -m pytest
 
       - name: Run lint
-        run: python -m ruff check packages packaging tests tools
+        run: python -m ruff check packages packaging tests tools benchmarks
 
       - name: Run type checks
-        run: python -m mypy packages packaging tests tools
+        run: python -m mypy packages packaging tests tools benchmarks
 
       - name: Build application package
         run: python tools/build_package.py --platform ${{ matrix.platform }}

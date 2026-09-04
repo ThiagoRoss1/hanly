@@ -31,6 +31,6 @@ jobs:
       - name: Run tests
         run: python -m pytest
       - name: Run lint
-        run: python -m ruff check packages packaging tests tools
+        run: python -m ruff check packages packaging tests tools benchmarks
       - name: Run type checks
-        run: python -m mypy packages packaging tests tools
+        run: python -m mypy packages packaging tests tools benchmarks

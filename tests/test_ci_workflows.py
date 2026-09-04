@@ -148,8 +148,8 @@ def test_build_runs_repository_gates_before_producing_an_artifact() -> None:
 
     assert 'python -m pip install --editable "packages/hanly-app[runtime]"' in joined
     assert "python -m pytest" in joined
-    assert "python -m ruff check packages packaging tests tools" in joined
-    assert "python -m mypy packages packaging tests tools" in joined
+    assert "python -m ruff check packages packaging tests tools benchmarks" in joined
+    assert "python -m mypy packages packaging tests tools benchmarks" in joined
 
     gates = [index for index, command in enumerate(commands) if "python -m pytest" in command]
     builds = [index for index, command in enumerate(commands) if "build_package.py" in command]
@@ -772,3 +772,21 @@ def test_the_release_lane_installs_only_the_packages_it_imports() -> None:
     assert "packages/hanly" in code and "packages/hanly-app" in code
     assert "[runtime]" not in code
     assert "pip install --upgrade pip" not in code
+
+
+def test_cross_platform_build_steps_pin_bash_before_reading_shell_variables() -> None:
+    """The build job runs one step list on Windows, macOS and Linux. GitHub's
+    default Windows shell is pwsh, where ``$NAME`` is not an environment
+    variable and silently expands to nothing, so a step that reads one must
+    pin bash."""
+
+    workflow = _workflow("build.yml")
+    job = workflow["jobs"]["build"]
+    default_shell = job.get("defaults", {}).get("run", {}).get("shell")
+    shell_variable = re.compile(r"\$\{?[A-Za-z_]")
+
+    for step in _steps(workflow, "build"):
+        command = _shell_code(step.get("run", ""))
+        if not shell_variable.search(command):
+            continue
+        assert (step.get("shell") or default_shell) == "bash", step.get("name")
