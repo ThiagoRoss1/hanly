@@ -222,29 +222,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" fetch \
-            --no-tags --depth=1 origin "$APPLICATION_HEAD_SHA"
+          
+          tagged_metadata="$(mktemp -d)"
+          for path in packages/hanly-app/pyproject.toml packages/hanly/pyproject.toml; do
+            mkdir -p "$tagged_metadata/$(dirname "$path")"
+            gh api \
+              -H "Accept: application/vnd.github.raw" \
+              "repos/$REPOSITORY/contents/$path?ref=$APPLICATION_HEAD_SHA" \
+              > "$tagged_metadata/$path"
+          done
 
           read -r TAGGED_APP_VERSION TAGGED_ENGINE_VERSION APP_HANLY_PIN APP_HANLY_CONCRETE_PIN < <(
-            python - "$APPLICATION_HEAD_SHA" <<'PY'
-          import subprocess
+            python - "$tagged_metadata" <<'PY'
           import sys
           import tomllib
+          from pathlib import Path
 
-          sha = sys.argv[1]
+          tagged = Path(sys.argv[1])
 
           def read_project(path: str) -> dict:
-              result = subprocess.run(
-                  ["git", "show", f"{sha}:{path}"],
-                  check=False,
-                  capture_output=True,
-                  text=True,
-              )
-              if result.returncode != 0:
-                  raise RuntimeError(f"cannot read {path} from exact tag commit")
               try:
-                  payload = tomllib.loads(result.stdout)
+                  text = (tagged / path).read_text(encoding="utf-8")
+              except OSError as error:
+                  raise RuntimeError(f"cannot read {path} from exact tag commit: {error}") from error
+              try:
+                  payload = tomllib.loads(text)
               except tomllib.TOMLDecodeError as error:
                   raise RuntimeError(f"invalid TOML in {path}: {error}") from error
               if not isinstance(payload, dict):

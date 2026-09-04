@@ -784,3 +784,41 @@ def test_every_push_is_checked_on_windows_without_renaming_the_linux_gates() -> 
     assert "python -m pip install --group dev" in commands
     assert "python -m pip install --editable packages/hanly-app" in commands
     assert "python -m pytest" in commands
+
+
+def test_the_release_lane_never_authenticates_git_by_hand() -> None:
+    """The checkout runs with `persist-credentials: false`, so this job holds no
+    git credential at all. A hand-rolled one is either a header GitHub's git
+    endpoint rejects -- a bearer `http.extraheader` already failed a release
+    this way -- or a token written somewhere it can be read back. Reads of
+    another commit go through `gh`, which already has the token."""
+
+    workflow = _workflow("release.yml")
+    steps = _steps(workflow, "release")
+    checkout = next(step for step in steps if "checkout" in step.get("uses", ""))
+    credential_in_url = re.compile(r"https://[^\s/]*\$[^\s/]*@")
+
+    assert checkout["with"]["persist-credentials"] is False
+
+    for step in steps:
+        code = _shell_code(step.get("run", ""))
+        assert "extraheader" not in code, step.get("name")
+        assert not credential_in_url.search(code), step.get("name")
+        assert not re.search(r"\bgit\s+(?:fetch|clone|pull|ls-remote)\b", code), step.get("name")
+
+
+def test_the_tagged_version_check_reads_the_tag_commit_through_the_api() -> None:
+    """The tag commit is untrusted content being read by the job that publishes,
+    so its two files arrive as data rather than as a tree checked out beside the
+    default-branch tooling that runs here."""
+
+    tagged = next(
+        step
+        for step in _steps(_workflow("release.yml"), "release")
+        if "release_version.py" in step.get("run", "")
+    )
+    code = _shell_code(tagged["run"])
+
+    assert "contents/$path?ref=$APPLICATION_HEAD_SHA" in code
+    assert "application/vnd.github.raw" in code
+    assert tagged["env"]["APPLICATION_HEAD_SHA"] == "${{ steps.application.outputs.head_sha }}"
