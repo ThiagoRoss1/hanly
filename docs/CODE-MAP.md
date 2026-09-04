@@ -134,7 +134,7 @@ data/source/<official KRDICT>.zip
 ```
 
 56,555 entries, 11 tables, ~92 MB, ~27 MB compressed. Build commands are in
-`data/README.md`. `tools/krdict/inspect.py` reads the source without building.
+`data/README.md`. `tools/krdict/inspect_archive.py` reads the source without building.
 
 ### Contract
 

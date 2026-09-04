@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 import hanly_app.first_run as first_run
 import pytest
+from hanly.resource_manager import ResourceManager
 from hanly_app.first_run import (
     LOCAL_KRDICT_VARIABLE,
     PUBLIC_REPOSITORY_NAME,
@@ -321,3 +324,74 @@ def test_a_named_local_database_that_does_not_exist_is_reported(
 
     with pytest.raises(FirstRunError, match=LOCAL_KRDICT_VARIABLE):
         provision_runtime_config(tmp_path / "runtime.json")
+
+
+def test_an_install_records_its_version_and_identity_in_one_atomic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both facts describe the same installed bytes. No intermediate manifest
+    may name a version whose identity has not been recorded alongside it."""
+
+    config = tmp_path / "runtime.json"
+    snapshots: list[dict[str, object]] = []
+    original = first_run._write_json_atomically
+
+    def record(path: Path, payload: object) -> None:
+        assert isinstance(payload, Mapping)
+        entry = payload["resources"]["krdict"]
+        if isinstance(entry, Mapping) and "installed_version" in entry:
+            snapshots.append(dict(entry))
+        original(path, payload)
+
+    monkeypatch.setattr(first_run, "_write_json_atomically", record)
+
+    provision_runtime_config(config, fetcher=_fetcher())
+
+    assert snapshots, "the activation was never recorded"
+    assert all(entry.get("verified_identity") for entry in snapshots)
+    payload = json.loads(config.read_text(encoding="utf-8"))
+    krdict = payload["resources"]["krdict"]
+    installed = config.parent / krdict["path"]
+    status = installed.stat()
+    assert krdict["installed_version"] == "fixture-v1"
+    assert krdict["verified_identity"] == f"{status.st_size}:{status.st_mtime_ns}"
+
+
+def test_the_launch_after_an_install_skips_the_sqlite_integrity_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The installer already scanned these exact bytes, and the recorded
+    identity still describes them, so startup pays for no second full-file read."""
+
+    config = tmp_path / "runtime.json"
+    provision_runtime_config(config, fetcher=_fetcher())
+
+    scans: list[Path] = []
+    monkeypatch.setattr(
+        ResourceManager, "_validate_integrity", staticmethod(lambda path: scans.append(path))
+    )
+
+    assert load_runtime(config).resource_manager.all_valid
+    assert scans == []
+
+
+def test_a_replaced_database_re_earns_the_integrity_scan_on_the_next_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recorded identity is a claim about specific bytes, not a permanent
+    exemption: anything that changes the file spends the check again."""
+
+    config = tmp_path / "runtime.json"
+    provision_runtime_config(config, fetcher=_fetcher())
+    payload = json.loads(config.read_text(encoding="utf-8"))
+    installed = config.parent / payload["resources"]["krdict"]["path"]
+    os.utime(installed, ns=(0, 0))
+
+    scans: list[Path] = []
+    monkeypatch.setattr(
+        ResourceManager, "_validate_integrity", staticmethod(lambda path: scans.append(path))
+    )
+
+    load_runtime(config)
+
+    assert scans == [installed.resolve()]

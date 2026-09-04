@@ -338,6 +338,7 @@ _RESOURCE_FIELDS = frozenset(
         "checksum",
         "version_file",
         "installed_version",
+        "verified_identity",
         "expected_version",
         "kind",
         "configuration",
@@ -380,6 +381,9 @@ def _resource_specs(resources: Mapping[str, object]) -> tuple[ResourceSpec, ...]
                 version_file=version_file,
                 installed_version=_optional_string(
                     value.get("installed_version"), "installed_version", resource_id
+                ),
+                verified_identity=_optional_string(
+                    value.get("verified_identity"), "verified_identity", resource_id
                 ),
                 expected_version=_optional_string(
                     value.get("expected_version"), "expected_version", resource_id

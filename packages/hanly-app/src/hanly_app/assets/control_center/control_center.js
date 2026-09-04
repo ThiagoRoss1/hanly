@@ -5,7 +5,7 @@
     app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
     config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space" },
     runtime: { ocr_provider: "—", resources: [], diagnostics: [] },
-    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null }
+    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false }
   };
 
   let currentState = fallbackState;
@@ -55,6 +55,24 @@
     });
   }
 
+  function renderApplicationUpdate(application, busy) {
+    const message = byId("application-message");
+    const update = byId("update-application");
+    const notes = byId("release-notes");
+    if (!application) {
+      message.textContent = "The installed Hanly version has not been checked yet.";
+      update.hidden = true;
+      notes.hidden = true;
+      return;
+    }
+    message.textContent = application.message || "";
+    // "Update now" is the whole update; the notes are the one thing Hanly
+    // cannot show in its own window, so they stay a secondary action.
+    update.hidden = !application.installable;
+    update.disabled = busy;
+    notes.hidden = !application.release_url;
+  }
+
   function renderUpdates(updates) {
     const updateState = updates || fallbackState.updates;
     const resources = updateState.resources || [];
@@ -80,12 +98,13 @@
       });
       select.value = updateState.active_resource_id || available[0].id;
     }
-    const busy = ["checking", "downloading", "validating"].indexOf(updateState.status) !== -1;
+    const busy = ["checking", "downloading", "verifying", "installing", "validating"].indexOf(updateState.status) !== -1;
     select.disabled = busy || available.length === 0;
     check.disabled = busy;
     install.disabled = busy || available.length === 0;
     byId("update-status").textContent = formatStatus(updateState.status || "idle");
     byId("update-message").textContent = updateState.message || fallbackState.updates.message;
+    renderApplicationUpdate(updateState.application, busy);
     const progress = updateState.progress;
     progressPanel.hidden = !progress || !busy;
     if (progress) {
@@ -150,6 +169,8 @@
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });
+  byId("update-application").addEventListener("click", function () { invoke("install_application_update"); });
+  byId("release-notes").addEventListener("click", function () { invoke("open_release_notes"); });
   byId("install-update").addEventListener("click", function () {
     const resourceId = byId("update-resource").value;
     invoke("install_update", resourceId || undefined);

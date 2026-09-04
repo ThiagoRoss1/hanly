@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import tools.release_version as release_version
 from tools.release_version import (
     ENGINE_PACKAGE,
     PRODUCT_PACKAGE,
@@ -16,6 +17,7 @@ from tools.release_version import (
     product_version,
     tag_for,
     verify_tag,
+    verify_tag_metadata,
     version_for_tag,
 )
 
@@ -69,6 +71,114 @@ def test_a_tag_naming_a_different_version_is_rejected() -> None:
 
     with pytest.raises(ReleaseVersionError, match="does not match"):
         verify_tag(other)
+
+
+def test_tag_metadata_accepts_all_inert_project_values() -> None:
+    version = product_version()
+
+    assert verify_tag_metadata(
+        f"v{version}",
+        engine_version=version,
+        app_version=version,
+        app_hanly_pin=f"{ENGINE_PACKAGE}=={version}",
+        app_hanly_concrete_pin=f"{ENGINE_PACKAGE}[concrete]=={version}",
+    ) == version
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("engine_version", "9.9.9"),
+        ("app_version", "9.9.9"),
+        ("app_hanly_pin", "hanly==9.9.9"),
+        ("app_hanly_concrete_pin", "hanly[concrete]==9.9.9"),
+    ],
+)
+def test_tag_metadata_rejects_each_value_that_disagrees_with_the_tag(
+    field: str, value: str
+) -> None:
+    version = product_version()
+    values = {
+        "engine_version": version,
+        "app_version": version,
+        "app_hanly_pin": f"{ENGINE_PACKAGE}=={version}",
+        "app_hanly_concrete_pin": f"{ENGINE_PACKAGE}[concrete]=={version}",
+    }
+    values[field] = value
+
+    with pytest.raises(ReleaseVersionError, match=field.replace("_", " ")):
+        verify_tag_metadata(f"v{version}", **values)
+
+
+def test_metadata_cli_mode_uses_supplied_values_instead_of_installed_metadata(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    version = product_version()
+
+    def unexpected_installed_metadata() -> str:
+        raise AssertionError("metadata mode must not inspect installed packages")
+
+    monkeypatch.setattr(release_version, "product_version", unexpected_installed_metadata)
+    monkeypatch.setattr(release_version, "engine_version", unexpected_installed_metadata)
+
+    assert release_version.main(
+        [
+            "--tag",
+            f"v{version}",
+            "--engine-version",
+            version,
+            "--app-version",
+            version,
+            "--app-hanly-pin",
+            f"{ENGINE_PACKAGE}=={version}",
+            "--app-hanly-concrete-pin",
+            f"{ENGINE_PACKAGE}[concrete]=={version}",
+        ]
+    ) == 0
+    assert capsys.readouterr().out.strip() == version
+
+
+@pytest.mark.parametrize(
+    "omitted",
+    [
+        "--engine-version",
+        "--app-version",
+        "--app-hanly-pin",
+        "--app-hanly-concrete-pin",
+    ],
+)
+def test_metadata_cli_mode_requires_each_project_value(
+    capsys: pytest.CaptureFixture[str],
+    omitted: str,
+) -> None:
+    version = product_version()
+    values = {
+        "--engine-version": version,
+        "--app-version": version,
+        "--app-hanly-pin": f"{ENGINE_PACKAGE}=={version}",
+        "--app-hanly-concrete-pin": f"{ENGINE_PACKAGE}[concrete]=={version}",
+    }
+    values.pop(omitted)
+    arguments = ["--tag", f"v{version}"]
+    for option, value in values.items():
+        arguments.extend((option, value))
+
+    assert release_version.main(arguments) == 1
+    output = capsys.readouterr().out
+    assert "metadata mode requires" in output
+    assert omitted in output
+
+
+def test_cli_help_distinguishes_installed_and_inert_metadata_modes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        release_version.main(["--help"])
+
+    assert error.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "installed package" in help_text
+    assert "inert values" in help_text
 
 
 @pytest.mark.parametrize("tag", ["0.1.0", "v0.1", "v0.1.0.1", "release-0.1.0", "v0.1.0rc1", "v"])

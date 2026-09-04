@@ -10,10 +10,10 @@ import sys
 import time
 from pathlib import Path
 
-if __package__ in {None, ""}:
-    # Run as a plain script, sys.path[0] is tools/krdict, whose inspect.py
-    # would shadow the standard library. Swap it for the repository root.
-    sys.path[0] = str(Path(__file__).resolve().parents[2])
+if __package__ in (None, ""):
+    # Run as a plain script rather than ``python -m``, so the repository root
+    # is not on the path and ``tools.krdict`` cannot be imported without it.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from collections import Counter
 from collections.abc import Mapping, Sequence

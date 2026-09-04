@@ -19,6 +19,13 @@ from typing import Any, Protocol, cast
 
 from hanly.resource_manager import ResourceManager
 
+from .app_update import (
+    ApplicationInstaller,
+    ApplicationUpdate,
+    ApplicationUpdateError,
+    check_application_update,
+    installation_root,
+)
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .config import CaptureMode, ConfigManager
 from .control_center import (
@@ -29,7 +36,7 @@ from .control_center import (
 )
 from .desktop_controller import DesktopController, DesktopState
 from .first_run import (
-    persist_resource_version,
+    persist_installed_resource,
     provision_runtime_config,
 )
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
@@ -41,8 +48,8 @@ from .runtime import (
 from .runtime_trace import RuntimeTraceSink
 from .signal_bridge import QtSignalBridge
 from .tray import TrayService
-from .update_coordinator import UpdateCoordinator
-from .update_service import GitHubReleaseFetcher, UpdateService
+from .update_coordinator import ApplicationInstall, UpdateCoordinator
+from .update_service import GitHubReleaseFetcher, ProgressCallback, UpdateService
 
 #: File name a packaged installation uses for its runtime configuration.
 RUNTIME_CONFIG_NAME = "runtime.json"
@@ -377,6 +384,12 @@ def run_desktop(
         diagnostics,
         before_install=before_install,
         after_install=after_install,
+        # A staged application build only lands when the process holding the
+        # old one exits, so finishing the update is the ordinary quit path.
+        on_restart_required=lambda: _dispatch_sync(
+            dispatcher, desktop_ref[0].quit, cancel=closing()
+        ),
+        automatic_check=settings.config.update_checks_enabled,
     )
     bridge = ControlCenterBridge(
         config_manager=settings,
@@ -469,6 +482,8 @@ def _update_coordinator(
     *,
     before_install: Callable[[str], None] | None = None,
     after_install: Callable[[str], None] | None = None,
+    on_restart_required: Callable[[], None] | None = None,
+    automatic_check: bool = True,
 ) -> UpdateCoordinator | None:
     try:
         service = load_update_service(runtime_config, resource_manager)
@@ -477,19 +492,62 @@ def _update_coordinator(
         return None
     if service is None:
         return None
+    application_check, application_install = _application_updates(service)
     coordinator = UpdateCoordinator(
         service,
         resource_manager=resource_manager,
         before_install=before_install,
         after_install=after_install,
-        record_install=lambda result: persist_resource_version(
+        record_install=lambda result: persist_installed_resource(
             runtime_config,
             result.resource.resource_id,
             result.resource.version,
+            result.validation.integrity_identity,
         ),
+        application_check=application_check,
+        application_install=application_install,
+        on_restart_required=on_restart_required,
     )
-    coordinator.check_for_updates()
+    # The coordinator is always built, so the Control Center's explicit "Check
+    # for updates" keeps working; only the unattended startup check is a
+    # setting, because it is the one that reaches the network on its own.
+    if automatic_check:
+        coordinator.check_for_updates()
     return coordinator
+
+
+def _application_updates(
+    service: UpdateService,
+) -> tuple[Callable[[], ApplicationUpdate] | None, ApplicationInstall | None]:
+    """Return how this installation checks for, and installs, a new Hanly build.
+
+    The resource fetcher already reads the release payload and already knows how
+    to download an asset from it, so both halves reuse it rather than opening a
+    second channel. An installation that is not a packaged bundle can still be
+    told a new build exists; it just has nothing for Hanly to replace.
+    """
+
+    fetcher = getattr(service, "fetcher", None)
+    release_source = getattr(fetcher, "fetch_release", None)
+    if fetcher is None or not callable(release_source):
+        return None, None
+
+    install_root = installation_root()
+
+    def check() -> ApplicationUpdate:
+        return check_application_update(release_source, install_root=install_root)
+
+    if install_root is None:
+        return check, None
+    try:
+        installer = ApplicationInstaller(fetcher, release_source, install_root=install_root)
+    except ApplicationUpdateError:
+        return check, None
+
+    def install(update: ApplicationUpdate, on_progress: ProgressCallback | None) -> None:
+        installer.apply(installer.stage(update, on_progress=on_progress))
+
+    return check, install
 
 
 class DesktopShuttingDown(DesktopApplicationError):

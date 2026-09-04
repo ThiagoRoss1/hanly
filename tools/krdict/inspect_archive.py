@@ -10,10 +10,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from xml.etree import ElementTree
 
-if __package__ in {None, ""}:
-    # Run as a plain script, sys.path[0] is tools/krdict, whose inspect.py
-    # would shadow the standard library. Swap it for the repository root.
-    sys.path[0] = str(Path(__file__).resolve().parents[2])
+if __package__ in (None, ""):
+    # Run as a plain script rather than ``python -m``, so the repository root
+    # is not on the path and ``tools.krdict`` cannot be imported without it.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.krdict import configure_utf8_output
 from tools.krdict.source import (
@@ -42,6 +42,28 @@ def _selected_translation(
     return None
 
 
+def _pronunciation(node: ElementTree.Element) -> str | None:
+    """Return the entry's pronunciation from wherever the archive records it.
+
+    The official source usually carries it directly on a ``WordForm`` whose
+    ``type`` is 발음, and only sometimes on a nested ``FormRepresentation``.
+    Requiring the nested form, as this inspector once did, reported no
+    pronunciation for most of the dictionary.
+    """
+
+    word_forms = _children(node, "WordForm")
+    nested = [
+        representation
+        for word_form in word_forms
+        for representation in _children(word_form, "FormRepresentation")
+    ]
+    for candidate in (*word_forms, *nested, *_children(node, "FormRepresentation")):
+        value = _feature(candidate, "pronunciation")
+        if value is not None:
+            return value
+    return None
+
+
 def _compact_entry(node: ElementTree.Element, language: str) -> dict[str, object]:
     lemmas = _children(node, "Lemma")
     senses: list[dict[str, object]] = []
@@ -59,33 +81,19 @@ def _compact_entry(node: ElementTree.Element, language: str) -> dict[str, object
                 "translation": _selected_translation(sense_node, language),
             }
         )
-    pronunciation = next(
-        (
-            value
-            for word_form in _children(node, "WordForm")
-            for representation in _children(word_form, "FormRepresentation")
-            for value in [_feature(representation, "pronunciation")]
-            if value is not None
-        ),
-        None,
-    )
-    category = next(
-        (
-            value
-            for subject in _children(node, "SubjectField")
-            for value in [_feature(subject, "subject")]
-            if value is not None
-        ),
-        None,
-    )
     return {
         "entry_id": str(_source_id(node)),
         "headword": _feature(lemmas[0], "writtenForm") if lemmas else None,
         "homonym": _feature(node, "homonym_number"),
         "part_of_speech": _feature(node, "partOfSpeech"),
-        "pronunciation": pronunciation,
+        "pronunciation": _pronunciation(node),
         "level": _feature(node, "vocabularyLevel"),
-        "category": category,
+        # Categories are entry-level features, not a SubjectField element, and
+        # the two kinds are kept apart because the source keeps them apart.
+        # "subjectCategiory" is misspelled in the official XML; matching the
+        # correct spelling would silently report no subject categories.
+        "semantic_categories": _direct_features(node, "semanticCategory"),
+        "subject_categories": _direct_features(node, "subjectCategiory"),
         "senses": senses,
     }
 

@@ -9,7 +9,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from tools.krdict.inspect import inspect, main
+from tools.krdict.inspect_archive import inspect, main
 
 
 def _archive(path: Path, *sources: bytes) -> Path:
@@ -65,7 +65,7 @@ def test_cli_uses_utf8_output_on_a_legacy_windows_console() -> None:
     environment["PYTHONIOENCODING"] = "cp1252"
 
     result = subprocess.run(
-        [sys.executable, "tools/krdict/inspect.py", "--help"],
+        [sys.executable, "tools/krdict/inspect_archive.py", "--help"],
         cwd=Path(__file__).parents[2],
         env=environment,
         capture_output=True,
@@ -136,7 +136,8 @@ def test_compact_mode_keeps_missing_optional_fields_explicit(tmp_path, capsys) -
         "part_of_speech": None,
         "pronunciation": None,
         "level": None,
-        "category": None,
+        "semantic_categories": [],
+        "subject_categories": [],
         "senses": [
             {
                 "sense_id": "1",
@@ -219,3 +220,99 @@ def test_sample_limit_does_not_stop_full_archive_iteration(tmp_path, capsys) -> 
         "senses_scanned": 3,
         "sanitized_0x08_bytes": 0,
     }
+
+
+#: One real 가1 entry, trimmed to the shapes this inspector reads. The
+#: pronunciation sits directly on the WordForm, the categories are entry-level
+#: features, and "subjectCategiory" is the official misspelling.
+_REAL_ENTRY = """
+<LexicalEntry att="id" val="30">
+  <feat att="homonym_number" val="1" />
+  <feat att="lexicalUnit" val="단어" />
+  <feat att="partOfSpeech" val="감탄사" />
+  <feat att="vocabularyLevel" val="없음" />
+  <feat att="semanticCategory" val="인간 &gt; 의사소통" />
+  <feat att="subjectCategiory" val="사회 생활 &gt; 인간관계" />
+  <Lemma><feat att="writtenForm" val="가" /></Lemma>
+  <WordForm>
+    <feat att="type" val="발음" />
+    <feat att="pronunciation" val="가ː" />
+  </WordForm>
+  <Sense att="id" val="1"><feat att="definition" val="말을 시작할 때 내는 소리." /></Sense>
+</LexicalEntry>
+"""
+
+#: The nested shape the inspector previously required, kept so the fallback is
+#: exercised rather than assumed.
+_NESTED_PRONUNCIATION_ENTRY = """
+<LexicalEntry att="id" val="31">
+  <Lemma><feat att="writtenForm" val="값" /></Lemma>
+  <WordForm>
+    <feat att="type" val="발음" />
+    <FormRepresentation><feat att="pronunciation" val="갑" /></FormRepresentation>
+  </WordForm>
+  <Sense att="id" val="1"><feat att="definition" val="물건의 가치." /></Sense>
+</LexicalEntry>
+"""
+
+
+def _sample(tmp_path, entry: str, capsys) -> dict:
+    archive = _archive(tmp_path / "krdict.zip", _source(entry))
+
+    assert inspect(archive, compact=True, language="영어", samples=1) == 0
+
+    return json.loads(capsys.readouterr().out)["samples"][0]
+
+
+def test_pronunciation_is_read_from_the_word_form_the_archive_actually_uses(
+    tmp_path, capsys
+) -> None:
+    """The official source records it on the WordForm, not below it."""
+
+    sample = _sample(tmp_path, _REAL_ENTRY, capsys)
+
+    assert sample["pronunciation"] == "가ː"
+
+
+def test_a_nested_form_representation_pronunciation_is_still_found(
+    tmp_path, capsys
+) -> None:
+    sample = _sample(tmp_path, _NESTED_PRONUNCIATION_ENTRY, capsys)
+
+    assert sample["pronunciation"] == "갑"
+
+
+def test_categories_come_from_the_entry_level_features_including_the_misspelling(
+    tmp_path, capsys
+) -> None:
+    """``SubjectField``/``subject`` do not exist in the archive; these do."""
+
+    sample = _sample(tmp_path, _REAL_ENTRY, capsys)
+
+    assert sample["semantic_categories"] == ["인간 > 의사소통"]
+    assert sample["subject_categories"] == ["사회 생활 > 인간관계"]
+
+
+def test_an_entry_without_categories_reports_empty_lists(tmp_path, capsys) -> None:
+    sample = _sample(tmp_path, _NESTED_PRONUNCIATION_ENTRY, capsys)
+
+    assert sample["semantic_categories"] == []
+    assert sample["subject_categories"] == []
+
+
+def test_the_inspector_reads_the_same_shapes_the_builder_reads(tmp_path, capsys) -> None:
+    """The inspector exists to preview what the build will store, so the two
+    must not disagree about where pronunciation and categories live."""
+
+    from tools.krdict.source import KRDICTSource
+
+    sample = _sample(tmp_path, _REAL_ENTRY, capsys)
+    (record,) = list(KRDICTSource(tmp_path / "krdict.zip").iter_entries())
+
+    assert sample["pronunciation"] in {form.pronunciation for form in record.word_forms}
+    assert sample["semantic_categories"] == [
+        category.value for category in record.categories if category.type == "semantic"
+    ]
+    assert sample["subject_categories"] == [
+        category.value for category in record.categories if category.type == "subject"
+    ]

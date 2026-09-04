@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import sqlite3
+import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
@@ -50,6 +51,23 @@ class RemoteManifestError(UpdateServiceError):
 
 class ResourceUpdateError(UpdateServiceError):
     """Raised when a resource cannot be downloaded, validated, or activated."""
+
+
+#: The largest a Zstandard frame header can be: a 4-byte magic number plus at
+#: most 14 bytes of header, the last 8 of which are the declared content size.
+#: Reading exactly this many bytes is enough to parse any frame's parameters
+#: and is not more conservative than the format requires.
+_ZSTD_FRAME_HEADER_BYTES = 18
+
+#: Decompression ceiling for a frame whose content size is absent or larger
+#: than anything Hanly ships. KRDICT is ~92 MB, so this leaves it several times
+#: the room it needs while still bounding a hostile frame to a size a user's
+#: disk survives.
+_ZSTD_MAX_OUTPUT_BYTES = 512 * 1024 * 1024
+
+#: Read size for the bounded decompression loop, so the ceiling is enforced
+#: incrementally rather than after a hostile frame has already been buffered.
+_ZSTD_CHUNK_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -114,7 +132,9 @@ class RemoteManifest:
 
         raw_resources = payload.get("resources")
         if isinstance(raw_resources, Mapping):
-            entries = [dict(value, id=resource_id) for resource_id, value in raw_resources.items()]
+            entries = [
+                _keyed_entry(resource_id, value) for resource_id, value in raw_resources.items()
+            ]
         elif isinstance(raw_resources, Sequence) and not isinstance(raw_resources, (str, bytes)):
             entries = list(raw_resources)
         else:
@@ -255,9 +275,20 @@ class GitHubReleaseFetcher:
         self._opener = opener or _https_opener()
         self._release_payload: Mapping[str, Any] | None = None
 
+    def fetch_release(self, *, refresh: bool = False) -> Mapping[str, Any]:
+        """Return the raw release payload, reading it at most once per fetcher.
+
+        The application version check, the resource manifest, and every asset
+        download describe the same release, so they share one request rather
+        than asking GitHub once each.
+        """
+
+        if refresh or self._release_payload is None:
+            self._release_payload = self._json(self._release_url)
+        return self._release_payload
+
     def fetch_manifest(self) -> RemoteManifest:
-        payload = self._json(self._release_url)
-        self._release_payload = payload
+        payload = self.fetch_release(refresh=True)
 
         inline = payload.get("hanly_manifest", payload.get("manifest"))
         if isinstance(inline, Mapping):
@@ -279,17 +310,15 @@ class GitHubReleaseFetcher:
     ) -> None:
         url = resource.url
         if url is None:
-            payload = self._release_payload
-            if payload is None:
-                payload = self._json(self._release_url)
-                self._release_payload = payload
-            asset = self._asset(payload, resource.asset_name or "")
+            asset = self._asset(self.fetch_release(), resource.asset_name or "")
             if asset is None:
                 raise ResourceUpdateError(
                     f"GitHub release has no asset for resource {resource.resource_id}"
                 )
             url = self._asset_url(asset)
-        self._download_url(resource.resource_id, url, destination, on_progress)
+        self._download_url(
+            resource.resource_id, url, destination, on_progress, limit=resource.size
+        )
 
     def _json(self, url: str) -> Mapping[str, Any]:
         try:
@@ -307,7 +336,16 @@ class GitHubReleaseFetcher:
         url: str,
         destination: Path,
         on_progress: ProgressCallback | None,
+        *,
+        limit: int | None = None,
     ) -> None:
+        """Stream one asset to ``destination``, stopping if it outgrows ``limit``.
+
+        The manifest's declared size is an exact bound, so a response that
+        exceeds it is already wrong and is abandoned mid-stream rather than
+        written to the end and rejected afterwards.
+        """
+
         try:
             response = self._open(url)
             with closing(response), destination.open("wb") as output:
@@ -319,8 +357,12 @@ class GitHubReleaseFetcher:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
-                    output.write(chunk)
                     completed += len(chunk)
+                    if limit is not None and completed > limit:
+                        raise ResourceUpdateError(
+                            f"{resource_id} download exceeds its declared {limit} byte size"
+                        )
+                    output.write(chunk)
                     if on_progress is not None:
                         on_progress(DownloadProgress(resource_id, "downloading", completed, total))
         except (OSError, ValueError) as exc:
@@ -364,6 +406,12 @@ class UpdateService:
         self._resource_manager = resource_manager
         self._fetcher = fetcher
         self._manifest: RemoteManifest | None = None
+
+    @property
+    def fetcher(self) -> ResourceFetcher:
+        """The delivery adapter, so a caller can ask it about the release itself."""
+
+        return self._fetcher
 
     def check_for_updates(self) -> tuple[UpdateAvailability, ...]:
         """Report release resources this installation actually uses.
@@ -434,11 +482,11 @@ class UpdateService:
                 raise ResourceUpdateError(
                     f"downloaded artifact size does not match the manifest for {resource_id}"
                 )
-            _verify_checksum(stage_file, resource.checksum)
+            verify_checksum(stage_file, resource.checksum)
 
             compressed = resource.kind == "krdict" and _is_zstd_resource(resource)
             if resource.kind == "directory":
-                stage_path = _extract_directory(stage_file, destination.parent, resource_id)
+                stage_path = extract_archive(stage_file, destination.parent, resource_id)
             elif compressed:
                 stage_path = _decompress_zstd(stage_file, destination.parent, resource_id)
 
@@ -451,7 +499,7 @@ class UpdateService:
                 expected_checksum=(resource.checksum if resource.kind != "directory" else None),
                 compressed=compressed,
             )
-            backup_path = _activate(stage_path, destination)
+            backup_path = activate_path(stage_path, destination)
             activated = True
             _emit(on_progress, DownloadProgress(resource_id, "complete", 1, 1))
             return UpdateResult(resource, destination.resolve(), validation, backup_path)
@@ -552,6 +600,9 @@ class UpdateService:
                 installed_version=resource.version,
                 version_file=None,
                 checksum=None if compressed else expected_checksum,
+                # The previous artifact's recorded identity says nothing about
+                # these bytes, so a staged resource always earns its own scan.
+                verified_identity=None,
             )
             if candidate.resource_id == resource_id
             else candidate
@@ -651,7 +702,12 @@ def _emit(callback: ProgressCallback | None, progress: DownloadProgress) -> None
         callback(progress)
 
 
-def _verify_checksum(path: Path, expected: str) -> None:
+def verify_checksum(path: Path, expected: str) -> None:
+    """Reject a downloaded file whose digest is not exactly ``expected``.
+
+    ``expected`` is ``algorithm:hexdigest``, or a bare SHA-256 hex digest.
+    """
+
     normalized = expected.strip().lower()
     algorithm, separator, digest = normalized.partition(":")
     if not separator:
@@ -670,20 +726,81 @@ def _verify_checksum(path: Path, expected: str) -> None:
         raise ResourceUpdateError("downloaded artifact checksum does not match the manifest")
 
 
-def _extract_directory(archive: Path, parent: Path, resource_id: str) -> Path:
-    target = Path(tempfile.mkdtemp(prefix=f".{resource_id}.", dir=parent))
+def extract_archive(
+    archive: Path,
+    parent: Path,
+    label: str,
+    *,
+    archive_format: str = "zip",
+) -> Path:
+    """Unpack a verified archive into a fresh temporary directory under ``parent``.
+
+    The format is supplied by the caller because the archive is a staged
+    download whose own name carries no extension. Every member path is resolved
+    against the extraction root before anything is written, so an archive
+    cannot place a file outside the directory it is unpacked into.
+    """
+
+    target = Path(tempfile.mkdtemp(prefix=f".{label}.", dir=parent))
     try:
-        with zipfile.ZipFile(archive) as bundle:
-            root = target.resolve()
-            for member in bundle.infolist():
-                candidate = (target / member.filename).resolve()
-                if candidate != root and root not in candidate.parents:
-                    raise ResourceUpdateError("resource archive contains an unsafe path")
-            bundle.extractall(target)
+        if archive_format == "zip":
+            _extract_zip(archive, target)
+        elif archive_format == "gztar":
+            _extract_gztar(archive, target)
+        else:
+            raise ResourceUpdateError(f"unsupported archive format: {archive_format}")
         return target
-    except (OSError, zipfile.BadZipFile) as exc:
+    except Exception as exc:
         _remove_path(target)
-        raise ResourceUpdateError(f"could not unpack directory resource: {exc}") from exc
+        if isinstance(exc, UpdateServiceError):
+            raise
+        raise ResourceUpdateError(f"could not unpack {label}: {exc}") from exc
+
+
+def _extract_zip(archive: Path, target: Path) -> None:
+    with zipfile.ZipFile(archive) as bundle:
+        for member in bundle.infolist():
+            _require_contained(target, member.filename)
+        bundle.extractall(target)
+
+
+def _extract_gztar(archive: Path, target: Path) -> None:
+    # ``tarfile`` reproduces symlinks, hard links, and device nodes verbatim,
+    # any of which can escape the extraction root after the path check passes.
+    # A Hanly bundle is only directories and regular files, so nothing else is
+    # accepted rather than filtered.
+    with tarfile.open(archive, "r:gz") as bundle:
+        members = bundle.getmembers()
+        for member in members:
+            if not (member.isfile() or member.isdir()):
+                raise ResourceUpdateError("archive contains a link or special file")
+            _require_contained(target, member.name)
+        # ``data_filter`` marks the interpreters that accept ``filter``; it is
+        # the 3.14 default and is asked for explicitly where it is available.
+        if hasattr(tarfile, "data_filter"):
+            bundle.extractall(target, filter="data")
+        else:
+            bundle.extractall(target)
+
+
+def _require_contained(target: Path, member_name: str) -> None:
+    root = target.resolve()
+    candidate = (target / member_name).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ResourceUpdateError("archive contains an unsafe path")
+
+
+def _keyed_entry(resource_id: Any, value: Any) -> Mapping[str, Any]:
+    """Copy one object-form manifest entry, keyed by the id it is filed under.
+
+    The value is proven to be a mapping first: copying it blind turns a
+    malformed remote payload into a bare ``TypeError`` instead of the module's
+    own fail-closed error.
+    """
+
+    if not isinstance(value, Mapping):
+        raise RemoteManifestError(f"manifest resource {resource_id!r} must be an object")
+    return dict(value, id=resource_id)
 
 
 def _optional_integer(value: Any, resource_id: str, field_name: str) -> int | None:
@@ -703,13 +820,46 @@ def _is_zstd_resource(resource: RemoteResource) -> bool:
     return bool(name and name.casefold().endswith(".zst"))
 
 
+def _zstd_output_limit(archive: Path) -> int:
+    """Return the byte ceiling a Zstandard resource may decompress to.
+
+    A well-formed producer frame declares its content size, which is an exact
+    bound. An absent declaration falls back to a fixed ceiling rather than
+    trusting the stream, because the frame itself is attacker-controlled once a
+    release manifest is compromised.
+    """
+
+    try:
+        with archive.open("rb") as source:
+            parameters = zstandard.get_frame_parameters(source.read(_ZSTD_FRAME_HEADER_BYTES))
+    except (OSError, zstandard.ZstdError) as exc:
+        raise ResourceUpdateError(f"could not read Zstandard frame header: {exc}") from exc
+
+    declared = parameters.content_size
+    if not isinstance(declared, int) or declared <= 0 or declared > _ZSTD_MAX_OUTPUT_BYTES:
+        return _ZSTD_MAX_OUTPUT_BYTES
+    return declared
+
+
 def _decompress_zstd(archive: Path, parent: Path, resource_id: str) -> Path:
+    limit = _zstd_output_limit(archive)
     target = _temporary_file(
         prefix=f".{resource_id}.", suffix=".install", directory=parent
     )
     try:
+        written = 0
         with archive.open("rb") as source, target.open("wb") as output:
-            zstandard.ZstdDecompressor().copy_stream(source, output)
+            with zstandard.ZstdDecompressor().stream_reader(source) as stream:
+                while True:
+                    chunk = stream.read(_ZSTD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > limit:
+                        raise ResourceUpdateError(
+                            f"Zstandard resource exceeds its {limit} byte decompression bound"
+                        )
+                    output.write(chunk)
         if target.stat().st_size == 0:
             raise ResourceUpdateError("Zstandard resource decompressed to an empty file")
     except Exception as exc:
@@ -723,7 +873,13 @@ def _decompress_zstd(archive: Path, parent: Path, resource_id: str) -> Path:
     return target
 
 
-def _activate(stage: Path, destination: Path) -> Path | None:
+def activate_path(stage: Path, destination: Path) -> Path | None:
+    """Replace ``destination`` with ``stage`` and return the backup it kept.
+
+    The previous artifact is copied aside first and restored if the swap fails,
+    so a failed activation leaves the last-known-good copy in place.
+    """
+
     backup = _backup_path(destination) if destination.exists() else None
     if backup is not None:
         _remove_path(backup)
@@ -743,7 +899,10 @@ def _activate(stage: Path, destination: Path) -> Path | None:
             except Exception:
                 os.replace(temporary, destination)
                 raise
-            _remove_path(temporary)
+            # The new resource is live from here on. The displaced copy is
+            # leftover data, so failing to delete it is litter on disk, never a
+            # failed activation the caller should roll back.
+            _discard(temporary)
         else:
             os.replace(stage, destination)
     except Exception:
@@ -767,6 +926,15 @@ def _copy_path(source: Path, target: Path) -> None:
 
 def _backup_path(destination: Path) -> Path:
     return destination.with_name(destination.name + ".last-known-good")
+
+
+def _discard(path: Path) -> None:
+    """Delete leftover data whose removal must never fail the caller."""
+
+    try:
+        _remove_path(path)
+    except OSError:
+        pass
 
 
 def _remove_path(path: Path) -> None:
@@ -796,6 +964,8 @@ def _temporary_file(*, prefix: str, suffix: str, directory: Path) -> Path:
 __all__ = [
     "DownloadProgress",
     "GitHubReleaseFetcher",
+    "activate_path",
+    "extract_archive",
     "RemoteManifest",
     "RemoteManifestError",
     "RemoteResource",
@@ -805,4 +975,5 @@ __all__ = [
     "UpdateResult",
     "UpdateService",
     "UpdateServiceError",
+    "verify_checksum",
 ]

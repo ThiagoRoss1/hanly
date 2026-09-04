@@ -1,190 +1,129 @@
-# First release plan — publishing the dictionary and finalizing the tag
+# First release runbook
 
-Status: **not started.** Written 2026-08-28 from the state the code is in now.
-No commit, tag, workflow dispatch, or release publication has been performed.
+This runbook bootstraps the first public desktop release. The release envelope
+contains the three platform archives, `hanly-resources.json`, the exact
+`krdict-<version>.sqlite3.zst` named by that manifest, and `SHA256SUMS`.
 
-## Why this exists
+There are two independent lanes: `build-krdict-resource.yml` is a manual,
+non-publishing KRDICT candidate producer; `release.yml` publishes one public
+release per application tag. An application tag never rebuilds KRDICT or
+changes its version.
 
-Everything downstream of "install Hanly" works today except the one step that
-makes it usable by anyone other than the person who built the database.
+## Before starting
 
-A first launch provisions KRDICT from the GitHub release channel. There is no
-release. So a fresh clone or a packaged executable on a machine that has never
-seen `krdict.sqlite3` cannot start, and the only workaround is the developer
-environment variable:
+- Confirm `release.yml` is merged on the repository's default branch. The
+  `workflow_run` trigger uses that default-branch workflow definition; a tag
+  pushed before it is available there will not publish automatically and must
+  be recovered manually.
+- The existing `v0.1.0` tag points at stale commit `24ed285`. A human must
+  correct that tag/commit relationship before the first release. Actions never
+  create, move, or recreate tags. If a public release already exists, bump the
+  version instead of moving its tag.
+- Confirm an approved HTTPS KRDICT source URL and SHA-256 are available for the
+  producer workflow. The producer needs the independent resource identity,
+  source/build dates, and expected entry/sense counts.
 
-```
-HANLY_KRDICT_DB=/path/to/krdict.sqlite3
-```
+GitHub's `releases/latest` ordering follows the release/tag commit-date
+behavior, not publication order. Do not publish the stale tag or a release tag
+from an older commit and assume it will become `latest`; first release history
+must use the corrected chronological application tag.
 
-Publishing the release closes that. It is the last thing standing between the
-current tree and someone else being able to run Hanly.
+## First-release sequence
 
-## Current state, verified
+Run these operations in order:
 
-| | |
-|---|---|
-| Tag `v0.1.0`, local and on `origin` | exists, points at `24ed285` |
-| Commits between that tag and `HEAD` | 2, and none of the recent work |
-| GitHub Releases on the repository | **none** (`/releases` returns `[]`) |
-| Product version in both `pyproject.toml` files | `0.1.0` |
-| Dictionary asset built locally | yes, gitignored |
-| Producer workflow | present, never dispatched |
-| Release workflow | present, never dispatched |
+1. Dispatch **Build KRDICT resource** with the approved source URL/digest and
+   resource metadata.
+2. Verify the successful producer output: manifest shape, resource checksum,
+   asset name, size, and validation/count report. Record its run ID. The
+   candidate is retained for 30 days, subject to the repository ceiling; it
+   does not publish a release.
+3. On the intended application commit, human-correct and push the matching
+   `vMAJOR.MINOR.PATCH` tag (for the current bootstrap, `v0.1.0`). Verify the
+   package versions and pins before pushing:
 
-The tag is therefore stale *and* unreleased. Nothing was ever built or
-published from it, nothing links to it, and the repository has no other
-consumers — so it can be moved or deleted without the usual cost of rewriting a
-published ref.
+   ```powershell
+   python tools/release_version.py --tag v0.1.0
+   ```
 
-## What the release has to contain
+4. Wait for the three platform jobs in **Build Desktop Artifacts** to succeed.
+   The successful same-repository tag build triggers `release.yml`, which
+   selects the staged candidate, creates a draft, verifies exactly six assets,
+   and publishes one public release.
+5. Verify first-run acquisition on a clean machine with no
+   `HANLY_KRDICT_DB` and no local generated database. Confirm download,
+   checksum/schema validation, installation, vocabulary lookup, and a restart
+   while offline. Repeat with the packaged executable.
 
-`hanly_app.first_run` asks the release channel for a manifest asset named
-**`hanly-resources.json`** and expects it to advertise one `krdict` resource.
-`release.yml` already asserts the shape, so the release must carry:
+If the tag was pushed before `release.yml` reached the default branch, wait for
+the build and use the manual recovery below; do not push or move the tag again.
 
-| Asset | Produced by |
-|---|---|
-| `hanly-resources.json` | `tools/krdict/package_resource.py`, copied by `release.yml` |
-| `krdict-<version>.sqlite3.zst` | `tools/krdict/package_resource.py` |
-| `hanly-desktop-windows.zip` | `build.yml` |
-| `hanly-desktop-macos.tar.gz` | `build.yml` |
-| `hanly-desktop-linux.tar.gz` | `build.yml` |
-| `SHA256SUMS` | `release.yml` |
+## Later application-only release
 
-The asset name is checked against `krdict-{version}.sqlite3.zst` and against the
-file actually uploaded, so the resource version and the file name cannot drift
-apart.
+1. Bump both package versions and the two `hanly-app` pins.
+2. Commit and push, then push the matching `vMAJOR.MINOR.PATCH` tag.
+3. After the successful platform build, let `release.yml` copy the previous
+   public release's manifest and referenced KRDICT bytes unchanged.
 
-Locally reproduced values for the current database, for comparison when the
-workflow produces its own:
+Do not dispatch the KRDICT producer merely because the application version
+changed. An app-only tag requires a previous public release; the first release
+requires a validated staged candidate.
 
-- resource version `20260819-v1`, schema version `1`, source date `2026-08-19`
-- 56,555 entries, 76,833 senses
-- SQLite 92,508,160 bytes → Zstandard 27,352,629 bytes (29.6%)
-- asset SHA-256 `62748d8a37dab9bc3c551672cf4cebde3ea7dc1abb6f5f404e11e99db64b9ab9`
+## KRDICT candidate plus application release
 
-## Open question, and it blocks everything
+1. Dispatch **Build KRDICT resource** with a new source identity and a new
+   `resource_version`.
+2. Verify its manifest, checksum, size, and validation report.
+3. Bump/push the application tag and wait for the platform build.
+4. The automatic release promotes the candidate when its producer creation
+   time is strictly later than the previous public release's `published_at`.
+   A missing, expired, or invalid newer candidate fails publication; it never
+   silently falls back to the old resource.
 
-`build-krdict-resource.yml` takes `source_url`: an **HTTPS URL the runner can
-download the official KRDICT archive from**, plus its exact SHA-256. It
-deliberately does not read a source archive from the repository.
+After promotion, later app-only releases copy the manifest and KRDICT bytes
+from the public release, so they no longer depend on the 30-day Actions
+artifact. A changed database must use a new `resource_version`; equal version
+with a different checksum is rejected.
 
-**There is no such URL recorded anywhere.** The archive was acquired by hand.
-Before the producer workflow can run even once, someone has to establish either:
+## Manual recovery
 
-1. a stable public HTTPS URL for the official archive that the runner may fetch,
-   with the licence permitting automated download; or
-2. a private location the runner is allowed to reach, which means adding a
-   secret and changing the workflow's current no-credentials shape; or
-3. a decision that the resource is built locally and uploaded to the release by
-   hand, which makes the producer workflow dead weight and should delete it
-   rather than leave it unusable.
+Use **Release Hanly Desktop** only to recover a failed or unavailable automatic
+publication. The tag must already exist and its successful desktop build
+artifacts must still be available (the application artifacts expire after 14
+days; rerun the tag build if needed).
 
-**Do not start the sequence below until this is settled.** Option 3 is a real
-option — it is honest about how the database is actually built today — but it
-trades reproducibility in CI for one person's machine, so it deserves a
-deliberate decision rather than a default.
+Normal recovery selection:
 
-## Sequence
-
-Each step is human-dispatched. Nothing here happens automatically on push.
-
-### 1. Decide the version
-
-Re-tagging `v0.1.0` is safe *only* while no release exists. Once one is
-published from a tag, moving that tag leaves the release pointing at the old
-commit while the ref says otherwise.
-
-- **First real attempt:** delete and re-create `v0.1.0` on the current commit.
-- **Any repeat after a release exists:** bump instead.
-
-Bumping touches four lines, and `release.yml` refuses to publish when the tag
-and the product version disagree:
-
-- `packages/hanly/pyproject.toml` → `version`
-- `packages/hanly-app/pyproject.toml` → `version`
-- `packages/hanly-app/pyproject.toml` → `dependencies = ["hanly==<v>", …]`
-- `packages/hanly-app/pyproject.toml` → `runtime = ["hanly[concrete]==<v>", …]`
-
-### 2. Finalize the tag
-
-```bash
-python tools/release_version.py                 # print the product version
-python tools/release_version.py --tag v0.1.0    # fail loudly on a mismatch
-
-git tag -d v0.1.0
-git push origin :refs/tags/v0.1.0
-git tag v0.1.0
-git push origin v0.1.0
+```powershell
+gh workflow run release.yml --ref <default-branch> -f tag=vMAJOR.MINOR.PATCH
 ```
 
-Pushing a `v*` tag triggers `build.yml`, which produces the three platform
-archives. It refuses to build if the tag and the product version disagree.
+To force one exact, successful KRDICT producer run, supply its run ID. It must
+be an unexpired artifact from the successful default-branch producer workflow;
+an invalid override fails and never falls back:
 
-### 3. Produce the resource
+```powershell
+gh workflow run release.yml --ref <default-branch> `
+  -f tag=vMAJOR.MINOR.PATCH -f resource_run_id=<producer-run-id>
+```
 
-Dispatch **Build KRDICT resource** with `source_url`, `source_sha256`, and the
-resource identity (`resource_version`, `source_date`, `build_date`,
-`expected_entries`, `expected_senses`).
+To explicitly reuse the previous public resource when a newer candidate is
+invalid or expired, use the manual-only escape. It requires a previous public
+release and cannot be combined with `resource_run_id`:
 
-The runner downloads the archive, verifies the digest *before* parsing, builds,
-validates, packages, and uploads `hanly-krdict-resource` — the `.sqlite3.zst`,
-the producer manifest, and the validation report. It cannot publish anything.
+```powershell
+gh workflow run release.yml --ref <default-branch> `
+  -f tag=vMAJOR.MINOR.PATCH `
+  -f reuse_previous_release_resource=true
+```
 
-Compare its outputs against the locally reproduced values above. A byte-identical
-`.zst` with the same SHA-256 confirms the build is deterministic across machines;
-a difference is a finding, not a rounding error.
+The workflow records the reuse decision, previous release tag, and reason in
+the job summary and release notes. Keep the operator reason in the recovery
+record. Automatic runs cannot use this escape.
 
-Record the **run id**.
-
-### 4. Publish
-
-Dispatch **Release Hanly Desktop** with the tag and that `resource_run_id`. It
-finds the tag's application build itself, assembles the six assets, writes
-`SHA256SUMS`, and creates the release with generated notes.
-
-### 5. Verify the thing this was all for
-
-On a machine that has **never** run Hanly, with no `HANLY_KRDICT_DB` set and no
-`data/generated/krdict.sqlite3` present:
-
-- [ ] Start it. It should report `Preparing Hanly` → `Checking resources` →
-      `Downloading Korean dictionary` → `Verifying` → `Installing` → `Ready`.
-- [ ] Confirm the phases are visible in the Control Center, not just on stderr.
-      They were only wired to their labels recently and have never run against
-      a real download.
-- [ ] Confirm the installed database validates and real vocabulary resolves.
-- [ ] Restart with the network disconnected. It must start offline — that path
-      is already covered by tests, and this is the end-to-end confirmation.
-- [ ] Repeat with the packaged executable, not only a source install.
-
-Until step 5 passes, the first-run download path has never executed against a
-real release. Every test of it uses a fake fetcher.
-
-## Worth doing before publishing, not after
-
-Recorded in `review-handoffs/han-38-krdict-production-resource-pipeline.md`
-and unresolved:
-
-- **`_decompress_zstd` has no output bound.** The checksum is verified before
-  decompression, so a decompression bomb needs a compromised release manifest —
-  but publishing a real release is exactly when that stops being hypothetical.
-  A `max_output_size` from the frame content size closes it cheaply.
-- **Startup validation costs ~4.5 s cold** on the 92 MB resource, dominated by
-  `PRAGMA quick_check` reading the whole file on *every* launch. Users will feel
-  this the moment they have the real dictionary. The fix is to tie the deep
-  check to a verified resource identity so it runs on first launch after an
-  install rather than always — with tests proving the full checks still run on
-  install, recovery, and every identity change.
-- **A `record_install` failure is reported as an install failure** even though
-  the resource is already active. Narrow window, self-heals on the next
-  validation, but a real download makes it reachable for the first time.
-
-## Not in scope here
-
-- Keeping the desktop open when no dictionary can be obtained. That is a
-  separate feature and an approved-architecture change; it is described in the
-  handoff and needs a decision of its own.
-- Publishing either package to PyPI. Nothing in this flow depends on an index,
-  and `README.md` says so plainly.
+An automatic rerun for an already-published public tag is a successful no-op.
+Manual dispatch fails on any existing release; draft or prerelease collisions
+fail on both paths. If draft creation or exact-six verification leaves a
+partial draft, leave it untouched: an operator must inspect and repair/publish
+it or remove it before dispatching recovery. No workflow path overwrites a
+partial draft or moves a tag.

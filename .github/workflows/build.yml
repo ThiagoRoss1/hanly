@@ -35,10 +35,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -64,7 +64,9 @@ jobs:
       # version must agree before any artifact is produced under that name.
       - name: Verify the tag matches the product version
         if: startsWith(github.ref, 'refs/tags/')
-        run: python tools/release_version.py --tag "${{ github.ref_name }}"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python tools/release_version.py --tag "$RELEASE_TAG"
 
       - name: Install packaging tool
         run: python -m pip install "pyinstaller>=6,<7"
@@ -95,7 +97,7 @@ jobs:
       # Only the archive is retained. The uncompressed onedir tree beside it is
       # the same payload again, and PyInstaller's work cache is not releasable.
       - name: Retain platform artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hanly-desktop-${{ matrix.platform }}
           path: |

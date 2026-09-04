@@ -115,6 +115,7 @@ def provision_runtime_config(
             raise FirstRunError(
                 _invalid_resources_message(manager, metadata, "runtime resources are invalid")
             )
+        persist_verified_identities(path, metadata)
         _status(on_status, "Ready")
         return path
 
@@ -134,6 +135,7 @@ def provision_runtime_config(
                 manager, final_metadata, "runtime resources remain invalid after provisioning"
             )
         )
+    persist_verified_identities(path, final_metadata)
     _status(on_status, "Ready")
     return path
 
@@ -181,7 +183,7 @@ def _install_resources(
                 _status(on_status, "Installing...")
 
         try:
-            service.install(resource_id, on_progress=progress)
+            result = service.install(resource_id, on_progress=progress)
         except UpdateServiceError as error:
             raise FirstRunError(
                 f"could not install {resource_id} from {PUBLIC_RELEASE_CHANNEL}: {error}"
@@ -189,7 +191,12 @@ def _install_resources(
         # Record each activation before the next artifact starts. A later
         # download may fail, but already activated resources must still retain
         # their release identities for the next launch/update check.
-        persist_resource_version(config_path, resource_id, remote[resource_id].version)
+        persist_installed_resource(
+            config_path,
+            resource_id,
+            remote[resource_id].version,
+            result.validation.integrity_identity,
+        )
 
 
 def _status(callback: Callable[[str], None] | None, message: str) -> None:
@@ -320,35 +327,88 @@ def _load_manager(path: Path, *, context: str) -> ResourceManager:
         raise FirstRunError(f"{context} {path}: {error}") from error
 
 
-def persist_resource_version(path: Path, resource_id: str, version: str) -> None:
-    """Record one release version without replacing unrelated runtime options."""
+def persist_installed_resource(
+    path: Path,
+    resource_id: str,
+    version: str,
+    integrity_identity: str | None = None,
+) -> None:
+    """Record what one activation installed: its release version and its identity.
+
+    Both facts describe the same bytes, so they are written in a single atomic
+    replace. Recording them separately would let a crash between the two leave
+    an identity standing against a version it does not belong to, and the next
+    launch would skip the integrity check on an artifact nothing verified.
+    """
 
     payload = _runtime_payload_for_update(path)
     resources = dict(payload["resources"])
-    entry = resources.get(resource_id)
-    if isinstance(entry, Mapping):
-        updated_entry = dict(entry)
-    elif isinstance(entry, str):
-        updated_entry = {"path": entry}
-    else:
+    entry = _resource_entry(resources, resource_id)
+    if entry is None:
         raise FirstRunError(
             f"could not record installed resource versions in {path}: "
             f"resources.{resource_id} must be an object or path"
         )
 
+    updated_entry = dict(entry)
     # ``version`` is the operator's expected-version pin, which ResourceManager
     # compares the observed version against; writing a release identity over it
     # would report the freshly installed artifact as OUTDATED.
-    if updated_entry.get("version") is not None:
-        return
+    #
+    # ``installed_version`` is deliberately separate: KRDICT's version is the
+    # embedded SQLite schema contract, while the release version identifies the
+    # independently delivered database.
+    if updated_entry.get("version") is None:
+        updated_entry["installed_version"] = version
+    if integrity_identity is not None:
+        updated_entry["verified_identity"] = integrity_identity
 
-    # ``installed_version`` is deliberately separate from ``version``: KRDICT's
-    # version is the embedded SQLite schema contract, while the release version
-    # identifies the independently delivered database.
-    updated_entry["installed_version"] = version
+    if updated_entry == entry:
+        return
     resources[resource_id] = updated_entry
     payload["resources"] = resources
     _write_json_atomically(path, payload)
+
+
+def persist_verified_identities(path: Path, metadata: Mapping[str, ResourceMetadata]) -> None:
+    """Record which validated bytes already passed deep integrity validation.
+
+    Writing this back is what makes the next launch cheap: ResourceManager skips
+    a full-file scan while the recorded identity still describes the file. Only
+    changed entries are written, so an ordinary launch touches no disk.
+    """
+
+    payload = _runtime_payload_for_update(path)
+    resources = dict(payload["resources"])
+    changed = False
+    for resource_id, resource_metadata in metadata.items():
+        identity = resource_metadata.integrity_identity
+        if identity is None:
+            continue
+        updated_entry = _resource_entry(resources, resource_id)
+        if updated_entry is None:
+            continue
+        if updated_entry.get("verified_identity") == identity:
+            continue
+        updated_entry["verified_identity"] = identity
+        resources[resource_id] = updated_entry
+        changed = True
+
+    if not changed:
+        return
+    payload["resources"] = resources
+    _write_json_atomically(path, payload)
+
+
+def _resource_entry(resources: Mapping[str, Any], resource_id: str) -> dict[str, Any] | None:
+    """Return a writable copy of one manifest entry, or None if it has no shape."""
+
+    entry = resources.get(resource_id)
+    if isinstance(entry, Mapping):
+        return dict(entry)
+    if isinstance(entry, str):
+        return {"path": entry}
+    return None
 
 
 def _runtime_payload_for_update(path: Path) -> dict[str, Any]:
@@ -461,6 +521,7 @@ __all__ = [
     "REQUIRED_RESOURCE_IDS",
     "RESOURCE_KINDS",
     "FirstRunError",
-    "persist_resource_version",
+    "persist_installed_resource",
+    "persist_verified_identities",
     "provision_runtime_config",
 ]

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import sys
 import threading
+import urllib.parse
+import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
@@ -349,6 +351,35 @@ class ControlCenterBridge:
         self._update_coordinator.install_update(resource_id)
         return self.get_state()
 
+    def install_application_update(self) -> dict[str, object]:
+        """Download, verify, and stage the newer application build inside Hanly.
+
+        This is the primary update action. The browser is never part of it.
+        """
+
+        if self._update_coordinator is None:
+            raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        self._update_coordinator.install_application_update()
+        return self.get_state()
+
+    def open_release_notes(self) -> dict[str, object]:
+        """Open the release notes for the build the last check reported.
+                            
+        Reading the notes is the one thing Hanly cannot show in-app. The URL
+        is the one the release channel returned, re-checked against the host
+        and path a release page actually has, so neither the UI nor a hostile
+        release payload can turn this into an arbitrary browser launch.
+        """
+
+        if self._update_coordinator is None:
+            raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        application = self._update_coordinator.snapshot().get("application")
+        url = application.get("release_url") if isinstance(application, Mapping) else None
+        if not isinstance(url, str) or not _is_release_page(url):
+            raise ControlCenterUnavailable("no application release page is available")
+        webbrowser.open(url)
+        return self.get_state()
+
     def replace_capture_service(
         self,
         capture_service: MonitorSource | CaptureService,
@@ -461,6 +492,21 @@ class ControlCenterBridge:
             }
             resources.append(resource)
         return resources
+
+
+#: The only host a release page may live on, and the path segment that says
+#: the URL is one. Anything else is not opened, whoever supplied it.
+_RELEASE_HOST = "github.com"
+_RELEASE_PATH = "/releases/"
+
+
+def _is_release_page(url: str) -> bool:
+    parts = urllib.parse.urlsplit(url)
+    return (
+        parts.scheme == "https"
+        and parts.netloc == _RELEASE_HOST
+        and _RELEASE_PATH in parts.path
+    )
 
 
 def _validated_hotkey(hotkey: object) -> str:

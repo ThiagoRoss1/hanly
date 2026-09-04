@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 from pathlib import Path
 
@@ -289,3 +290,81 @@ def test_resource_compatibility_requirements_are_normalized(tmp_path: Path) -> N
 def _create_krdict_database(path: Path) -> None:
     built = build_fixture_krdict(path.parent)
     built.replace(path)
+
+
+def test_deep_integrity_runs_once_and_is_skipped_while_the_bytes_are_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scanning a ~92 MB database on every launch costs seconds. Bytes that
+    already passed keep their result until the file itself changes."""
+
+    database = tmp_path / "krdict.sqlite"
+    _create_krdict_database(database)
+    scans: list[Path] = []
+    monkeypatch.setattr(
+        ResourceManager, "_validate_integrity", staticmethod(lambda path: scans.append(path))
+    )
+
+    first = ResourceManager((ResourceSpec("krdict", database, kind="krdict"),)).validate()
+    identity = first["krdict"].integrity_identity
+
+    assert first["krdict"].status is ResourceStatus.VALID
+    assert identity is not None
+    assert len(scans) == 1
+
+    repeat = ResourceManager(
+        (ResourceSpec("krdict", database, kind="krdict", verified_identity=identity),)
+    ).validate()
+
+    assert repeat["krdict"].status is ResourceStatus.VALID
+    assert repeat["krdict"].integrity_identity == identity
+    assert len(scans) == 1
+
+
+def test_replacing_the_file_re_earns_the_deep_integrity_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "krdict.sqlite"
+    _create_krdict_database(database)
+    scans: list[Path] = []
+    monkeypatch.setattr(
+        ResourceManager, "_validate_integrity", staticmethod(lambda path: scans.append(path))
+    )
+    stale = "1:1"
+
+    metadata = ResourceManager(
+        (ResourceSpec("krdict", database, kind="krdict", verified_identity=stale),)
+    ).validate()
+
+    assert metadata["krdict"].status is ResourceStatus.VALID
+    assert metadata["krdict"].integrity_identity != stale
+    assert len(scans) == 1
+
+
+def test_a_failed_integrity_check_records_no_identity_to_skip_next_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "krdict.sqlite"
+    _create_krdict_database(database)
+
+    def fail_integrity(_path: Path) -> None:
+        raise ValueError("PRAGMA quick_check returned malformed")
+
+    monkeypatch.setattr(ResourceManager, "_validate_integrity", staticmethod(fail_integrity))
+
+    metadata = ResourceManager((ResourceSpec("krdict", database, kind="krdict"),)).validate()
+
+    assert metadata["krdict"].status is ResourceStatus.INCOMPATIBLE
+    assert metadata["krdict"].integrity_identity is None
+
+
+def test_identity_tracks_size_and_modification_time_together(tmp_path: Path) -> None:
+    from hanly.resource_manager import _integrity_identity
+
+    database = tmp_path / "krdict.sqlite"
+    _create_krdict_database(database)
+    before = _integrity_identity(database)
+    os.utime(database, ns=(1_000_000_000, 1_000_000_000))
+
+    assert _integrity_identity(database) != before
+    assert before.split(":")[0] == str(database.stat().st_size)

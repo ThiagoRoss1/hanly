@@ -19,6 +19,25 @@ data/
 
 ## Building it
 
+One command produces everything a release needs: the database, the compressed
+asset, the manifest under its published name, and the validation report.
+
+```powershell
+.\.venv\Scripts\python.exe tools\krdict\build_release_asset.py `
+  'data\source\<official-krdict-archive>.zip' `
+  --resource-version 20260819-v1 `
+  --source-date 2026-08-19 `
+  --build-date 2026-08-25 `
+  --expect-entries 56555 --expect-senses 76833 --expect-sanitized-bytes 7
+```
+
+It prints the two files to attach to a GitHub Release. `--build-date` defaults
+to today; pin it to reproduce an existing release byte-for-byte. The expected
+counts are optional — supply them when reproducing a known release, omit them
+when building from a new archive where the counts are what you are discovering.
+
+### The same work, one step at a time
+
 Put the official archive in `source/`, then run the three tools in order. Each
 takes the source identity explicitly — nothing is inferred from a filename.
 
@@ -58,7 +77,7 @@ the counts are what you are trying to discover.
 To look at an archive without building anything:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\krdict\inspect.py <archive.zip> --compact
+.\.venv\Scripts\python.exe tools\krdict\inspect_archive.py <archive.zip> --compact
 ```
 
 ## Known irregularities in the official source

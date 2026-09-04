@@ -278,6 +278,9 @@ class ResourceMetadata:
     status: ResourceStatus
     compatible: bool
     checksum: str | None = None
+    #: Cheap identity of the bytes that passed deep validation, so a caller can
+    #: record it and let the next validation skip a full-file integrity scan.
+    integrity_identity: str | None = None
 
     def __post_init__(self) -> None:
         if self.status in (ResourceStatus.MISSING, ResourceStatus.INCOMPATIBLE) and self.compatible:

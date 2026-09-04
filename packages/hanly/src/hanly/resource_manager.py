@@ -81,6 +81,9 @@ class ResourceSpec:
     schema: SchemaSpec | None = None
     version_file: str | os.PathLike[str] | None = None
     installed_version: str | None = None
+    #: Identity recorded when these bytes last passed deep integrity validation.
+    #: Matching it skips a full-file scan that costs seconds on a large database.
+    verified_identity: str | None = None
     expected_version: str | None = None
     kind: str = "file"
     configuration: Mapping[str, Any] = field(default_factory=dict)
@@ -421,11 +424,23 @@ class ResourceManager:
             except (OSError, UnicodeError, sqlite3.Error, ValueError) as exc:
                 diagnostics.append(f"schema is incompatible: {exc}")
 
+        integrity_identity: str | None = None
         if not diagnostics and (spec.kind in {"sqlite", "krdict"} or spec.schema is not None):
             try:
-                self._validate_integrity(path)
-            except (OSError, sqlite3.Error, ValueError) as exc:
-                diagnostics.append(f"SQLite integrity check failed: {exc}")
+                integrity_identity = _integrity_identity(path)
+            except OSError as exc:
+                diagnostics.append(f"resource identity is unreadable: {exc}")
+
+        # A full-file scan costs seconds on the ~92 MB dictionary. Bytes that
+        # already passed it keep their result until the file itself changes,
+        # so an install, a rollback, or any tampering re-earns the check.
+        if not diagnostics and integrity_identity is not None:
+            if integrity_identity != spec.verified_identity:
+                try:
+                    self._validate_integrity(path)
+                except (OSError, sqlite3.Error, ValueError) as exc:
+                    diagnostics.append(f"SQLite integrity check failed: {exc}")
+                    integrity_identity = None
 
         if not diagnostics and spec.checksum is not None:
             try:
@@ -462,6 +477,7 @@ class ResourceManager:
             status=status,
             compatible=compatible,
             checksum=actual_checksum,
+            integrity_identity=integrity_identity if compatible else None,
         )
         return metadata, tuple(diagnostics), observed_version, path
 
@@ -570,6 +586,18 @@ class ResourceManager:
             )
         finally:
             connection.close()
+
+
+def _integrity_identity(path: Path) -> str:
+    """Return a cheap identity for the exact bytes now on disk.
+
+    Size and modification time change together whenever the file is replaced,
+    and both are read from one stat call rather than the file contents. A
+    metadata change that leaves content untouched only costs one extra scan.
+    """
+
+    status = path.stat()
+    return f"{status.st_size}:{status.st_mtime_ns}"
 
 
 def _format_integrity_rows(rows: tuple[str, ...]) -> str:

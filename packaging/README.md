@@ -63,29 +63,66 @@ One product version covers both packages. It lives in
 `hanly==<version>`. Tags are `v{version}` — `0.1.0` publishes as `v0.1.0`.
 
 Hanly is not published to PyPI in this flow. The version identifies a desktop
-release, not a package index entry.
+release, not a package index entry. The release topology has two independent
+lanes but one public envelope: the manual KRDICT workflow stages a candidate,
+and a successful application tag build publishes the three app archives plus
+the manifest, exact referenced KRDICT asset, and `SHA256SUMS`.
 
-Releasing is semi-automatic. The human chooses the version and creates the tag:
+### Application-only release
 
-1. Edit `version` in `packages/hanly-app/pyproject.toml`, and match it in
-   `packages/hanly/pyproject.toml` and the `hanly==` pins.
-2. Commit and push.
-3. Create and push the matching tag, `v{version}`.
-4. Pushing the tag runs the build workflow, which refuses to build if the tag
-   and the product version disagree, then produces the three platform archives.
-5. Dispatch the release workflow with that tag and the run id of the separately
-   produced resource artifacts. It finds the tag's application build itself;
-   resource versions come from the resource artifact names.
+1. Bump both package versions and the `hanly-app` dependency/runtime pins.
+2. Commit and push, then push the matching `vMAJOR.MINOR.PATCH` tag.
+3. After the successful platform build, `release.yml` copies the previous
+   public release's `hanly-resources.json` and KRDICT bytes unchanged.
+
+Do not dispatch the KRDICT producer for an application-only change. A first
+release has no previous public release and therefore needs a validated staged
+KRDICT candidate.
+
+### KRDICT candidate plus application release
+
+1. Dispatch **Build KRDICT resource** with its approved source URL/digest and a
+   new independent `resource_version`.
+2. Verify its manifest, checksum, size, and validation/count report.
+3. Bump/push the application tag and wait for the platform build.
+4. The automatic release promotes the candidate when its producer
+   `created_at` is later than the previous public release's `published_at`.
+
+Producer artifacts are retained for 90 days, subject to repository limits. A
+newer candidate that is missing, expired, or invalid fails publication rather
+than silently downgrading; a changed database must use a new resource version.
+Once published, later releases copy the exact resource bytes from the public
+release and no longer depend on the Actions artifact.
+
+### Recovery and first-release notes
+
+The normal path is automatic only after `release.yml` is merged on the default
+branch; `workflow_run` uses that revision. A tag pushed earlier can be
+recovered manually. Manual recovery accepts the existing tag and optionally
+one exact successful producer `resource_run_id`; an invalid override never
+falls back. The manual-only `reuse_previous_release_resource=true` escape
+requires a previous public release and is mutually exclusive with
+`resource_run_id`. It records the explicit reuse decision in the job summary
+and release notes.
+
+Automatic reruns of an already-public tag are successful no-ops. Manual
+duplicates, drafts, and prerelease collisions fail. A partial draft is left
+untouched for an operator to repair/publish or remove before recovery; no
+workflow moves tags or overwrites releases. Application artifacts expire after
+14 days, so rerun the tag build before recovery if necessary.
+
+The existing `v0.1.0` tag points at stale commit `24ed285` and must be
+human-corrected before the first release. Actions never create or move it.
+GitHub's `releases/latest` follows release/tag commit-date ordering rather than
+publication order, so a release from an older commit may not become latest.
+
+For a local pre-tag check (the publisher itself reads exact tag metadata as
+data with trusted default-branch tooling):
 
 ```powershell
-python tools/release_version.py                # print the current version
-python tools/release_version.py --tag v0.1.0   # fail loudly on a mismatch
+python tools/release_version.py                # print installed product version
+python tools/release_version.py --tag v0.1.0   # check the local package/tag match
 ```
-
-Step 5 stays manual because the KRDICT resource is produced and versioned
-independently of the application, so a tag push cannot supply it. Everything else is derived: the release title is
-`Hanly Desktop <tag>`, notes are GitHub-generated, and the application build is
-selected by tag rather than by a copied run id.
 
 ## Runtime configuration
 

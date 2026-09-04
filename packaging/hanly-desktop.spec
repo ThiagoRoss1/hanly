@@ -16,6 +16,7 @@ from PyInstaller.utils.hooks import (
     collect_data_files,
     collect_dynamic_libs,
     collect_submodules,
+    copy_metadata,
 )
 
 
@@ -49,6 +50,10 @@ datas = collect_data_files(
         "assets/control_center/*.js",
     ],
 )
+
+for distribution in ("hanly-app", "hanly"):
+    datas.extend(copy_metadata(distribution))
+
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 

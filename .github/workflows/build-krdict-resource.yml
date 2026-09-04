@@ -1,5 +1,7 @@
 name: Build KRDICT resource
 
+run-name: Build KRDICT resource (${{ inputs.resource_version }})
+
 # The official source archive is supplied by an explicit HTTPS URL and digest.
 # This workflow produces reviewable outputs only; release publication remains
 # the separate, human-dispatched release.yml gate.
@@ -63,10 +65,10 @@ jobs:
       EXPECTED_SANITIZED_BYTES: ${{ inputs.expected_sanitized_bytes }}
     steps:
       - name: Check out resource tooling
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.10"
 
@@ -144,9 +146,14 @@ jobs:
             --manifest producer-output/krdict.resource.json
 
       - name: Upload reviewable KRDICT resource outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hanly-krdict-resource
           if-no-files-found: error
-          retention-days: 14
+          # A candidate only has to survive from its manual dispatch until the
+          # next application tag publishes it; after that the exact bytes live
+          # on the public release forever and every later release copies them
+          # from there. 30 days leaves that cycle a wide margin without keeping
+          # ~100 MB of superseded candidates around for a quarter.
+          retention-days: 30
           path: producer-output/

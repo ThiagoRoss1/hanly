@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import urllib.request
 import zipfile
@@ -13,6 +14,7 @@ from typing import Any
 import pytest
 import zstandard
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
+from hanly_app import update_service
 from hanly_app.update_service import (
     DownloadProgress,
     GitHubReleaseFetcher,
@@ -643,31 +645,31 @@ def test_checksum_verification_streams_multi_chunk_artifacts(tmp_path: Path) -> 
     it is pinned against a payload larger than one read chunk rather than a
     stdlib helper that only exists from Python 3.11 onward."""
 
-    from hanly_app.update_service import _verify_checksum
+    from hanly_app.update_service import verify_checksum
 
     artifact = tmp_path / "artifact.bin"
     payload = b"\xa1\x9c" * (1024 * 1024)
     artifact.write_bytes(payload)
 
-    _verify_checksum(artifact, f"sha256:{_sha256(payload)}")
-    _verify_checksum(artifact, _sha256(payload).upper())
-    _verify_checksum(artifact, f"sha512:{hashlib.sha512(payload).hexdigest()}")
+    verify_checksum(artifact, f"sha256:{_sha256(payload)}")
+    verify_checksum(artifact, _sha256(payload).upper())
+    verify_checksum(artifact, f"sha512:{hashlib.sha512(payload).hexdigest()}")
 
     with pytest.raises(ResourceUpdateError, match="checksum does not match"):
-        _verify_checksum(artifact, f"sha256:{'0' * 64}")
+        verify_checksum(artifact, f"sha256:{'0' * 64}")
 
 
 def test_checksum_verification_reports_unusable_algorithms_and_paths(tmp_path: Path) -> None:
-    from hanly_app.update_service import _verify_checksum
+    from hanly_app.update_service import verify_checksum
 
     artifact = tmp_path / "artifact.bin"
     artifact.write_bytes(b"payload")
 
     with pytest.raises(ResourceUpdateError, match="unsupported artifact checksum algorithm"):
-        _verify_checksum(artifact, "crc32:00000000")
+        verify_checksum(artifact, "crc32:00000000")
 
     with pytest.raises(ResourceUpdateError, match="could not hash staged artifact"):
-        _verify_checksum(tmp_path / "missing.bin", f"sha256:{'0' * 64}")
+        verify_checksum(tmp_path / "missing.bin", f"sha256:{'0' * 64}")
 
 
 def test_updates_are_not_offered_for_resources_this_install_never_declared(
@@ -693,3 +695,229 @@ def test_updates_are_not_offered_for_resources_this_install_never_declared(
     availability = service.check_for_updates()
 
     assert [item.resource.resource_id for item in availability] == ["krdict"]
+
+
+def _zstd_zeros_declaring_no_size(size: int) -> bytes:
+    """Compress ``size`` zero bytes into a frame that declares no content size.
+
+    Zeros compress to a few kilobytes, which is the shape of a decompression
+    bomb; streaming keeps the uncompressed fixture out of the test's memory.
+    """
+
+    buffer = io.BytesIO()
+    block = b"\0" * (4 * 1024 * 1024)
+    with zstandard.ZstdCompressor(write_content_size=False).stream_writer(
+        buffer, closefd=False
+    ) as writer:
+        remaining = size
+        while remaining > 0:
+            writer.write(block[:remaining])
+            remaining -= min(remaining, len(block))
+    return buffer.getvalue()
+
+
+def test_a_zstd_bomb_is_refused_at_the_shipped_ceiling_without_writing_it_out(
+    tmp_path: Path,
+) -> None:
+    """A frame that declares no size and keeps producing bytes past the ceiling
+    is stopped mid-stream, so a compromised manifest cannot fill a user's disk.
+
+    Nothing here is monkeypatched: the bound under test is the shipped one.
+    """
+
+    destination = tmp_path / "krdict.sqlite3"
+    _create_krdict_database(destination, "known good")
+    payload = _zstd_zeros_declaring_no_size(
+        update_service._ZSTD_MAX_OUTPUT_BYTES + 8 * 1024 * 1024
+    )
+    resource = RemoteResource(
+        "krdict",
+        "2",
+        url="https://example.test/krdict-2.sqlite3.zst",
+        checksum=f"sha256:{_sha256(payload)}",
+        kind="krdict",
+        size=len(payload),
+        schema_version=1,
+        expected_entry_count=1,
+        source_date="fixture",
+    )
+    fetcher = FakeFetcher(RemoteManifest((resource,)), {"krdict": payload})
+    manager = ResourceManager(
+        ResourceManifest((ResourceSpec("krdict", destination, version="1", kind="krdict"),))
+    )
+
+    with pytest.raises(ResourceUpdateError, match="decompression bound"):
+        UpdateService(manager, fetcher).install("krdict")
+
+    assert _headword(destination) == "known good"
+    assert not tuple(tmp_path.glob(".*.install"))
+
+
+def test_a_declared_size_beyond_the_ceiling_is_capped_rather_than_trusted(
+    tmp_path: Path,
+) -> None:
+    """A frame header is attacker-controlled, so a declaration larger than
+    anything Hanly ships buys no extra room."""
+
+    # A hand-built header: magic, a descriptor selecting an 8-byte content size
+    # with no window descriptor, then the declared size itself.
+    header = b"\x28\xb5\x2f\xfd\xe0" + (8 * 1024**3).to_bytes(8, "little")
+    archive = tmp_path / "resource.zst"
+    archive.write_bytes(header)
+
+    assert update_service._zstd_output_limit(archive) == update_service._ZSTD_MAX_OUTPUT_BYTES
+
+
+def test_the_decompression_bound_comes_from_the_declared_frame_content_size(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "resource.zst"
+    archive.write_bytes(zstandard.ZstdCompressor().compress(b"x" * 5000))
+
+    assert update_service._zstd_output_limit(archive) == 5000
+
+
+def test_a_frame_declaring_no_content_size_falls_back_to_the_fixed_ceiling(
+    tmp_path: Path,
+) -> None:
+    """An undeclared size is the attacker-controlled case, so it is capped
+    rather than trusted."""
+
+    archive = tmp_path / "resource.zst"
+    compressor = zstandard.ZstdCompressor(write_content_size=False)
+    archive.write_bytes(compressor.compress(b"x" * 5000))
+
+    assert update_service._zstd_output_limit(archive) == update_service._ZSTD_MAX_OUTPUT_BYTES
+
+
+def test_an_unreadable_zstd_header_is_a_resource_error_not_a_crash(tmp_path: Path) -> None:
+    archive = tmp_path / "resource.zst"
+    archive.write_bytes(b"not a frame")
+
+    with pytest.raises(ResourceUpdateError, match="frame header"):
+        update_service._zstd_output_limit(archive)
+
+
+def test_an_object_form_manifest_entry_that_is_not_an_object_is_refused() -> None:
+    """A remote manifest is the least trusted input here, so a malformed value
+    must fail closed as a manifest error, not as an incidental TypeError."""
+
+    with pytest.raises(RemoteManifestError, match="must be an object"):
+        RemoteManifest.from_payload({"resources": {"krdict": 123}})
+
+
+def test_a_directory_activation_survives_a_failed_cleanup_of_the_displaced_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the new tree is live, leftover data that will not delete is litter
+    on disk, not a failed activation the caller should roll back."""
+
+    from hanly_app import update_service as module
+
+    destination = tmp_path / "models"
+    destination.mkdir()
+    (destination / "weights.bin").write_bytes(b"old")
+    stage = tmp_path / "staged"
+    stage.mkdir()
+    (stage / "weights.bin").write_bytes(b"new")
+
+    real_remove = module._remove_path
+    calls: list[Path] = []
+
+    def flaky_remove(path: Path) -> None:
+        calls.append(path)
+        # Only the post-swap discard of the displaced copy is made to fail.
+        swapped = (destination / "weights.bin").read_bytes() == b"new"
+        if swapped and path.name.startswith(".models."):
+            raise PermissionError("directory is in use")
+        real_remove(path)
+
+    monkeypatch.setattr(module, "_remove_path", flaky_remove)
+
+    backup = module.activate_path(stage, destination)
+
+    assert (destination / "weights.bin").read_bytes() == b"new"
+    assert backup is not None and (backup / "weights.bin").read_bytes() == b"old"
+
+
+def test_a_failed_directory_swap_puts_the_previous_tree_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hanly_app import update_service as module
+
+    destination = tmp_path / "models"
+    destination.mkdir()
+    (destination / "weights.bin").write_bytes(b"old")
+    stage = tmp_path / "staged"
+    stage.mkdir()
+    (stage / "weights.bin").write_bytes(b"new")
+
+    real_replace = os.replace
+    seen: list[int] = []
+
+    def failing_replace(source: Any, target: Any, **kwargs: Any) -> None:
+        seen.append(1)
+        # The first replace moves the live tree aside; the second is the swap.
+        if len(seen) == 2:
+            raise OSError("cannot move staged tree into place")
+        real_replace(source, target, **kwargs)
+
+    monkeypatch.setattr(module.os, "replace", failing_replace)
+
+    with pytest.raises(OSError, match="cannot move staged tree"):
+        module.activate_path(stage, destination)
+
+    assert (destination / "weights.bin").read_bytes() == b"old"
+
+
+def test_a_download_that_outgrows_its_declared_size_is_abandoned_mid_stream(
+    tmp_path: Path,
+) -> None:
+    """The manifest size is an exact bound, so an oversized response is already
+    wrong and is not written out in full before being rejected."""
+
+    served = b"x" * (4 * 1024 * 1024)
+
+    def opener(url: str, timeout: float | None = None) -> Any:
+        return _StreamedResponse(served)
+
+    fetcher = GitHubReleaseFetcher("owner", "repo", opener=opener)
+    resource = RemoteResource(
+        "krdict", "2", url="https://example.test/krdict.zst", size=1024, kind="krdict"
+    )
+    destination = tmp_path / "artifact.bin"
+
+    with pytest.raises(ResourceUpdateError, match="exceeds its declared 1024 byte size"):
+        fetcher.download(resource, destination)
+
+    assert destination.stat().st_size <= 1024
+
+
+def test_a_download_within_its_declared_size_is_written_in_full(tmp_path: Path) -> None:
+    served = b"y" * 2048
+
+    fetcher = GitHubReleaseFetcher(
+        "owner", "repo", opener=lambda url, timeout=None: _StreamedResponse(served)
+    )
+    resource = RemoteResource(
+        "krdict", "2", url="https://example.test/krdict.zst", size=len(served), kind="krdict"
+    )
+    destination = tmp_path / "artifact.bin"
+
+    fetcher.download(resource, destination)
+
+    assert destination.read_bytes() == served
+
+
+class _StreamedResponse:
+    """The tiny slice of an HTTP response the downloader reads."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._stream = io.BytesIO(payload)
+        self.headers = {"Content-Length": str(len(payload))}
+
+    def read(self, size: int = -1) -> bytes:
+        return self._stream.read(size)
+
+    def close(self) -> None:
+        self._stream.close()

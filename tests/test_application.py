@@ -22,6 +22,7 @@ from hanly_app.application import (
     discover_runtime_config,
     load_update_service,
 )
+from hanly_app.control_center import ControlCenterBridge
 
 
 class _Signal:
@@ -426,12 +427,15 @@ def test_update_coordinator_checks_availability_as_soon_as_it_is_exposed(
     assert callable(record_install)
     record_install(
         types.SimpleNamespace(
-            resource=types.SimpleNamespace(resource_id="krdict", version="2")
+            resource=types.SimpleNamespace(resource_id="krdict", version="2"),
+            validation=types.SimpleNamespace(integrity_identity="120:900"),
         )
     )
-    assert json.loads(config.read_text(encoding="utf-8"))["resources"]["krdict"][
-        "installed_version"
-    ] == "2"
+    # One write carries both: the version that was installed and the identity of
+    # the bytes the installer already scanned.
+    recorded = json.loads(config.read_text(encoding="utf-8"))["resources"]["krdict"]
+    assert recorded["installed_version"] == "2"
+    assert recorded["verified_identity"] == "120:900"
 
 
 def test_windowed_startup_failure_uses_native_error_reporter(
@@ -477,3 +481,96 @@ def test_native_startup_reporter_preloads_ocr_before_opening_the_qt_dialog(
     application_module._show_native_startup_error("resource setup failed")
 
     assert events == ["ocr", "qt", "Hanly Desktop", "resource setup failed"]
+
+
+def _runtime_config(tmp_path: Path) -> Path:
+    config = tmp_path / "runtime.json"
+    config.write_text(
+        json.dumps(
+            {
+                "resources": {
+                    "krdict": {
+                        "kind": "krdict",
+                        "path": "krdict.sqlite3",
+                        "installed_version": "1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return config
+
+
+def _coordinator_with_recorded_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, automatic_check: bool
+) -> tuple[object, list[str]]:
+    service = object()
+    checks: list[str] = []
+
+    class _Coordinator:
+        def __init__(self, received: object, **options: object) -> None:
+            assert received is service
+
+        def check_for_updates(self) -> dict[str, object]:
+            checks.append("check")
+            return self.snapshot()
+
+        def snapshot(self) -> dict[str, object]:
+            return {"status": "checking" if checks else "idle", "resources": []}
+
+    monkeypatch.setattr(application_module, "load_update_service", lambda *_args: service)
+    monkeypatch.setattr(application_module, "UpdateCoordinator", _Coordinator)
+    coordinator = application_module._update_coordinator(
+        _runtime_config(tmp_path),
+        ResourceManager(ResourceManifest(())),
+        DiagnosticLog(),
+        automatic_check=automatic_check,
+    )
+    return coordinator, checks
+
+
+def test_disabling_update_checks_stops_the_unattended_startup_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``update_checks_enabled`` is off, so nothing reaches the network on its own."""
+
+    coordinator, checks = _coordinator_with_recorded_checks(
+        tmp_path, monkeypatch, automatic_check=False
+    )
+
+    assert coordinator is not None
+    assert checks == []
+
+
+def test_a_manual_check_still_works_while_automatic_checks_are_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The setting governs the unattended check, never the button the user presses."""
+
+    coordinator, checks = _coordinator_with_recorded_checks(
+        tmp_path, monkeypatch, automatic_check=False
+    )
+    assert coordinator is not None
+
+    ControlCenterBridge(update_coordinator=cast(Any, coordinator)).check_for_updates()
+
+    assert checks == ["check"]
+
+
+def test_the_startup_check_runs_when_the_setting_leaves_it_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _coordinator, checks = _coordinator_with_recorded_checks(
+        tmp_path, monkeypatch, automatic_check=True
+    )
+
+    assert checks == ["check"]
+
+
+def test_the_desktop_passes_the_persisted_setting_to_the_coordinator() -> None:
+    """The wiring, not just the parameter: a disabled setting has to reach it."""
+
+    source = Path(application_module.__file__).read_text(encoding="utf-8")
+
+    assert "automatic_check=settings.config.update_checks_enabled" in source

@@ -3,9 +3,11 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
+from hanly_app import control_center
 from hanly_app.capture import ScreenRect
 from hanly_app.config import (
     HOVER_DELAY_MAX_MS,
@@ -355,3 +357,151 @@ def test_ui_script_resolves_the_bridge_after_pywebview_injects_it() -> None:
     assert "const api = window.pywebview" not in javascript
     assert "function bridge()" in javascript
     assert "const api = bridge();" in javascript
+
+
+class _StubCoordinator:
+    """A coordinator double exposing only the snapshot the bridge reads."""
+
+    def __init__(self, application: object) -> None:
+        self._application = application
+        self.application_installs = 0
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "available": False,
+            "status": "current",
+            "message": "checked",
+            "resources": [],
+            "active_resource_id": None,
+            "progress": None,
+            "application": self._application,
+            "restart_required": False,
+        }
+
+    def install_application_update(self) -> dict[str, object]:
+        self.application_installs += 1
+        return self.snapshot()
+
+
+def _bridge_with_application(application: object) -> ControlCenterBridge:
+    return ControlCenterBridge(
+        update_coordinator=cast(Any, _StubCoordinator(application)),
+    )
+
+
+def test_the_application_update_reaches_the_ui_snapshot() -> None:
+    application = {
+        "current_version": "0.1.0",
+        "latest_version": "0.2.0",
+        "release_url": "https://github.com/example/hanly/releases/tag/v0.2.0",
+        "available": True,
+        "installable": True,
+        "message": "Hanly 0.2.0 is available. You are running 0.1.0.",
+    }
+
+    state = _bridge_with_application(application).get_state()
+
+    assert state["updates"]["application"] == application
+
+
+def test_updating_the_application_is_installed_in_app_not_in_a_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The primary update action never reaches the browser."""
+
+    opened: list[str] = []
+    monkeypatch.setattr(control_center.webbrowser, "open", lambda url: opened.append(url))
+    coordinator = _StubCoordinator(
+        {
+            "available": True,
+            "installable": True,
+            "release_url": "https://github.com/example/hanly/releases/tag/v0.2.0",
+            "current_version": "0.1.0",
+            "latest_version": "0.2.0",
+            "message": "available",
+        }
+    )
+    bridge = ControlCenterBridge(update_coordinator=cast(Any, coordinator))
+
+    bridge.install_application_update()
+
+    assert coordinator.application_installs == 1
+    assert opened == []
+
+
+def test_installing_an_application_update_without_a_channel_is_refused() -> None:
+    with pytest.raises(ControlCenterUnavailable):
+        ControlCenterBridge().install_application_update()
+
+
+def test_release_notes_open_the_url_the_check_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(control_center.webbrowser, "open", lambda url: opened.append(url))
+    bridge = _bridge_with_application(
+        {
+            "available": True,
+            "installable": True,
+            "release_url": "https://github.com/example/hanly/releases/tag/v0.2.0",
+            "current_version": "0.1.0",
+            "latest_version": "0.2.0",
+            "message": "available",
+        }
+    )
+
+    bridge.open_release_notes()
+
+    assert opened == ["https://github.com/example/hanly/releases/tag/v0.2.0"]
+
+
+@pytest.mark.parametrize(
+    "application",
+    [
+        None,
+        {"available": True, "release_url": None},
+        {"available": True, "release_url": "javascript:alert(1)"},
+        {"available": True, "release_url": "http://github.com/example/hanly/releases/tag/v1"},
+        {"available": True, "release_url": "https://evil.test/releases/tag/v1"},
+        {"available": True, "release_url": "https://github.com.evil.test/releases/tag/v1"},
+        {"available": True, "release_url": "https://github.com/example/hanly/issues/1"},
+    ],
+)
+def test_only_a_github_release_page_from_the_last_check_can_be_opened(
+    application: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither the UI nor a hostile release payload picks the browser target."""
+
+    opened: list[str] = []
+    monkeypatch.setattr(control_center.webbrowser, "open", lambda url: opened.append(url))
+
+    with pytest.raises(ControlCenterUnavailable):
+        _bridge_with_application(application).open_release_notes()
+
+    assert opened == []
+
+
+def test_opening_release_notes_without_an_update_channel_is_refused() -> None:
+    with pytest.raises(ControlCenterUnavailable):
+        ControlCenterBridge().open_release_notes()
+
+
+def test_the_primary_update_action_installs_in_app_and_the_browser_is_secondary() -> None:
+    """Every bridge call the UI can make for an application update, and which
+    one the markup makes primary."""
+
+    assets = load_control_center_assets()
+
+    assert "install_application_update" in assets.javascript
+    assert "open_release_page" not in assets.javascript
+    assert 'id="update-application"' in assets.html
+    assert 'class="button button-primary" id="update-application"' in assets.html
+    assert "Update now" in assets.html
+    assert 'class="button button-quiet" id="release-notes"' in assets.html
+    assert "View release notes" in assets.html
+    # The one action that reaches a browser is the notes, and only the notes.
+    browser_calls = [
+        line for line in assets.javascript.splitlines() if "open_release_notes" in line
+    ]
+    assert len(browser_calls) == 1
+    assert "release-notes" in browser_calls[0]

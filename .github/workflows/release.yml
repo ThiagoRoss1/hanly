@@ -1,9 +1,11 @@
 name: Release Hanly Desktop
 
-# Publication stays a deliberate dispatch. The independently versioned KRDICT
-# resource is produced by build-krdict-resource.yml and selected by its run id;
-# the application build is found from the tag rather than a copied run id.
+# The application lane publishes one complete release after a successful tag
+# build. The KRDICT lane remains an independent, manual candidate producer.
 on:
+  workflow_run:
+    workflows: ["Build Desktop Artifacts"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -11,90 +13,620 @@ on:
         required: true
         type: string
       resource_run_id:
-        description: "Successful build-krdict-resource run id"
-        required: true
+        description: "Optional successful build-krdict-resource run id"
+        required: false
         type: string
+      reuse_previous_release_resource:
+        description: "Deliberately reuse the previous public KRDICT resource"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
   contents: write
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Publish release assets
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ inputs.tag }}
-      RESOURCE_RUN_ID: ${{ inputs.resource_run_id }}
+      REPOSITORY: ${{ github.repository }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RELEASE_EVENT: ${{ github.event_name }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || inputs.tag }}
+      WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+      RESOURCE_RUN_ID_INPUT: ${{ inputs.resource_run_id }}
+      REUSE_PREVIOUS_RELEASE_RESOURCE: ${{ inputs.reuse_previous_release_resource }}
     steps:
-      - name: Check out release tooling
-        uses: actions/checkout@v7
+      - name: Check out trusted release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.10"
+          python-version: "3.13"
 
-      - name: Install packages
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --editable packages/hanly
-          python -m pip install --editable packages/hanly-app
-
-      - name: Verify the tag matches the product version
+      - name: Install trusted release dependencies
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo "tag must be vMAJOR.MINOR.PATCH" >&2
-            exit 1
-          }
-          [[ "$RESOURCE_RUN_ID" =~ ^[0-9]+$ ]] || {
-            echo "resource_run_id must be a decimal run id" >&2
-            exit 1
-          }
-          python tools/release_version.py --tag "$RELEASE_TAG"
+          python -m pip install --disable-pip-version-check \
+            --editable packages/hanly --editable packages/hanly-app
 
-      # The build workflow runs on the tag itself, so selecting its run by tag
-      # ties the published binaries to the commit that tag names without asking
-      # a human to copy a run id that could point anywhere.
-      - name: Resolve the application build for this tag
-        id: build
+      - name: Resolve application build for exact tag
+        id: application
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
         run: |
           set -euo pipefail
-          run_id=$(gh run list --workflow build.yml --branch "$RELEASE_TAG" \
-            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          test -n "$run_id" || {
-            echo "no successful build run found for tag $RELEASE_TAG" >&2
+
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "release tag must be vMAJOR.MINOR.PATCH" >&2
             exit 1
           }
-          printf 'run_id=%s\n' "$run_id" >> "$GITHUB_OUTPUT"
 
-      - name: Download per-platform application artifacts
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ steps.build.outputs.run_id }}
-          pattern: hanly-desktop-*
-          path: release-inputs/app
-          merge-multiple: false
+          resolve_object_commit() {
+            local object_type="$1" object_sha="$2" label="$3" tag_json depth=0
+            while [[ "$object_type" == "tag" ]]; do
+              depth=$((depth + 1))
+              ((depth <= 16)) || {
+                echo "$label annotation chain is too deep" >&2
+                exit 1
+              }
+              [[ "$object_sha" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "$label annotation object is not a SHA" >&2
+                exit 1
+              }
+              tag_json="$(gh api "repos/$REPOSITORY/git/tags/$object_sha")"
+              object_type="$(jq -r '.object.type // empty' <<<"$tag_json")"
+              object_sha="$(jq -r '.object.sha // empty' <<<"$tag_json")"
+            done
+            [[ "$object_type" == "commit" ]] || {
+              echo "$label did not resolve to a commit object" >&2
+              exit 1
+            }
+            [[ "$object_sha" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "$label did not resolve to a commit SHA" >&2
+              exit 1
+            }
+            printf '%s' "$object_sha"
+          }
+
+          tag_ref_json="$(gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          tag_type="$(jq -r '.object.type // empty' <<<"$tag_ref_json")"
+          tag_object_sha="$(jq -r '.object.sha // empty' <<<"$tag_ref_json")"
+          tag_sha="$(resolve_object_commit "$tag_type" "$tag_object_sha" "release tag")"
+          export TAG_SHA="$tag_sha"
+          export RELEASE_TAG
+          export REPOSITORY
+
+          mapfile -t semver_refs < <(
+            gh api --paginate "repos/$REPOSITORY/git/refs/tags?per_page=100" \
+              --jq '.[] | select(.ref | test("^refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$")) | [.ref, .object.type, .object.sha] | @tsv'
+          )
+          matching_tags=()
+          for tag_entry in "${semver_refs[@]}"; do
+            IFS=$'\t' read -r tag_ref candidate_type candidate_sha <<<"$tag_entry"
+            candidate_sha="$(resolve_object_commit "$candidate_type" "$candidate_sha" "tag ${tag_ref#refs/tags/}")"
+            if [[ "$candidate_sha" == "$tag_sha" ]]; then
+              matching_tags+=("${tag_ref#refs/tags/}")
+            fi
+          done
+          ((${#matching_tags[@]} == 1)) || {
+            echo "expected exactly one semver tag for the triggering commit" >&2
+            exit 1
+          }
+          [[ "${matching_tags[0]}" == "$RELEASE_TAG" ]] || {
+            echo "the resolved semver tag is not the requested release tag" >&2
+            exit 1
+          }
+
+          verify_application_run() {
+            local run_json="$1" run_path run_sha run_id
+            run_path="$(jq -r '.path // empty' <<<"$run_json")"
+            run_path="${run_path%@*}"
+            [[ "$run_path" == ".github/workflows/build.yml" ]] || {
+              echo "application run is not .github/workflows/build.yml" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.repository.full_name // empty' <<<"$run_json")" == "$REPOSITORY" ]] || {
+              echo "application run belongs to another repository" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.head_repository.full_name // empty' <<<"$run_json")" == "$REPOSITORY" ]] || {
+              echo "application head repository belongs to another repository" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.head_sha // empty' <<<"$run_json")" == "$tag_sha" ]] || {
+              echo "application run head_sha does not equal the peeled tag commit" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.head_branch // empty' <<<"$run_json")" == "$RELEASE_TAG" ]] || {
+              echo "application run head_branch does not equal the release tag" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.event // empty' <<<"$run_json")" == "push" ]] || {
+              echo "application run was not triggered by a push" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.status // empty' <<<"$run_json")" == "completed" ]] || {
+              echo "application run is not completed" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.conclusion // empty' <<<"$run_json")" == "success" ]] || {
+              echo "application run did not succeed" >&2
+              exit 1
+            }
+            run_id="$(jq -r '.id // empty' <<<"$run_json")"
+            [[ "$run_id" =~ ^[0-9]+$ ]] || {
+              echo "application run has no numeric id" >&2
+              exit 1
+            }
+            printf '%s' "$run_id"
+          }
+
+          if [[ "$RELEASE_EVENT" == "workflow_run" ]]; then
+            [[ "$WORKFLOW_RUN_ID" =~ ^[0-9]+$ ]] || {
+              echo "workflow_run id is not numeric" >&2
+              exit 1
+            }
+            [[ "$WORKFLOW_RUN_HEAD_BRANCH" == "$RELEASE_TAG" ]] || {
+              echo "release tag does not match workflow_run.head_branch" >&2
+              exit 1
+            }
+            [[ "$WORKFLOW_RUN_HEAD_SHA" == "$tag_sha" ]] || {
+              echo "tag commit does not equal workflow_run.head_sha" >&2
+              exit 1
+            }
+            application_run_json="$(gh api "repos/$REPOSITORY/actions/runs/$WORKFLOW_RUN_ID")"
+            application_run_id="$(verify_application_run "$application_run_json")"
+            [[ "$application_run_id" == "$WORKFLOW_RUN_ID" ]] || {
+              echo "workflow_run API id does not match its event payload" >&2
+              exit 1
+            }
+          else
+            application_run_json="$(gh api --paginate --slurp \
+              "repos/$REPOSITORY/actions/workflows/build.yml/runs" \
+              -f event=push -f status=completed -f per_page=100 \
+              --jq 'map(.workflow_runs) | add // [] | map(select((.path // "" | sub("@[^@]*$"; "")) == ".github/workflows/build.yml" and .repository.full_name == env.REPOSITORY and .head_repository.full_name == env.REPOSITORY and .head_sha == env.TAG_SHA and .head_branch == env.RELEASE_TAG and .conclusion == "success")) | sort_by(.created_at) | last // empty')"
+            [[ -n "$application_run_json" ]] || {
+              echo "no successful push build for the exact tag commit" >&2
+              exit 1
+            }
+            application_run_id="$(verify_application_run "$application_run_json")"
+          fi
+
+          printf 'run_id=%s\n' "$application_run_id" >> "$GITHUB_OUTPUT"
+          printf 'head_sha=%s\n' "$tag_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tagged product version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPLICATION_HEAD_SHA: ${{ steps.application.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" fetch \
+            --no-tags --depth=1 origin "$APPLICATION_HEAD_SHA"
+
+          read -r TAGGED_APP_VERSION TAGGED_ENGINE_VERSION APP_HANLY_PIN APP_HANLY_CONCRETE_PIN < <(
+            python - "$APPLICATION_HEAD_SHA" <<'PY'
+          import subprocess
+          import sys
+          import tomllib
+
+          sha = sys.argv[1]
+
+          def read_project(path: str) -> dict:
+              result = subprocess.run(
+                  ["git", "show", f"{sha}:{path}"],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  raise RuntimeError(f"cannot read {path} from exact tag commit")
+              try:
+                  payload = tomllib.loads(result.stdout)
+              except tomllib.TOMLDecodeError as error:
+                  raise RuntimeError(f"invalid TOML in {path}: {error}") from error
+              if not isinstance(payload, dict):
+                  raise RuntimeError(f"{path} did not contain a TOML table")
+              return payload
+
+          def project_version(payload: dict, path: str) -> str:
+              project = payload.get("project")
+              if not isinstance(project, dict) or not isinstance(project.get("version"), str):
+                  raise RuntimeError(f"{path} has no string project.version")
+              return project["version"]
+
+          app_path = "packages/hanly-app/pyproject.toml"
+          engine_path = "packages/hanly/pyproject.toml"
+          app = read_project(app_path)
+          engine = read_project(engine_path)
+          app_version = project_version(app, app_path)
+          engine_version = project_version(engine, engine_path)
+
+          project = app["project"]
+          dependencies = project.get("dependencies", [])
+          if not isinstance(dependencies, list):
+              raise RuntimeError("hanly-app project.dependencies must be a list")
+          app_pins = [value for value in dependencies if isinstance(value, str) and value.startswith("hanly")]
+          if len(app_pins) != 1:
+              raise RuntimeError("tagged app must contain exactly one hanly project pin")
+
+          optional = project.get("optional-dependencies", {})
+          runtime = optional.get("runtime") if isinstance(optional, dict) else None
+          if not isinstance(runtime, list):
+              raise RuntimeError("hanly-app runtime optional dependencies must be a list")
+          concrete_pins = [value for value in runtime if isinstance(value, str) and value.startswith("hanly")]
+          if len(concrete_pins) != 1:
+              raise RuntimeError("tagged app must contain exactly one hanly runtime pin")
+
+          values = [app_version, engine_version, app_pins[0], concrete_pins[0]]
+          if any("\t" in value or "\n" in value for value in values):
+              raise RuntimeError("tagged metadata contains a forbidden control character")
+          print("\t".join(values))
+          PY
+          )
+
+          python tools/release_version.py \
+            --tag "$RELEASE_TAG" \
+            --engine-version "$TAGGED_ENGINE_VERSION" \
+            --app-version "$TAGGED_APP_VERSION" \
+            --app-hanly-pin "$APP_HANLY_PIN" \
+            --app-hanly-concrete-pin "$APP_HANLY_CONCRETE_PIN"
+
+      - name: Check release collision
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          api_get() {
+            local url="$1" output="$2"
+            curl --silent --show-error --location \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --output "$output" --write-out '%{http_code}' "$url"
+          }
+
+          response_file="$RUNNER_TEMP/release-response.json"
+          response_status="$(api_get "https://api.github.com/repos/$REPOSITORY/releases/tags/$RELEASE_TAG" "$response_file")"
+          [[ "$response_status" =~ ^[0-9]{3}$ ]] || {
+            echo "release lookup returned an invalid HTTP status" >&2
+            exit 1
+          }
+          case "$response_status" in
+            200)
+              is_draft="$(jq -r '.draft // false' "$response_file")"
+              is_prerelease="$(jq -r '.prerelease // false' "$response_file")"
+              if [[ "$is_draft" == "true" || "$is_prerelease" == "true" ]]; then
+                echo "draft or prerelease collision for $RELEASE_TAG; refusing overwrite" >&2
+                exit 1
+              fi
+              if [[ "$RELEASE_EVENT" == "workflow_run" ]]; then
+                echo "automatic release already published for $RELEASE_TAG; successful no-op"
+                printf 'noop=true\n' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "manual release recovery refuses existing public release $RELEASE_TAG" >&2
+              exit 1
+              ;;
+            404)
+              echo "no existing release found for $RELEASE_TAG"
+              ;;
+            *)
+              echo "release lookup returned HTTP $response_status" >&2
+              cat "$response_file" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Resolve the KRDICT source
+        id: resources
+        if: steps.preflight.outputs.noop != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-inputs/resources release-inputs/previous release-output
+          notes_file="release-output/release-notes.md"
+          : > "$notes_file"
+
+          resolved_resource_run_id=""
+          if [[ -n "$RESOURCE_RUN_ID_INPUT" && ! "$RESOURCE_RUN_ID_INPUT" =~ ^[0-9]+$ ]]; then
+            echo "resource_run_id must be a decimal run id" >&2
+            exit 1
+          fi
+          if [[ "$REUSE_PREVIOUS_RELEASE_RESOURCE" != "" &&
+                "$REUSE_PREVIOUS_RELEASE_RESOURCE" != "true" &&
+                "$REUSE_PREVIOUS_RELEASE_RESOURCE" != "false" ]]; then
+            echo "reuse_previous_release_resource must be boolean" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_EVENT" != "workflow_dispatch" &&
+                "$REUSE_PREVIOUS_RELEASE_RESOURCE" == "true" ]]; then
+            echo "reuse_previous_release_resource is manual-only" >&2
+            exit 1
+          fi
+          if [[ -n "$RESOURCE_RUN_ID_INPUT" &&
+                "$REUSE_PREVIOUS_RELEASE_RESOURCE" == "true" ]]; then
+            echo "resource_run_id and reuse_previous_release_resource are mutually exclusive" >&2
+            exit 1
+          fi
+
+          verify_producer_run() {
+            local run_id="$1"
+            local run_json artifact_count producer_path producer_repository
+            [[ "$run_id" =~ ^[0-9]+$ ]] || {
+              echo "producer run id is not numeric" >&2
+              exit 1
+            }
+            run_json="$(gh api "repos/$REPOSITORY/actions/runs/$run_id")"
+            producer_path="$(jq -r '.path // empty' <<<"$run_json")"
+            producer_path="${producer_path%@*}"
+            producer_repository="$(jq -r '.repository.full_name // empty' <<<"$run_json")"
+            [[ "$producer_path" == ".github/workflows/build-krdict-resource.yml" ]] || {
+              echo "producer run is not build-krdict-resource.yml" >&2
+              exit 1
+            }
+            [[ "$producer_repository" == "$REPOSITORY" ]] || {
+              echo "producer run belongs to another repository" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.head_repository.full_name // empty' <<<"$run_json")" == "$REPOSITORY" ]] || {
+              echo "producer head repository belongs to another repository" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.head_branch // empty' <<<"$run_json")" == "$DEFAULT_BRANCH" ]] || {
+              echo "producer run is not on the default branch" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.event // empty' <<<"$run_json")" == "workflow_dispatch" ]] || {
+              echo "producer run was not manually dispatched" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.status // empty' <<<"$run_json")" == "completed" ]] || {
+              echo "producer run is not completed" >&2
+              exit 1
+            }
+            [[ "$(jq -r '.conclusion // empty' <<<"$run_json")" == "success" ]] || {
+              echo "producer run did not succeed" >&2
+              exit 1
+            }
+            artifact_count="$(gh api "repos/$REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select(.name == "hanly-krdict-resource" and .expired == false)] | length')"
+            [[ "$artifact_count" == "1" ]] || {
+              echo "producer run does not own exactly one unexpired hanly-krdict-resource artifact" >&2
+              exit 1
+            }
+          }
+
+          latest_producer_run() {
+            gh api --paginate --slurp \
+              "repos/$REPOSITORY/actions/workflows/build-krdict-resource.yml/runs" \
+              -f branch="$DEFAULT_BRANCH" -f event=workflow_dispatch \
+              -f status=completed -f per_page=100 \
+              --jq 'map(.workflow_runs) | add // [] | map(select((.path // "" | sub("@[^@]*$"; "")) == ".github/workflows/build-krdict-resource.yml" and .repository.full_name == env.REPOSITORY and .head_repository.full_name == env.REPOSITORY and .head_branch == env.DEFAULT_BRANCH and .conclusion == "success")) | sort_by(.created_at) | last // empty'
+          }
+
+          api_get() {
+            local url="$1" output="$2"
+            curl --silent --show-error --location \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --output "$output" --write-out '%{http_code}' "$url"
+          }
+
+          RESOURCE_SOURCE=""
+          if [[ -n "$RESOURCE_RUN_ID_INPUT" ]]; then
+            verify_producer_run "$RESOURCE_RUN_ID_INPUT"
+            resolved_resource_run_id="$RESOURCE_RUN_ID_INPUT"
+            RESOURCE_SOURCE="producer"
+            RESOURCE_SELECTION="manual resource_run_id override $RESOURCE_RUN_ID_INPUT"
+          fi
+
+          latest_file="$RUNNER_TEMP/latest-release.json"
+          latest_status="$(api_get "https://api.github.com/repos/$REPOSITORY/releases/latest" "$latest_file")"
+          [[ "$latest_status" =~ ^[0-9]{3}$ ]] || {
+            echo "latest public release lookup returned an invalid HTTP status" >&2
+            exit 1
+          }
+          PREVIOUS_EXISTS="false"
+          case "$latest_status" in
+            200)
+              PREVIOUS_EXISTS="true"
+              PREVIOUS_TAG="$(jq -r '.tag_name // empty' "$latest_file")"
+              PREVIOUS_PUBLISHED_AT="$(jq -r '.published_at // empty' "$latest_file")"
+              [[ "$PREVIOUS_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+                echo "latest public release has no semver tag" >&2
+                exit 1
+              }
+              [[ -n "$PREVIOUS_PUBLISHED_AT" ]] || {
+                echo "latest public release has no published_at timestamp" >&2
+                exit 1
+              }
+              gh release download "$PREVIOUS_TAG" \
+                --pattern "hanly-resources.json" \
+                --dir release-inputs/previous --clobber
+              [[ -f release-inputs/previous/hanly-resources.json ]] || {
+                echo "latest public release lacks hanly-resources.json" >&2
+                exit 1
+              }
+              ;;
+            404)
+              PREVIOUS_EXISTS="false"
+              ;;
+            *)
+              echo "latest public release lookup returned HTTP $latest_status" >&2
+              cat "$latest_file" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$REUSE_PREVIOUS_RELEASE_RESOURCE" == "true" ]]; then
+            [[ "$PREVIOUS_EXISTS" == "true" ]] || {
+              echo "cannot reuse a previous resource before the first public release" >&2
+              exit 1
+            }
+            RESOURCE_SOURCE="previous"
+            RESOURCE_SELECTION="manual reuse_previous_release_resource=true; previous release $PREVIOUS_TAG; explicit operator recovery of a newer candidate"
+          fi
+
+          if [[ -z "$RESOURCE_SOURCE" ]]; then
+            candidate_json="$(latest_producer_run)"
+            if [[ "$PREVIOUS_EXISTS" == "false" ]]; then
+              [[ -n "$candidate_json" ]] || {
+                echo "first release requires a successful build-krdict-resource.yml candidate" >&2
+                exit 1
+              }
+              candidate_id="$(jq -r '.id // empty' <<<"$candidate_json")"
+              verify_producer_run "$candidate_id"
+              resolved_resource_run_id="$candidate_id"
+              RESOURCE_SOURCE="producer"
+              RESOURCE_SELECTION="first-release producer candidate run $candidate_id"
+            elif [[ -n "$candidate_json" ]]; then
+              candidate_created_at="$(jq -r '.created_at // empty' <<<"$candidate_json")"
+              previous_published_at="$PREVIOUS_PUBLISHED_AT"
+              candidate_newer="$(python - "$candidate_created_at" "$previous_published_at" <<'PY'
+          from datetime import datetime
+          import sys
+
+          def parse(value: str) -> datetime:
+              try:
+                  parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+              except ValueError as error:
+                  raise SystemExit(f"invalid UTC timestamp {value!r}: {error}")
+              if parsed.tzinfo is None:
+                  raise SystemExit(f"timestamp {value!r} is missing timezone information")
+              return parsed
+
+          print("true" if parse(sys.argv[1]) > parse(sys.argv[2]) else "false")
+          PY
+              )"
+              if [[ "$candidate_newer" == "true" ]]; then
+                candidate_id="$(jq -r '.id // empty' <<<"$candidate_json")"
+                verify_producer_run "$candidate_id"
+                resolved_resource_run_id="$candidate_id"
+                RESOURCE_SOURCE="producer"
+                RESOURCE_SELECTION="newer producer candidate run $candidate_id created_at $candidate_created_at after previous published_at $PREVIOUS_PUBLISHED_AT"
+              fi
+            fi
+          fi
+
+          if [[ -z "$RESOURCE_SOURCE" && "$PREVIOUS_EXISTS" == "true" ]]; then
+            RESOURCE_SOURCE="previous"
+            RESOURCE_SELECTION="previous public release $PREVIOUS_TAG; no newer valid candidate"
+          fi
+
+          if [[ "$RESOURCE_SOURCE" == "previous" ]]; then
+            previous_asset_name="$(jq -r '.resources.krdict.asset_name // empty' release-inputs/previous/hanly-resources.json)"
+            [[ "$previous_asset_name" =~ ^krdict-[A-Za-z0-9._-]+\.sqlite3\.zst$ ]] || {
+              echo "previous manifest has no canonical KRDICT asset_name" >&2
+              exit 1
+            }
+            gh release download "$PREVIOUS_TAG" \
+              --pattern "$previous_asset_name" \
+              --dir release-inputs/resources --clobber
+            [[ -f "release-inputs/resources/$previous_asset_name" ]] || {
+              echo "previous public release lacks $previous_asset_name" >&2
+              exit 1
+            }
+            cp release-inputs/previous/hanly-resources.json \
+              release-inputs/resources/hanly-resources.json
+          fi
+
+          [[ -n "$RESOURCE_SOURCE" ]] || {
+            echo "no KRDICT source is available" >&2
+            exit 1
+          }
+          printf 'source=%s\n' "$RESOURCE_SOURCE" >> "$GITHUB_OUTPUT"
+          printf 'resource_run_id=%s\n' "$resolved_resource_run_id" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "## Resource selection audit" >> "$notes_file"
+          printf '%s\n' "- $RESOURCE_SELECTION" >> "$notes_file"
+          printf '%s\n' "## Resource selection audit" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- $RESOURCE_SELECTION" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Download resource artifacts
-        uses: actions/download-artifact@v4
+        if: steps.preflight.outputs.noop != 'true' && steps.resources.outputs.source == 'producer'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ env.RESOURCE_RUN_ID }}
+          run-id: ${{ steps.resources.outputs.resource_run_id }}
           name: hanly-krdict-resource
           path: release-inputs/resources
           merge-multiple: false
 
-      - name: Validate and stage the producer resource manifest
-        id: manifest
+      - name: Download per-platform application artifacts
+        if: steps.preflight.outputs.noop != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.application.outputs.run_id }}
+          pattern: hanly-desktop-*
+          path: release-inputs/app
+          merge-multiple: false
+
+      - name: Validate application assets
+        id: assets
+        if: steps.preflight.outputs.noop != 'true'
         shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t symlinks < <(find release-inputs/app -type l -print)
+          ((${#symlinks[@]} == 0)) || {
+            echo "symlink application assets are not allowed" >&2
+            exit 1
+          }
+          mapfile -t all_archives < <(find release-inputs/app -type f -print | sort)
+          if [[ ${#all_archives[@]} -ne 3 ]]; then
+            echo "expected exactly three application archives; duplicate, unexpected, or missing files" >&2
+            exit 1
+          fi
+          # Exactly three files, and exactly one match for each expected name,
+          # together mean the three files are precisely the expected three.
+          expected_archives=(
+            hanly-desktop-windows.zip
+            hanly-desktop-macos.tar.gz
+            hanly-desktop-linux.tar.gz
+          )
+          mkdir -p release-output
+          for expected in "${expected_archives[@]}"; do
+            mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
+            ((${#matches[@]} == 1)) || {
+              echo "expected exactly one $expected; duplicate or missing files" >&2
+              exit 1
+            }
+            cp "${matches[0]}" "release-output/$expected"
+          done
+
+      - name: Validate and stage release inputs
+        if: steps.preflight.outputs.noop != 'true'
+        id: manifest
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RESOURCE_SOURCE: ${{ steps.resources.outputs.source }}
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-output
@@ -111,10 +643,20 @@ jobs:
           }
 
           krdict="$(find_resource 'krdict-*.sqlite3.zst')"
-          producer_manifest="$(find_resource '*.resource.json')"
+          if [[ "$RESOURCE_SOURCE" == "producer" ]]; then
+            producer_manifest="$(find_resource '*.resource.json')"
+          else
+            producer_manifest="release-inputs/resources/hanly-resources.json"
+          fi
           cp "$producer_manifest" release-output/hanly-resources.json
+          resource_asset_name="$(basename "$krdict")"
+          cp "$krdict" "release-output/$resource_asset_name"
 
-          python - "$krdict" release-output/hanly-resources.json <<'PY'
+          previous_manifest=""
+          if [[ -f release-inputs/previous/hanly-resources.json ]]; then
+            previous_manifest="release-inputs/previous/hanly-resources.json"
+          fi
+          python - "$resource_asset_name" release-output/hanly-resources.json "$previous_manifest" <<'PY'
           import hashlib
           import json
           import pathlib
@@ -123,90 +665,173 @@ jobs:
 
           from hanly_app.update_service import RemoteManifest, RemoteManifestError
 
-          artifact = pathlib.Path(sys.argv[1])
-          payload = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
-          assert isinstance(payload, dict)
-          assert set(payload) == {"manifest_version", "resources"}
-          assert type(payload["manifest_version"]) is int
-          assert payload["manifest_version"] == 1
-          resources = payload["resources"]
-          assert isinstance(resources, dict) and set(resources) == {"krdict"}
-          resource = resources["krdict"]
-          assert isinstance(resource, dict)
-          expected_fields = {
-              "asset_name",
-              "checksum",
-              "expected_entry_count",
-              "kind",
-              "schema_version",
-              "size",
-              "source_date",
-              "version",
-          }
-          assert set(resource) == expected_fields
-          assert "url" not in resource
-          assert isinstance(resource["asset_name"], str)
-          assert isinstance(resource["checksum"], str)
-          assert isinstance(resource["kind"], str)
-          assert resource["kind"] == "krdict"
-          assert isinstance(resource["version"], str)
-          assert re.fullmatch(r"[A-Za-z0-9._-]+", resource["version"])
-          assert resource["asset_name"] == f"krdict-{resource['version']}.sqlite3.zst"
-          assert re.fullmatch(r"krdict-[A-Za-z0-9._-]+\.sqlite3\.zst", resource["asset_name"])
-          assert re.fullmatch(r"sha256:[0-9a-f]{64}", resource["checksum"])
-          assert type(resource["schema_version"]) is int and resource["schema_version"] == 1
-          assert type(resource["expected_entry_count"]) is int
-          assert resource["expected_entry_count"] > 0
-          assert type(resource["size"]) is int and resource["size"] > 0
-          assert isinstance(resource["source_date"], str)
-          assert re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", resource["source_date"])
+          asset_name = sys.argv[1]
+          manifest_path = pathlib.Path(sys.argv[2])
+          previous_path = pathlib.Path(sys.argv[3]) if sys.argv[3] else None
+          artifact = pathlib.Path("release-output") / asset_name
+
+          def require(condition: bool, message: str) -> None:
+              if not condition:
+                  raise ValueError(message)
+
+          def read_payload(path: pathlib.Path, label: str) -> dict:
+              try:
+                  payload = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError) as error:
+                  raise ValueError(f"{label} is not valid JSON: {error}") from error
+              require(isinstance(payload, dict), f"{label} must be an object")
+              return payload
+
           try:
-              parsed = RemoteManifest.from_payload(payload)
-          except (RemoteManifestError, ValueError) as exc:
-              raise AssertionError(f"producer manifest is not consumable: {exc}") from exc
-          assert len(tuple(parsed)) == 1
-          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-          assert resource["asset_name"] == artifact.name
-          assert resource["checksum"] == f"sha256:{digest}"
-          assert resource["size"] == artifact.stat().st_size
-          assert resource["kind"] == "krdict"
-          for field in ("version", "schema_version", "expected_entry_count", "source_date"):
-              assert resource[field]
+              payload = read_payload(manifest_path, "manifest")
+              require(set(payload) == {"manifest_version", "resources"}, "manifest keys are not canonical")
+              require(type(payload["manifest_version"]) is int, "manifest_version must be an integer")
+              require(payload["manifest_version"] == 1, "manifest_version must be 1")
+              resources = payload["resources"]
+              require(isinstance(resources, dict) and set(resources) == {"krdict"}, "resources must contain only krdict")
+              resource = resources["krdict"]
+              require(isinstance(resource, dict), "krdict resource must be an object")
+              expected_fields = {
+                  "asset_name", "checksum", "expected_entry_count", "kind",
+                  "schema_version", "size", "source_date", "version",
+              }
+              require(set(resource) == expected_fields, "resource fields are not canonical")
+              require("url" not in resource, "inline resource URLs are forbidden")
+              require(isinstance(resource["asset_name"], str), "asset_name must be a string")
+              require(isinstance(resource["checksum"], str), "checksum must be a string")
+              require(isinstance(resource["kind"], str) and resource["kind"] == "krdict", "kind must be krdict")
+              require(isinstance(resource["version"], str), "resource_version must be a string")
+              resource_version = resource["version"]
+              require(re.fullmatch(r"[A-Za-z0-9._-]+", resource_version) is not None, "resource_version has unsafe characters")
+              require(resource["asset_name"] == f"krdict-{resource_version}.sqlite3.zst", "asset_name is not canonical")
+              require(re.fullmatch(r"krdict-[A-Za-z0-9._-]+\.sqlite3\.zst", resource["asset_name"]) is not None, "asset_name is unsafe")
+              require(re.fullmatch(r"sha256:[0-9a-f]{64}", resource["checksum"]) is not None, "checksum is not canonical")
+              require(type(resource["schema_version"]) is int and resource["schema_version"] == 1, "schema_version must be 1")
+              require(type(resource["expected_entry_count"]) is int and resource["expected_entry_count"] > 0, "expected_entry_count must be positive")
+              require(type(resource["size"]) is int and resource["size"] > 0, "size must be positive")
+              require(isinstance(resource["source_date"], str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", resource["source_date"]) is not None, "source_date must be YYYY-MM-DD")
+              try:
+                  parsed = RemoteManifest.from_payload(payload)
+              except (RemoteManifestError, ValueError) as error:
+                  raise ValueError(f"manifest is not consumable: {error}") from error
+              require(len(tuple(parsed)) == 1, "manifest must contain exactly one resource")
+              require(asset_name == resource["asset_name"], "artifact name does not match manifest")
+              digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+              require(resource["checksum"] == f"sha256:{digest}", "artifact checksum does not match manifest")
+              require(resource["size"] == artifact.stat().st_size, "artifact size does not match manifest")
+
+              if previous_path is not None:
+                  previous = read_payload(previous_path, "previous manifest")
+                  previous_resources = previous.get("resources")
+                  require(isinstance(previous_resources, dict), "previous resources must be an object")
+                  previous_resource = previous["resources"]["krdict"]
+                  require(isinstance(previous_resource, dict), "previous krdict resource must be an object")
+                  previous_version = previous_resource.get("version")
+                  previous_checksum = previous_resource.get("checksum")
+                  require(isinstance(previous_version, str), "previous resource_version must be a string")
+                  require(isinstance(previous_checksum, str), "previous checksum must be a string")
+                  if resource_version == previous_version:
+                      require(resource["checksum"] == previous_checksum, "candidate resource_version matches previous but checksum changed")
+          except (KeyError, OSError, TypeError, ValueError) as error:
+              print(f"resource validation failed: {error}", file=sys.stderr)
+              raise SystemExit(1)
           PY
 
-          mapfile -t app_assets < <(find release-inputs/app -type f \( -name 'hanly-desktop-*.zip' -o -name 'hanly-desktop-*.tar.gz' \) -print | sort)
-          ((${#app_assets[@]} > 0)) || { echo 'missing hanly-desktop application archives' >&2; exit 1; }
-          resource_assets=("$krdict")
-
-          # Checksums are recorded under the published asset names so a
-          # consumer can verify downloaded files directly, not under the
-          # staging paths the artifacts happen to land in here.
-          for asset in "${app_assets[@]}" "${resource_assets[@]}" release-output/hanly-resources.json; do
-            ( cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")" )
+          for asset in \
+              release-output/hanly-desktop-windows.zip \
+              release-output/hanly-desktop-macos.tar.gz \
+              release-output/hanly-desktop-linux.tar.gz \
+              "release-output/$resource_asset_name" \
+              release-output/hanly-resources.json; do
+            (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")")
           done > release-output/SHA256SUMS
 
-          printf '%s\n' "${app_assets[@]}" > release-output/application-assets.txt
-          printf '%s\n' "${resource_assets[@]}" > release-output/resource-assets.txt
-
-      - name: Create GitHub release and attach artifacts
+      - name: Create and verify draft release
+        id: publish
+        if: steps.preflight.outputs.noop != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          APPLICATION_HEAD_SHA: ${{ steps.application.outputs.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -t resource_assets < <(find release-output -maxdepth 1 -type f -name 'krdict-*.sqlite3.zst' -printf '%f\n' | sort)
+          ((${#resource_assets[@]} == 1)) || {
+            echo "expected exactly one canonical KRDICT release asset" >&2
+            exit 1
+          }
+          resource_asset_name="${resource_assets[0]}"
+          expected_assets=(
+            hanly-desktop-windows.zip
+            hanly-desktop-macos.tar.gz
+            hanly-desktop-linux.tar.gz
+            "$resource_asset_name"
+            hanly-resources.json
+            SHA256SUMS
+          )
+          for asset in "${expected_assets[@]}"; do
+            [[ -f "release-output/$asset" ]] || {
+              echo "missing staged release asset $asset" >&2
+              exit 1
+            }
+          done
 
-          # gh would otherwise create a missing tag at the default branch head,
-          # publishing binaries under a ref that was never built or reviewed.
-          gh api "repos/${{ github.repository }}/git/ref/tags/$RELEASE_TAG" >/dev/null \
-            || { echo "release tag $RELEASE_TAG does not exist" >&2; exit 1; }
+          resolve_final_tag_commit() {
+            local ref_json object_type object_sha tag_json depth=0
+            ref_json="$(gh api "repos/$REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+            object_type="$(jq -r '.object.type // empty' <<<"$ref_json")"
+            object_sha="$(jq -r '.object.sha // empty' <<<"$ref_json")"
+            while [[ "$object_type" == "tag" ]]; do
+              depth=$((depth + 1))
+              ((depth <= 16)) || {
+                echo "tag annotation chain is too deep immediately before draft creation" >&2
+                exit 1
+              }
+              [[ "$object_sha" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "tag annotation object is not a SHA immediately before draft creation" >&2
+                exit 1
+              }
+              tag_json="$(gh api "repos/$REPOSITORY/git/tags/$object_sha")"
+              object_type="$(jq -r '.object.type // empty' <<<"$tag_json")"
+              object_sha="$(jq -r '.object.sha // empty' <<<"$tag_json")"
+            done
+            [[ "$object_type" == "commit" ]] || {
+              echo "final release tag object is not a commit" >&2
+              exit 1
+            }
+            [[ "$object_sha" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "final release tag object is not a commit SHA" >&2
+              exit 1
+            }
+            printf '%s' "$object_sha"
+          }
 
-          mapfile -t app_assets < release-output/application-assets.txt
-          mapfile -t resource_assets < release-output/resource-assets.txt
+          final_tag_sha="$(resolve_final_tag_commit)"
+          [[ "$final_tag_sha" == "$APPLICATION_HEAD_SHA" ]] || {
+            echo "release tag moved after application verification; refusing draft creation" >&2
+            exit 1
+          }
+
           gh release create "$RELEASE_TAG" \
-            "${app_assets[@]}" \
-            "${resource_assets[@]}" \
-            release-output/hanly-resources.json \
-            release-output/SHA256SUMS \
+            "${expected_assets[@]/#/release-output/}" \
+            --draft \
+            --verify-tag \
             --title "Hanly Desktop $RELEASE_TAG" \
-            --generate-notes
+            --generate-notes \
+            --notes-file release-output/release-notes.md
+
+          actual_assets_file="$RUNNER_TEMP/actual-release-assets"
+          gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[].name' | sort > "$actual_assets_file"
+          mapfile -t actual_assets < "$actual_assets_file"
+          if [[ ${#actual_assets[@]} -ne 6 ]]; then
+            echo "partial draft: expected exactly six release assets" >&2
+            exit 1
+          fi
+          mapfile -t sorted_expected < <(printf '%s\n' "${expected_assets[@]}" | sort)
+          [[ "$(printf '%s\n' "${actual_assets[@]}")" == "$(printf '%s\n' "${sorted_expected[@]}")" ]] || {
+            echo "partial draft: release asset list is not exactly the expected six" >&2
+            exit 1
+          }
+          # A failed verification intentionally leaves the partial draft for
+          # explicit operator repair or removal; no workflow deletes it.
+          gh release edit "$RELEASE_TAG" --draft=false
