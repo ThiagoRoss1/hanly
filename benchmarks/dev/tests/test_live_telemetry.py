@@ -297,6 +297,22 @@ def test_live_summary_understands_production_trace_vocabulary() -> None:
     assert summary["provider_worker_ready_count"] == 0
 
 
-def test_summary_json_is_serializable() -> None:
+def test_summary_json_survives_a_round_trip_with_its_empty_session_shape() -> None:
+    """A summary is written to a run file and read back, so serializing is only
+    half of it: the values have to come back as themselves."""
+
     result = LiveSummary.from_records([{"event": "session_started", "monotonic_ns": 10}], [])
-    json.dumps(result)
+
+    restored = json.loads(json.dumps(result))
+
+    assert restored == result
+    assert restored["hover_opportunities"] == 0
+    assert restored["ocr_invocations"] == 0
+    assert restored["ocr_latency_ns"] is None
+    assert restored["first_ocr_inference_ns"] is None
+    assert set(restored["stage_latency_ns"]) >= {"capture", "morphology", "dictionary"}
+    assert all(stage is None for stage in restored["stage_latency_ns"].values())
+    assert all(
+        value is None or isinstance(value, (str, int, float, bool, dict, list))
+        for value in restored.values()
+    )

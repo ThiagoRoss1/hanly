@@ -23,9 +23,35 @@ def application() -> QApplication:
 
 
 def _spin(milliseconds: int) -> None:
+    """Run the event loop for a fixed span, to show something never happens."""
+
     loop = QEventLoop()
     QTimer.singleShot(milliseconds, loop.quit)
     loop.exec()
+
+
+def _spin_until(ready: Callable[[], bool], *, timeout_ms: int = 5000) -> bool:
+    """Run the event loop until ``ready`` holds, or give up at the deadline.
+
+    Waiting a fixed span for a callback that is supposed to arrive makes a busy
+    machine look like a broken scheduler, so the deadline is generous and only
+    the arrival ends the wait.
+    """
+
+    loop = QEventLoop()
+    poll = QTimer()
+    poll.setInterval(1)
+
+    def check() -> None:
+        if ready():
+            loop.quit()
+
+    poll.timeout.connect(check)
+    poll.start()
+    QTimer.singleShot(timeout_ms, loop.quit)
+    loop.exec()
+    poll.stop()
+    return ready()
 
 
 def test_scheduled_callback_runs_on_the_qt_thread_without_a_timer_thread(
@@ -36,8 +62,8 @@ def test_scheduled_callback_runs_on_the_qt_thread_without_a_timer_thread(
     before = threading.active_count()
 
     scheduler(10, lambda: fired.append(threading.get_ident()))
-    _spin(80)
 
+    assert _spin_until(lambda: bool(fired))
     assert fired == [threading.get_ident()]
     assert threading.active_count() == before
 
@@ -68,8 +94,8 @@ def test_rescheduling_replaces_the_pending_delay_and_reuses_one_timer(
 
     for index in range(50):
         scheduler(10, record(index))
-    _spin(120)
 
+    assert _spin_until(lambda: bool(fired))
     assert fired == ["move-49"]
     assert threading.active_count() == before
 
@@ -83,6 +109,6 @@ def test_cancelling_a_superseded_handle_leaves_the_newer_delay_pending(
     stale = scheduler(10, lambda: fired.append("stale"))
     scheduler(10, lambda: fired.append("current"))
     stale.cancel()
-    _spin(80)
 
+    assert _spin_until(lambda: bool(fired))
     assert fired == ["current"]

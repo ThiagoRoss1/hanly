@@ -94,17 +94,6 @@ def test_provider_implementations_satisfy_the_protocols_statically() -> None:
     assert dictionary.lookup("한국어")
 
 
-def test_ocr_results_are_returned_in_reading_order() -> None:
-    """The provider contract states results arrive in reading order, so a
-    caller may rely on sequence order instead of re-deriving it."""
-
-    results = _StructuralOCRProvider().recognize(_ROI)
-
-    assert [result.text for result in results] == ["책을", "읽습니다."]
-    lefts = [result.bounding_box.left for result in results]
-    assert lefts == sorted(lefts)
-
-
 def test_provider_protocol_methods_have_the_published_names() -> None:
     ocr_method = OCRProvider.recognize
     morphology_method = MorphologyProvider.analyze

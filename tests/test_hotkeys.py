@@ -266,12 +266,17 @@ def test_action_handler_does_not_block_shutdown_from_another_thread() -> None:
         service.shutdown()
         shutdown_returned.set()
 
-    threading.Thread(target=shutdown).start()
+    shutdown_thread = threading.Thread(target=shutdown)
+    shutdown_thread.start()
     returned_while_handler_ran = shutdown_returned.wait(1.0)
 
     release.set()
-    listener_thread.join(timeout=2.0)
-    assert shutdown_returned.wait(2.0)
+    listener_thread.join(timeout=5.0)
+    shutdown_thread.join(timeout=5.0)
+
+    assert not listener_thread.is_alive()
+    assert not shutdown_thread.is_alive()
+    assert shutdown_returned.is_set()
     assert returned_while_handler_ran
 
 

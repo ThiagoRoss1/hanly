@@ -152,8 +152,9 @@ def test_shutdown_can_cancel_pending_work_but_finishes_running_work() -> None:
     assert executor.stopping is True
     release_first.set()
     assert shutdown_done.wait(timeout=2)
-    shutdown_thread.join(timeout=2)
+    shutdown_thread.join(timeout=5)
 
+    assert not shutdown_thread.is_alive()
     assert results == ["FIRST"]
     assert len(close_calls) == 1
     assert executor.stopped is True

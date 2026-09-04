@@ -4,7 +4,6 @@ import os
 import threading
 from collections.abc import Callable, Mapping
 from threading import Event, Thread
-from time import monotonic
 
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
@@ -189,8 +188,9 @@ def test_lookup_hotkey_posts_to_ui_captures_there_and_delivers_result_on_ui() ->
         args=("<ctrl>+<shift>+<space>",),
     )
     trigger_thread.start()
-    trigger_thread.join(timeout=2)
+    trigger_thread.join(timeout=5)
 
+    assert not trigger_thread.is_alive()
     assert capture.called_on == []
     assert len(queue.pending) == 1
     queue.drain_one()
@@ -297,16 +297,29 @@ def test_shutdown_returns_without_waiting_for_lookup_or_hotkey_cleanup() -> None
     queue.drain_one()
     assert worker.started.wait(timeout=2)
 
-    started = monotonic()
-    composition.shutdown()
-    elapsed = monotonic() - started
+    # Shutting down on this thread would block on the worker still holding
+    # ``release``, so a regression has to surface as a bounded wait rather than
+    # as a stopwatch reading that a loaded machine can fail on its own.
+    finished = Event()
 
-    assert elapsed < 0.5
-    assert capture.closed
-    assert popup.closed
-    assert worker.release.is_set() is False
+    def shut_down() -> None:
+        composition.shutdown()
+        finished.set()
 
-    worker.release.set()
+    shutdown_thread = Thread(target=shut_down)
+    shutdown_thread.start()
+    try:
+        assert finished.wait(timeout=5), "shutdown waited for the running lookup"
+        assert capture.closed
+        assert popup.closed
+        assert worker.release.is_set() is False
+    finally:
+        # Releasing and joining here as well: a failed assertion above must not
+        # leave the worker blocked or the shutdown thread outliving the test.
+        worker.release.set()
+        shutdown_thread.join(timeout=5)
+        assert not shutdown_thread.is_alive()
+
     for _ in range(20):
         if queue.pending:
             break

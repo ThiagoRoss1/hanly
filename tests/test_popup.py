@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Event
-from time import monotonic
+from threading import Event, Thread
 
 import pytest
 from hanly import (
@@ -175,14 +174,28 @@ def test_ui_shutdown_uses_non_waiting_lookup_stop_against_queued_dispatch() -> N
     lookup.submit(_IMAGE, Point(10, 10))
     assert dispatch_entered.wait(timeout=2)
 
-    started = monotonic()
-    PopupRuntime(popup, lookup).shutdown()
-    elapsed = monotonic() - started
+    # The dispatch is still blocked, so shutting down on this thread would wait
+    # for it. A bounded join turns that regression into a failure instead of a
+    # stopwatch reading that a loaded machine can fail on its own.
+    finished = Event()
 
-    assert elapsed < 1
-    assert [event[0] for event in view.events] == ["close"]
+    def shut_down() -> None:
+        PopupRuntime(popup, lookup).shutdown()
+        finished.set()
 
-    release_dispatch.set()
+    shutdown_thread = Thread(target=shut_down)
+    shutdown_thread.start()
+    try:
+        assert finished.wait(timeout=5), "shutdown waited for the blocked dispatch"
+        assert not release_dispatch.is_set()
+        assert [event[0] for event in view.events] == ["close"]
+    finally:
+        # Releasing and joining here as well: a failed assertion above must not
+        # leave the dispatch blocked or the shutdown thread outliving the test.
+        release_dispatch.set()
+        shutdown_thread.join(timeout=5)
+        assert not shutdown_thread.is_alive()
+
     assert worker_closed.wait(timeout=2)
     assert pending_callbacks
 

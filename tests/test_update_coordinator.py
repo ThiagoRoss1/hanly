@@ -69,12 +69,19 @@ def _recording_manager(validations: list[str]) -> ResourceManager:
     return manager
 
 
+#: The coordinator publishes progress through its snapshot rather than an event,
+#: so waiting on it is a deadline rather than a fixed number of tries -- a busy
+#: machine must be slow here, never a failure.
+_STATUS_TIMEOUT = 10.0
+
+
 def _wait_for(coordinator: UpdateCoordinator, status: str) -> dict[str, Any]:
-    for _ in range(100):
+    deadline = time.monotonic() + _STATUS_TIMEOUT
+    while time.monotonic() < deadline:
         state = coordinator.snapshot()
         if state["status"] == status:
             return state
-        time.sleep(0.01)
+        time.sleep(0.005)
     raise AssertionError(f"coordinator did not reach {status!r}: {coordinator.snapshot()!r}")
 
 
@@ -203,13 +210,13 @@ def test_an_unreachable_release_channel_never_reaches_the_caller() -> None:
 def _settle(coordinator: UpdateCoordinator) -> dict[str, Any]:
     """Return the snapshot once the background check has finished."""
 
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + _STATUS_TIMEOUT
     while time.monotonic() < deadline:
         state = coordinator.snapshot()
         if state["status"] != "checking":
             return state
-        time.sleep(0.01)
-    raise AssertionError("update check did not finish")
+        time.sleep(0.005)
+    raise AssertionError(f"update check did not finish: {coordinator.snapshot()!r}")
 
 
 def test_checking_for_updates_also_reports_a_newer_application_build() -> None:

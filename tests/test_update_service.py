@@ -675,16 +675,16 @@ def test_checksum_verification_reports_unusable_algorithms_and_paths(tmp_path: P
 def test_updates_are_not_offered_for_resources_this_install_never_declared(
     tmp_path: Path,
 ) -> None:
-    """A release serves every backend, so its manifest can advertise PaddleOCR
-    models to an EasyOCR install. Offering them would offer something ``install``
-    then refuses, because it resolves destinations from the local manifest."""
+    """One release manifest serves every install, so it can advertise a resource
+    this one never declared. Offering it would offer something ``install`` then
+    refuses, because installation resolves destinations from the local manifest."""
 
     service, _manager, fetcher = _service(tmp_path)
     fetcher.manifest = RemoteManifest(
         (
             *fetcher.manifest,
             RemoteResource(
-                "paddle_detection_model",
+                "unconfigured-resource",
                 "9",
                 url="https://example.test/detection",
                 kind="directory",
@@ -716,20 +716,29 @@ def _zstd_zeros_declaring_no_size(size: int) -> bytes:
     return buffer.getvalue()
 
 
-def test_a_zstd_bomb_is_refused_at_the_shipped_ceiling_without_writing_it_out(
-    tmp_path: Path,
+def test_the_shipped_decompression_ceiling_is_the_one_hanly_releases_with() -> None:
+    """The overrun test below lowers this bound to keep the run cheap, so the
+    shipped value is pinned here rather than left to that test to carry."""
+
+    assert update_service._ZSTD_MAX_OUTPUT_BYTES == 512 * 1024 * 1024
+
+
+def test_a_zstd_bomb_is_refused_mid_stream_without_writing_it_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A frame that declares no size and keeps producing bytes past the ceiling
     is stopped mid-stream, so a compromised manifest cannot fill a user's disk.
 
-    Nothing here is monkeypatched: the bound under test is the shipped one.
+    The ceiling is lowered rather than the mechanism replaced: streaming half a
+    gigabyte through the real decompressor proves nothing that the same overrun
+    a few megabytes past a smaller bound does not.
     """
 
+    ceiling = 8 * 1024 * 1024
+    monkeypatch.setattr(update_service, "_ZSTD_MAX_OUTPUT_BYTES", ceiling)
     destination = tmp_path / "krdict.sqlite3"
     _create_krdict_database(destination, "known good")
-    payload = _zstd_zeros_declaring_no_size(
-        update_service._ZSTD_MAX_OUTPUT_BYTES + 8 * 1024 * 1024
-    )
+    payload = _zstd_zeros_declaring_no_size(ceiling + 4 * 1024 * 1024)
     resource = RemoteResource(
         "krdict",
         "2",

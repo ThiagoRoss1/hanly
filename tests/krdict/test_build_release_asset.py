@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
+from tests.hanly_fixtures.krdict import FIXTURE_XML
 from tools.krdict.build_release_asset import (
     RELEASE_MANIFEST_NAME,
     BuildError,
@@ -14,8 +17,42 @@ from tools.krdict.build_release_asset import (
 )
 
 
-def test_the_manifest_is_written_under_the_name_a_release_publishes() -> None:
-    assert RELEASE_MANIFEST_NAME == "hanly-resources.json"
+def _source_archive(tmp_path: Path) -> Path:
+    archive = tmp_path / "krdict-source.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("fixture.xml", FIXTURE_XML)
+    return archive
+
+
+def test_one_command_builds_validates_and_packages_under_one_identity(tmp_path: Path) -> None:
+    """The three tools stay independently runnable, so what this command adds is
+    a single identity across all of them and a manifest named the way a release
+    publishes it -- neither of which a constant on its own would show."""
+
+    output = tmp_path / "out"
+
+    asset, manifest, report = build_release_asset(
+        _source_archive(tmp_path),
+        output,
+        resource_version="20260819-v1",
+        source_date="2026-08-19",
+        build_date="2026-08-25",
+    )
+
+    assert manifest == output / RELEASE_MANIFEST_NAME == output / "hanly-resources.json"
+    assert asset == output / "krdict-20260819-v1.sqlite3.zst"
+    assert asset.is_file() and report.is_file()
+
+    published = json.loads(manifest.read_text(encoding="utf-8"))
+    validation = json.loads(report.read_text(encoding="utf-8"))
+
+    krdict = published["resources"]["krdict"]
+
+    assert validation["source_entry_count"] == 3
+    assert krdict["asset_name"] == asset.name
+    assert krdict["version"] == "20260819-v1"
+    assert krdict["source_date"] == "2026-08-19"
+    assert krdict["expected_entry_count"] == 3
 
 
 def test_a_missing_source_archive_fails_before_any_output_is_written(tmp_path: Path) -> None:

@@ -25,7 +25,7 @@ from hanly.providers import OCRProvider
 from hanly.word_resolver import WordResolver
 
 from tests.hanly_fixtures.korean import KOREAN_OCR_RESULTS
-from tests.hanly_fixtures.krdict import build_krdict_database
+from tests.hanly_fixtures.krdict import write_krdict_database
 
 _IMAGE = ROIImage(
     # These dimensions match the committed Korean ROI fixture.  The real
@@ -77,7 +77,9 @@ _VERB_ONLY_XML = """<?xml version="1.0" encoding="utf-8"?>
 
 @pytest.fixture
 def krdict_database(tmp_path: Path) -> Path:
-    return build_krdict_database(tmp_path, _VERB_ONLY_XML)
+    """A private copy per test: these exercise the engine, not the builder."""
+
+    return write_krdict_database(tmp_path, _VERB_ONLY_XML)
 
 
 @pytest.fixture(scope="module")

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import zipfile
+from functools import cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tools.krdict.build_seed import build_database
 
@@ -65,5 +67,31 @@ FIXTURE_XML = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 
+@cache
+def _database_image(xml: str) -> bytes:
+    """Return the bytes one production build of ``xml`` produces.
+
+    The builder is byte-deterministic for fixed dates, so one build per distinct
+    source per process answers for all of them.
+    """
+
+    with TemporaryDirectory() as directory:
+        return build_krdict_database(Path(directory), xml).read_bytes()
+
+
+def write_krdict_database(
+    directory: Path, xml: str, database_name: str = "krdict.sqlite3"
+) -> Path:
+    """Write a private copy of the database ``xml`` builds.
+
+    Callers get their own file rather than a shared one: several of them open it
+    read-write, and a database one test mutates must not reach another.
+    """
+
+    database = directory / database_name
+    database.write_bytes(_database_image(xml))
+    return database
+
+
 def build_fixture_krdict(directory: Path, database_name: str = "krdict.sqlite3") -> Path:
-    return build_krdict_database(directory, FIXTURE_XML, database_name)
+    return write_krdict_database(directory, FIXTURE_XML, database_name)

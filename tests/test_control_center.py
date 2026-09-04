@@ -81,8 +81,11 @@ def _bridge(tmp_path: Path) -> tuple[ControlCenterBridge, _Runtime, ConfigManage
     manager = ResourceManager(
         ResourceManifest(
             (
+                # A second, deliberately generic resource: the snapshot renders
+                # whatever the manifest declares, and KRDICT is the only live
+                # one, so nothing here should read as a managed OCR model.
                 ResourceSpec(
-                    "detection_model",
+                    "generic_directory",
                     model,
                     version="v1",
                     installed_version="v1",
@@ -125,7 +128,7 @@ def test_bridge_snapshot_contains_real_resources_and_desktop_preferences(tmp_pat
     assert state["runtime"]["ocr_provider"] == "EasyOCR"
     assert state["runtime"]["resources"] == [
         {
-            "id": "detection_model",
+            "id": "generic_directory",
             "kind": "directory",
             "status": "VALID",
             "version": "v1",

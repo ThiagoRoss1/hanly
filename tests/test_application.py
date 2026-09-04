@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import threading
@@ -569,8 +570,19 @@ def test_the_startup_check_runs_when_the_setting_leaves_it_enabled(
 
 
 def test_the_desktop_passes_the_persisted_setting_to_the_coordinator() -> None:
-    """The wiring, not just the parameter: a disabled setting has to reach it."""
+    """The tests above hand ``_update_coordinator`` the flag directly, so only
+    the composition site proves the stored setting is what reaches it. Reading
+    the call out of the syntax tree keeps that independent of Qt and of how the
+    call happens to be formatted."""
 
     source = Path(application_module.__file__).read_text(encoding="utf-8")
+    call = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_update_coordinator"
+    )
+    passed = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
 
-    assert "automatic_check=settings.config.update_checks_enabled" in source
+    assert passed["automatic_check"] == "settings.config.update_checks_enabled"

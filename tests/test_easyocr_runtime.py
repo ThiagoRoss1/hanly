@@ -1,4 +1,4 @@
-"""Runtime composition tests for the EasyOCR backend selection."""
+"""Runtime composition tests for the EasyOCR provider."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import threading
 from collections.abc import Sequence
 from pathlib import Path
+from threading import Event
 
 import hanly_app.runtime as runtime_module
 import pytest
@@ -37,12 +38,11 @@ def _krdict_database(path: Path) -> Path:
 
 
 def _easyocr_config(tmp_path: Path, **easyocr: object) -> Path:
-    """Write a runtime config that selects EasyOCR and declares only KRDICT."""
+    """Write a runtime config declaring only KRDICT, the one managed resource."""
 
     (tmp_path / "data").mkdir(exist_ok=True)
     _krdict_database(tmp_path / "data" / "krdict.sqlite3")
     payload: dict[str, object] = {
-        "ocr_backend": "easyocr",
         "resources": {"krdict": {"path": "data/krdict.sqlite3", "kind": "krdict"}},
     }
     if easyocr:
@@ -50,6 +50,11 @@ def _easyocr_config(tmp_path: Path, **easyocr: object) -> Path:
     path = tmp_path / "runtime-easyocr.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+#: Which thread each provider was constructed and used on. The worker owns the
+#: whole lifecycle, so every value here has to be the same thread.
+_PROVIDER_THREADS: dict[str, int] = {}
 
 
 class _FakeEasyOCR:
@@ -60,6 +65,7 @@ class _FakeEasyOCR:
 
     def __init__(self, *, config: EasyOCRConfig) -> None:
         type(self).constructions.append(config)
+        _PROVIDER_THREADS["ocr"] = threading.get_ident()
 
     def prewarm(self) -> None:
         type(self).prewarms.append(threading.get_ident())
@@ -76,21 +82,29 @@ class _FakeEasyOCR:
 
 
 class _FakeKiwi:
+    def __init__(self) -> None:
+        _PROVIDER_THREADS["kiwi"] = threading.get_ident()
+
     def analyze(self, text: str) -> Sequence[TokenAnalysis]:
         assert text == "책"
         return (TokenAnalysis(token="책", lemma="책"),)
 
 
 class _FakeKRDICT:
+    databases: list[Path] = []
+
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
+        type(self).databases.append(database_path)
+        _PROVIDER_THREADS["krdict"] = threading.get_ident()
 
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
         assert lemma == "책"
+        _PROVIDER_THREADS["krdict_lookup"] = threading.get_ident()
         return (DictionaryEntry(headword="책", definitions=("book",)),)
 
     def close(self) -> None:
-        return None
+        _PROVIDER_THREADS["krdict_close"] = threading.get_ident()
 
 
 @pytest.fixture
@@ -99,6 +113,8 @@ def easyocr_providers(monkeypatch: pytest.MonkeyPatch) -> type[_FakeEasyOCR]:
 
     _FakeEasyOCR.constructions = []
     _FakeEasyOCR.prewarms = []
+    _FakeKRDICT.databases = []
+    _PROVIDER_THREADS.clear()
     monkeypatch.setattr(runtime_module, "EasyOCRProvider", _FakeEasyOCR)
     monkeypatch.setattr(runtime_module, "KiwiProvider", _FakeKiwi)
     monkeypatch.setattr(runtime_module, "KRDICTProvider", _FakeKRDICT)
@@ -218,3 +234,29 @@ def test_a_non_boolean_flat_roi_gate_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeConfigError, match="skip_flat_rois"):
         load_runtime(path)
+
+
+def test_concrete_provider_factories_are_deferred_and_krdict_lifecycle_stays_on_worker(
+    tmp_path: Path, easyocr_providers: type[_FakeEasyOCR]
+) -> None:
+    """Constructing a provider on the calling thread would load EasyOCR and open
+    SQLite there, and a connection opened off the worker cannot be used on it."""
+
+    runtime = load_runtime(_easyocr_config(tmp_path))
+    delivered = Event()
+
+    controller = runtime.create_lookup_controller(lambda _result: delivered.set())
+    assert easyocr_providers.constructions == []
+
+    controller.start()
+    assert controller.wait_until_ready(timeout=5)
+    controller.submit(_IMAGE, _TARGET)
+    assert delivered.wait(timeout=5)
+    controller.stop()
+
+    worker_thread = controller._executor.thread_ident
+
+    assert worker_thread is not None
+    assert set(_PROVIDER_THREADS) == {"ocr", "kiwi", "krdict", "krdict_lookup", "krdict_close"}
+    assert set(_PROVIDER_THREADS.values()) == {worker_thread}
+    assert _FakeKRDICT.databases == [(tmp_path / "data" / "krdict.sqlite3").resolve()]

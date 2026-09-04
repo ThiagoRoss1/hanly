@@ -11,12 +11,15 @@ import sys
 import tarfile
 import zipfile
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from hanly_app import app_update
 from hanly_app.app_update import (
     APPLICATION_STEM,
+    PRODUCT_PACKAGE,
     ApplicationInstaller,
     ApplicationUpdate,
     ApplicationUpdateError,
@@ -94,8 +97,20 @@ def test_release_metadata_that_is_not_an_object_is_rejected() -> None:
         check_application_update(lambda: cast(Any, "v0.2.0"), current_version="0.1.0")
 
 
-def test_the_running_version_comes_from_installed_package_metadata() -> None:
-    assert installed_version() == "0.1.0"
+def test_the_running_version_comes_from_installed_package_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frozen build and a source install both answer from ``hanly-app``'s
+    metadata, and an installation without it is an error rather than a guess."""
+
+    assert installed_version() == metadata.version(PRODUCT_PACKAGE)
+
+    def uninstalled(name: str) -> str:
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(app_update.metadata, "version", uninstalled)
+    with pytest.raises(ApplicationUpdateError, match="metadata is not available"):
+        installed_version()
 
 
 def test_the_snapshot_is_json_compatible_primitives() -> None:
@@ -107,13 +122,10 @@ def test_the_snapshot_is_json_compatible_primitives() -> None:
         "release_url": RELEASE_URL,
         "available": True,
         "installable": False,
-        "message": ApplicationUpdate(
-            current_version="0.1.0",
-            latest_version="0.2.0",
-            release_url=RELEASE_URL,
-            available=True,
-            message=payload["message"],
-        ).message,
+        "message": (
+            "Hanly 0.2.0 is available. You are running 0.1.0; "
+            "this installation updates itself outside Hanly."
+        ),
     }
     assert all(
         isinstance(value, (str, bool, type(None))) for value in payload.values()
@@ -410,7 +422,19 @@ def _bundle(root: Path, name: str, launched: Path) -> Path:
     return root
 
 
-def _run_posix_handoff(tmp_path: Path, *, break_staged: bool, break_rollback: bool) -> str:
+#: Windows runs the ``.cmd`` handoff, and a Windows PATH can hand back a
+#: ``bash`` that cannot run a POSIX script at all — the hosted image resolves
+#: one to a WSL stub with no distribution behind it. Gate on the platform the
+#: script is written for, not on a name that happens to be on PATH.
+_posix_handoff = pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="the POSIX handoff runs only where Hanly uses it",
+)
+
+
+def _run_posix_handoff(
+    tmp_path: Path, *, break_staged: bool, break_rollback: bool, expect_status: int
+) -> str:
     """Run the real handoff script and report which bundle it relaunched."""
 
     launched = tmp_path / "launched"
@@ -437,19 +461,25 @@ def _run_posix_handoff(tmp_path: Path, *, break_staged: bool, break_rollback: bo
 
     script = tmp_path / "hanly-update.sh"
     script.write_text(render_handoff_script(windows=False), encoding="ascii", newline="\n")
-    subprocess.run(
+    finished = subprocess.run(
         ["bash", str(script), _dead_pid(), str(install), str(staged), str(backup)],
         check=False,
         capture_output=True,
         timeout=60,
         env=environment,
     )
+
+    # A shell that cannot run the script at all exits without touching anything,
+    # which reads as "nothing was relaunched" unless the status is checked.
+    assert finished.returncode == expect_status, finished.stderr.decode("utf-8", "replace")
     return launched.read_text(encoding="ascii")
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="the POSIX handoff needs a shell")
+@_posix_handoff
 def test_a_successful_update_relaunches_the_new_bundle(tmp_path: Path) -> None:
-    launched = _run_posix_handoff(tmp_path, break_staged=False, break_rollback=False)
+    launched = _run_posix_handoff(
+        tmp_path, break_staged=False, break_rollback=False, expect_status=0
+    )
 
     assert launched == "new"
     assert "printf %s new" in (tmp_path / "hanly-desktop" / APPLICATION_STEM).read_text(
@@ -457,13 +487,15 @@ def test_a_successful_update_relaunches_the_new_bundle(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="the POSIX handoff needs a shell")
+@_posix_handoff
 def test_a_failed_replacement_relaunches_the_bundle_the_rollback_restored(
     tmp_path: Path,
 ) -> None:
     """A failed update costs the user the update, not their running Hanly."""
 
-    launched = _run_posix_handoff(tmp_path, break_staged=True, break_rollback=False)
+    launched = _run_posix_handoff(
+        tmp_path, break_staged=True, break_rollback=False, expect_status=0
+    )
 
     assert launched == "old"
     assert "printf %s old" in (tmp_path / "hanly-desktop" / APPLICATION_STEM).read_text(
@@ -471,17 +503,119 @@ def test_a_failed_replacement_relaunches_the_bundle_the_rollback_restored(
     )
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="the POSIX handoff needs a shell")
+@_posix_handoff
 def test_a_failed_rollback_launches_nothing(tmp_path: Path) -> None:
     """Neither bundle is at the install path, so nothing there is safe to start."""
 
-    launched = _run_posix_handoff(tmp_path, break_staged=True, break_rollback=True)
+    launched = _run_posix_handoff(
+        tmp_path, break_staged=True, break_rollback=True, expect_status=1
+    )
 
     assert launched == ""
     assert not (tmp_path / "hanly-desktop").exists()
     # The previous bundle is intact under its backup name, so a person can
     # still put it back by hand.
     assert (tmp_path / "hanly-desktop.previous" / APPLICATION_STEM).is_file()
+
+
+_windows_handoff = pytest.mark.skipif(
+    sys.platform != "win32", reason="the .cmd handoff runs only where Hanly uses it"
+)
+
+
+#: The line the test copy of the script replaces, and nothing else.
+_WINDOWS_RELAUNCH = f'start "" "%INSTALL%\\{APPLICATION_STEM}.exe"'
+
+#: Records which bundle the script reached the relaunch with. ``type`` is a
+#: shell built-in writing into the working directory, so nothing is spawned.
+_WINDOWS_RELAUNCH_MARKER = 'type "%INSTALL%\\bundle" >>launched.txt'
+
+
+def _windows_bundle(root: Path, name: str) -> Path:
+    """Create a stub bundle whose contents say which bundle it is."""
+
+    root.mkdir(parents=True)
+    (root / "bundle").write_text(name, encoding="ascii")
+    return root
+
+
+def _windows_handoff_script(tmp_path: Path) -> Path:
+    """Write the real .cmd with only its relaunch swapped for a marker.
+
+    ``start`` hands the path to the shell, which launches a real process when
+    the executable is there and raises a modal error when it is not. A unit test
+    may do neither, so the two relaunch lines -- and only those -- are replaced
+    by a command that records the bundle now at the install path. Their number
+    is asserted first, and their placement stays covered structurally by
+    ``test_the_rollback_relaunch_is_gated_on_the_rollback_actually_succeeding``.
+    """
+
+    body = render_handoff_script(windows=True)
+    assert body.count(_WINDOWS_RELAUNCH) == 2, body
+
+    script = tmp_path / "hanly-update.cmd"
+    script.write_text(
+        body.replace(_WINDOWS_RELAUNCH, _WINDOWS_RELAUNCH_MARKER),
+        encoding="ascii",
+        newline="\r\n",
+    )
+    return script
+
+
+def _run_windows_handoff(tmp_path: Path, *, break_staged: bool, expect_status: int) -> str:
+    """Run the .cmd handoff the way the installer spawns it, and report the
+    bundle it relaunched -- empty when it reached no relaunch at all."""
+
+    install = _windows_bundle(tmp_path / "hanly-desktop", "old")
+    staged = _windows_bundle(tmp_path / "hanly-desktop.staged", "new")
+    backup = tmp_path / "hanly-desktop.previous"
+    if break_staged:
+        shutil.rmtree(staged)
+
+    script = _windows_handoff_script(tmp_path)
+    finished = subprocess.run(
+        ["cmd.exe", "/c", str(script), _dead_pid(), str(install), str(staged), str(backup)],
+        check=False,
+        capture_output=True,
+        timeout=120,
+        cwd=tmp_path,
+    )
+
+    assert finished.returncode == expect_status, finished.stdout.decode("utf-8", "replace")
+    launched = tmp_path / "launched.txt"
+    return launched.read_text(encoding="ascii") if launched.exists() else ""
+
+
+@_windows_handoff
+def test_the_windows_handoff_moves_the_staged_bundle_onto_the_install_path(
+    tmp_path: Path,
+) -> None:
+    launched = _run_windows_handoff(tmp_path, break_staged=False, expect_status=0)
+
+    assert launched == "new"
+    assert (tmp_path / "hanly-desktop" / "bundle").read_text(encoding="ascii") == "new"
+    assert not (tmp_path / "hanly-desktop.staged").exists()
+    assert not (tmp_path / "hanly-desktop.previous").exists()
+
+
+@_windows_handoff
+def test_a_failed_windows_replacement_relaunches_the_bundle_the_rollback_restored(
+    tmp_path: Path,
+) -> None:
+    """A failed update costs the user the update, not their running Hanly."""
+
+    launched = _run_windows_handoff(tmp_path, break_staged=True, expect_status=1)
+
+    assert launched == "old"
+    assert (tmp_path / "hanly-desktop" / "bundle").read_text(encoding="ascii") == "old"
+    assert not (tmp_path / "hanly-desktop.previous").exists()
+
+
+# Failing the rollback needs the install path occupied between two moves inside
+# a script that is already running, which no fixture can arrange without racing
+# it -- so that branch is not executed here. It stays covered structurally by
+# the test below, which pins ``exit /b 1`` ahead of the relaunch, and by the
+# POSIX run above, where a shimmed ``mv`` makes the same failure reachable.
 
 
 @pytest.mark.parametrize("windows", [True, False])

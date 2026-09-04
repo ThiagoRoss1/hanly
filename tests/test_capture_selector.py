@@ -117,27 +117,73 @@ def test_a_malformed_capture_roi_size_is_rejected(value: str) -> None:
         parse_roi_size(value)
 
 
-def test_the_selector_prepares_the_ocr_runtime_before_qt(tmp_path: Path) -> None:
+def test_the_selector_prepares_the_ocr_runtime_before_qt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Windows resolves native libraries differently after Qt initializes, so
-    the OCR stack has to load first."""
+    the OCR stack has to load first. That order lives inside
+    ``select_capture_area``, which an injected selector replaces wholesale, so
+    the real function is what has to run.
 
-    config = tmp_path / "runtime.json"
-    config.write_text('{"resources": {}}', encoding="utf-8")
+    Cancel is the last button added and the one reported back, which ends
+    selection at the point the ordering has already been established.
+    """
+
+    import hanly_app.ocr_preload as ocr_preload
+
     order: list[str] = []
 
-    def record() -> None:
-        order.append("selector")
-        return None
+    class _FakeApplication:
+        def setQuitOnLastWindowClosed(self, _closed: bool) -> None:
+            return None
 
-    result = run_selected_desktop(
-        ["--runtime-config", str(config)],
-        selector=record,
-        runtime_resolver=lambda explicit: explicit or config,
-        desktop_runner=lambda *_a, **_k: 0,
+    class _FakeMessageBox:
+        """Enough of QMessageBox to reach the cancel branch without Qt."""
+
+        class ButtonRole:
+            AcceptRole = 0
+            ActionRole = 1
+
+        class StandardButton:
+            Cancel = 2
+
+        def __init__(self) -> None:
+            order.append("prompt")
+            self.clicked: object = None
+
+        def setWindowTitle(self, _title: str) -> None:
+            return None
+
+        def setText(self, _text: str) -> None:
+            return None
+
+        def addButton(self, *_arguments: object) -> object:
+            self.clicked = object()
+            return self.clicked
+
+        def exec(self) -> int:
+            return 0
+
+        def clickedButton(self) -> object:
+            return self.clicked
+
+    def import_qt_widgets() -> tuple[object, object]:
+        order.append("qt_widgets")
+        return object(), _FakeMessageBox
+
+    def shared_application(_factory: object) -> _FakeApplication:
+        order.append("qapplication")
+        return _FakeApplication()
+
+    monkeypatch.setattr(ocr_preload, "preload_ocr_runtime", lambda: order.append("ocr"))
+    monkeypatch.setattr(capture_selector, "_import_qt_widgets", import_qt_widgets)
+    monkeypatch.setattr(
+        capture_selector, "_prepare_web_engine", lambda: order.append("web_engine")
     )
+    monkeypatch.setattr(capture_selector, "_shared_application", shared_application)
 
-    assert result == 0
-    assert order == ["selector"]
+    assert capture_selector.select_capture_area() is None
+    assert order == ["ocr", "qt_widgets", "web_engine", "qapplication", "prompt"]
 
 
 def test_one_qapplication_is_shared_across_selection_and_startup() -> None:
@@ -205,12 +251,18 @@ def test_a_missing_control_center_runtime_does_not_block_area_selection(
 
     import hanly_app.control_center as control_center
 
+    attempts: list[str] = []
+
     def unavailable() -> None:
+        attempts.append("prepare")
         raise control_center.ControlCenterUnavailable("no Qt WebEngine")
 
     monkeypatch.setattr(control_center, "prepare_control_center_qt", unavailable)
 
     capture_selector._prepare_web_engine()
+
+    # Without this the test would still pass if preparation stopped happening.
+    assert attempts == ["prepare"]
 
 
 def test_a_missing_qt_runtime_is_a_startup_condition_not_a_crash(

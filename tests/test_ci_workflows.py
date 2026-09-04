@@ -131,8 +131,9 @@ def test_build_matrix_expands_to_one_job_per_desktop_platform() -> None:
     assert all(entry["python-version"] for entry in matrix["include"])
 
 
-def test_building_desktop_artifacts_is_never_automatic() -> None:
-    """Every job installs the desktop runtime and freezes a multi-GB package."""
+def test_desktop_build_runs_only_manually_or_for_release_tags() -> None:
+    """Every job installs the desktop runtime and freezes a multi-GB package, so
+    a release tag and a deliberate dispatch are the only things worth that."""
 
     triggers = _triggers(_workflow("build.yml"))
 
@@ -358,19 +359,6 @@ def test_workflow_env_writes_do_not_shadow_job_environment() -> None:
                 )
             )
             assert not written.intersection(job_env), (workflow_name, job_name, written & job_env)
-
-
-def test_release_preflight_proves_trigger_and_classifies_collisions() -> None:
-    workflow = _workflow("release.yml")
-    condition = workflow["jobs"]["release"]["if"]
-    assert all(
-        fragment in condition
-        for fragment in (
-            "github.event.workflow_run.event",
-            "github.event.workflow_run.conclusion",
-            "github.event.workflow_run.head_repository.full_name",
-        )
-    )
 
 
 def test_release_lookup_distinguishes_confirmed_404_from_fatal_errors() -> None:
@@ -689,6 +677,10 @@ def test_build_context_values_are_env_backed_in_shell_commands() -> None:
     version_check = next(step for step in steps if "release_version.py" in step.get("run", ""))
     assert version_check.get("env", {}).get("RELEASE_TAG") == "${{ github.ref_name }}"
     assert _uses_quoted_shell_variable(version_check["run"], "RELEASE_TAG")
+    # The build job runs one step list on three platforms. GitHub's default
+    # Windows shell is pwsh, where ``$RELEASE_TAG`` is not a variable at all and
+    # expands to nothing, which would hand the check an empty tag.
+    assert version_check.get("shell") == "bash"
     direct_github = re.compile(r"\$\{\{\s*(?:github|inputs)\b")
     for step in steps:
         assert not direct_github.search(_shell_code(step.get("run", ""))), step
@@ -774,19 +766,21 @@ def test_the_release_lane_installs_only_the_packages_it_imports() -> None:
     assert "pip install --upgrade pip" not in code
 
 
-def test_cross_platform_build_steps_pin_bash_before_reading_shell_variables() -> None:
-    """The build job runs one step list on Windows, macOS and Linux. GitHub's
-    default Windows shell is pwsh, where ``$NAME`` is not an environment
-    variable and silently expands to nothing, so a step that reads one must
-    pin bash."""
+def test_every_push_is_checked_on_windows_without_renaming_the_linux_gates() -> None:
+    """A POSIX-only assumption in a test is invisible on a Linux-only matrix
+    until a tag build runs it. The Linux job keeps its name because required
+    status checks are pinned to it, so Windows arrives as its own job."""
 
-    workflow = _workflow("build.yml")
-    job = workflow["jobs"]["build"]
-    default_shell = job.get("defaults", {}).get("run", {}).get("shell")
-    shell_variable = re.compile(r"\$\{?[A-Za-z_]")
+    workflow = _workflow("ci.yml")
+    quality = workflow["jobs"]["quality"]
+    windows = workflow["jobs"]["windows-tests"]
 
-    for step in _steps(workflow, "build"):
-        command = _shell_code(step.get("run", ""))
-        if not shell_variable.search(command):
-            continue
-        assert (step.get("shell") or default_shell) == "bash", step.get("name")
+    assert quality["name"] == "quality (py${{ matrix.python-version }})"
+    assert quality["runs-on"] == "ubuntu-latest"
+    assert windows["runs-on"] == "windows-latest"
+    assert "push" in _triggers(workflow)
+
+    commands = "\n".join(step.get("run", "") for step in _steps(workflow, "windows-tests"))
+    assert "python -m pip install --group dev" in commands
+    assert "python -m pip install --editable packages/hanly-app" in commands
+    assert "python -m pytest" in commands

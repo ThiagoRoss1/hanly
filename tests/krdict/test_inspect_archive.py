@@ -60,12 +60,16 @@ def test_cli_accepts_a_zip_and_prints_compact_json(tmp_path, capsys) -> None:
     assert report["validation"]["entries_scanned"] == 1
 
 
-def test_cli_uses_utf8_output_on_a_legacy_windows_console() -> None:
+def test_cli_uses_utf8_output_on_a_legacy_windows_console(tmp_path: Path) -> None:
+    """The report is the Korean the console has to survive. ``--help`` is ASCII
+    and would pass on a console that cannot encode a single headword."""
+
+    archive = _archive(tmp_path / "krdict.zip", _source(_entry("10", "책")))
     environment = os.environ.copy()
     environment["PYTHONIOENCODING"] = "cp1252"
 
     result = subprocess.run(
-        [sys.executable, "tools/krdict/inspect_archive.py", "--help"],
+        [sys.executable, "tools/krdict/inspect_archive.py", str(archive), "--compact"],
         cwd=Path(__file__).parents[2],
         env=environment,
         capture_output=True,
@@ -73,7 +77,9 @@ def test_cli_uses_utf8_output_on_a_legacy_windows_console() -> None:
     )
 
     assert result.returncode == 0, result.stderr.decode(errors="replace")
-    assert b"--language" in result.stdout
+    report = json.loads(result.stdout.decode("utf-8"))
+    assert report["samples"][0]["headword"] == "책"
+    assert report["language"] == "영어"
 
 
 def test_illegal_backspace_is_sanitized_in_memory(tmp_path, capsys) -> None:

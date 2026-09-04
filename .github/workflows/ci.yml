@@ -34,3 +34,22 @@ jobs:
         run: python -m ruff check packages packaging tests tools benchmarks
       - name: Run type checks
         run: python -m mypy packages packaging tests tools benchmarks
+        
+  windows-tests:
+    name: windows tests (py3.10)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --group dev
+      - name: Install packages
+        run: |
+          python -m pip install --editable packages/hanly
+          python -m pip install --editable packages/hanly-app
+      - name: Run tests
+        run: python -m pytest
