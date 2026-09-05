@@ -202,7 +202,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          previous_tag="$(gh api "repos/$REPOSITORY/releases/latest" --jq '.tag_name // empty' 2>/dev/null || true)"
+          previous_tag="$(
+            gh release list --repo "$REPOSITORY" --exclude-drafts \
+              --exclude-pre-releases --limit 1 --json tagName \
+              --jq '.[0].tagName // empty'
+          )"
           if [[ -z "$previous_tag" ]]; then
             echo "no previous public release; the draft waits for the first KRDICT upload"
             printf 'carried=false\n' >> "$GITHUB_OUTPUT"
@@ -464,7 +468,11 @@ jobs:
           gh release download "$RELEASE_TAG" --pattern hanly-resources.json \
             --dir release-inputs/resources --clobber
 
-          previous_tag="$(gh api "repos/$REPOSITORY/releases/latest" --jq '.tag_name // empty' 2>/dev/null || true)"
+          previous_tag="$(
+            gh release list --repo "$REPOSITORY" --exclude-drafts \
+              --exclude-pre-releases --limit 1 --json tagName \
+              --jq '.[0].tagName // empty'
+          )"
           if [[ -n "$previous_tag" && "$previous_tag" != "$RELEASE_TAG" ]]; then
             gh release download "$previous_tag" --pattern hanly-resources.json \
               --dir release-inputs/previous --clobber

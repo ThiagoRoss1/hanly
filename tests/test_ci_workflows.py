@@ -391,7 +391,11 @@ def test_staging_carries_the_previous_resource_so_an_app_release_needs_no_upload
     carried = _step(_release(), "stage", step_id="carried")
     code = _shell_code(carried["run"])
 
-    assert "releases/latest" in code
+    assert "gh release list" in code
+    assert "--exclude-drafts" in code
+    assert "--exclude-pre-releases" in code
+    assert "--limit 1" in code
+    assert "releases/latest" not in _release_code("stage") + _release_code("finalize")
     assert "gh release download" in code
     assert "hanly-resources.json" in code
     assert "resources.krdict.asset_name" in code
