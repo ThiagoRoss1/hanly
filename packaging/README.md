@@ -45,12 +45,11 @@ then creates one application archive at the root of `dist/`:
 Release tooling publishes those files under the stable
 `hanly-desktop-<platform>` stem. Resource delivery is separate and uses one
 asset per runtime resource under the
-`krdict-<version>.sqlite3.zst` convention. The producer manifest carries the
-independent resource version; it never substitutes the application tag. A
-release run expects the one `krdict` asset and publishes the producer's
-manifest as `hanly-resources.json` alongside it. These artifacts are not
-collected from `resources/dev` or any other developer-machine cache by this
-spec.
+`krdict-<version>.sqlite3.zst` convention. The manifest built beside it carries
+the independent resource version; it never substitutes the application tag. A
+release expects exactly one `krdict` asset and publishes its
+`hanly-resources.json` alongside it. These artifacts are not collected from
+`resources/dev` or any other developer-machine cache by this spec.
 
 A `directory` resource must be delivered as a `.zip`: `UpdateService` unpacks it
 with `zipfile` and installs every other kind as the downloaded file itself.
@@ -63,58 +62,60 @@ One product version covers both packages. It lives in
 `hanly==<version>`. Tags are `v{version}` — `0.1.0` publishes as `v0.1.0`.
 
 Hanly is not published to PyPI in this flow. The version identifies a desktop
-release, not a package index entry. The release topology has two independent
-lanes but one public envelope: the manual KRDICT workflow stages a candidate,
-and a successful application tag build publishes the three app archives plus
-the manifest, exact referenced KRDICT asset, and `SHA256SUMS`.
+release, not a package index entry.
 
-### Application-only release
+KRDICT is built locally from the manually acquired official ZIP. That ZIP and
+the raw `krdict.sqlite3` never leave the operator's machine and are never
+release assets. Only two files are attached by hand, to a draft:
 
-1. Bump both package versions and the `hanly-app` dependency/runtime pins.
-2. Commit and push, then push the matching `vMAJOR.MINOR.PATCH` tag.
-3. After the successful platform build, `release.yml` copies the previous
-   public release's `hanly-resources.json` and KRDICT bytes unchanged.
+- `data/generated/krdict-<resource-version>.sqlite3.zst`
+- `data/generated/hanly-resources.json`
 
-Do not dispatch the KRDICT producer for an application-only change. A first
-release has no previous public release and therefore needs a validated staged
-KRDICT candidate.
+`release.yml` therefore never downloads a source archive and never builds the
+resource. It runs in two halves around that manual step.
 
-### KRDICT candidate plus application release
+### Stage, approve, publish
 
-1. Dispatch **Build KRDICT resource** with its approved source URL/digest and a
-   new independent `resource_version`.
-2. Verify its manifest, checksum, size, and validation/count report.
-3. Bump/push the application tag and wait for the platform build.
-4. The automatic release promotes the candidate when its producer
-   `created_at` is later than the previous public release's `published_at`.
+1. `stage` runs automatically after a successful tag build, or manually for an
+   existing tag. It resolves the tag commit, verifies the successful **Build
+   Desktop Artifacts** run for that exact commit, checks the tagged package
+   metadata against the tag, and creates a private **draft** holding the three
+   platform archives. It never publishes and never writes `SHA256SUMS`.
+2. If a previous public release exists, stage also copies that release's
+   `hanly-resources.json` and the KRDICT `.zst` it references into the draft, so
+   an application-only release needs no upload at all. A new application tag
+   never implies the dictionary changed.
+3. The operator edits the draft and attaches the two local files when KRDICT
+   actually changed: exactly one `krdict-*.sqlite3.zst` and one
+   `hanly-resources.json`, replacing any carried pair.
+4. `finalize` waits on the `hanly-release` environment. Approving it under
+   **Review deployments** re-resolves the tag and its build from scratch,
+   re-downloads the three archives from that exact run, takes the resource pair
+   from the draft, validates the manifest shape, filename, version, size,
+   SHA-256, schema version and entry count, writes `SHA256SUMS` only once all
+   five payload assets pass, uploads the six assets, asserts the draft holds
+   exactly those six, and only then clears the draft flag.
 
-Producer artifacts are retained for 90 days, subject to repository limits. A
-newer candidate that is missing, expired, or invalid fails publication rather
-than silently downgrading; a changed database must use a new resource version.
-Once published, later releases copy the exact resource bytes from the public
-release and no longer depend on the Actions artifact.
+A first release has no previous resource to copy, so its draft is created with
+the three archives alone and waits for the operator's two files. Missing
+resources fail at finalization, never at draft creation.
 
-### Recovery and first-release notes
+### Recovery, dry runs, and idempotency
 
-The normal path is automatic only after `release.yml` is merged on the default
-branch; `workflow_run` uses that revision. A tag pushed earlier can be
-recovered manually. Manual recovery accepts the existing tag and optionally
-one exact successful producer `resource_run_id`; an invalid override never
-falls back. The manual-only `reuse_previous_release_resource=true` escape
-requires a previous public release and is mutually exclusive with
-`resource_run_id`. It records the explicit reuse decision in the job summary
-and release notes.
+Manual dispatch takes an existing tag; nothing here creates or moves a tag. A
+draft this workflow staged for the same commit is not a collision — a rerun
+repairs it. A draft naming another commit, an unrelated draft, a prerelease, or
+an already-public release is refused, and an automatic rerun of an
+already-published tag is a successful no-op.
 
-Automatic reruns of an already-public tag are successful no-ops. Manual
-duplicates, drafts, and prerelease collisions fail. A partial draft is left
-untouched for an operator to repair/publish or remove before recovery; no
-workflow moves tags or overwrites releases. Application artifacts expire after
-14 days, so rerun the tag build before recovery if necessary.
+`validate_only: true` runs the finalize half's checks against the real draft and
+stops before writing: it uploads nothing, refreshes no draft asset, and
+publishes nothing. It still needs the same approval, and a normal finalization
+repeats every check, so a passing dry run is not treated as evidence later.
 
-The existing `v0.1.0` tag points at stale commit `24ed285` and must be
-human-corrected before the first release. Actions never create or move it.
-GitHub's `releases/latest` follows release/tag commit-date ordering rather than
-publication order, so a release from an older commit may not become latest.
+A failed validation leaves the draft intact and unpublished; no workflow deletes
+one. Application artifacts expire after 14 days, so rerun the tag build before a
+late recovery.
 
 For a local pre-tag check (the publisher itself reads exact tag metadata as
 data with trusted default-branch tooling):

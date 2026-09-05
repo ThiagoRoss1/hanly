@@ -4,56 +4,74 @@ This runbook bootstraps the first public desktop release. The release envelope
 contains the three platform archives, `hanly-resources.json`, the exact
 `krdict-<version>.sqlite3.zst` named by that manifest, and `SHA256SUMS`.
 
-There are two independent lanes: `build-krdict-resource.yml` is a manual,
-non-publishing KRDICT candidate producer; `release.yml` publishes one public
-release per application tag. An application tag never rebuilds KRDICT or
-changes its version.
+KRDICT is built locally from the manually acquired official ZIP. That ZIP and
+the raw `krdict.sqlite3` never leave the operator's machine and are never
+release assets. `release.yml` never downloads a source archive and never builds
+the resource: it stages a draft, waits for the operator to attach the two local
+files and approve, and publishes last. An application tag never rebuilds KRDICT
+or changes its version.
+
+## The two halves
+
+- **`stage`** runs automatically after a successful same-repository tag build,
+  or manually for an existing tag. It resolves the tag commit, verifies the
+  successful **Build Desktop Artifacts** run for that exact commit, checks the
+  tagged package versions and pins, and creates or repairs a private draft
+  holding the three platform archives. It never publishes and never writes
+  `SHA256SUMS`.
+- **`finalize`** waits on the `hanly-release` environment. Approving it re-runs
+  every check from the tag up, takes the KRDICT pair from the draft, validates
+  the manifest, writes `SHA256SUMS`, uploads the six assets, asserts the draft
+  holds exactly those six, and only then clears the draft flag.
+
+The two halves are one run in one per-tag concurrency group, and that group is
+never cancelled automatically. **A second run for the same tag queues behind a
+run waiting for approval** — plan the sequence below accordingly.
 
 ## Before starting
 
 - Confirm `release.yml` is merged on the repository's default branch. The
   `workflow_run` trigger uses that default-branch workflow definition; a tag
-  pushed before it is available there will not publish automatically and must
-  be recovered manually.
-- The existing `v0.1.0` tag points at stale commit `24ed285`. A human must
-  correct that tag/commit relationship before the first release. Actions never
-  create, move, or recreate tags. If a public release already exists, bump the
-  version instead of moving its tag.
-- Confirm an approved HTTPS KRDICT source URL and SHA-256 are available for the
-  producer workflow. The producer needs the independent resource identity,
-  source/build dates, and expected entry/sense counts.
+  pushed before it is available there will not stage automatically and must be
+  recovered manually.
+- Confirm the `hanly-release` environment exists with the intended required
+  reviewers. Without it the finalize job cannot gate.
+- Build the resource locally and keep both files to hand:
+  `data/generated/krdict-<resource-version>.sqlite3.zst` and
+  `data/generated/hanly-resources.json`. Build commands are in `data/README.md`.
+- Verify the tag points at the intended commit. Actions never create, move, or
+  recreate tags. If a public release already exists, bump the version instead of
+  moving its tag.
 
-GitHub's `releases/latest` ordering follows the release/tag commit-date
-behavior, not publication order. Do not publish the stale tag or a release tag
-from an older commit and assume it will become `latest`; first release history
-must use the corrected chronological application tag.
+GitHub's `releases/latest` ordering follows release/tag commit-date behavior,
+not publication order. Do not publish a release tag from an older commit and
+assume it will become `latest`.
 
 ## First-release sequence
 
-Run these operations in order:
-
-1. Dispatch **Build KRDICT resource** with the approved source URL/digest and
-   resource metadata.
-2. Verify the successful producer output: manifest shape, resource checksum,
-   asset name, size, and validation/count report. Record its run ID. The
-   candidate is retained for 30 days, subject to the repository ceiling; it
-   does not publish a release.
-3. On the intended application commit, human-correct and push the matching
-   `vMAJOR.MINOR.PATCH` tag (for the current bootstrap, `v0.1.0`). Verify the
-   package versions and pins before pushing:
+1. On the intended application commit, push the matching `vMAJOR.MINOR.PATCH`
+   tag. Verify the package versions and pins before pushing:
 
    ```powershell
    python tools/release_version.py --tag v0.1.0
    ```
 
-4. Wait for the three platform jobs in **Build Desktop Artifacts** to succeed.
-   The successful same-repository tag build triggers `release.yml`, which
-   selects the staged candidate, creates a draft, verifies exactly six assets,
-   and publishes one public release.
-5. Verify first-run acquisition on a clean machine with no
-   `HANLY_KRDICT_DB` and no local generated database. Confirm download,
-   checksum/schema validation, installation, vocabulary lookup, and a restart
-   while offline. Repeat with the packaged executable.
+2. Wait for the three platform jobs in **Build Desktop Artifacts** to succeed.
+   The successful same-repository tag build triggers `release.yml`.
+3. `stage` finishes with a private draft for the tag holding the three platform
+   archives. There is no previous public release, so no resource pair is carried
+   and none is required yet.
+4. Open the draft in **Releases → Edit** and attach both local files: exactly
+   one `krdict-<resource-version>.sqlite3.zst` and one `hanly-resources.json`.
+   Save the draft. Leave the `Hanly-Release-Commit:` line in the body — the
+   finalize job uses it to prove the draft is the one staged for this commit.
+5. Open the run, find the `finalize` job waiting under **Review deployments**,
+   and approve it. It revalidates everything and publishes.
+6. Confirm the published release lists exactly six assets.
+7. Verify first-run acquisition on a clean machine with no `HANLY_KRDICT_DB` and
+   no local generated database. Confirm download, checksum/schema validation,
+   installation, vocabulary lookup, and a restart while offline. Repeat with the
+   packaged executable.
 
 If the tag was pushed before `release.yml` reached the default branch, wait for
 the build and use the manual recovery below; do not push or move the tag again.
@@ -62,68 +80,64 @@ the build and use the manual recovery below; do not push or move the tag again.
 
 1. Bump both package versions and the two `hanly-app` pins.
 2. Commit and push, then push the matching `vMAJOR.MINOR.PATCH` tag.
-3. After the successful platform build, let `release.yml` copy the previous
-   public release's manifest and referenced KRDICT bytes unchanged.
+3. After the successful platform build, `stage` creates the draft and copies the
+   previous public release's `hanly-resources.json` and the KRDICT `.zst` it
+   names into it. Nothing to upload by hand.
+4. Approve `finalize`.
 
-Do not dispatch the KRDICT producer merely because the application version
-changed. An app-only tag requires a previous public release; the first release
-requires a validated staged candidate.
+An application-only tag needs no local KRDICT build and no upload. A new
+application tag never implies the dictionary changed.
 
-## KRDICT candidate plus application release
+## Changing KRDICT alongside an application release
 
-1. Dispatch **Build KRDICT resource** with a new source identity and a new
-   `resource_version`.
-2. Verify its manifest, checksum, size, and validation report.
-3. Bump/push the application tag and wait for the platform build.
-4. The automatic release promotes the candidate when its producer creation
-   time is strictly later than the previous public release's `published_at`.
-   A missing, expired, or invalid newer candidate fails publication; it never
-   silently falls back to the old resource.
+Follow the app-only sequence, and before approving, replace **both** carried
+resource assets in the draft with the newly built pair. A changed database must
+use a new `resource_version`; the same version with a different checksum is
+rejected at finalization.
 
-After promotion, later app-only releases copy the manifest and KRDICT bytes
-from the public release, so they no longer depend on the 30-day Actions
-artifact. A changed database must use a new `resource_version`; equal version
-with a different checksum is rejected.
+The carried pair is written only when the draft is created. A rerun that repairs
+an existing draft touches the three application archives and nothing else, so an
+uploaded pair is never silently overwritten.
 
 ## Manual recovery
 
-Use **Release Hanly Desktop** only to recover a failed or unavailable automatic
-publication. The tag must already exist and its successful desktop build
-artifacts must still be available (the application artifacts expire after 14
-days; rerun the tag build if needed).
-
-Normal recovery selection:
+Use **Release Hanly Desktop** to recover a failed or unavailable automatic
+staging. The tag must already exist and its successful desktop build artifacts
+must still be available (application artifacts expire after 14 days; rerun the
+tag build if needed).
 
 ```powershell
 gh workflow run release.yml --ref <default-branch> -f tag=vMAJOR.MINOR.PATCH
 ```
 
-To force one exact, successful KRDICT producer run, supply its run ID. It must
-be an unexpired artifact from the successful default-branch producer workflow;
-an invalid override fails and never falls back:
+A draft this lane staged for the same commit is not a collision: a rerun repairs
+its application archives and leaves the resource pair alone. A draft naming
+another commit, an unrelated draft, a prerelease, or an existing public release
+is refused. An automatic rerun of a tag already published *in full by this lane*
+— the same commit marker and exactly the six valid asset names — is a successful
+no-op; a foreign, partial, or inconsistent public release fails instead.
 
-```powershell
-gh workflow run release.yml --ref <default-branch> `
-  -f tag=vMAJOR.MINOR.PATCH -f resource_run_id=<producer-run-id>
-```
+## Dry runs
 
-To explicitly reuse the previous public resource when a newer candidate is
-invalid or expired, use the manual-only escape. It requires a previous public
-release and cannot be combined with `resource_run_id`:
+`validate_only: true` runs every check against an **existing** draft and writes
+nothing: staging creates nothing, uploads nothing, and does not even download the
+artifacts it would upload; finalize validates and stops before touching the
+draft. It still passes through the same approval gate.
 
-```powershell
-gh workflow run release.yml --ref <default-branch> `
-  -f tag=vMAJOR.MINOR.PATCH `
-  -f reuse_previous_release_resource=true
-```
+Because one per-tag run holds the concurrency group, a dry run cannot be started
+while a normal run waits for approval. The supported orders are:
 
-The workflow records the reuse decision, previous release tag, and reason in
-the job summary and release notes. Keep the operator reason in the recovery
-record. Automatic runs cannot use this escape.
+- **Approve directly.** Stage → attach files → approve. No dry run.
+- **Dry run first.** Stage → attach files → cancel the pending run (cancelling
+  deletes nothing; the draft stays) → dispatch with `validate_only: true` and
+  approve it → dispatch normally again and approve. The second normal run reuses
+  the same draft and repairs only the application archives.
 
-An automatic rerun for an already-published public tag is a successful no-op.
-Manual dispatch fails on any existing release; draft or prerelease collisions
-fail on both paths. If draft creation or exact-six verification leaves a
-partial draft, leave it untouched: an operator must inspect and repair/publish
-it or remove it before dispatching recovery. No workflow path overwrites a
-partial draft or moves a tag.
+Do not run both at once. Two runs mutating one draft is exactly what the
+concurrency group exists to prevent.
+
+## When something fails
+
+A failed validation leaves the draft intact and unpublished. No workflow path
+deletes a draft, overwrites a public release, or moves a tag. Fix the cause and
+dispatch the same tag again.

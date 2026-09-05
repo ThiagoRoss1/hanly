@@ -130,7 +130,7 @@ data/source/<official KRDICT>.zip
   → tools/krdict/source.py          streams and normalizes the XML
   → tools/krdict/build_seed.py      writes the SQLite, using schema.sql
   → tools/krdict/validate_seed.py   proves it against the source
-  → tools/krdict/package_resource.py  → .sqlite3.zst + producer manifest
+  → tools/krdict/package_resource.py  → .sqlite3.zst + hanly-resources.json
 ```
 
 56,555 entries, 11 tables, ~92 MB, ~27 MB compressed. Build commands are in
@@ -234,7 +234,8 @@ download run the same code.
 |---|---|
 | `tools/krdict/` | Builds, validates, and packages the dictionary |
 | `tools/dev_lookup.py` | Engine-only lookup rig |
-| `tools/build_package.py`, `tools/release_version.py` | Release tooling |
+| `tools/build_package.py`, `tools/release_version.py` | Release tooling: freeze the bundle, prove a tag matches the packages |
+| `tools/release_build.py`, `tools/tagged_metadata.py` | The release lane's decisions — peel the tag, verify its build, classify an existing release, read the tagged identity |
 | `packaging/` | PyInstaller spec, runtime hook, frozen entry point |
 | `benchmarks/dev/` | Developer-only measurement harness — code, its own `tests/`, and the unwired hover `hud/`. Nothing in `packages/` imports it |
 | `data/` | Local KRDICT source and build outputs. Gitignored except the README |
@@ -265,6 +266,26 @@ export HANLY_KRDICT_DB=/path/to/krdict.sqlite3    # Windows: set HANLY_KRDICT_DB
 A clone that already has `data/generated/krdict.sqlite3` is found without the
 variable. EasyOCR downloads its own recognition models on the first lookup, so
 that launch needs network access.
+
+## 8a. How a release is made
+
+The dictionary is built **locally**, from the manually acquired official ZIP.
+Neither that ZIP nor the raw `krdict.sqlite3` is ever a release asset, and no
+workflow downloads a source archive or builds the resource.
+
+`.github/workflows/release.yml` has two jobs around one manual step:
+
+1. `stage` reuses the successful tag build, validates the three platform
+   archives, and leaves a **private draft**. On a repeat release it also copies
+   the previous public release's `hanly-resources.json` and the KRDICT `.zst` it
+   names, so an application-only release needs no upload at all.
+2. The operator attaches `krdict-<version>.sqlite3.zst` and
+   `hanly-resources.json` to the draft, by hand, when the dictionary changed.
+3. `finalize` waits on the `hanly-release` environment. After approval it
+   re-resolves the tag and its build, revalidates the manifest and every
+   checksum, writes `SHA256SUMS` last, and publishes exactly six assets.
+
+`docs/execution/first-release-plan.md` is the operator runbook.
 
 ## 9. Gates
 

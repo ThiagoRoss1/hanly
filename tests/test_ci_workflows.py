@@ -77,26 +77,9 @@ def _shell_code(command: str) -> str:
     )
 
 
-def _has_count_guard(command: str, count: int) -> bool:
-    return bool(
-        re.search(
-            rf"(?:len\([^)]*\)\s*(?:==|!=)\s*{count}|"
-            rf"\$\{{#\w+(?:\[@\])?\}}\s*(?:==|!=|-eq|-ne)\s*{count}|"
-            rf"wc\s+-l[^\n]*\b{count}\b)",
-            command,
-        )
-    )
-
-
-def _assert_numeric_404_handling(command: str, status_variable: str) -> None:
-    lower = command.lower()
-    assert "curl" in command and "--write-out '%{http_code}'" in command
-    assert all(marker in lower for marker in (f'case "${status_variable}" in', "404)", "*)"))
-    assert "exit 1" in lower
-    assert not re.search(r"\bgrep\b[^\n]*(?:404|status)", lower)
-
-
 def _redirected_names(command: str, sink: str) -> set[str]:
+    """Return the names a shell command appends to ``$SINK``."""
+
     pattern = (
         rf"(?:printf|echo)\s+['\"](?P<name>[A-Za-z_][A-Za-z0-9_]*)=.*?>>\s*"
         rf"['\"]?\${re.escape(sink)}\b"
@@ -104,8 +87,28 @@ def _redirected_names(command: str, sink: str) -> set[str]:
     return {match.group("name") for match in re.finditer(pattern, _shell_code(command))}
 
 
+def _all_steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    return [step for job in workflow["jobs"] for step in _steps(workflow, job)]
+
+
+def _gh_api_commands(command: str) -> list[str]:
+    """Return each ``gh api`` invocation, with its line continuations joined.
+
+    A pipe ends the invocation: what follows is a separate program, and its own
+    ``jq`` is exactly how a paged query is meant to be filtered.
+    """
+
+    joined = re.sub(r"\\\s*\n\s*", " ", command)
+    invocations = []
+    for line in joined.splitlines():
+        start = line.find("gh api")
+        if start >= 0:
+            invocations.append(line[start:].split("|", 1)[0].strip())
+    return invocations
+
+
 @pytest.mark.parametrize(
-    "name", ["ci.yml", "build.yml", "build-krdict-resource.yml", "release.yml"]
+    "name", ["ci.yml", "build.yml", "release.yml"]
 )
 def test_every_workflow_is_parseable_and_declares_jobs(name: str) -> None:
     workflow = _workflow(name)
@@ -201,154 +204,8 @@ def test_build_workflow_does_not_publish_releases() -> None:
     assert _workflow("build.yml")["permissions"] == {"contents": "read"}
 
 
-def test_krdict_producer_is_manual_read_only_and_verifies_an_https_source() -> None:
-    workflow = _workflow("build-krdict-resource.yml")
-    inputs = _triggers(workflow)["workflow_dispatch"]["inputs"]
-
-    assert set(_triggers(workflow)) == {"workflow_dispatch"}
-    assert isinstance(workflow.get("run-name"), str)
-    assert "${{ inputs.resource_version }}" in workflow["run-name"]
-    assert workflow["permissions"] == {"contents": "read"}
-    assert {"source_url", "source_sha256"} <= set(inputs)
-    assert not {"source_run_id", "source_artifact", "source_zip_name"} & set(inputs)
-    assert all(inputs[name]["required"] for name in inputs)
-
-    steps = _steps(workflow, "build-resource")
-    validation = next(step for step in steps if step.get("name") == "Validate producer inputs")
-    validation_command = validation["run"]
-    assert '[[ "$SOURCE_URL" == https://* ]]' in validation_command
-    assert '[[ "$RESOURCE_VERSION" =~ ^[A-Za-z0-9._-]+$ ]]' in validation_command
-    assert '[[ "$SOURCE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]' in validation_command
-    assert '[[ "$BUILD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]' in validation_command
-    assert '[[ "$SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]' in validation_command
-    download = next(
-        step
-        for step in steps
-        if step.get("name") == "Download and verify approved official source"
-    )
-    command = download["run"]
-    assert "curl --fail --location --proto '=https' --proto-redir '=https'" in command
-    assert 'source_path="$RUNNER_TEMP/krdict-source.zip"' in command
-    assert "sha256sum --check --status -" in command
-    assert steps.index(validation) < steps.index(download)
-    assert steps.index(download) < next(
-        index for index, step in enumerate(steps) if "build_seed.py" in step.get("run", "")
-    )
-
-
-def test_krdict_producer_builds_validates_packages_and_uploads_only_review_artifacts() -> None:
-    workflow = _workflow("build-krdict-resource.yml")
-    steps = _steps(workflow, "build-resource")
-    commands = [_shell_code(step.get("run", "")) for step in steps]
-    joined = "\n".join(commands)
-
-    assert "tools/krdict/build_seed.py" in joined
-    assert "tools/krdict/validate_seed.py" in joined
-    assert "tools/krdict/package_resource.py" in joined
-    assert joined.index("build_seed.py") < joined.index("validate_seed.py") < joined.index(
-        "package_resource.py"
-    )
-    assert all("${{ inputs." not in command for command in commands)
-
-    upload = next(step for step in steps if "upload-artifact" in step.get("uses", ""))
-    assert upload["with"]["path"] == "producer-output/"
-    assert upload["with"]["name"] == "hanly-krdict-resource"
-    assert upload["with"]["if-no-files-found"] == "error"
-    assert upload["with"]["retention-days"] == 30
-    rendered = "\n".join(str(step) for step in steps)
-    assert "krdict-source.zip" not in upload["with"]["path"]
-    assert "$RUNNER_TEMP" not in upload["with"]["path"]
-    assert "actions/download-artifact" not in rendered
-    assert "gh release" not in rendered
-    assert "action-gh-release" not in rendered
-
-
-def test_release_has_automatic_and_manual_recovery_triggers() -> None:
-    workflow = _workflow("release.yml")
-    triggers = _triggers(workflow)
-    workflow_run = triggers["workflow_run"]
-    dispatch = triggers["workflow_dispatch"]
-    inputs = dispatch["inputs"]
-
-    assert set(triggers) == {"workflow_run", "workflow_dispatch"}
-    assert workflow_run["workflows"] == ["Build Desktop Artifacts"]
-    assert workflow_run["types"] == ["completed"]
-    assert set(inputs) == {
-        "tag",
-        "resource_run_id",
-        "reuse_previous_release_resource",
-    }
-    assert inputs["tag"]["required"] is True
-    assert inputs["tag"]["type"] == "string"
-    assert inputs["resource_run_id"]["required"] is False
-    assert inputs["resource_run_id"]["type"] == "string"
-    reuse = inputs["reuse_previous_release_resource"]
-    assert reuse["required"] is False
-    assert reuse["type"] == "boolean"
-    assert reuse.get("default") is False
-
-    release_job = workflow["jobs"]["release"]
-    assert workflow["permissions"] == {"actions": "read", "contents": "write"}
-    condition = str(release_job.get("if", ""))
-    required_condition = (
-        "github.event_name",
-        "github.event.workflow_run.event",
-        "github.event.workflow_run.conclusion",
-        "github.event.workflow_run.head_repository.full_name",
-        "github.repository",
-        "success",
-    )
-    assert all(fragment in condition for fragment in required_condition)
-    assert "push" in condition and "workflow_dispatch" in condition
-
-    release_env = str(release_job.get("env", {}))
-    release_env += str([step.get("env", {}) for step in _steps(workflow, "release")])
-    assert "reuse_previous_release_resource" in release_env
-
-    concurrency = workflow["concurrency"]
-    assert isinstance(concurrency, dict)
-    group = str(concurrency["group"])
-    assert group != "release-publish"
-    assert "inputs.tag" in group
-    assert "workflow_run.head_branch" in group
-    assert concurrency["cancel-in-progress"] is False
-
-
-def test_release_uses_step_outputs_for_resolved_state() -> None:
-    workflow = _workflow("release.yml")
-    steps = _steps(workflow, "release")
-    application = _step(workflow, "release", step_id="application")
-    preflight = _step(workflow, "release", step_id="preflight")
-    resources = _step(workflow, "release", step_id="resources")
-
-    assert {"run_id", "head_sha"} <= _redirected_names(application["run"], "GITHUB_OUTPUT")
-    assert _step(workflow, "release", name="Download per-platform application artifacts")["with"][
-        "run-id"
-    ] == "${{ steps.application.outputs.run_id }}"
-    tagged = next(step for step in steps if "release_version.py" in step.get("run", ""))
-    assert "steps.application.outputs.head_sha" in str(tagged)
-
-    assert "noop" in _redirected_names(preflight["run"], "GITHUB_OUTPUT")
-    preflight_index = steps.index(preflight)
-    for step in steps[preflight_index + 1 :]:
-        if step.get("id") in {"resources", "assets", "manifest", "publish"}:
-            assert "steps.preflight.outputs.noop" in str(step.get("if", ""))
-
-    assert "resource_run_id" in _redirected_names(resources["run"], "GITHUB_OUTPUT")
-    assert _step(workflow, "release", name="Download resource artifacts")["with"]["run-id"] == (
-        "${{ steps.resources.outputs.resource_run_id }}"
-    )
-    override_keys = [
-        key
-        for key, value in (workflow["jobs"]["release"].get("env") or {}).items()
-        if value == "${{ inputs.resource_run_id }}"
-    ]
-    assert len(override_keys) == 1
-    assert override_keys[0].lower() != "resource_run_id"
-
-
 def test_workflow_env_writes_do_not_shadow_job_environment() -> None:
-    for workflow_name in ("ci.yml", "build.yml", "build-krdict-resource.yml", "release.yml"):
+    for workflow_name in ("ci.yml", "build.yml", "release.yml"):
         workflow = _workflow(workflow_name)
         for job_name, job in workflow["jobs"].items():
             job_env = set((job.get("env") or {}).keys())
@@ -359,127 +216,6 @@ def test_workflow_env_writes_do_not_shadow_job_environment() -> None:
                 )
             )
             assert not written.intersection(job_env), (workflow_name, job_name, written & job_env)
-
-
-def test_release_lookup_distinguishes_confirmed_404_from_fatal_errors() -> None:
-    workflow = _workflow("release.yml")
-    collision = _step(workflow, "release", name="Check release collision")
-    code = _shell_code(collision["run"])
-    lower = code.lower()
-
-    assert "releases/tags/$release_tag" in lower
-    _assert_numeric_404_handling(code, "response_status")
-    # Public duplicates are an automatic no-op only; manual, draft, and
-    # prerelease collisions are fatal.
-    assert "automatic" in lower and "manual" in lower
-    assert "draft" in lower and "prerelease" in lower
-    assert "exit 0" in lower or "no-op" in lower or "noop" in lower
-    assert "exit 1" in code
-
-    latest = _step(workflow, "release", step_id="resources")
-    latest_code = _shell_code(latest["run"])
-    assert "/releases/latest" in latest_code
-    _assert_numeric_404_handling(latest_code, "latest_status")
-
-
-def test_release_uses_the_exact_triggering_application_run_and_proves_the_tag() -> None:
-    workflow = _workflow("release.yml")
-    steps = _steps(workflow, "release")
-    app_download = _step(workflow, "release", name="Download per-platform application artifacts")
-    assert app_download["with"]["run-id"] == "${{ steps.application.outputs.run_id }}"
-
-    setup = next(
-        step for step in steps if str(step.get("uses", "")).startswith("actions/setup-python@")
-    )
-    assert str(setup["with"]["python-version"]) == "3.13"
-
-    resolve = _step(workflow, "release", step_id="application")
-    resolve_code = _shell_code(resolve["run"])
-    assert all(marker in resolve_code for marker in ("RELEASE_TAG", "build.yml", "head_sha"))
-    lookup = "gh run list --workflow build.yml"
-    api_lookup = "actions/workflows/build.yml/runs"
-    assert lookup in resolve_code or api_lookup in resolve_code
-    if lookup in resolve_code:
-        assert "--commit" in resolve_code
-        assert "--json databaseId,headSha,event,conclusion,headBranch" in resolve_code
-        assert "headSha == env.APPLICATION_HEAD_SHA" in resolve_code
-    else:
-        assert "head_sha == env.TAG_SHA" in resolve_code
-        assert "head_branch == env.RELEASE_TAG" in resolve_code
-    assert "git/ref/tags" in resolve_code or "refs/tags" in resolve_code
-    assert re.search(r"\^v\[0-9\].*\\\.", resolve_code)
-    assert all(
-        re.search(pattern, resolve_code, re.S)
-        for pattern in (
-            r"while\s+\[\[.*(?:tag|object).*==\s*\"tag\"",
-            r"\[\[.*(?:tag|object).*==\s*\"commit\"",
-        )
-    )
-    assert "git/refs/tags" in resolve_code or "refs/tags?" in resolve_code
-    assert "exactly one" in resolve_code.lower() or re.search(
-        r"(?:len|count)\([^\n]+\).*1", resolve_code.lower()
-    )
-    assert re.search(r"run_path\s*=\s*\"\$\{run_path%@\*\}\"", resolve_code)
-    assert all(marker in resolve_code for marker in (".github/workflows/build.yml", "success"))
-    assert re.search(
-        r"\[\[\s*\"\$WORKFLOW_RUN_HEAD_SHA\"\s*==\s*\"\$tag_sha\"", resolve_code
-    )
-    assert not re.search(r"--branch\s+['\"]?\$RELEASE_TAG", resolve_code)
-
-    checkout = next(
-        step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")
-    )
-    checkout_ref = str(checkout.get("with", {}).get("ref", ""))
-    assert checkout_ref == "${{ github.event.repository.default_branch }}"
-    assert checkout["with"]["persist-credentials"] is False
-    assert steps.index(checkout) < steps.index(resolve)
-
-    run_resolvers = [
-        step
-        for step in steps
-        if any(
-            marker in _shell_code(step.get("run", ""))
-            for marker in (lookup, api_lookup)
-        )
-    ]
-    assert [step.get("id") for step in run_resolvers] == ["application"]
-
-    # The build.yml provenance of this exact run is proven once, by
-    # verify_application_run against the API, and is not restated here.
-    assert resolve_code.count(".github/workflows/build.yml") >= 1
-    tagged = next(step for step in steps if "release_version.py" in step.get("run", ""))
-    tagged_code = _shell_code(tagged["run"])
-    assert ".github/workflows/build.yml" not in tagged_code
-    assert all(
-        marker in tagged_code
-        for marker in (
-            "tomllib",
-            "packages/hanly-app/pyproject.toml",
-            "packages/hanly/pyproject.toml",
-            "tools/release_version.py",
-        )
-    )
-    invocation = tagged_code.split("python tools/release_version.py", 1)[1]
-    assert all(
-        flag in invocation
-        for flag in (
-            "--tag",
-            "--engine-version",
-            "--app-version",
-            "--app-hanly-pin",
-            "--app-hanly-concrete-pin",
-        )
-    )
-    assert "product_version" not in tagged_code.lower()
-    assert "verify_tag" not in tagged_code.lower()
-    assert not re.search(r"pip\s+install[^\n]+packages/(?:hanly|hanly-app)", tagged_code)
-    assert not re.search(r"git\s+(?:checkout|switch)\s+[^\n]*\$", tagged_code)
-
-    release_job = workflow["jobs"]["release"]
-    assert "GH_TOKEN" not in release_job.get("env", {})
-    for step in steps:
-        if re.search(r"\bgh\s+(?:api|run|release)\b", _shell_code(step.get("run", ""))):
-            assert "GH_TOKEN" in step.get("env", {}), step.get("name", step.get("id"))
 
 
 def test_build_refuses_a_tag_that_disagrees_with_the_product_version() -> None:
@@ -497,179 +233,6 @@ def test_build_refuses_a_tag_that_disagrees_with_the_product_version() -> None:
     assert build.index(tag_push_check) < next(
         index for index, step in enumerate(build) if "build_package.py" in step.get("run", "")
     )
-def test_release_consumes_the_artifact_names_the_build_publishes() -> None:
-    upload = next(
-        step
-        for step in _steps(_workflow("build.yml"), "build")
-        if "upload-artifact" in step.get("uses", "")
-    )
-    assert upload["with"]["name"] == "hanly-desktop-${{ matrix.platform }}"
-    download = _step(
-        _workflow("release.yml"),
-        "release",
-        name="Download per-platform application artifacts",
-    )
-    assert download["with"]["pattern"] == "hanly-desktop-*"
-
-    code = _shell_code(_step(_workflow("release.yml"), "release", step_id="assets")["run"])
-    assert all(
-        archive in code
-        for archive in (
-            "hanly-desktop-windows.zip",
-            "hanly-desktop-macos.tar.gz",
-            "hanly-desktop-linux.tar.gz",
-        )
-    )
-    assert _has_count_guard(code, 3)
-    assert all(marker in code.lower() for marker in ("duplicate", "unexpected", "symlink"))
-
-
-def test_release_selects_resources_by_provenance_and_fails_closed() -> None:
-    workflow = _workflow("release.yml")
-    steps = _steps(workflow, "release")
-    resource = _step(workflow, "release", step_id="resources")
-    code = _shell_code(resource["run"])
-    lower = code.lower()
-    download = _step(workflow, "release", name="Download resource artifacts")
-    assert download["with"]["name"] == "hanly-krdict-resource"
-    assert "build-krdict-resource.yml" in code
-    assert all(marker in lower for marker in ("head_branch", "success", "completed", "artifacts"))
-    assert "head_repository.full_name" in lower or "headrepository.full_name" in lower
-    assert "actions/runs/$run_id" in lower
-    rest_path = ".github/workflows/build-krdict-resource.yml@main"
-    assert rest_path.rsplit("@", 1)[0] in code
-    assert re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*%@\*\}", code) or re.search(
-        r"\.path[^\n]*sub\(\"@\[\^@\]\*\";\s*\"\"\)", code
-    )
-    assert ".repository.full_name // empty" in code or ".repository.full_name" in code
-    assert all(marker in lower for marker in ("/releases/latest", "published_at", "created_at"))
-    assert not re.search(r"(?:previous|release)[^\n]{0,80}created_at", code, re.I)
-    assert all(
-        marker in lower
-        for marker in ("previous", "candidate", "hanly-resources.json", "asset_name", "exit 1")
-    )
-    assert "cp " in lower or "copy" in lower
-    assert all(
-        marker in code
-        for marker in (
-            "verify_producer_run",
-            'gh release download "$PREVIOUS_TAG"',
-            '--pattern "$previous_asset_name"',
-            "cp release-inputs/previous/hanly-resources.json",
-        )
-    )
-
-    # The manual override and explicit previous-resource escape are local
-    # branches; neither is allowed to fall through silently.
-    assert re.search(
-        r"resource_run_id.{0,240}reuse_previous_release_resource|"
-        r"reuse_previous_release_resource.{0,240}resource_run_id",
-        code,
-        re.S | re.I,
-    )
-    assert all(
-        marker in lower for marker in ("github_step_summary", "reuse_previous_release_resource")
-    )
-    assert "--notes" in lower or "notes_file" in lower
-    assert "newer" in lower or "created_at" in lower
-    assert re.search(
-        r'python\s+-\s+"\$[A-Za-z_][A-Za-z0-9_]*created_at"\s+"\$[A-Za-z_][A-Za-z0-9_]*published_at"'
-        r'.{0,700}parse\(sys\.argv\[1\]\)\s*>\s*parse\(sys\.argv\[2\]\)',
-        code,
-        re.S | re.I,
-    )
-    assert "first release" in lower or "bootstrap" in lower
-    assert "gh run list" in lower or "actions/workflows" in lower
-    assert "default_branch" in lower or "defaultbranch" in lower
-    assert re.search(r"verify_producer_run\s+\"\$[A-Za-z_][A-Za-z0-9_]*\"", code)
-    assert re.search(r"created_at.{0,900}verify_producer_run", code, re.S)
-    assert "exit 1" in code
-    _assert_step_order(steps, "preflight", "resources", "manifest", "publish")
-
-
-def test_release_uses_draft_first_exact_six_asset_publication() -> None:
-    workflow = _workflow("release.yml")
-    steps = _steps(workflow, "release")
-    publish = _step(workflow, "release", step_id="publish")
-    publish_code = _shell_code(publish["run"])
-
-    assert all(
-        marker in publish_code
-        for marker in (
-            "--draft",
-            "--verify-tag",
-            "gh release create",
-            "gh api",
-            "assets",
-            "--draft=false",
-        )
-    )
-    tag_recheck = "git/ref/tags/$RELEASE_TAG"
-    assert tag_recheck in publish_code
-    assert publish_code.index(tag_recheck) < publish_code.index("gh release create")
-    assert re.search(
-        r'\[\[\s*"\$[^"\n]*tag[^"\n]*"\s*==\s*"\$APPLICATION_HEAD_SHA"',
-        publish_code,
-        re.I,
-    )
-    asset_api = publish_code.index(".assets[].name")
-    assert publish_code.index("gh release create") < asset_api
-    assert asset_api < publish_code.index("gh release edit")
-    assert _has_count_guard(publish_code, 6)
-    assert all(
-        marker in publish_code
-        for marker in ("actual_assets", ".assets[].name", "sorted_expected")
-    )
-    assert all(
-        name in publish_code
-        for name in (
-            "hanly-desktop-windows.zip",
-            "hanly-desktop-macos.tar.gz",
-            "hanly-desktop-linux.tar.gz",
-            "hanly-resources.json",
-            "SHA256SUMS",
-        )
-    )
-    assert all(
-        marker in publish_code
-        for marker in (
-            "krdict-*.sqlite3.zst",
-            '--title "Hanly Desktop $RELEASE_TAG"',
-            "--generate-notes",
-        )
-    )
-    assert _uses_shell_variable(publish_code, "RELEASE_TAG")
-    assert "${{ inputs.tag }}" not in publish_code
-    for step in steps:
-        code = _shell_code(step.get("run", ""))
-        assert not re.search(r"\bgit\s+(?:tag|push|update-ref)\b", code)
-        assert not any(
-            tool in code
-            for tool in (
-                "tools/krdict/build_seed.py",
-                "tools/krdict/validate_seed.py",
-                "tools/krdict/package_resource.py",
-            )
-        )
-    _assert_step_order(steps, "assets", "manifest", "publish")
-
-
-@pytest.mark.parametrize(
-    "name, job",
-    [
-        ("release.yml", "release"),
-        ("build-krdict-resource.yml", "build-resource"),
-    ],
-)
-def test_release_and_producer_shells_do_not_interpolate_external_context(
-    name: str, job: str
-) -> None:
-    workflow = _workflow(name)
-    direct_context = re.compile(r"\$\{\{\s*(?:github|matrix|inputs)\b")
-
-    for step in _steps(workflow, job):
-        command = _shell_code(step.get("run", ""))
-        assert not direct_context.search(command), (name, step.get("name"), command)
 
 
 def test_build_context_values_are_env_backed_in_shell_commands() -> None:
@@ -686,53 +249,8 @@ def test_build_context_values_are_env_backed_in_shell_commands() -> None:
         assert not direct_github.search(_shell_code(step.get("run", ""))), step
 
 
-def test_release_manifest_validation_is_executable_and_checks_staged_bytes() -> None:
-    workflow = _workflow("release.yml")
-    steps = _steps(workflow, "release")
-    manifest_code = _shell_code(_step(workflow, "release", step_id="manifest")["run"])
-    resource_code = _shell_code(_step(workflow, "release", step_id="resources")["run"])
-    require_lines = "\n".join(
-        line for line in manifest_code.splitlines() if re.search(r"\brequire\(", line)
-    )
-
-    assert re.search(r"def require\(condition:\s*bool", manifest_code)
-    assert re.search(r"raise (?:ValueError|RuntimeError)", manifest_code)
-    for guard in (
-        "isinstance(payload, dict)",
-        'payload["manifest_version"] == 1',
-        'set(resources) == {"krdict"}',
-        '"url" not in resource',
-    ):
-        assert guard in require_lines
-    assert re.search(
-        r'require\([^\n]*resource\["asset_name"\]\s*==\s*f"krdict-\{[^\n]+\}\.sqlite3\.zst"',
-        require_lines,
-    )
-    assert re.search(
-        r'require\([^\n]*re\.fullmatch\(r"sha256:\[0-9a-f\]\{64\}"',
-        require_lines,
-    )
-
-    staged_manifest = 'cp "$producer_manifest" release-output/hanly-resources.json'
-    staged_validation = 'python - "$resource_asset_name" release-output/hanly-resources.json'
-    assert staged_manifest in manifest_code
-    assert staged_validation in manifest_code
-    assert manifest_code.index(staged_manifest) < manifest_code.index(staged_validation)
-    assert "hashlib.sha256(artifact.read_bytes())" in manifest_code
-    assert "artifact.stat().st_size" in manifest_code
-    compare_code = resource_code + "\n" + manifest_code
-    assert re.search(r"if\s+\w*version\s*==\s*\w*version", compare_code)
-    assert re.search(
-        r"require\([^\n]*(?:resource|candidate)[^\n]*checksum[^\n]*(?:previous|prior)",
-        compare_code,
-        re.I,
-    )
-    assert "checksum changed" in compare_code.lower()
-    _assert_step_order(steps, "assets", "manifest", "publish")
-
-
 @pytest.mark.parametrize(
-    "name", ["release.yml", "build.yml", "build-krdict-resource.yml"]
+    "name", ["release.yml", "build.yml"]
 )
 def test_release_lane_actions_are_pinned_to_immutable_commits(name: str) -> None:
     """A floating major tag is mutable and its owner can move it. These three
@@ -747,23 +265,6 @@ def test_release_lane_actions_are_pinned_to_immutable_commits(name: str) -> None
         _action, _, revision = reference.partition("@")
         assert re.fullmatch(r"[0-9a-f]{40}", revision), (name, reference)
         assert re.search(r"#\s*v\d+\.\d+\.\d+", trailer), (name, reference)
-
-
-def test_the_release_lane_installs_only_the_packages_it_imports() -> None:
-    """The publisher needs hanly-app's manifest parser and nothing else: hanly
-    declares no dependencies, hanly-app base adds only zstandard, and the GUI
-    extras stay out of a job that holds contents: write."""
-
-    install = next(
-        step
-        for step in _steps(_workflow("release.yml"), "release")
-        if "pip install" in step.get("run", "")
-    )
-    code = _shell_code(install["run"])
-
-    assert "packages/hanly" in code and "packages/hanly-app" in code
-    assert "[runtime]" not in code
-    assert "pip install --upgrade pip" not in code
 
 
 def test_every_push_is_checked_on_windows_without_renaming_the_linux_gates() -> None:
@@ -786,39 +287,374 @@ def test_every_push_is_checked_on_windows_without_renaming_the_linux_gates() -> 
     assert "python -m pytest" in commands
 
 
-def test_the_release_lane_never_authenticates_git_by_hand() -> None:
-    """The checkout runs with `persist-credentials: false`, so this job holds no
-    git credential at all. A hand-rolled one is either a header GitHub's git
-    endpoint rejects -- a bearer `http.extraheader` already failed a release
-    this way -- or a token written somewhere it can be read back. Reads of
-    another commit go through `gh`, which already has the token."""
+@pytest.mark.parametrize(
+    "name", ["release.yml", "build.yml", "ci.yml"]
+)
+def test_no_gh_api_call_combines_slurp_with_its_own_jq(name: str) -> None:
+    """``gh api`` refuses ``--slurp`` together with ``--jq`` or ``--template``
+    and prints its usage instead, which a release already failed on. Paged
+    output is filtered by piping into a real ``jq``."""
 
-    workflow = _workflow("release.yml")
-    steps = _steps(workflow, "release")
-    checkout = next(step for step in steps if "checkout" in step.get("uses", ""))
+    for step in _all_steps(_workflow(name)):
+        for command in _gh_api_commands(_shell_code(step.get("run", ""))):
+            if "--slurp" in command:
+                assert "--jq" not in command, (name, command)
+                assert "-q " not in command and "--template" not in command, (name, command)
+
+
+@pytest.mark.parametrize(
+    "name", ["release.yml", "build.yml", "ci.yml"]
+)
+def test_every_parameterised_gh_api_query_states_its_method(name: str) -> None:
+    """``gh api`` switches to POST as soon as a ``-f``/``-F`` field appears, so a
+    list query that filters with fields has to say ``--method GET`` or it stops
+    being a query at all."""
+
+    for step in _all_steps(_workflow(name)):
+        for command in _gh_api_commands(_shell_code(step.get("run", ""))):
+            if re.search(r"(?<!-)-[fF]\s+\S+=", command):
+                assert "--method GET" in command or "-X GET" in command, (name, command)
+
+
+# --- The two-job release lane -------------------------------------------------
+#
+# KRDICT is built locally from the manually acquired official ZIP, so the
+# workflow never fetches a source archive and never produces the resource. It
+# stages a draft, waits for a human to attach the two local files and approve,
+# and only then publishes.
+
+
+def _release() -> dict[str, Any]:
+    return _workflow("release.yml")
+
+
+def _release_code(job: str) -> str:
+    return "\n".join(_shell_code(step.get("run", "")) for step in _steps(_release(), job))
+
+
+def test_the_release_lane_is_a_staged_draft_then_an_approved_publish() -> None:
+    workflow = _release()
+    stage = workflow["jobs"]["stage"]
+    finalize = workflow["jobs"]["finalize"]
+
+    assert set(workflow["jobs"]) == {"stage", "finalize"}
+    assert finalize["needs"] == "stage"
+    assert finalize["environment"] == "hanly-release"
+    # One per-tag concurrency group prevents two runs from mutating the same
+    # draft concurrently while one waits for approval.
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert "environment" not in stage
+    assert workflow["permissions"] == {"actions": "read", "contents": "write"}
+
+
+def test_staging_creates_the_draft_and_cannot_publish_it() -> None:
+    """The draft exists before anyone has attached a dictionary to it, and no
+    step in the staging half can make a release public."""
+
+    code = _release_code("stage")
+
+    assert "gh release create" in code
+    assert "--draft" in code
+    assert "--draft=false" not in code
+    assert "SHA256SUMS" not in code
+    for forbidden in ("gh release delete", "git tag", "git push"):
+        assert forbidden not in code
+
+
+def test_staging_needs_no_dictionary_and_no_resource_producer() -> None:
+    """A first release stages three application archives and nothing else, so a
+    missing KRDICT pair cannot stop the draft from being created."""
+
+    workflow = _release()
+    code = _release_code("stage")
+    rendered = str(workflow)
+
+    assert "refusing to stage a draft without the three application archives" in code
+    # No source archive, no producer run, and no way to ask for either.
+    for obsolete in (
+        "source_url",
+        "resource_run_id",
+        "reuse_previous_release_resource",
+        "build-krdict-resource",
+        "hanly-krdict-resource",
+    ):
+        assert obsolete not in rendered, obsolete
+    assert set(_triggers(workflow)["workflow_dispatch"]["inputs"]) == {"tag", "validate_only"}
+    assert not (WORKFLOWS / "build-krdict-resource.yml").exists()
+
+
+def test_staging_carries_the_previous_resource_so_an_app_release_needs_no_upload() -> None:
+    """A new application tag never implies the dictionary changed: the previous
+    release's exact bytes are staged again, and the operator replaces them in
+    the draft only when KRDICT actually moved."""
+
+    carried = _step(_release(), "stage", step_id="carried")
+    code = _shell_code(carried["run"])
+
+    assert "releases/latest" in code
+    assert "gh release download" in code
+    assert "hanly-resources.json" in code
+    assert "resources.krdict.asset_name" in code
+    # No previous release is a normal first release, not a failure.
+    assert "carried=false" in code
+
+
+def test_finalizing_reresolves_the_tag_and_accepts_only_its_own_draft() -> None:
+    """Approval can sit for days, so nothing staged earlier is trusted."""
+
+    steps = _steps(_release(), "finalize")
+    names = [step.get("name") for step in steps]
+    code = "\n".join(_shell_code(step.get("run", "")) for step in steps)
+
+    assert "Re-resolve the tag and its application build" in names
+    assert "release_build.py" in code
+    assert "classify" in code
+    assert 'action" == "reuse"' in code
+    assert "no draft staged for" in code
+
+
+def test_finalizing_takes_the_application_archives_from_the_exact_build() -> None:
+    """The draft's own copies are not authoritative; the build's artifacts are."""
+
+    download = next(
+        step
+        for step in _steps(_release(), "finalize")
+        if "download-artifact" in step.get("uses", "")
+    )
+
+    assert download["with"]["run-id"] == "${{ steps.application.outputs.run_id }}"
+    assert download["with"]["pattern"] == "hanly-desktop-*"
+    assert download["with"]["merge-multiple"] is False
+
+
+def test_finalizing_refuses_a_draft_without_exactly_one_resource_pair() -> None:
+    resources = _step(_release(), "finalize", step_id="resources")
+    code = _shell_code(resources["run"])
+
+    assert "exactly one krdict-" in code
+    assert "no hanly-resources.json" in code
+    assert "unexpected asset" in code
+    assert "gh release download" in code
+
+
+def test_finalizing_validates_every_resource_field_before_writing_checksums() -> None:
+    workflow = _release()
+    steps = _steps(workflow, "finalize")
+    validation = next(step for step in steps if "RemoteManifest" in step.get("run", ""))
+    code = _shell_code(validation["run"])
+
+    for requirement in (
+        "manifest_version must be 1",
+        "asset_name is not canonical",
+        "checksum is not canonical",
+        "schema_version must be 1",
+        "expected_entry_count must be positive",
+        "size must be positive",
+        "artifact checksum does not match manifest",
+        "artifact size does not match manifest",
+        "candidate resource_version matches previous but checksum changed",
+    ):
+        assert requirement in code, requirement
+
+    # The checksum manifest attests to nothing unless every payload asset has
+    # already been validated, so it is written last, in this same step.
+    assert code.index("RemoteManifest") < code.index("SHA256SUMS")
+    publish = _step(workflow, "finalize", step_id="publish")
+    assert steps.index(validation) < steps.index(publish)
+
+
+def test_publication_is_the_last_act_and_only_over_exactly_six_assets() -> None:
+    publish = _step(_release(), "finalize", step_id="publish")
+    code = _shell_code(publish["run"])
+
+    assert "gh release upload" in code
+    assert "--clobber" in code
+    for asset in (
+        "hanly-desktop-windows.zip",
+        "hanly-desktop-macos.tar.gz",
+        "hanly-desktop-linux.tar.gz",
+        "hanly-resources.json",
+        "SHA256SUMS",
+    ):
+        assert asset in code, asset
+    assert "RESOURCE_ASSET_NAME" in code
+    assert "expected exactly six release assets" in code
+    assert code.index("expected exactly six release assets") < code.index("--draft=false")
+    assert code.count("--draft=false") == 1
+    # A failed check leaves the draft; nothing here removes one.
+    assert "gh release delete" not in code
+
+
+def test_a_dry_run_validates_the_draft_and_writes_nothing() -> None:
+    workflow = _release()
+    steps = _steps(workflow, "finalize")
+    publish = _step(workflow, "finalize", step_id="publish")
+    dry_run = next(step for step in steps if step.get("name") == "Report a validated dry run")
+
+    assert publish["if"] == "${{ inputs.validate_only != true }}"
+    assert dry_run["if"] == "${{ inputs.validate_only == true }}"
+    assert steps.index(dry_run) < steps.index(publish)
+    # Only the publishing step writes to the release, so a dry run cannot.
+    writers = [step for step in steps if "gh release upload" in step.get("run", "")]
+    assert writers == [publish]
+
+
+def test_an_already_published_tag_is_a_no_op_rather_than_a_second_release() -> None:
+    workflow = _release()
+    stage = workflow["jobs"]["stage"]
+
+    assert stage["outputs"]["noop"] == "${{ steps.preflight.outputs.action == 'noop' }}"
+    assert workflow["jobs"]["finalize"]["if"] == "needs.stage.outputs.noop != 'true'"
+
+
+def test_the_release_lane_installs_only_the_packages_it_imports() -> None:
+    """Both halves need hanly-app's manifest parser and nothing else: the GUI
+    extras stay out of jobs that hold contents: write."""
+
+    for job in ("stage", "finalize"):
+        install = next(
+            step for step in _steps(_release(), job) if "pip install" in step.get("run", "")
+        )
+        code = _shell_code(install["run"])
+
+        assert "packages/hanly" in code and "packages/hanly-app" in code
+        assert "[runtime]" not in code
+
+
+def test_the_release_lane_never_authenticates_git_by_hand() -> None:
+    """Both checkouts run with `persist-credentials: false`, so neither job holds
+    a git credential. Reads of another commit go through the API."""
+
+    workflow = _release()
     credential_in_url = re.compile(r"https://[^\s/]*\$[^\s/]*@")
 
-    assert checkout["with"]["persist-credentials"] is False
+    for job in ("stage", "finalize"):
+        steps = _steps(workflow, job)
+        checkout = next(step for step in steps if "checkout" in step.get("uses", ""))
+        assert checkout["with"]["persist-credentials"] is False
 
-    for step in steps:
-        code = _shell_code(step.get("run", ""))
-        assert "extraheader" not in code, step.get("name")
-        assert not credential_in_url.search(code), step.get("name")
-        assert not re.search(r"\bgit\s+(?:fetch|clone|pull|ls-remote)\b", code), step.get("name")
+        for step in steps:
+            code = _shell_code(step.get("run", ""))
+            assert "extraheader" not in code, (job, step.get("name"))
+            assert not credential_in_url.search(code), (job, step.get("name"))
+            assert not re.search(r"\bgit\s+(?:fetch|clone|pull|ls-remote)\b", code)
 
 
-def test_the_tagged_version_check_reads_the_tag_commit_through_the_api() -> None:
-    """The tag commit is untrusted content being read by the job that publishes,
-    so its two files arrive as data rather than as a tree checked out beside the
-    default-branch tooling that runs here."""
-
-    tagged = next(
-        step
-        for step in _steps(_workflow("release.yml"), "release")
-        if "release_version.py" in step.get("run", "")
-    )
+@pytest.mark.parametrize("job", ["stage", "finalize"])
+def test_the_tagged_version_check_reads_the_tag_commit_through_the_api(job: str) -> None:
+    tagged = _step(_release(), job, name="Verify tagged product version")
     code = _shell_code(tagged["run"])
 
     assert "contents/$path?ref=$APPLICATION_HEAD_SHA" in code
     assert "application/vnd.github.raw" in code
     assert tagged["env"]["APPLICATION_HEAD_SHA"] == "${{ steps.application.outputs.head_sha }}"
+
+
+@pytest.mark.parametrize("job", ["stage", "finalize"])
+def test_release_shells_do_not_interpolate_external_context(job: str) -> None:
+    direct_context = re.compile(r"\$\{\{\s*(?:github|matrix|inputs)\b")
+
+    for step in _steps(_release(), job):
+        command = _shell_code(step.get("run", ""))
+        assert not direct_context.search(command), (job, step.get("name"), command)
+
+
+def test_a_previous_resource_is_carried_only_into_a_brand_new_draft() -> None:
+    """An existing draft may already hold the pair the operator uploaded, and
+    replacing it would silently swap out the dictionary they chose."""
+
+    workflow = _release()
+    carried = _step(workflow, "stage", step_id="carried")
+    repair = _step(workflow, "stage", name="Create or repair the draft release")
+    code = _shell_code(repair["run"])
+
+    assert "steps.preflight.outputs.action == 'create'" in carried["if"]
+    # The repair uploads the three archives unconditionally, and the carried
+    # pair only on the branch that just created the draft.
+    assert 'PREFLIGHT_ACTION" == "create" && "$CARRIED" == "true"' in code
+    upload = code.split("upload=(", 1)[1].split("gh release upload", 1)[0]
+    assert "hanly-resources.json" in upload.split('== "create"', 1)[1]
+    assert "hanly-resources.json" not in upload.split('== "create"', 1)[0]
+
+
+def test_finalizing_repeats_the_tagged_version_check_rather_than_trusting_stage() -> None:
+    """Staging read the tag commit's metadata before the approval; the job that
+    makes a version public reads it again."""
+
+    for job in ("stage", "finalize"):
+        step = _step(_release(), job, name="Verify tagged product version")
+        code = _shell_code(step["run"])
+
+        assert "tools/tagged_metadata.py" in code
+        assert "tools/release_version.py" in code
+        assert "--app-hanly-concrete-pin" in code
+        assert step["env"]["APPLICATION_HEAD_SHA"] == "${{ steps.application.outputs.head_sha }}"
+
+
+def test_a_dry_run_makes_the_staging_half_read_only() -> None:
+    """`validate_only` writes nothing anywhere, so staging may not create a
+    draft, upload to one, or even fetch the artifacts it would upload."""
+
+    workflow = _release()
+    steps = _steps(workflow, "stage")
+    preflight = _step(workflow, "stage", step_id="preflight")
+
+    mutating = [
+        step
+        for step in steps
+        if "gh release create" in step.get("run", "")
+        or "gh release upload" in step.get("run", "")
+        or "download-artifact" in step.get("uses", "")
+        or step.get("id") == "carried"
+    ]
+    assert mutating
+    for step in mutating:
+        assert "inputs.validate_only != true" in step["if"], step.get("name")
+
+    # With nothing created, a dry run needs the draft to exist already.
+    assert "validate_only needs an existing draft" in _shell_code(preflight["run"])
+
+
+def test_a_dry_run_is_refused_where_it_could_not_be_honoured() -> None:
+    """An automatic release has no operator asking for a dry run, so the flag is
+    manual-only in both halves rather than silently ignored."""
+
+    for job in ("stage", "finalize"):
+        code = _release_code(job)
+
+        assert "validate_only must be boolean" in code
+        assert "validate_only is manual-only" in code
+
+
+def test_the_workflow_does_not_claim_cancellation_deletes_a_draft() -> None:
+    """Cancelling a pending approval leaves the draft exactly where it is; only
+    an operator removes one."""
+
+    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
+
+    assert "discard a staged draft" not in text
+    assert "never cancelling" in text
+    assert _release()["concurrency"]["cancel-in-progress"] is False
+    # Approval starts the job; publication is its last step.
+    assert "the moment the draft becomes public" not in text
+
+
+def test_the_published_checksums_are_proven_to_be_the_generated_ones() -> None:
+    """A draft may carry a SHA256SUMS an earlier finalize left behind, so the
+    asset-name check cannot tell a fresh one from a stale one. The bytes are
+    compared before anything becomes public."""
+
+    workflow = _release()
+    resources = _step(workflow, "finalize", step_id="resources")
+    publish = _step(workflow, "finalize", step_id="publish")
+    allowed = _shell_code(resources["run"])
+    code = _shell_code(publish["run"])
+
+    # Tolerated on the draft, because a rerun has to be able to repair its own
+    # partially finished work rather than refuse it.
+    assert "SHA256SUMS" in allowed.split("allowed=(", 1)[1].split(")", 1)[0]
+
+    assert "cmp --silent" in code
+    assert "release-output/SHA256SUMS" in code
+    assert "is not the one generated for these assets" in code
+    assert code.index("cmp --silent") < code.index("--draft=false")
