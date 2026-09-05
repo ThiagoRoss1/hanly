@@ -178,6 +178,21 @@ def test_linux_build_installs_only_the_missing_egl_loader_dependency() -> None:
     assert steps.index(step) < steps.index(build)
 
 
+def test_linux_build_uses_the_cpu_only_ocr_runtime() -> None:
+    steps = _steps(_workflow("build.yml"), "build")
+    cpu_runtime = _step(
+        _workflow("build.yml"), "build", name="Install CPU-only OCR runtime on Linux"
+    )
+    packages = _step(_workflow("build.yml"), "build", name="Install packages")
+
+    assert cpu_runtime["if"] == "matrix.platform == 'linux'"
+    assert cpu_runtime["run"] == (
+        "python -m pip install torch torchvision "
+        "--index-url https://download.pytorch.org/whl/cpu"
+    )
+    assert steps.index(cpu_runtime) < steps.index(packages)
+
+
 def test_build_retains_only_the_release_archive() -> None:
     upload = next(
         step
@@ -193,6 +208,16 @@ def test_build_retains_only_the_release_archive() -> None:
     # `if: always()` would upload after a failed build and report a second,
     # misleading "no files found" error on top of the real failure.
     assert "if" not in upload
+
+
+def test_build_rejects_an_archive_too_large_for_github_releases() -> None:
+    verify = _step(
+        _workflow("build.yml"), "build", name="Verify the release archive exists"
+    )
+    code = _shell_code(verify["run"])
+
+    assert "max_release_asset_bytes=2147483648" in code
+    assert '"$archive_size" -lt "$max_release_asset_bytes"' in code
 
 
 def test_build_workflow_does_not_publish_releases() -> None:
@@ -359,6 +384,20 @@ def test_staging_creates_the_draft_and_cannot_publish_it() -> None:
     assert "SHA256SUMS" not in code
     for forbidden in ("gh release delete", "git tag", "git push"):
         assert forbidden not in code
+
+
+def test_release_rejects_oversized_application_assets_before_mutating_the_draft() -> None:
+    for job in ("stage", "finalize"):
+        validation = _step(_release(), job, name="Validate application assets")
+        code = _shell_code(validation["run"])
+
+        assert "max_release_asset_bytes=2147483648" in code
+        assert '"$archive_size" -lt "$max_release_asset_bytes"' in code
+
+    stage_steps = _steps(_release(), "stage")
+    validation = _step(_release(), "stage", name="Validate application assets")
+    draft = _step(_release(), "stage", name="Create or repair the draft release")
+    assert stage_steps.index(validation) < stage_steps.index(draft)
 
 
 def test_staging_needs_no_dictionary_and_no_resource_producer() -> None:

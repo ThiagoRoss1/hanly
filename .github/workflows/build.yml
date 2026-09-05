@@ -55,6 +55,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --group dev
 
+      - name: Install CPU-only OCR runtime on Linux
+        if: matrix.platform == 'linux'
+        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install packages
         run: |
           python -m pip install --editable packages/hanly
@@ -93,12 +97,18 @@ jobs:
             if [ -f "$candidate" ]; then archive="$candidate"; fi
           done
           test -n "$archive" || { echo "no release archive for ${{ matrix.platform }}" >&2; exit 1; }
-          echo "release archive: $archive ($(wc -c < "$archive") bytes)"
+          archive_size="$(wc -c < "$archive")"
+          max_release_asset_bytes=2147483648
+          test "$archive_size" -lt "$max_release_asset_bytes" || {
+            echo "release archive exceeds GitHub's per-asset size limit: $archive_size bytes" >&2
+            exit 1
+          }
+          echo "release archive: $archive ($archive_size bytes)"
 
       # Only the archive is retained. The uncompressed onedir tree beside it is
       # the same payload again, and PyInstaller's work cache is not releasable.
       - name: Retain platform artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hanly-desktop-${{ matrix.platform }}
           path: |

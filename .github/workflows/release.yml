@@ -155,7 +155,7 @@ jobs:
 
       - name: Download per-platform application artifacts
         if: steps.preflight.outputs.action != 'noop' && inputs.validate_only != true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           github-token: ${{ github.token }}
           run-id: ${{ steps.application.outputs.run_id }}
@@ -183,11 +183,17 @@ jobs:
             hanly-desktop-macos.tar.gz
             hanly-desktop-linux.tar.gz
           )
+          max_release_asset_bytes=2147483648
           mkdir -p release-output
           for expected in "${expected_archives[@]}"; do
             mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
             ((${#matches[@]} == 1)) || {
               echo "expected exactly one $expected; duplicate or missing files" >&2
+              exit 1
+            }
+            archive_size="$(wc -c < "${matches[0]}")"
+            test "$archive_size" -lt "$max_release_asset_bytes" || {
+              echo "$expected exceeds GitHub's per-asset size limit: $archive_size bytes" >&2
               exit 1
             }
             cp "${matches[0]}" "release-output/$expected"
@@ -387,7 +393,7 @@ jobs:
           }
 
       - name: Download per-platform application artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           github-token: ${{ github.token }}
           run-id: ${{ steps.application.outputs.run_id }}
@@ -414,11 +420,17 @@ jobs:
             hanly-desktop-macos.tar.gz
             hanly-desktop-linux.tar.gz
           )
+          max_release_asset_bytes=2147483648
           mkdir -p release-output
           for expected in "${expected_archives[@]}"; do
             mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
             ((${#matches[@]} == 1)) || {
               echo "expected exactly one $expected; duplicate or missing files" >&2
+              exit 1
+            }
+            archive_size="$(wc -c < "${matches[0]}")"
+            test "$archive_size" -lt "$max_release_asset_bytes" || {
+              echo "$expected exceeds GitHub's per-asset size limit: $archive_size bytes" >&2
               exit 1
             }
             cp "${matches[0]}" "release-output/$expected"
