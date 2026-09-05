@@ -447,13 +447,30 @@ def test_finalizing_reresolves_the_tag_and_accepts_only_its_own_draft() -> None:
 
     steps = _steps(_release(), "finalize")
     names = [step.get("name") for step in steps]
-    code = "\n".join(_shell_code(step.get("run", "")) for step in steps)
+    confirm = _step(_release(), "finalize", name="Confirm the draft was staged for this commit")
+    code = _shell_code(confirm["run"])
 
     assert "Re-resolve the tag and its application build" in names
     assert "release_build.py" in code
     assert "classify" in code
+    assert 'cat "$classified"' in code
     assert 'action" == "reuse"' in code
-    assert "no draft staged for" in code
+    assert "exit 1" in code
+
+
+def test_finalizing_reads_the_draft_through_its_verified_release_id() -> None:
+    workflow = _release()
+    confirm = _step(workflow, "finalize", name="Confirm the draft was staged for this commit")
+    resources = _step(workflow, "finalize", name="Take the KRDICT pair from the draft")
+    publish = _step(workflow, "finalize", name="Publish the approved release")
+    code = "\n".join((_shell_code(resources["run"]), _shell_code(publish["run"])))
+
+    assert confirm["id"] == "release"
+    assert 'cat "$classified" >> "$GITHUB_OUTPUT"' in _shell_code(confirm["run"])
+    assert resources["env"]["RELEASE_ID"] == "${{ steps.release.outputs.release_id }}"
+    assert publish["env"]["RELEASE_ID"] == "${{ steps.release.outputs.release_id }}"
+    assert "releases/$RELEASE_ID" in code
+    assert "releases/tags/$RELEASE_TAG" not in code
 
 
 def test_finalizing_takes_the_application_archives_from_the_exact_build() -> None:
@@ -688,3 +705,26 @@ def test_the_published_checksums_are_proven_to_be_the_generated_ones() -> None:
     assert "release-output/SHA256SUMS" in code
     assert "is not the one generated for these assets" in code
     assert code.index("cmp --silent") < code.index("--draft=false")
+
+
+@pytest.mark.parametrize("job", ["stage", "finalize"])
+def test_the_tag_is_only_addressed_once_one_release_is_known_to_hold_it(job: str) -> None:
+    """`gh release <cmd> <tag>` resolves a draft by listing releases, so two
+    drafts sharing a tag make it pick one arbitrarily -- which is how a run once
+    uploaded the archives to a stale draft. `classify` refuses that ambiguity,
+    so it has to run before anything addresses the tag."""
+
+    steps = _steps(_release(), job)
+    classify = next(
+        index
+        for index, step in enumerate(steps)
+        if "release_build.py classify" in _shell_code(step.get("run", ""))
+    )
+    addressed = [
+        index
+        for index, step in enumerate(steps)
+        if re.search(r'gh release \w+ "\$RELEASE_TAG"', _shell_code(step.get("run", "")))
+    ]
+
+    assert addressed, job
+    assert min(addressed) > classify, (job, addressed, classify)

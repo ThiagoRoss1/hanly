@@ -19,8 +19,10 @@ from tools.release_build import (
     GitHubAPI,
     ReleaseStateError,
     _next_page,
+    _release_for_tag,
     classify_release,
     find_application_run,
+    main,
     resolve_tag_commit,
     unique_semver_tag,
     verify_application_run,
@@ -225,6 +227,51 @@ def test_the_draft_staged_for_this_commit_is_reused_not_treated_as_a_collision()
     decision = classify_release(_draft(), commit=COMMIT, event="workflow_dispatch")
 
     assert decision.action == "reuse"
+
+
+def test_release_lookup_finds_a_draft_in_the_release_listing() -> None:
+    current = _draft(id=2, tag_name=TAG)
+    api = _FakeAPI(
+        {},
+        {f"repos/{REPOSITORY}/releases": [current]},
+    )
+
+    assert _release_for_tag(api, REPOSITORY, TAG) == current
+
+
+def test_release_lookup_refuses_more_than_one_release_for_the_tag() -> None:
+    current = _draft(id=2, tag_name=TAG)
+    stale = _draft(OTHER_COMMIT, id=1, tag_name=TAG)
+    api = _FakeAPI(
+        {},
+        {f"repos/{REPOSITORY}/releases": [stale, current]},
+    )
+
+    with pytest.raises(ReleaseStateError, match="multiple releases"):
+        _release_for_tag(api, REPOSITORY, TAG)
+
+
+def test_classify_cli_reports_the_release_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    draft = _draft(id=123, tag_name=TAG)
+    api = _FakeAPI({}, {f"repos/{REPOSITORY}/releases": [draft]})
+    monkeypatch.setattr("tools.release_build._api", lambda _token: api)
+
+    result = main(
+        [
+            "classify",
+            "--repository",
+            REPOSITORY,
+            "--tag",
+            TAG,
+            "--commit",
+            COMMIT,
+        ]
+    )
+
+    assert result == 0
+    assert "release_id=123" in capsys.readouterr().out.splitlines()
 
 
 @pytest.mark.parametrize(

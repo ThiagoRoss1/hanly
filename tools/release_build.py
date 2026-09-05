@@ -17,7 +17,6 @@ import json
 import os
 import re
 import sys
-import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -346,13 +345,17 @@ def _api(token: str | None) -> GitHubAPI:
     return GitHubAPI(token)
 
 
-def _release_for_tag(api: ReadOnlyAPI, repository: str, tag: str) -> Mapping[str, Any] | None:
-    try:
-        return api.get(f"repos/{repository}/releases/tags/{tag}")
-    except urllib.error.HTTPError as error:
-        if error.code == 404:
-            return None
-        raise ReleaseStateError(f"release lookup returned HTTP {error.code}") from error
+def _release_for_tag(
+    api: ReadOnlyAPI, repository: str, tag: str
+) -> Mapping[str, Any] | None:
+    releases = [
+        release
+        for release in api.get_all(f"repos/{repository}/releases")
+        if isinstance(release, Mapping) and release.get("tag_name") == tag
+    ]
+    if len(releases) > 1:
+        raise ReleaseStateError("multiple releases occupy the tag; remove obsolete drafts")
+    return releases[0] if releases else None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -385,9 +388,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.commit:
             raise ReleaseStateError("classify mode requires --commit")
         release = _release_for_tag(api, args.repository, args.tag)
+        release_id = ""
+        if release is not None:
+            raw_release_id = release.get("id")
+            if (
+                not isinstance(raw_release_id, int)
+                or isinstance(raw_release_id, bool)
+                or raw_release_id <= 0
+            ):
+                raise ReleaseStateError("the release payload has no valid numeric id")
+            release_id = str(raw_release_id)
         decision = classify_release(release, commit=args.commit, event=args.event)
         print(f"action={decision.action}")
         print(f"reason={decision.reason}")
+        print(f"release_id={release_id}")
     except ReleaseStateError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

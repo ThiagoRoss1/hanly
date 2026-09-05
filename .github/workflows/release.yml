@@ -375,6 +375,7 @@ jobs:
             --app-hanly-concrete-pin "$APP_HANLY_CONCRETE_PIN"
 
       - name: Confirm the draft was staged for this commit
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           APPLICATION_HEAD_SHA: ${{ steps.application.outputs.head_sha }}
@@ -382,13 +383,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          action="$(python tools/release_build.py classify \
+          classified="$RUNNER_TEMP/final-release-classification"
+          python tools/release_build.py classify \
             --repository "$REPOSITORY" \
             --tag "$RELEASE_TAG" \
             --commit "$APPLICATION_HEAD_SHA" \
-            --event workflow_dispatch | sed -n 's/^action=//p')"
+            --event "$RELEASE_EVENT" > "$classified"
+          cat "$classified"
+          cat "$classified" >> "$GITHUB_OUTPUT"
+
+          action="$(sed -n 's/^action=//p' "$classified")"
           [[ "$action" == "reuse" ]] || {
-            echo "no draft staged for $RELEASE_TAG at $APPLICATION_HEAD_SHA" >&2
+            echo "expected a staged draft for $RELEASE_TAG at $APPLICATION_HEAD_SHA; got $action" >&2
             exit 1
           }
 
@@ -440,13 +446,14 @@ jobs:
         id: resources
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-inputs/resources release-inputs/previous release-output
 
           mapfile -t draft_assets < <(
-            gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[].name' | sort
+            gh api "repos/$REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort
           )
           mapfile -t resource_assets < <(printf '%s\n' "${draft_assets[@]}" | grep -E '^krdict-[A-Za-z0-9._-]+\.sqlite3\.zst$' || true)
           ((${#resource_assets[@]} == 1)) || {
@@ -610,6 +617,7 @@ jobs:
         if: ${{ inputs.validate_only != true }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
           RESOURCE_ASSET_NAME: ${{ steps.resources.outputs.asset_name }}
         shell: bash
         run: |
@@ -632,7 +640,7 @@ jobs:
           gh release upload "$RELEASE_TAG" "${expected_assets[@]/#/release-output/}" --clobber
 
           actual_assets_file="$RUNNER_TEMP/actual-release-assets"
-          gh api "repos/$REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[].name' | sort > "$actual_assets_file"
+          gh api "repos/$REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort > "$actual_assets_file"
           mapfile -t actual_assets < "$actual_assets_file"
           if [[ ${#actual_assets[@]} -ne 6 ]]; then
             echo "partial draft: expected exactly six release assets" >&2
