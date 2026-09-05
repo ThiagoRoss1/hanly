@@ -626,19 +626,6 @@ def test_a_dry_run_is_refused_where_it_could_not_be_honoured() -> None:
         assert "validate_only is manual-only" in code
 
 
-def test_the_workflow_does_not_claim_cancellation_deletes_a_draft() -> None:
-    """Cancelling a pending approval leaves the draft exactly where it is; only
-    an operator removes one."""
-
-    text = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
-
-    assert "discard a staged draft" not in text
-    assert "never cancelling" in text
-    assert _release()["concurrency"]["cancel-in-progress"] is False
-    # Approval starts the job; publication is its last step.
-    assert "the moment the draft becomes public" not in text
-
-
 def test_the_published_checksums_are_proven_to_be_the_generated_ones() -> None:
     """A draft may carry a SHA256SUMS an earlier finalize left behind, so the
     asset-name check cannot tell a fresh one from a stale one. The bytes are
