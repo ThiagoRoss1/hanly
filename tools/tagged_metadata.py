@@ -9,6 +9,7 @@ approval, because nothing staged earlier is trusted by the half that publishes.
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -50,10 +51,9 @@ def _read_project(root: Path, path: str) -> dict[str, Any]:
     # ``tomllib`` arrived in 3.11 and the repository still targets 3.10. The
     # release runner is 3.13, so the import is deferred rather than the whole
     # module being unimportable on the oldest supported interpreter.
-    if sys.version_info >= (3, 11):
-        import tomllib
-    else:  # pragma: no cover - the release lane pins Python 3.13
+    if sys.version_info < (3, 11):  # pragma: no cover - the release lane pins Python 3.13
         raise TaggedMetadataError("reading tagged metadata needs Python 3.11 or newer")
+    loads = getattr(importlib.import_module("tomllib"), "loads")
 
     try:
         text = (root / path).read_text(encoding="utf-8")
@@ -62,8 +62,8 @@ def _read_project(root: Path, path: str) -> dict[str, Any]:
             f"cannot read {path} from the exact tag commit: {error}"
         ) from error
     try:
-        payload = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as error:
+        payload = loads(text)
+    except ValueError as error:
         raise TaggedMetadataError(f"invalid TOML in {path}: {error}") from error
     if not isinstance(payload, dict):
         raise TaggedMetadataError(f"{path} did not contain a TOML table")
