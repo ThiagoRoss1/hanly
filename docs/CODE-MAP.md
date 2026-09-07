@@ -40,11 +40,24 @@ a second entry point appears.
 
 ```
 cli.main
-  └─ capture_selector.select_capture_area()      whole monitor, or drag a region
-  └─ application.resolve_runtime_config()
-        └─ first_run.provision_runtime_config()  writes runtime.json, installs krdict
+  └─ diagnostics.open_diagnostics()              rotating log, before anything native
   └─ application.run_desktop()                   the app itself
+        └─ qt_bootstrap.ensure_qt_application()  OCR → WebEngine → QApplication("hanly")
+        └─ control_center_host.run()             the one window, the one event loop
+        └─ startup.StartupCoordinator.start()    off-thread, behind the open window
+              └─ application.resolve_runtime_config()
+                    └─ first_run.provision_runtime_config()   runtime.json, krdict
+              └─ runtime.load_runtime()
+  └─ cli._leave()                                ends the process, does not unwind
 ```
+
+Nothing is asked before the window opens. The interface is on screen while
+resources download and providers warm, and it stays usable if either fails.
+
+`main` ends the process rather than returning into interpreter finalization.
+Qt WebEngine keeps Chromium alive until the process is gone, and unloading its
+libraries on the way out is what a quit used to hang or fail fast on. See
+`cli._terminate_without_unloading`.
 
 ---
 
@@ -62,9 +75,17 @@ cli.main
    *factories* (not instances) for the three providers.
 4. **`hanly_app/composition.py`** — wires those factories into a
    `LookupWorker`, wrapping them in caching, text-presence, and tracing layers.
-5. **`hanly_app/application.py`** — builds capture, hover, hotkeys, popup,
-   tray, Control Center, update coordinator, and the shutdown lifecycle, then
-   enters the Qt event loop.
+5. **`hanly_app/application.py`** — builds the shell (window, tray, settings,
+   diagnostics, runtime status) first, then everything that needs a validated
+   runtime once `startup.StartupCoordinator` has one. The event loop belongs to
+   `control_center_host.ControlCenterHost.run()`: pywebview's Qt backend calls
+   `QApplication.exec` itself, so nothing else may.
+
+Steps 2 and 3 happen **after** the window is visible, on the startup
+coordinator's thread. Readiness is reported through
+`runtime_status.RuntimeStatus`, which is separate from the capture lifecycle:
+launching reaches `ready` without watching the screen, and the Start action is
+what begins capture.
 
 Providers are constructed **on the worker thread that will later close them** —
 a SQLite connection belongs to the thread that opened it.
@@ -182,13 +203,19 @@ download run the same code.
 
 | File | What it does |
 |---|---|
-| `application.py` | Composition root: `run_desktop`, lifecycle, shutdown |
-| `cli.py` | The one entry point: parser, chooser, dispatch |
+| `application.py` | Composition root: `run_desktop`, the desktop session, shutdown |
+| `cli.py` | The one entry point: parser, dispatch, `--self-check`, process exit |
+| `qt_bootstrap.py` | OCR → WebEngine → the one `QApplication`, with a program name |
+| `startup.py` | Prepares the runtime off the UI thread, behind the open window |
 | `ocr_preload.py` | Imports EasyOCR before Qt |
 | `first_run.py` | Writes the default config, provisions missing resources |
 | `runtime.py` | JSON config → validated `HanlyRuntime` with provider factories |
 | `composition.py` | Builds the worker: caching, text-presence gate, tracing wrappers |
-| `config.py` | Per-user preferences |
+| `config.py` | Per-user preferences, including the capture target and region |
+| `paths.py` | Per-user settings, runtime-config, and log locations |
+| `diagnostics.py` | Rotating session log plus the tail the interface shows |
+| `runtime_status.py` | Readiness, separate from the capture lifecycle |
+| `self_check.py` | `--self-check`: the frozen bundle proving its own runtime and window |
 
 **Input and capture**
 
@@ -198,7 +225,7 @@ download run the same code.
 | `hover_controller.py` | Decides when a hover is worth acting on |
 | `qt_hover_scheduler.py` | Hover timing on the Qt thread |
 | `capture.py` | Screen ROI capture |
-| `capture_selector.py` | The launch-time "which area?" chooser |
+| `capture_selector.py` | The "which area?" overlay, reached from settings |
 | `hotkeys.py` | Global hotkeys |
 
 **Lookup execution**
@@ -217,7 +244,8 @@ download run the same code.
 |---|---|
 | `popup.py` / `qt_popup.py` | The dictionary popup |
 | `tray.py` | System tray |
-| `control_center.py` | pywebview settings/diagnostics window (`assets/control_center/`) |
+| `control_center.py` | The bridge behind the window (`assets/control_center/`) |
+| `control_center_host.py` | The one window and the process's only event loop |
 | `desktop_controller.py` | Start / pause / resume state |
 | `signal_bridge.py` | Ctrl+C → clean Qt shutdown |
 

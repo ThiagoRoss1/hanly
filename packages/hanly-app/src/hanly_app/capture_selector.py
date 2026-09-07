@@ -39,23 +39,32 @@ class CaptureSelection:
 
 
 def select_capture_area() -> CaptureSelection | None:
-    """Ask for a whole monitor or a snipping-style region before app startup.
+    """Ask for a whole monitor or a snipping-style region.
 
-    This runs before Qt: Hanly's Windows native ordering requires the OCR
-    stack to load first.
+    The shared bootstrap owns the OCR-before-Qt ordering and the one
+    application object, so this works both before the desktop starts and from
+    the Qt thread of a running one.
     """
 
-    from .ocr_preload import preload_ocr_runtime
-
-    preload_ocr_runtime()
     QApplication, QMessageBox = _import_qt_widgets()
-
-    _prepare_web_engine()
     application = _shared_application(QApplication)
+    # Restored below: leaving this off would let the desktop keep running with
+    # no window after the main one is closed, which is the unreachable
+    # background process the tray fallback exists to prevent.
+    quit_on_last_window = application.quitOnLastWindowClosed()
     application.setQuitOnLastWindowClosed(False)
+    try:
+        return _choose(application, QMessageBox)
+    finally:
+        application.setQuitOnLastWindowClosed(quit_on_last_window)
+
+
+def _choose(application: Any, QMessageBox: Any) -> CaptureSelection | None:
+    """Ask for a monitor or a region, and read back what was picked."""
+
     prompt = QMessageBox()
     prompt.setWindowTitle("Start Hanly")
-    prompt.setText("Choose the area Hanly should observe for this session.")
+    prompt.setText("Choose the area Hanly should watch. This is saved as a setting.")
     whole_button = prompt.addButton(
         "Whole monitor", QMessageBox.ButtonRole.AcceptRole
     )
@@ -91,42 +100,23 @@ def _import_qt_widgets() -> tuple[Any, Any]:
     return QApplication, QMessageBox
 
 
-def _prepare_web_engine() -> None:
-    """Set up Qt WebEngine before this module constructs a QApplication.
+def _shared_application(application_type: Any) -> Any:
+    """Return the one QApplication for this process, creating it if needed.
 
-    The Control Center's WebEngine requires its shared-OpenGL attribute before
-    Qt builds an application object, and the chooser now builds the one the
-    desktop goes on to reuse. Failure is ignored here: desktop startup repeats
-    this call and owns reporting a genuinely missing Qt runtime.
+    A genuinely missing Qt runtime is a normal startup condition here, so it
+    surfaces as Hanly's own error rather than as the bootstrap's.
     """
 
-    from .control_center import ControlCenterUnavailable, prepare_control_center_qt
+    from .control_center import ControlCenterUnavailable
+    from .qt_bootstrap import ensure_qt_application
 
     try:
-        prepare_control_center_qt()
-    except ControlCenterUnavailable:
-        pass
-
-
-#: Holds the process's QApplication so it outlives this module's callers.
-#: Qt registers window classes on construction and does not unregister them on
-#: destruction, so letting the chooser's application fall out of scope and
-#: building a second one for the desktop makes Qt re-register classes it
-#: already owns. One application per process avoids that entirely.
-_application: object | None = None
-
-
-def _shared_application(application_type: Any) -> Any:
-    """Return the one QApplication for this process, creating it if needed."""
-
-    global _application
-
-    existing = application_type.instance()
-    if isinstance(existing, application_type):
-        _application = existing
-    elif not isinstance(_application, application_type):
-        _application = application_type([])
-    return _application
+        application = ensure_qt_application()
+    except ControlCenterUnavailable as error:
+        raise CaptureSelectorError("capture selection requires the Qt runtime") from error
+    if not isinstance(application, application_type):
+        raise CaptureSelectorError("capture selection requires the Qt runtime")
+    return application
 
 
 def _select_region(application: object) -> ScreenRect | None:

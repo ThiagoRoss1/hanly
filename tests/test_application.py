@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import queue
 import sys
 import threading
 import types
@@ -23,7 +24,13 @@ from hanly_app.application import (
     discover_runtime_config,
     load_update_service,
 )
+from hanly_app.config import AppConfig, ConfigManager
 from hanly_app.control_center import ControlCenterBridge
+from hanly_app.desktop_controller import DesktopState
+from hanly_app.runtime_status import RuntimeStatusPublisher
+
+#: Bounded so a marshalling regression fails the test instead of hanging it.
+_WAIT_SECONDS = 5.0
 
 
 class _Signal:
@@ -51,9 +58,16 @@ class _Qt:
 
 
 class _Service:
-    def __init__(self, name: str, events: list[str]) -> None:
+    def __init__(
+        self,
+        name: str,
+        events: list[str],
+        *,
+        can_restore_window: bool = True,
+    ) -> None:
         self.name = name
         self.events = events
+        self.can_restore_window = can_restore_window
 
     def start(self) -> None:
         self.events.append(f"{self.name}.start")
@@ -67,11 +81,18 @@ class _Service:
     def refresh(self) -> None:
         self.events.append(f"{self.name}.refresh")
 
-    def open(self) -> None:
-        self.events.append(f"{self.name}.open")
+    def show(self) -> None:
+        self.events.append(f"{self.name}.show")
 
     def close(self) -> None:
         self.events.append(f"{self.name}.close")
+
+    def run(self) -> int:
+        self.events.append(f"{self.name}.run")
+        return 7
+
+    def set_restorable(self, restorable: bool) -> None:
+        self.events.append(f"{self.name}.restorable={restorable}")
 
     def shutdown(self) -> None:
         self.events.append(f"{self.name}.shutdown")
@@ -95,16 +116,18 @@ def test_desktop_application_runs_and_shuts_down_services_once() -> None:
     assert desktop.run() == 7
     desktop.shutdown()
 
+    # The loop belongs to the Control Center host; nothing here calls exec, and
+    # nothing starts watching the screen before the user asks.
     assert events == [
-        "controller.start",
         "tray.start",
-        "tray.refresh",
+        "control.restorable=True",
+        "control.run",
         "tray.shutdown",
         "control.close",
         "controller.begin_shutdown",
         "controller.await_shutdown",
     ]
-    assert qt.events == ["exec"]
+    assert qt.events == []
 
 
 def test_desktop_actions_refresh_tray_and_capture_control_center_errors() -> None:
@@ -115,7 +138,7 @@ def test_desktop_actions_refresh_tray_and_capture_control_center_errors() -> Non
     tray = _Service("tray", events)
 
     class BrokenControl(_Service):
-        def open(self) -> None:
+        def show(self) -> None:
             raise RuntimeError("host failed")
 
     desktop = DesktopApplication(
@@ -477,11 +500,17 @@ def test_native_startup_reporter_preloads_ocr_before_opening_the_qt_dialog(
     widgets.QApplication = _Application  # type: ignore[attr-defined]
     widgets.QMessageBox = _MessageBox  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "PyQt6.QtWidgets", widgets)
-    monkeypatch.setattr(application_module, "preload_ocr_runtime", lambda: events.append("ocr"))
+
+    def bootstrap() -> object:
+        events.append("bootstrap")
+        return _Application(["hanly"])
+
+    monkeypatch.setattr(application_module, "ensure_qt_application", bootstrap)
 
     application_module._show_native_startup_error("resource setup failed")
 
-    assert events == ["ocr", "qt", "Hanly Desktop", "resource setup failed"]
+    # The shared bootstrap owns the OCR-before-Qt ordering on this path too.
+    assert events == ["bootstrap", "qt", "Hanly Desktop", "resource setup failed"]
 
 
 def _runtime_config(tmp_path: Path) -> Path:
@@ -585,4 +614,209 @@ def test_the_desktop_passes_the_persisted_setting_to_the_coordinator() -> None:
     )
     passed = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
 
-    assert passed["automatic_check"] == "settings.config.update_checks_enabled"
+    assert passed["automatic_check"] == "self._settings.config.update_checks_enabled"
+
+
+def test_unreadable_preferences_do_not_stop_the_interface_from_opening(
+    tmp_path: Path,
+) -> None:
+    """A setting cannot be fixed from a window that never appears."""
+
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text("{not json", encoding="utf-8")
+    diagnostics = DiagnosticLog()
+
+    settings = application_module._load_settings(settings_path, diagnostics)
+
+    assert settings.config == AppConfig()
+    assert any("Preferences" in message for message in diagnostics.snapshot())
+
+
+class _QtOwnedController:
+    """Records which thread each Qt-owned lifecycle call actually arrived on."""
+
+    def __init__(self, state: DesktopState = DesktopState.NEW) -> None:
+        self.state = state
+        self.calls: list[str] = []
+        self.threads: list[threading.Thread] = []
+
+    def _record(self, name: str) -> None:
+        self.calls.append(name)
+        self.threads.append(threading.current_thread())
+
+    def start(self) -> None:
+        self._record("start")
+        self.state = DesktopState.RUNNING
+
+    def pause(self) -> None:
+        self._record("pause")
+        self.state = DesktopState.PAUSED
+
+    def resume(self) -> None:
+        self._record("resume")
+        self.state = DesktopState.RUNNING
+
+    def apply_config(self, _config: AppConfig) -> None:
+        self._record("apply_config")
+
+    def set_capture_preferences(self, **_preferences: object) -> None:
+        self._record("set_capture_preferences")
+
+    def begin_shutdown(self) -> None:
+        self._record("begin_shutdown")
+
+    def await_shutdown(self, _timeout: float | None = None) -> bool:
+        self._record("await_shutdown")
+        return True
+
+
+class _Desktop:
+    """The half of ``DesktopApplication`` a session actually reaches for."""
+
+    def __init__(self) -> None:
+        self.closing = threading.Event()
+        self.updates: list[object] = []
+        self.quits = 0
+
+    def attach_updates(self, coordinator: object) -> None:
+        self.updates.append(coordinator)
+
+    def quit(self) -> None:
+        self.quits += 1
+
+    def request_capture(self) -> None:
+        return None
+
+    def resume_capture(self) -> None:
+        return None
+
+    def pause_capture(self) -> None:
+        return None
+
+    def open_control_center(self) -> None:
+        return None
+
+
+def _session(
+    tmp_path: Path,
+    pending: queue.Queue[Callable[[], None]],
+) -> tuple[Any, _Desktop]:
+    """Build the real session over doubles, with a dispatcher we can drive.
+
+    Composition itself dispatches the first status snapshot, so the queue is
+    drained here and holds only what the action under test put there.
+    """
+
+    session = application_module._DesktopSession(
+        ConfigManager(tmp_path / "config.json"),
+        diagnostics=DiagnosticLog(),
+        status=RuntimeStatusPublisher(pending.put),
+        dispatcher=pending.put,
+    )
+    desktop = _Desktop()
+    session.attach(cast(Any, desktop))
+    while not pending.empty():
+        pending.get_nowait()
+    return session, desktop
+
+
+def test_control_center_actions_reach_the_controller_on_the_qt_thread(
+    tmp_path: Path,
+) -> None:
+    """pywebview calls the bridge off Qt, and capture is Qt-owned throughout."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    controller = _QtOwnedController()
+    session._controller = controller
+
+    worker = threading.Thread(target=session.bridge.start_capture, name="pywebview")
+    worker.start()
+    try:
+        dispatched = pending.get(timeout=_WAIT_SECONDS)
+        # The bridge's own thread got as far as the seam and no further.
+        assert controller.calls == []
+        dispatched()
+    finally:
+        worker.join(_WAIT_SECONDS)
+
+    assert controller.calls == ["start"]
+    assert controller.threads == [threading.main_thread()]
+
+
+def test_a_cancelled_selection_restores_observation_in_one_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Suspend, choose, and restore have to be one indivisible action."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    controller = _QtOwnedController(DesktopState.RUNNING)
+    session._controller = controller
+
+    def cancelled() -> None:
+        controller.calls.append("overlay")
+        return None
+
+    monkeypatch.setattr(application_module, "select_capture_area", cancelled)
+
+    worker = threading.Thread(target=session.bridge.select_capture_area)
+    worker.start()
+    try:
+        dispatched = pending.get(timeout=_WAIT_SECONDS)
+        dispatched()
+    finally:
+        worker.join(_WAIT_SECONDS)
+
+    assert controller.calls == ["pause", "overlay", "resume"]
+    assert pending.empty()
+    assert controller.state is DesktopState.RUNNING
+
+
+def test_releasing_a_failed_attempt_waits_off_the_qt_thread(tmp_path: Path) -> None:
+    """A retry must not freeze the window for the whole shutdown timeout."""
+
+    class _Coordinator:
+        def __init__(self) -> None:
+            self.shutdowns: list[bool] = []
+
+        def shutdown(self, wait: bool = False) -> None:
+            self.shutdowns.append(wait)
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, desktop = _session(tmp_path, pending)
+    controller = _QtOwnedController(DesktopState.RUNNING)
+    session._controller = controller
+    updates = _Coordinator()
+    session._updates = updates
+
+    worker = threading.Thread(target=session.release, name="hanly-startup")
+    worker.start()
+    try:
+        dispatched = pending.get(timeout=_WAIT_SECONDS)
+        dispatched()
+    finally:
+        worker.join(_WAIT_SECONDS)
+
+    assert controller.calls == ["begin_shutdown", "await_shutdown"]
+    # Only the detach belongs to Qt; the join runs where release was called.
+    assert controller.threads == [threading.main_thread(), worker]
+    assert updates.shutdowns == [True]
+    assert desktop.updates == [None]
+    assert session.state is DesktopState.NEW
+
+
+def test_a_tray_without_a_way_back_leaves_the_window_closable() -> None:
+    """Started is not usable: an Xorg tray has no menu to reopen anything."""
+
+    events: list[str] = []
+    tray = _Service("tray", events, can_restore_window=False)
+    desktop = DesktopApplication(
+        _Qt(), _Service("controller", events), tray, _Service("control", events)
+    )
+
+    desktop.run()
+
+    assert "control.restorable=True" not in events
+    assert any("cannot restore" in message for message in desktop.diagnostics)

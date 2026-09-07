@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from hanly_app.desktop_controller import DesktopState
 from hanly_app.tray import (
@@ -20,6 +20,7 @@ class _Item:
     label: str
     action: Callable[..., None]
     enabled: object = True
+    default: bool = False
 
 
 class _Menu:
@@ -149,3 +150,31 @@ def test_refresh_rebuilds_title_and_menu_without_restarting_icon() -> None:
     assert icon.title == "Hanly — Running"
     assert icon.items[0].label == "Status: Running"
     assert icon.refreshed == 1
+
+
+def test_opening_the_control_center_is_also_the_icon_default_action() -> None:
+    """pystray's Xorg backend has no menu; a default action is the only route."""
+
+    posted: list[Callable[[], None]] = []
+    events: list[str] = []
+    service, icon = _service([DesktopState.RUNNING], posted, events)
+    service.start()
+
+    defaults = [item for item in icon.items if item.default]
+
+    assert [item.label for item in defaults] == ["Open Control Center"]
+
+
+def test_a_tray_with_neither_a_menu_nor_a_default_action_is_not_a_route_back() -> None:
+    posted: list[Callable[[], None]] = []
+    events: list[str] = []
+    service, icon = _service([DesktopState.RUNNING], posted, events)
+
+    assert service.can_restore_window
+
+    cast(Any, icon).HAS_MENU = False
+    cast(Any, icon).HAS_DEFAULT_ACTION = False
+    assert not service.can_restore_window
+
+    cast(Any, icon).HAS_DEFAULT_ACTION = True
+    assert service.can_restore_window

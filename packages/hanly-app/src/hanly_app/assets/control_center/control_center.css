@@ -46,6 +46,8 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.masthead-side { display: grid; justify-items: end; gap: 18px; }
+
 .eyebrow, .utility {
   margin: 0;
   color: var(--muted);
@@ -175,4 +177,20 @@ h2 { margin-bottom: 8px; font-size: 20px; letter-spacing: -0.025em; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+
+.hint-error {
+  color: #b3261e;
+}
+
+.runtime-item .hint {
+  margin: 4px 0 0;
+}
+
+.runtime-item[data-phase="failed"] strong {
+  color: #b3261e;
+}
+
+.runtime-item[data-phase="ready"] strong {
+  color: #1b7f4d;
 }

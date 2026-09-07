@@ -29,6 +29,10 @@ ENTRYPOINT = ROOT / "packaging" / "entrypoint.py"
 RUNTIME_HOOK = ROOT / "packaging" / "runtime_hook.py"
 APPLICATION_STEM = "hanly-desktop"
 
+MANDATORY_PACKAGES = ("kiwipiepy", "kiwipiepy_model")
+
+MANDATORY_EXTENSION_MODULES = ("_kiwipiepy",)
+
 
 def _unique(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Preserve collection order while avoiding duplicate source/dest pairs."""
@@ -54,6 +58,12 @@ datas = collect_data_files(
 for distribution in ("hanly-app", "hanly"):
     datas.extend(copy_metadata(distribution))
 
+for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
+    try:
+        datas.extend(copy_metadata(distribution))
+    except Exception:
+        continue
+
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
@@ -65,6 +75,13 @@ for package_name in ("easyocr", "torch", "torchvision"):
     datas.extend(package_datas)
     binaries.extend(package_binaries)
     hiddenimports.extend(package_hiddenimports)
+
+for package_name in MANDATORY_PACKAGES:
+    package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
+    datas.extend(package_datas)
+    binaries.extend(package_binaries)
+    hiddenimports.extend(package_hiddenimports)
+hiddenimports.extend(MANDATORY_EXTENSION_MODULES)
 
 # The GUI and optional desktop adapters are also lazy. Keep this list explicit
 # rather than collecting every Qt module (which adds unrelated Designer,

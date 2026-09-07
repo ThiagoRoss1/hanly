@@ -7,7 +7,14 @@ runtime libraries. The frozen startup hook preserves the required
 OCR-before-Qt ordering.
 `hanly-desktop.exe` is the whole interface: it calls `hanly_app.cli:main`, the
 same function the installed `hanly` script calls, so it accepts the same flags
-and opens the same area chooser. No launcher script is shipped beside it.
+and opens the same window. No launcher script is shipped beside it.
+
+Morphology is collected unconditionally. `kiwipiepy`, `kiwipiepy_model`, and
+the top-level `_kiwipiepy` extension are imported by name at runtime, so
+PyInstaller cannot see them, and the worker warms Kiwi before reporting
+readiness — a bundle without them can never look a word up. Their collection is
+deliberately outside the tolerant loop that may skip an absent optional
+package: failing to collect them fails the build.
 
 Build with the authoritative interpreter for the current host:
 
@@ -28,8 +35,50 @@ same dependency with:
 
 ```bash
 sudo apt-get update
-sudo apt-get install --yes --no-install-recommends libegl1
+sudo apt-get install --yes --no-install-recommends libegl1 xvfb
 ```
+
+`libegl1` is what PyInstaller's Qt collection needs; `xvfb` is the display the
+frozen window check opens in.
+
+## Proving a build before it ships
+
+A build that passes every pre-freeze gate can still be unusable: v0.1.0 did,
+in two independent ways. Three checks run against the produced bundle, in this
+order.
+
+```bash
+# Deterministic and offline: names any runtime dependency the build forgot.
+python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop --inventory-only
+
+# Runs the executable itself on a temporary profile, outside the checkout,
+# with no developer virtual environment or model cache to fall back on.
+python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop \
+    --image tests/hanly_fixtures/assets/korean_reading_roi.png
+
+# Opens the frozen main window and makes its page call the bridge.
+python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop --window-only
+```
+
+The last two drive `hanly --self-check worker` and `hanly --self-check ui`,
+internal modes on the same entry point rather than a second application.
+`worker` loads the runtime, constructs the real providers, reads the Korean
+fixture with EasyOCR, analyzes it with Kiwi, looks the word up in KRDICT, and
+prints one JSON report. `ui` opens the one main window, waits for its document
+and injected bridge, calls `get_state` from the page, and closes it; it needs
+no runtime, because the window deliberately opens before any resource exists.
+Inventory alone is not evidence of readiness, ready providers are not evidence
+of a usable window, and a skipped check is not a pass.
+
+Every run redirects the settings root, the home directory, and all three
+EasyOCR model locations into a temporary profile, so no developer cache can be
+what makes a check succeed. That makes the worker run *cold*: it fetches its
+own models. `--model-cache DIR` copies a named EasyOCR model directory into
+the isolated profile instead, which is the deterministic offline scenario.
+
+`tests/integration/test_packaged_desktop.py` is the same gate as a test. It
+uses `dist/<platform>/hanly-desktop` by default, or the bundle named by
+`HANLY_PACKAGED_APP`.
 
 ## Artifact and resource conventions
 

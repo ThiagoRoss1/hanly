@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
-from hanly_app.config import AppConfig, CaptureMode, ConfigManager, Theme
+from hanly_app.config import AppConfig, CaptureMode, CaptureRegion, ConfigManager, Theme
 
 
 def test_default_config_is_valid_and_contains_only_desktop_preferences() -> None:
@@ -82,3 +83,66 @@ def test_save_replaces_existing_file_without_leaving_a_temp_file(tmp_path: Path)
 
     assert '"hotkey": "ctrl+j"' in path.read_text(encoding="utf-8")
     assert list(tmp_path.glob(".settings.json.*.tmp")) == []
+
+
+def test_capture_target_and_region_persist_as_preferences(tmp_path: Path) -> None:
+    """Where Hanly looks is a setting now, not a launch-time prompt."""
+
+    manager = ConfigManager(tmp_path / "settings.json")
+    manager.load()
+
+    saved = manager.update(
+        capture_mode=CaptureMode.REGION,
+        capture_monitor=2,
+        capture_region={"left": 10, "top": 20, "width": 300, "height": 200},
+    )
+
+    assert saved.capture_monitor == 2
+    assert saved.capture_region == CaptureRegion(10, 20, 300, 200)
+    assert ConfigManager(manager.path).load() == saved
+
+
+def test_settings_written_before_capture_preferences_still_load(tmp_path: Path) -> None:
+    """An existing profile must keep working after this release."""
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"hotkey": "ctrl+alt+k", "hover_delay_ms": 120}),
+        encoding="utf-8",
+    )
+
+    loaded = ConfigManager(path).load()
+
+    assert loaded.hotkey == "ctrl+alt+k"
+    assert loaded.capture_monitor is None
+    assert loaded.capture_region is None
+
+
+def test_region_mode_without_a_region_stays_loadable(tmp_path: Path) -> None:
+    """A monitor can disappear between sessions; settings must survive it."""
+
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"capture_mode": "region"}), encoding="utf-8")
+
+    loaded = ConfigManager(path).load()
+
+    assert loaded.capture_mode is CaptureMode.REGION
+    assert loaded.capture_region is None
+
+
+@pytest.mark.parametrize(
+    "region",
+    [
+        {"left": 0, "top": 0, "width": 0, "height": 10},
+        {"left": 0, "top": 0, "width": 10},
+        {"left": 0.5, "top": 0, "width": 10, "height": 10},
+    ],
+)
+def test_an_unusable_capture_region_is_rejected(region: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        AppConfig(capture_region=cast(Any, region))
+
+
+def test_a_monitor_index_must_be_one_of_the_capture_service_indices() -> None:
+    with pytest.raises(ValueError, match="capture_monitor"):
+        AppConfig(capture_monitor=0)

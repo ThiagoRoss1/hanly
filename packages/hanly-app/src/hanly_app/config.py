@@ -34,6 +34,22 @@ class Theme(str, Enum):
 HOVER_DELAY_MIN_MS = 20
 HOVER_DELAY_MAX_MS = 2000
 
+#: Preferences :meth:`ConfigManager.update` accepts. Capture target and region
+#: are here because settings, not a launch-time prompt, is where they are now
+#: chosen; the Control Center still exposes a narrower list to the page.
+SETTABLE_FIELDS = frozenset(
+    {
+        "hotkey",
+        "hover_delay_ms",
+        "capture_mode",
+        "capture_monitor",
+        "capture_region",
+        "theme",
+        "popup_enabled",
+        "update_checks_enabled",
+    }
+)
+
 
 class ConfigError(ValueError):
     """Raised when persisted configuration cannot be read or validated."""
@@ -62,6 +78,70 @@ def _coerce_theme(value: object) -> Theme:
 
 
 @dataclass(frozen=True, slots=True)
+class CaptureRegion:
+    """A persisted screen-space capture rectangle.
+
+    Deliberately not ``ScreenRect``: capture imports this module, so the
+    preference type has to live below that seam. The desktop converts at the
+    boundary.
+    """
+
+    left: int
+    top: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        for name in ("left", "top", "width", "height"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError("capture region bounds must be integers")
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("capture region dimensions must be positive")
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "left": self.left,
+            "top": self.top,
+            "width": self.width,
+            "height": self.height,
+        }
+
+    @classmethod
+    def from_dict(cls, values: Mapping[str, Any]) -> CaptureRegion:
+        if not isinstance(values, Mapping):
+            raise ValueError("capture_region must be a JSON object")
+        try:
+            return cls(
+                left=values["left"],
+                top=values["top"],
+                width=values["width"],
+                height=values["height"],
+            )
+        except KeyError as error:
+            raise ValueError(f"capture_region is missing {error.args[0]}") from error
+
+
+def _coerce_capture_region(value: object) -> CaptureRegion | None:
+    if value is None or isinstance(value, CaptureRegion):
+        return value
+    if isinstance(value, Mapping):
+        return CaptureRegion.from_dict(value)
+    raise ValueError("capture_region must be a JSON object or null")
+
+
+def _coerce_capture_monitor(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("capture_monitor must be an integer index or null")
+    # Monitor indices are the capture service's, which are 1-based.
+    if value < 1:
+        raise ValueError("capture_monitor must be a positive monitor index")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     """Preferences owned by the desktop client.
 
@@ -76,6 +156,12 @@ class AppConfig:
     # nearby cursor positions started reusing one cached recognition.
     hover_delay_ms: int = 80
     capture_mode: CaptureMode = CaptureMode.FULL_MONITOR
+    #: None means the capture follows the cursor rather than a fixed monitor.
+    capture_monitor: int | None = None
+    # Region mode without a region is a real state: a monitor can disappear
+    # between sessions. Capture falls back to the whole monitor and the user
+    # reselects, which beats refusing to load their settings at all.
+    capture_region: CaptureRegion | None = None
     theme: Theme = Theme.SYSTEM
     popup_enabled: bool = True
     update_checks_enabled: bool = True
@@ -92,6 +178,8 @@ class AppConfig:
             )
         if not isinstance(self.capture_mode, CaptureMode):
             object.__setattr__(self, "capture_mode", _coerce_capture_mode(self.capture_mode))
+        object.__setattr__(self, "capture_monitor", _coerce_capture_monitor(self.capture_monitor))
+        object.__setattr__(self, "capture_region", _coerce_capture_region(self.capture_region))
         if not isinstance(self.theme, Theme):
             object.__setattr__(self, "theme", _coerce_theme(self.theme))
         if not isinstance(self.popup_enabled, bool):
@@ -104,6 +192,10 @@ class AppConfig:
 
         return {
             "capture_mode": self.capture_mode.value,
+            "capture_monitor": self.capture_monitor,
+            "capture_region": (
+                None if self.capture_region is None else self.capture_region.to_dict()
+            ),
             "hotkey": self.hotkey,
             "hover_delay_ms": self.hover_delay_ms,
             "popup_enabled": self.popup_enabled,
@@ -129,6 +221,12 @@ class AppConfig:
                 hover_delay_ms=cast(int, values.get("hover_delay_ms", defaults.hover_delay_ms)),
                 capture_mode=_coerce_capture_mode(
                     values.get("capture_mode", defaults.capture_mode)
+                ),
+                capture_monitor=_coerce_capture_monitor(
+                    values.get("capture_monitor", defaults.capture_monitor)
+                ),
+                capture_region=_coerce_capture_region(
+                    values.get("capture_region", defaults.capture_region)
                 ),
                 theme=_coerce_theme(values.get("theme", defaults.theme)),
                 popup_enabled=cast(bool, values.get("popup_enabled", defaults.popup_enabled)),
@@ -213,15 +311,7 @@ class ConfigManager:
     def update(self, **changes: object) -> AppConfig:
         """Validate, persist, and return a copy with selected preferences changed."""
 
-        supported = {
-            "hotkey",
-            "hover_delay_ms",
-            "capture_mode",
-            "theme",
-            "popup_enabled",
-            "update_checks_enabled",
-        }
-        unknown = set(changes) - supported
+        unknown = set(changes) - SETTABLE_FIELDS
         if unknown:
             names = ", ".join(sorted(unknown))
             raise TypeError(f"unknown application configuration field(s): {names}")
@@ -231,6 +321,12 @@ class ConfigManager:
             hover_delay_ms=cast(int, changes.get("hover_delay_ms", self._config.hover_delay_ms)),
             capture_mode=_coerce_capture_mode(
                 changes.get("capture_mode", self._config.capture_mode)
+            ),
+            capture_monitor=_coerce_capture_monitor(
+                changes.get("capture_monitor", self._config.capture_monitor)
+            ),
+            capture_region=_coerce_capture_region(
+                changes.get("capture_region", self._config.capture_region)
             ),
             theme=_coerce_theme(changes.get("theme", self._config.theme)),
             popup_enabled=cast(bool, changes.get("popup_enabled", self._config.popup_enabled)),

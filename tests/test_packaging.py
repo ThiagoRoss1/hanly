@@ -15,6 +15,15 @@ from tools.build_package import (
     build_command,
     host_platform,
 )
+from tools.smoke_packaged_runtime import (
+    EASYOCR_MODEL_SUBDIRECTORY,
+    EASYOCR_PATH_VARIABLES,
+    HOME_VARIABLES,
+    REQUIRED_MODEL_FILES,
+    _ProfileContext,
+    inspect_bundle,
+    isolated_environment,
+)
 
 ROOT = Path(__file__).parents[1]
 SPEC = ROOT / "packaging" / "hanly-desktop.spec"
@@ -131,3 +140,109 @@ def test_build_command_defaults_to_current_interpreter_and_platform(tmp_path: Pa
     assert command[command.index("--distpath") + 1] == str(
         tmp_path / "dist" / host_platform()
     )
+
+
+def test_packaging_spec_collects_morphology_as_a_mandatory_dependency() -> None:
+    """The v0.1.0 Windows bundle shipped without Kiwi and never became ready.
+
+    Collection must therefore sit outside the tolerant loop that is allowed to
+    skip an absent optional package, and it must apply on every platform.
+    """
+
+    source = SPEC.read_text(encoding="utf-8")
+
+    for package_name in ("kiwipiepy", "kiwipiepy_model", "_kiwipiepy"):
+        assert package_name in source
+    mandatory_block = source.split("for package_name in MANDATORY_PACKAGES:", 1)[1]
+    assert "except Exception" not in mandatory_block.split("\n\n", 1)[0]
+    assert "sys.platform" not in mandatory_block.split("\n\n", 1)[0]
+
+
+def _write_bundle(root: Path, *, with_morphology: bool) -> Path:
+    """Build a frozen-layout directory, optionally with the v0.1.0 defect."""
+
+    internal = root / "_internal"
+    (internal / "easyocr").mkdir(parents=True)
+    if not with_morphology:
+        return root
+
+    (internal / "kiwipiepy").mkdir()
+    (internal / "_kiwipiepy.pyd").write_bytes(b"native extension")
+    model = internal / "kiwipiepy_model"
+    model.mkdir()
+    for name in REQUIRED_MODEL_FILES:
+        (model / name).write_bytes(b"model data")
+    return root
+
+
+def test_bundle_inventory_reports_the_released_windows_defect(tmp_path: Path) -> None:
+    inventory = inspect_bundle(_write_bundle(tmp_path / "app", with_morphology=False))
+
+    assert not inventory.ok
+    assert "kiwipiepy" in inventory.missing
+    assert "kiwipiepy_model" in inventory.missing
+    assert any("_kiwipiepy" in item for item in inventory.missing)
+    assert "easyocr" in inventory.present
+
+
+def test_bundle_inventory_accepts_a_complete_morphology_collection(tmp_path: Path) -> None:
+    inventory = inspect_bundle(_write_bundle(tmp_path / "app", with_morphology=True))
+
+    assert inventory.ok
+    assert inventory.missing == ()
+    assert "_kiwipiepy.pyd" in inventory.present
+
+
+def test_the_frozen_smoke_cannot_fall_back_to_a_developer_model_cache(
+    tmp_path: Path,
+) -> None:
+    """EasyOCR resolves models through three inherited paths, not one."""
+
+    developer = tmp_path / "developer"
+    profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
+
+    environment = isolated_environment(
+        {
+            "EASYOCR_MODULE_PATH": str(developer / ".EasyOCR"),
+            "MODULE_PATH": str(developer / "models"),
+            "HOME": str(developer),
+            "USERPROFILE": str(developer),
+            "XDG_CACHE_HOME": str(developer / "cache"),
+            "LOCALAPPDATA": str(developer / "AppData"),
+            "HANLY_KRDICT_DB": str(developer / "krdict.sqlite3"),
+        },
+        profile,
+        home,
+        models,
+    )
+
+    assert all(environment[name] == str(models) for name in EASYOCR_PATH_VARIABLES)
+    assert all(environment[name] == str(home) for name in HOME_VARIABLES)
+    assert environment["LOCALAPPDATA"] == str(profile)
+    assert "HANLY_KRDICT_DB" not in environment
+    # Nothing left points anywhere the developer's own resources could be.
+    assert str(developer) not in "".join(environment.values())
+
+
+def test_a_named_model_cache_makes_the_isolated_run_deterministic(
+    tmp_path: Path,
+) -> None:
+    """Offline determinism is opt-in and explicit, never an inherited accident."""
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "korean_g2.pth").write_bytes(b"recognition model")
+
+    with _ProfileContext(tmp_path / "profile", model_cache=cache) as (environment, _work):
+        # EasyOCR appends "model" to whichever module path it resolved.
+        seeded = Path(environment[EASYOCR_PATH_VARIABLES[0]]) / EASYOCR_MODEL_SUBDIRECTORY
+
+        assert (seeded / "korean_g2.pth").read_bytes() == b"recognition model"
+
+
+def test_a_missing_model_cache_is_named_rather_than_silently_ignored(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(FileNotFoundError, match="EasyOCR model directory"):
+        with _ProfileContext(tmp_path / "profile", model_cache=tmp_path / "absent"):
+            pass

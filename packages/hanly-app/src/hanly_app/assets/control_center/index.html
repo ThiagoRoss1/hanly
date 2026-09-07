@@ -14,8 +14,11 @@
           <h1>Read what is ready.</h1>
           <p class="lede">Control capture at a glance, then leave the desk quiet while Hanly reads.</p>
         </div>
-        <div class="readiness-mark" aria-label="Hanly readiness mark">
-          <span>준</span><span>비</span><span>읽</span><span>기</span>
+        <div class="masthead-side">
+          <div class="readiness-mark" aria-label="Hanly readiness mark">
+            <span>준</span><span>비</span><span>읽</span><span>기</span>
+          </div>
+          <button class="button button-quiet" id="quit-hanly" type="button">Quit Hanly</button>
         </div>
       </header>
 
@@ -36,6 +39,12 @@
             <span class="status-label">Capture</span>
             <strong id="capture-state">Stopped</strong>
           </div>
+          <div class="status-item runtime-item" data-phase="idle" id="runtime-item">
+            <span class="status-label">Lookup runtime</span>
+            <strong id="runtime-state">Preparing</strong>
+            <p class="hint" id="runtime-message">Hanly is getting its resources ready.</p>
+            <button class="text-button" id="retry-runtime" type="button" hidden>Try again</button>
+          </div>
           <div class="status-item">
             <span class="status-label">OCR provider</span>
             <strong id="ocr-provider">—</strong>
@@ -46,7 +55,7 @@
           </div>
           <div class="spine-footer">
             <span class="utility" id="resource-count">0 resources</span>
-            <span class="utility">V1 / local</span>
+            <span class="utility" id="log-path">V1 / local</span>
           </div>
         </aside>
 
@@ -61,7 +70,9 @@
               <div class="action-row">
                 <button class="button button-primary" id="start-capture" type="button">Start capture</button>
                 <button class="button button-quiet" id="stop-capture" type="button">Stop capture</button>
+                <button class="button button-quiet" id="select-area" type="button">Select capture area…</button>
               </div>
+              <p class="hint hint-error" id="action-error" role="alert" hidden></p>
               <div class="field-grid">
                 <label class="field">
                   <span>Capture scope</span>

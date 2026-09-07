@@ -30,12 +30,14 @@ from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, Theme
 from .control_center import (
     ControlCenterAssets,
     ControlCenterBridge,
-    ControlCenterHost,
     ControlCenterUnavailable,
+    control_center_document,
     load_control_center_assets,
     prepare_control_center_qt,
 )
+from .control_center_host import ControlCenterHost
 from .desktop_controller import DesktopController, DesktopState, LookupRuntime
+from .diagnostics import RotatingLogFile, open_diagnostics
 from .hotkeys import (
     DEFAULT_HOTKEYS,
     DuplicateHotkeyError,
@@ -55,6 +57,11 @@ from .manual_lookup import (
 )
 from .mouse_observer import MouseObserver
 from .ocr_preload import preload_ocr_runtime
+from .paths import (
+    default_log_directory,
+    default_runtime_config_path,
+    discover_runtime_config,
+)
 from .popup import (
     PopupContent,
     PopupController,
@@ -64,12 +71,19 @@ from .popup import (
     ScreenGeometry,
     format_lookup_result,
 )
+from .qt_bootstrap import ensure_qt_application, prepare_qt_runtime
 from .runtime import (
     HanlyRuntime,
     RuntimeConfigError,
     create_lookup_controller_from_config,
     create_worker_factory_from_config,
     load_runtime,
+)
+from .runtime_status import (
+    RuntimePhase,
+    RuntimeStatus,
+    RuntimeStatusPublisher,
+    watch_worker_readiness,
 )
 from .runtime_trace import RuntimeTraceSink, emit_trace
 from .signal_bridge import QtSignalBridge
@@ -135,7 +149,11 @@ __all__ = [
     "PopupSize",
     "ResultDispatcher",
     "ResultHandler",
+    "RotatingLogFile",
     "RuntimeConfigError",
+    "RuntimePhase",
+    "RuntimeStatus",
+    "RuntimeStatusPublisher",
     "RuntimeTraceSink",
     "QtSignalBridge",
     "RemoteManifest",
@@ -160,14 +178,22 @@ __all__ = [
     "create_lookup_worker_factory",
     "create_manual_lookup",
     "create_qt_manual_lookup",
+    "control_center_document",
     "create_worker_factory_from_config",
     "default_app_config_path",
+    "ensure_qt_application",
+    "default_log_directory",
+    "default_runtime_config_path",
+    "discover_runtime_config",
     "format_lookup_result",
     "emit_trace",
     "load_runtime",
     "load_update_service",
     "load_control_center_assets",
+    "open_diagnostics",
     "prepare_control_center_qt",
+    "prepare_qt_runtime",
     "preload_ocr_runtime",
     "run_desktop",
+    "watch_worker_readiness",
 ]

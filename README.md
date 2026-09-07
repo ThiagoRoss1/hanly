@@ -76,12 +76,18 @@ The packaged executable is the same command again — regular users just
 double-click it. `hanly run` is accepted too: `run` is the default and the only
 verb, so it changes nothing.
 
-Hanly asks which area to watch — a whole monitor, or a region you drag — and
-then starts. That choice lasts for the session; it does not overwrite your
-saved preference. Cancelling exits without provisioning anything.
+Launching opens the Control Center and nothing else. Hanly prepares its
+runtime behind that window — writing `runtime.json`, installing the dictionary,
+and warming the providers — and reports each step there. The window stays
+usable throughout, and if preparation fails it says why, points at the log, and
+offers to try again.
 
-First start takes a few seconds: it writes `runtime.json`, installs the
-dictionary, and validates it. Later starts skip the install.
+Nothing watches the screen until you press **Start capture**. Where Hanly looks
+is a setting: **Select capture area…** offers a whole monitor or a region you
+drag, and the choice is saved for next time. Cancelling changes nothing.
+
+First start takes a few seconds longer, because the dictionary has to be
+installed and validated. Later starts skip the install.
 
 ### Using it
 
@@ -89,8 +95,13 @@ dictionary, and validates it. Later starts skip the install.
 - **`Ctrl+Shift+Space`** looks up whatever is under the cursor right now.
 - **`Ctrl+Shift+F9` / `Ctrl+Shift+F10`** start and pause watching.
 - The **tray icon** starts, pauses, opens the Control Center, and quits.
-- The **Control Center** shows diagnostics and live settings, including the
-  hover delay.
+  Opening it is also the icon's default action, for desktops whose tray has no
+  menu at all.
+- The **Control Center** is the main window: capture controls, the capture
+  area, live settings, resource state, runtime readiness, diagnostics, and
+  **Quit Hanly**, which is the one way out that every desktop has.
+- Closing the window hides it while the tray can bring it back. Without a tray
+  that can, it stays open instead, so Hanly is never running out of reach.
 
 ### Options
 
@@ -102,7 +113,12 @@ dictionary, and validates it. Later starts skip the install.
 
 Per-user files live in `%LOCALAPPDATA%\Hanly\` on Windows and
 `~/.config/hanly/` elsewhere: `runtime.json` (resources and providers),
-`config.json` (preferences), and `resources/` (the installed dictionary).
+`config.json` (preferences), `resources/` (the installed dictionary), and
+`logs/hanly.log` (a rotating session log the Control Center links to).
+
+Installing the Python package puts `hanly` on your PATH. Extracting a portable
+archive does not: run the executable from where you unpacked it. Both are the
+same program with the same behaviour.
 
 ## Build the desktop application
 
@@ -115,7 +131,8 @@ This produces a self-contained onedir application under
 `hanly-desktop-windows.zip`, `hanly-desktop-macos.tar.gz`, or
 `hanly-desktop-linux.tar.gz`. Unpack it anywhere and run `hanly-desktop.exe`
 (or `hanly-desktop`) — it is the same command as `hanly`, so it opens the same
-area chooser and accepts the same flags.
+window and accepts the same flags. Unpacking an archive does not put `hanly` on
+your PATH; installing the Python package does.
 
 The build bundles Python, the engine, Qt, and the OCR runtime. It does **not**
 bundle the dictionary — a packaged install acquires that the same way a source

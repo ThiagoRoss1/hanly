@@ -37,6 +37,7 @@ class TrayStatus:
 
 
 TrayStatusProvider: TypeAlias = Callable[[], DesktopState]
+TrayDetailProvider: TypeAlias = Callable[[], str | None]
 TrayCallback: TypeAlias = Callable[[], None]
 TrayDispatcher: TypeAlias = Callable[[TrayCallback], None]
 TrayMenuAction: TypeAlias = Callable[..., None]
@@ -106,6 +107,7 @@ class TrayService:
         on_pause: TrayCallback | None = None,
         on_open_control_center: TrayCallback | None = None,
         on_quit: TrayCallback | None = None,
+        detail_provider: TrayDetailProvider | None = None,
         name: str = "hanly",
         title: str = "Hanly",
         icon_factory: TrayIconFactory | None = None,
@@ -114,12 +116,15 @@ class TrayService:
     ) -> None:
         if not callable(status_provider):
             raise TypeError("status_provider must be callable")
+        if detail_provider is not None and not callable(detail_provider):
+            raise TypeError("detail_provider must be callable")
         if not callable(dispatcher):
             raise TypeError("dispatcher must be callable")
         if not name.strip() or not title.strip():
             raise ValueError("tray name and title must not be empty")
 
         self._status_provider = status_provider
+        self._detail_provider = detail_provider
         self._dispatcher = dispatcher
         self._on_start = on_start
         self._on_resume = on_resume
@@ -144,10 +149,34 @@ class TrayService:
             return self._started
 
     @property
-    def status(self) -> TrayStatus:
-        """Return the current normalized application status."""
+    def can_restore_window(self) -> bool:
+        """Whether this tray is a real route back to a hidden main window.
 
-        return normalize_status(self._status_provider())
+        pystray's Xorg backend has no menu at all, so an "Open Control Center"
+        item is not a route there; the same item is also the icon's default
+        action, which that backend does support. A started tray with neither
+        is not a route, and the window must stay closable-to-quit instead.
+        """
+
+        with self._lock:
+            icon = self._icon
+        if icon is None:
+            return False
+        return bool(
+            getattr(icon, "HAS_MENU", True) or getattr(icon, "HAS_DEFAULT_ACTION", False)
+        )
+
+    @property
+    def status(self) -> TrayStatus:
+        """Return the current normalized application status.
+
+        ``detail`` carries runtime readiness, which is separate from the
+        capture lifecycle: a started desktop whose providers are still
+        preparing must not read as fully working.
+        """
+
+        detail = None if self._detail_provider is None else self._detail_provider()
+        return normalize_status(self._status_provider(), detail)
 
     def start(self) -> None:
         """Create and start the tray icon once."""
@@ -219,7 +248,9 @@ class TrayService:
                 self._pause,
                 enabled=lambda _item: status.state is TrayState.RUNNING,
             ),
-            menu_item("Open Control Center", self._open_control_center),
+            # Also the icon's default action, so a backend without menus
+            # still has one click that brings the window back.
+            menu_item("Open Control Center", self._open_control_center, default=True),
             menu_item("Quit", self._quit),
         )
 
@@ -245,7 +276,10 @@ class TrayService:
         self._dispatcher(callback)
 
     def _window_title(self) -> str:
-        return f"{self._title} — {self.status.label}"
+        status = self.status
+        if status.detail:
+            return f"{self._title} — {status.label} · {status.detail}"
+        return f"{self._title} — {status.label}"
 
 
 def _load_pystray() -> TrayBackend:
@@ -277,6 +311,7 @@ def _default_image() -> object:
 
 __all__ = [
     "TrayCallback",
+    "TrayDetailProvider",
     "TrayDispatcher",
     "TrayBackend",
     "TrayIcon",

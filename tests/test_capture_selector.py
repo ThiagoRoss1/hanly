@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import builtins
-import gc
 import subprocess
 import sys
 from pathlib import Path
@@ -13,8 +12,10 @@ import hanly_app.capture_selector as capture_selector
 import pytest
 from hanly_app.capture import ScreenRect
 from hanly_app.capture_selector import CaptureSelection, CaptureSelectorError
-from hanly_app.cli import build_parser, parse_roi_size, run_selected_desktop
+from hanly_app.cli import build_parser, parse_roi_size, run_hanly
 from hanly_app.config import CaptureMode
+from hanly_app.control_center import ControlCenterUnavailable
+from hanly_app.runtime import RuntimeConfigError
 
 
 def test_capture_selection_distinguishes_whole_monitor_and_dragged_region() -> None:
@@ -30,52 +31,35 @@ def test_capture_selection_distinguishes_whole_monitor_and_dragged_region() -> N
         CaptureSelection(CaptureMode.REGION, None)
 
 
-def test_hanly_run_applies_selected_region_to_the_same_desktop_runtime() -> None:
-    runtime_path = Path("runtime.json")
-    selected = CaptureSelection.for_region(ScreenRect(10, 20, 300, 200))
-    calls: list[tuple[Path, dict[str, object]]] = []
+def test_hanly_run_starts_the_desktop_without_asking_anything_first() -> None:
+    """Launch opens the interface; resources are resolved behind it."""
 
-    def desktop_runner(runtime: Path, **kwargs: object) -> int:
+    runtime_path = Path("runtime.json")
+    resolver_calls: list[Path | None] = []
+    calls: list[tuple[object, dict[str, object]]] = []
+
+    def resolve(explicit: Path | None) -> Path:
+        resolver_calls.append(explicit)
+        return runtime_path
+
+    def desktop_runner(runtime: object, **kwargs: object) -> int:
         calls.append((runtime, kwargs))
         return 7
 
-    result = run_selected_desktop(
+    result = run_hanly(
         ["--runtime-config", str(runtime_path)],
-        selector=lambda: selected,
-        runtime_resolver=lambda explicit: explicit or runtime_path,
+        runtime_resolver=resolve,
         desktop_runner=desktop_runner,
     )
 
     assert result == 7
-    assert calls == [
-        (
-            runtime_path,
-            {
-                "app_config": None,
-                "initial_capture_mode": CaptureMode.REGION,
-                "initial_capture_region": selected.region,
-                "roi_size": None,
-            },
-        )
-    ]
-
-
-def test_hanly_run_cancel_is_a_clean_noop_before_bootstrap() -> None:
-    resolved: list[Path | None] = []
-
-    def resolve(explicit: Path | None) -> Path:
-        resolved.append(explicit)
-        return Path("never")
-
-    result = run_selected_desktop(
-        [],
-        selector=lambda: None,
-        runtime_resolver=resolve,
-        desktop_runner=lambda *_args, **_kwargs: pytest.fail("desktop must not start"),
-    )
-
-    assert result == 0
-    assert resolved == []
+    # The desktop, not the command, decides when to resolve and provision.
+    assert resolver_calls == []
+    runtime, options = calls[0]
+    assert runtime == runtime_path
+    assert options["app_config"] is None
+    assert options["roi_size"] is None
+    assert options["runtime_resolver"] is resolve
 
 
 def test_launching_with_no_arguments_is_the_same_as_run() -> None:
@@ -97,13 +81,12 @@ def test_there_is_no_second_command() -> None:
 def test_hanly_run_forwards_an_explicit_capture_roi_size() -> None:
     calls: list[dict[str, object]] = []
 
-    def desktop_runner(_runtime: Path, **kwargs: object) -> int:
+    def desktop_runner(_runtime: object, **kwargs: object) -> int:
         calls.append(kwargs)
         return 0
 
-    run_selected_desktop(
+    run_hanly(
         ["--roi", "260x64"],
-        selector=lambda: CaptureSelection.whole_monitor(),
         runtime_resolver=lambda _explicit: Path("runtime.json"),
         desktop_runner=desktop_runner,
     )
@@ -117,35 +100,27 @@ def test_a_malformed_capture_roi_size_is_rejected(value: str) -> None:
         parse_roi_size(value)
 
 
-def test_the_selector_prepares_the_ocr_runtime_before_qt(
+def test_the_selector_uses_the_one_shared_application(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Windows resolves native libraries differently after Qt initializes, so
-    the OCR stack has to load first. That order lives inside
-    ``select_capture_area``, which an injected selector replaces wholesale, so
-    the real function is what has to run.
-
-    Cancel is the last button added and the one reported back, which ends
-    selection at the point the ordering has already been established.
-    """
-
-    import hanly_app.ocr_preload as ocr_preload
+    """Selection never builds its own application, before or after startup."""
 
     order: list[str] = []
 
     class _FakeApplication:
-        def setQuitOnLastWindowClosed(self, _closed: bool) -> None:
+        def quitOnLastWindowClosed(self) -> bool:
+            return True
+
+        def setQuitOnLastWindowClosed(self, _value: bool) -> None:
             return None
 
     class _FakeMessageBox:
-        """Enough of QMessageBox to reach the cancel branch without Qt."""
-
         class ButtonRole:
-            AcceptRole = 0
-            ActionRole = 1
+            AcceptRole = object()
+            ActionRole = object()
 
         class StandardButton:
-            Cancel = 2
+            Cancel = object()
 
         def __init__(self) -> None:
             order.append("prompt")
@@ -172,97 +147,30 @@ def test_the_selector_prepares_the_ocr_runtime_before_qt(
         return object(), _FakeMessageBox
 
     def shared_application(_factory: object) -> _FakeApplication:
-        order.append("qapplication")
+        order.append("shared_application")
         return _FakeApplication()
 
-    monkeypatch.setattr(ocr_preload, "preload_ocr_runtime", lambda: order.append("ocr"))
     monkeypatch.setattr(capture_selector, "_import_qt_widgets", import_qt_widgets)
-    monkeypatch.setattr(
-        capture_selector, "_prepare_web_engine", lambda: order.append("web_engine")
-    )
     monkeypatch.setattr(capture_selector, "_shared_application", shared_application)
 
     assert capture_selector.select_capture_area() is None
-    assert order == ["ocr", "qt_widgets", "web_engine", "qapplication", "prompt"]
+    assert order == ["qt_widgets", "shared_application", "prompt"]
 
 
-def test_one_qapplication_is_shared_across_selection_and_startup() -> None:
-    """Qt registers window classes on construction and never unregisters them,
-    so letting the chooser's application die and building a second one for the
-    desktop makes Qt re-register classes it already owns."""
-
-    class FakeQApplication:
-        instances = 0
-        current: FakeQApplication | None = None
-
-        def __init__(self, _argv: object = None) -> None:
-            type(self).instances += 1
-            type(self).current = self
-
-        @classmethod
-        def instance(cls) -> FakeQApplication | None:
-            return cls.current
-
-    first = capture_selector._shared_application(FakeQApplication)
-    del first
-    gc.collect()
-
-    second = capture_selector._shared_application(FakeQApplication)
-
-    assert FakeQApplication.instances == 1
-    assert second is capture_selector._application
-
-
-def test_web_engine_is_prepared_before_the_shared_qapplication_exists(
+def test_a_missing_qt_runtime_during_bootstrap_is_a_selector_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Qt WebEngine needs its shared-OpenGL attribute set before any
-    QApplication is constructed, and the chooser now builds the one the desktop
-    reuses -- so the chooser has to prepare it."""
+    """A genuinely missing Qt runtime is Hanly's error, not a raw RuntimeError."""
 
-    order: list[str] = []
+    import hanly_app.qt_bootstrap as qt_bootstrap
 
-    class FakeQApplication:
-        current: FakeQApplication | None = None
+    def unavailable(*_args: object, **_kwargs: object) -> object:
+        raise ControlCenterUnavailable("no Qt WebEngine")
 
-        def __init__(self, _argv: object = None) -> None:
-            order.append("qapplication")
-            type(self).current = self
+    monkeypatch.setattr(qt_bootstrap, "ensure_qt_application", unavailable)
 
-        @classmethod
-        def instance(cls) -> FakeQApplication | None:
-            return cls.current
-
-    monkeypatch.setattr(capture_selector, "_application", None)
-    monkeypatch.setattr(
-        capture_selector, "_prepare_web_engine", lambda: order.append("web_engine")
-    )
-
-    capture_selector._prepare_web_engine()
-    capture_selector._shared_application(FakeQApplication)
-
-    assert order == ["web_engine", "qapplication"]
-
-
-def test_a_missing_control_center_runtime_does_not_block_area_selection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Desktop startup repeats the call and owns reporting a missing runtime."""
-
-    import hanly_app.control_center as control_center
-
-    attempts: list[str] = []
-
-    def unavailable() -> None:
-        attempts.append("prepare")
-        raise control_center.ControlCenterUnavailable("no Qt WebEngine")
-
-    monkeypatch.setattr(control_center, "prepare_control_center_qt", unavailable)
-
-    capture_selector._prepare_web_engine()
-
-    # Without this the test would still pass if preparation stopped happening.
-    assert attempts == ["prepare"]
+    with pytest.raises(CaptureSelectorError, match="Qt runtime"):
+        capture_selector._shared_application(object)
 
 
 def test_a_missing_qt_runtime_is_a_startup_condition_not_a_crash(
@@ -295,3 +203,161 @@ def test_every_module_entry_point_is_the_same_command(module: str, tmp_path: Pat
 
     assert completed.returncode == 0
     assert completed.stdout.startswith("usage: hanly ")
+
+
+def test_selection_restores_the_application_quit_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leaving it off would strand a running desktop with no window."""
+
+    class _FakeApplication:
+        def __init__(self) -> None:
+            self.quit_on_last = True
+
+        def quitOnLastWindowClosed(self) -> bool:
+            return self.quit_on_last
+
+        def setQuitOnLastWindowClosed(self, value: bool) -> None:
+            self.quit_on_last = value
+
+    application = _FakeApplication()
+    seen: list[bool] = []
+
+    def choose(_application: object, _message_box: object) -> None:
+        seen.append(application.quit_on_last)
+        return None
+
+    monkeypatch.setattr(
+        capture_selector, "_import_qt_widgets", lambda: (object(), object())
+    )
+    monkeypatch.setattr(capture_selector, "_shared_application", lambda _type: application)
+    monkeypatch.setattr(capture_selector, "_choose", choose)
+
+    assert capture_selector.select_capture_area() is None
+    assert seen == [False]
+    assert application.quit_on_last is True
+
+
+def test_the_window_self_check_opens_the_shell_without_provisioning_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window opens before resources exist; checking it must not change that."""
+
+    import hanly_app.cli as cli
+
+    resolved: list[Path | None] = []
+    checked: list[tuple[object, str]] = []
+
+    def resolve(explicit: Path | None) -> Path:
+        resolved.append(explicit)
+        return Path("runtime.json")
+
+    def report(runtime_config: object, *, mode: str, image: object = None) -> int:
+        checked.append((runtime_config, mode))
+        return 0
+
+    monkeypatch.setattr(cli, "report_self_check", report)
+
+    assert (
+        run_hanly(
+            ["--self-check", "ui"],
+            runtime_resolver=resolve,
+            desktop_runner=lambda *_args, **_kwargs: 99,
+        )
+        == 0
+    )
+
+    assert resolved == []
+    assert checked == [(None, "ui")]
+
+
+def test_the_worker_self_check_still_gets_a_resolved_runtime_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hanly_app.cli as cli
+
+    checked: list[tuple[object, str]] = []
+
+    def report(runtime_config: object, *, mode: str, image: object = None) -> int:
+        checked.append((runtime_config, mode))
+        return 0
+
+    monkeypatch.setattr(cli, "report_self_check", report)
+
+    run_hanly(
+        ["--self-check", "worker"],
+        runtime_resolver=lambda _explicit: Path("resolved.json"),
+        desktop_runner=lambda *_args, **_kwargs: 99,
+    )
+
+    assert checked == [(Path("resolved.json"), "worker")]
+
+
+def test_the_entry_point_ends_the_process_rather_than_unwinding_into_qt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A desktop the user quit must not be kept alive by WebEngine teardown."""
+
+    import hanly_app.cli as cli
+
+    left: list[int] = []
+
+    def fake_exit(status: int) -> None:
+        left.append(status)
+
+    monkeypatch.setattr(cli, "_terminate_without_unloading", lambda _status: None)
+    monkeypatch.setattr(cli.os, "_exit", fake_exit)
+    monkeypatch.setattr(cli, "run_desktop", lambda *_a, **_k: 7)
+    monkeypatch.setattr(cli, "resolve_runtime_config", lambda explicit: Path("runtime.json"))
+
+    cli.main([])
+
+    assert left == [7]
+
+
+def test_a_startup_failure_still_leaves_with_its_own_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hanly_app.cli as cli
+
+    left: list[int] = []
+
+    def failing(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeConfigError("no runtime configuration")
+
+    monkeypatch.setattr(cli, "_terminate_without_unloading", lambda _status: None)
+    monkeypatch.setattr(cli.os, "_exit", lambda status: left.append(status))
+    monkeypatch.setattr(cli, "run_desktop", failing)
+    monkeypatch.setattr(cli, "report_startup_error", lambda *_a, **_k: None)
+
+    cli.main([])
+
+    assert left == [2]
+
+
+def test_leaving_terminates_before_it_falls_back_to_exiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ExitProcess`` runs Chromium's detach handlers; terminating does not."""
+
+    import hanly_app.cli as cli
+
+    order: list[str] = []
+    monkeypatch.setattr(
+        cli, "_terminate_without_unloading", lambda status: order.append(f"terminate {status}")
+    )
+    monkeypatch.setattr(cli.os, "_exit", lambda status: order.append(f"exit {status}"))
+
+    cli._leave(3)
+
+    assert order == ["terminate 3", "exit 3"]
+
+
+def test_only_a_windows_process_is_terminated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every other platform leaves through ``os._exit``, which is enough there."""
+
+    import hanly_app.cli as cli
+
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+
+    cli._terminate_without_unloading(0)

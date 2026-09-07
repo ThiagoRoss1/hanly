@@ -340,7 +340,10 @@ class HoverLookupRuntime:
             self._startup_point = None
 
         if not ready:
-            self._fail(RuntimeError("lookup worker initialization failed"))
+            # The controller keeps the provider-construction failure, so hover
+            # reports the real cause rather than the fact that it gave up.
+            cause = self._controller.initialization_error
+            self._fail(cause or RuntimeError("lookup worker initialization failed"))
             return
 
         try:

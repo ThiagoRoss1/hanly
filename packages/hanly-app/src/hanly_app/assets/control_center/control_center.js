@@ -4,7 +4,7 @@
   const fallbackState = {
     app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
     config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space" },
-    runtime: { ocr_provider: "—", resources: [], diagnostics: [] },
+    runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" } },
     updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false }
   };
 
@@ -124,6 +124,36 @@
     }
   }
 
+  function renderRuntimeStatus(runtime) {
+    const status = runtime.status || fallbackState.runtime.status;
+    const item = byId("runtime-item");
+    item.dataset.phase = status.phase || "idle";
+    byId("runtime-state").textContent = formatStatus(status.phase);
+    byId("runtime-message").textContent =
+      status.message || (status.stage ? "Working on " + formatStatus(status.stage) + "." : "");
+    // Retrying is only meaningful once preparation has actually given up.
+    byId("retry-runtime").hidden = status.phase !== "failed";
+    byId("log-path").textContent = runtime.log_path ? "Log: " + runtime.log_path : "V1 / local";
+  }
+
+  // A saved region can outlive the monitor it was drawn on. Capture then falls
+  // back to the whole monitor, and the page has to say so rather than leave the
+  // scope reading "region" over an area nobody chose.
+  function regionHint(app) {
+    if (app.region) return "A region is selected for focused reading.";
+    if (app.capture_mode === "region") {
+      return "Region scope is selected but no region is saved, so Hanly reads the whole monitor. Choose a capture area.";
+    }
+    return "No region selected. Choose a scope to keep capture close to the word.";
+  }
+
+  function showActionError(error) {
+    const line = byId("action-error");
+    const message = error && error.message ? error.message : String(error || "");
+    line.textContent = message;
+    line.hidden = message === "";
+  }
+
   function renderState(state) {
     currentState = state || fallbackState;
     const app = currentState.app || fallbackState.app;
@@ -141,10 +171,11 @@
     byId("capture-mode").value = app.capture_mode || "full_monitor";
     byId("hover-delay").value = config.hover_delay_ms || 150;
     byId("hotkey").value = config.hotkey || "";
-    byId("region-hint").textContent = app.region ? "A region is selected for focused reading." : "No region selected. Choose a scope to keep capture close to the word.";
+    byId("region-hint").textContent = regionHint(app);
     ["left", "top", "width", "height"].forEach(function (field) {
       byId("region-" + field).value = app.region ? app.region[field] : "";
     });
+    renderRuntimeStatus(runtime);
     renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
@@ -153,7 +184,12 @@
   function invoke(name, value) {
     const api = bridge();
     if (!api || typeof api[name] !== "function") return Promise.resolve(currentState);
-    return (value === undefined ? api[name]() : api[name](value)).then(renderState);
+    showActionError("");
+    // A rejected action -- "Hanly is still preparing", an unusable region --
+    // has to reach the page, or the button silently does nothing.
+    return (value === undefined ? api[name]() : api[name](value))
+      .then(renderState)
+      .catch(showActionError);
   }
 
   byId("start-capture").addEventListener("click", function () { invoke("start_capture"); });
@@ -166,6 +202,11 @@
     invoke("set_region", region);
   });
   byId("clear-region").addEventListener("click", function () { invoke("set_region", null); });
+  byId("select-area").addEventListener("click", function () { invoke("select_capture_area"); });
+  byId("retry-runtime").addEventListener("click", function () { invoke("retry_runtime"); });
+  // The tray is not a route back on every desktop, so the window the user is
+  // already looking at carries the action that always ends the session.
+  byId("quit-hanly").addEventListener("click", function () { invoke("quit"); });
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });

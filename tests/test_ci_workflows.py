@@ -160,7 +160,8 @@ def test_build_runs_repository_gates_before_producing_an_artifact() -> None:
     assert gates and builds and max(gates) < min(builds)
 
 
-def test_linux_build_installs_only_the_missing_egl_loader_dependency() -> None:
+def test_linux_build_installs_only_what_freezing_and_the_window_gate_need(
+) -> None:
     steps = _steps(_workflow("build.yml"), "build")
     linux_dependencies = [
         step for step in steps if step.get("name") == "Install Linux packaging dependencies"
@@ -170,9 +171,11 @@ def test_linux_build_installs_only_the_missing_egl_loader_dependency() -> None:
     step = linux_dependencies[0]
     assert step["if"] == "matrix.platform == 'linux'"
     commands = [line.strip() for line in step["run"].splitlines() if line.strip()]
+    # libegl1 is what PyInstaller's Qt collection needs; xvfb is the display
+    # the frozen window opens in. Nothing else belongs on a hosted runner.
     assert commands == [
         "sudo apt-get update",
-        "sudo apt-get install --yes --no-install-recommends libegl1",
+        "sudo apt-get install --yes --no-install-recommends libegl1 xvfb",
     ]
     build = next(item for item in steps if item.get("name") == "Build application package")
     assert steps.index(step) < steps.index(build)
@@ -193,21 +196,78 @@ def test_linux_build_uses_the_cpu_only_ocr_runtime() -> None:
     assert steps.index(cpu_runtime) < steps.index(packages)
 
 
-def test_build_retains_only_the_release_archive() -> None:
+def test_build_retains_the_release_archive_and_its_evidence() -> None:
     upload = next(
         step
         for step in _steps(_workflow("build.yml"), "build")
         if "upload-artifact" in step.get("uses", "")
     )
-    paths = [line for line in upload["with"]["path"].splitlines() if line.strip()]
+    paths = [line.strip() for line in upload["with"]["path"].splitlines() if line.strip()]
 
     assert upload["with"]["name"] == "hanly-desktop-${{ matrix.platform }}"
     assert upload["with"]["if-no-files-found"] == "error"
-    # The onedir tree beside the archive is the same payload a second time.
-    assert all(path.strip().startswith("dist/hanly-desktop-") for path in paths)
+    # The archive, plus the small JSON reports that say what was verified and
+    # which artifact it was verified against. The onedir tree beside the
+    # archive is the same payload a second time, and never travels.
+    assert all(
+        path.startswith("dist/hanly-desktop-") or path.startswith("dist/reports/")
+        for path in paths
+    ), paths
+    assert not any("hanly-desktop/" in path or ".pyinstaller" in path for path in paths)
     # `if: always()` would upload after a failed build and report a second,
     # misleading "no files found" error on top of the real failure.
     assert "if" not in upload
+
+
+def test_every_native_build_proves_the_frozen_runtime_before_retaining_it() -> None:
+    """v0.1.0 passed every pre-freeze gate and still could not look a word up."""
+
+    steps = _steps(_workflow("build.yml"), "build")
+    names = [step.get("name", "") for step in steps]
+
+    inventory = names.index("Check the frozen bundle inventory")
+    smoke = names.index("Smoke the frozen lookup runtime")
+    build = names.index("Build application package")
+    retain = next(
+        index for index, step in enumerate(steps) if "upload-artifact" in step.get("uses", "")
+    )
+
+    assert build < inventory < smoke < retain
+    for index in (inventory, smoke):
+        assert "smoke_packaged_runtime.py" in steps[index]["run"]
+        assert "if" not in steps[index], "the frozen gates run on every platform"
+    # A real image, so the frozen OCR stack has to read Korean rather than
+    # merely import.
+    assert "korean_reading_roi.png" in steps[smoke]["run"]
+
+
+def test_every_native_build_opens_the_frozen_window_it_is_about_to_ship() -> None:
+    """A bundle whose providers work and whose window aborts is still broken."""
+
+    steps = _steps(_workflow("build.yml"), "build")
+    names = [step.get("name", "") for step in steps]
+    window = names.index("Smoke the frozen Control Center")
+    retain = next(
+        index for index, step in enumerate(steps) if "upload-artifact" in step.get("uses", "")
+    )
+
+    assert names.index("Build application package") < window < retain
+    assert "--window-only" in steps[window]["run"]
+    assert "if" not in steps[window], "the window check runs on every platform"
+    # A hosted Linux runner has no display of its own.
+    assert "xvfb-run" in steps[window]["run"]
+    # Windows has a native run on record; the other two are recorded evidence
+    # for one release before they become gates.
+    assert steps[window]["continue-on-error"] == "${{ matrix.platform != 'windows' }}"
+
+
+def test_each_artifact_records_the_identity_it_was_built_from() -> None:
+    """One macOS runner architecture cannot stand in for the other."""
+
+    record = _step(_workflow("build.yml"), "build", name="Record the artifact identity")
+
+    for field in ("archive_sha256", "runner_arch", "os_version", "python"):
+        assert field in record["run"]
 
 
 def test_build_rejects_an_archive_too_large_for_github_releases() -> None:

@@ -44,20 +44,16 @@ def run_hud_session(
 ) -> int:
     """Start the desktop with the HUD panel and optional ROI outline visible."""
 
-    from hanly_app.control_center import prepare_control_center_qt
-    from hanly_app.ocr_preload import preload_ocr_runtime
+    from hanly_app.qt_bootstrap import ensure_qt_application
 
-    # The same OCR-before-Qt ordering the shipped command uses.
-    preload_ocr_runtime()
-    prepare_control_center_qt()
+    # The shipped bootstrap: OCR before Qt, WebEngine before the application,
+    # and a program name Chromium can start from.
+    application = ensure_qt_application()
 
     from hanly_app.application import resolve_runtime_config, run_desktop
-    from PyQt6.QtWidgets import QApplication
 
     from .capture_overlay import CaptureOverlay
     from .hover_hud import HoverHUD
-
-    application = QApplication.instance() or QApplication([])
 
     panel = HoverHUD(dwell_ms=dwell_ms, backend="easyocr")
     panel.show()

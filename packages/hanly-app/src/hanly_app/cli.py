@@ -8,9 +8,11 @@ second way to start the desktop.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from .application import (
     DesktopApplicationError,
@@ -18,11 +20,16 @@ from .application import (
     resolve_runtime_config,
     run_desktop,
 )
-from .capture_selector import CaptureSelection, CaptureSelectorError, select_capture_area
+from .control_center import ControlCenterUnavailable
+from .diagnostics import DiagnosticLog, open_diagnostics
 from .first_run import FirstRunError
 from .runtime import RuntimeConfigError
+from .self_check import (
+    RUNTIME_SELF_CHECK_MODES,
+    SELF_CHECK_MODES,
+    report_self_check,
+)
 
-Selector = Callable[[], CaptureSelection | None]
 RuntimeResolver = Callable[[Path | None], Path]
 DesktopRunner = Callable[..., int]
 
@@ -75,36 +82,83 @@ def build_parser() -> argparse.ArgumentParser:
         dest="roi_size",
         help="capture ROI as WIDTHxHEIGHT, for comparing detection areas",
     )
+    # Internal: the packaging harness drives the real runtime through this one
+    # entry point rather than through a second application.
+    parser.add_argument(
+        "--self-check",
+        dest="self_check",
+        choices=SELF_CHECK_MODES,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--self-check-image",
+        dest="self_check_image",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run Hanly, reporting a startup failure rather than raising."""
+def main(argv: Sequence[str] | None = None) -> NoReturn:
+    """Run Hanly, reporting a startup failure rather than raising, then leave."""
 
     args = build_parser().parse_args(list(argv) if argv is not None else sys.argv[1:])
+    # Opened before the OCR runtime and Qt so a native initialization failure
+    # is already being written somewhere the user can find it.
+    diagnostics = open_diagnostics()
     try:
-        return _start(
+        status = _start(
             args,
-            selector=select_capture_area,
             runtime_resolver=resolve_runtime_config,
             desktop_runner=run_desktop,
+            diagnostics=diagnostics,
         )
     except (
-        CaptureSelectorError,
+        ControlCenterUnavailable,
         DesktopApplicationError,
         FirstRunError,
         RuntimeConfigError,
         OSError,
         ValueError,
     ) as error:
-        report_startup_error(error)
-        return 2
+        diagnostics.report("Startup", error)
+        report_startup_error(error, log_path=diagnostics.path)
+        status = 2
+    _leave(status)
 
 
-def run_selected_desktop(
+def _leave(status: int) -> NoReturn:
+    """End the process now, rather than during interpreter finalization."""
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            pass
+    _terminate_without_unloading(status)
+    os._exit(status)
+
+
+def _terminate_without_unloading(status: int) -> None:
+    """End a Windows process without unloading the libraries it has loaded."""
+
+    if sys.platform != "win32":
+        return
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    # Untyped, the pseudo-handle is narrowed to 32 bits and the call fails.
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.TerminateProcess(kernel32.GetCurrentProcess(), status)
+
+
+def run_hanly(
     argv: Sequence[str] | None = None,
     *,
-    selector: Selector = select_capture_area,
     runtime_resolver: RuntimeResolver = resolve_runtime_config,
     desktop_runner: DesktopRunner = run_desktop,
 ) -> int:
@@ -112,7 +166,6 @@ def run_selected_desktop(
 
     return _start(
         build_parser().parse_args(list(argv or ())),
-        selector=selector,
         runtime_resolver=runtime_resolver,
         desktop_runner=desktop_runner,
     )
@@ -121,25 +174,35 @@ def run_selected_desktop(
 def _start(
     args: argparse.Namespace,
     *,
-    selector: Selector,
     runtime_resolver: RuntimeResolver,
     desktop_runner: DesktopRunner,
+    diagnostics: DiagnosticLog | None = None,
 ) -> int:
-    """Ask which area to watch, then start the desktop on that choice.
+    """Start the desktop, or run the internal diagnostic mode.
 
-    Cancelling returns before the runtime configuration is resolved, so it
-    never provisions resources or contacts the release channel.
+    Nothing is asked before the interface opens. Resource resolution and
+    provisioning happen inside the desktop, behind an already-visible window,
+    so a launch cannot stall on a prompt or a download.
     """
 
-    selection = selector()
-    if selection is None:
-        return 0
+    mode = getattr(args, "self_check", None)
+    if mode:
+        # The window check opens the shell before any resource exists, exactly
+        # as a launch does, so resolving one would provision what it must not.
+        return report_self_check(
+            runtime_resolver(args.runtime_config)
+            if mode in RUNTIME_SELF_CHECK_MODES
+            else None,
+            mode=mode,
+            image=getattr(args, "self_check_image", None),
+        )
+
     return desktop_runner(
-        runtime_resolver(args.runtime_config),
+        args.runtime_config,
         app_config=args.app_config,
-        initial_capture_mode=selection.capture_mode,
-        initial_capture_region=selection.region,
         roi_size=args.roi_size,
+        diagnostics=diagnostics,
+        runtime_resolver=runtime_resolver,
     )
 
 
@@ -147,4 +210,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["build_parser", "main", "parse_roi_size", "run_selected_desktop"]
+__all__ = ["build_parser", "main", "parse_roi_size", "run_hanly"]

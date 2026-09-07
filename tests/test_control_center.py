@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,20 +8,22 @@ import pytest
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
 from hanly_app import control_center
 from hanly_app.capture import ScreenRect
+from hanly_app.capture_selector import CaptureSelection
 from hanly_app.config import (
     HOVER_DELAY_MAX_MS,
     HOVER_DELAY_MIN_MS,
     AppConfig,
     CaptureMode,
+    CaptureRegion,
     ConfigManager,
 )
 from hanly_app.control_center import (
     ControlCenterBridge,
-    ControlCenterHost,
     ControlCenterUnavailable,
     load_control_center_assets,
 )
 from hanly_app.desktop_controller import DesktopState
+from hanly_app.runtime_status import RuntimeStatus
 
 
 class _Runtime:
@@ -258,25 +259,6 @@ def test_bridge_validates_region_and_monitor_target_choices(tmp_path: Path) -> N
         bridge.set_region({"left": 0, "top": 0, "width": 0, "height": 600})
 
 
-def test_host_uses_shared_qt_event_loop_on_main_thread() -> None:
-    calls: list[tuple[str, object]] = []
-
-    class _Webview:
-        def create_window(self, **kwargs: object) -> object:
-            calls.append(("create_window", kwargs))
-            return object()
-
-        def start(self, **kwargs: object) -> None:
-            calls.append(("start", kwargs))
-
-    host = ControlCenterHost(object(), webview_module=_Webview())
-
-    host.open()
-
-    assert calls[0][0] == "create_window"
-    assert calls[1] == ("start", {"gui": "qt", "debug": False})
-
-
 def test_qt_webengine_is_prepared_before_qapplication_creation() -> None:
     """The shared pywebview backend must load before Qt creates its app."""
 
@@ -289,24 +271,6 @@ def test_qt_webengine_is_prepared_before_qapplication_creation() -> None:
     from PyQt6.QtWidgets import QApplication
 
     assert QApplication.instance() is None
-
-
-def test_host_rejects_open_from_worker_thread() -> None:
-    errors: list[BaseException] = []
-    host = ControlCenterHost(object(), webview_module=object())
-
-    def run() -> None:
-        try:
-            host.open()
-        except BaseException as error:
-            errors.append(error)
-
-    thread = threading.Thread(target=run)
-    thread.start()
-    thread.join()
-
-    assert len(errors) == 1
-    assert "main thread" in str(errors[0])
 
 
 def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None:
@@ -508,3 +472,119 @@ def test_the_primary_update_action_installs_in_app_and_the_browser_is_secondary(
     ]
     assert len(browser_calls) == 1
     assert "release-notes" in browser_calls[0]
+
+
+def test_selecting_a_capture_area_persists_what_the_selector_returned(
+    tmp_path: Path,
+) -> None:
+    """Suspending observation belongs to the selector, which owns the Qt thread."""
+
+    bridge, runtime, settings = _bridge(tmp_path)
+    controller = cast(Any, bridge)._desktop_controller
+    controller.start()
+    chosen = CaptureSelection.for_region(ScreenRect(12, 24, 400, 300))
+
+    def select() -> CaptureSelection:
+        runtime.events.append("select")
+        return chosen
+
+    cast(Any, bridge)._select_capture_area = select
+
+    state = bridge.select_capture_area()
+
+    assert "select" in runtime.events
+    assert state["app"]["region"] == {"left": 12, "top": 24, "width": 400, "height": 300}
+    assert state["app"]["capture_mode"] == "region"
+    assert settings.config.capture_region == CaptureRegion(12, 24, 400, 300)
+    assert controller.state is DesktopState.RUNNING
+
+
+def test_cancelling_a_capture_selection_changes_nothing(tmp_path: Path) -> None:
+    bridge, _, settings = _bridge(tmp_path)
+    bridge.set_region({"left": 1, "top": 2, "width": 30, "height": 40})
+    before = settings.config
+    cast(Any, bridge)._select_capture_area = lambda: None
+
+    state = bridge.select_capture_area()
+
+    assert settings.config == before
+    assert state["app"]["region"] == {"left": 1, "top": 2, "width": 30, "height": 40}
+
+
+def test_selecting_a_whole_monitor_clears_region_mode(tmp_path: Path) -> None:
+    bridge, _, settings = _bridge(tmp_path)
+    bridge.set_region({"left": 1, "top": 2, "width": 30, "height": 40})
+    bridge.set_capture_mode("region")
+    cast(Any, bridge)._select_capture_area = CaptureSelection.whole_monitor
+
+    bridge.select_capture_area()
+
+    assert settings.config.capture_mode is CaptureMode.FULL_MONITOR
+
+
+def test_capture_selection_is_reported_as_unavailable_without_a_selector(
+    tmp_path: Path,
+) -> None:
+    bridge, _, _ = _bridge(tmp_path)
+
+    with pytest.raises(ControlCenterUnavailable, match="capture selection"):
+        bridge.select_capture_area()
+
+
+def test_the_window_can_end_the_session_itself(tmp_path: Path) -> None:
+    """The tray is not a route on every desktop; the window always is."""
+
+    quits: list[str] = []
+    bridge, _, _ = _bridge(tmp_path)
+    cast(Any, bridge)._on_quit = lambda: quits.append("quit")
+
+    state = bridge.quit()
+
+    assert quits == ["quit"]
+    assert "app" in state
+
+
+def test_quitting_is_reported_as_unavailable_without_a_way_to_quit(
+    tmp_path: Path,
+) -> None:
+    bridge, _, _ = _bridge(tmp_path)
+
+    with pytest.raises(ControlCenterUnavailable, match="quit"):
+        bridge.quit()
+
+
+def test_runtime_status_and_log_location_reach_the_page(tmp_path: Path) -> None:
+    bridge = ControlCenterBridge(
+        runtime_status=lambda: RuntimeStatus("failed", "resources", "no dictionary"),
+        log_path=tmp_path / "logs" / "hanly.log",
+    )
+
+    runtime = bridge.get_state()["runtime"]
+
+    assert runtime["status"] == {
+        "phase": "failed",
+        "stage": "resources",
+        "message": "no dictionary",
+    }
+    assert runtime["log_path"] == str(tmp_path / "logs" / "hanly.log")
+
+
+def test_retrying_is_refused_until_startup_supplies_the_action(tmp_path: Path) -> None:
+    bridge, _, _ = _bridge(tmp_path)
+    with pytest.raises(ControlCenterUnavailable, match="retry"):
+        bridge.retry_runtime()
+
+    retries: list[str] = []
+    bridge.set_retry(lambda: retries.append("retry"))
+    bridge.retry_runtime()
+
+    assert retries == ["retry"]
+
+
+def test_the_page_says_when_a_region_scope_has_no_region_to_read() -> None:
+    """A monitor can disappear between sessions; the fallback must be visible."""
+
+    assets = load_control_center_assets()
+
+    assert "reads the whole monitor" in assets.javascript
+    assert 'app.capture_mode === "region"' in assets.javascript

@@ -9,7 +9,6 @@ so it can reuse the ``QApplication`` that already hosts the popup.
 from __future__ import annotations
 
 import sys
-import threading
 import urllib.parse
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
@@ -21,15 +20,32 @@ from typing import Any, Protocol, cast
 from hanly.resource_manager import ResourceManager
 
 from .capture import CaptureService, MonitorInfo, ScreenRect
-from .config import HOVER_DELAY_MAX_MS, HOVER_DELAY_MIN_MS, AppConfig, CaptureMode, ConfigManager
+from .capture_selector import CaptureSelection
+from .config import (
+    HOVER_DELAY_MAX_MS,
+    HOVER_DELAY_MIN_MS,
+    AppConfig,
+    CaptureMode,
+    CaptureRegion,
+    ConfigManager,
+)
 from .desktop_controller import DesktopState
 from .hotkeys import HotkeyError, canonical_hotkey
 from .runtime import HanlyRuntime
+from .runtime_status import RuntimeStatus
 from .update_coordinator import UpdateCoordinator
 
 
 class ControlCenterUnavailable(RuntimeError):
     """Raised when an intentionally deferred Control Center action is used."""
+
+
+#: Shows the selection overlay and returns the choice, or ``None`` if the user
+#: cancelled. Supplied by composition so the bridge stays free of Qt. The
+#: selector owns suspending and restoring observation for the choice: the
+#: overlay covers the virtual desktop, and only composition knows the thread
+#: that may touch capture.
+CaptureAreaSelector = Callable[[], "CaptureSelection | None"]
 
 
 def prepare_control_center_qt() -> None:
@@ -114,21 +130,6 @@ class ControlCenterAssets:
     html_path: Path
 
 
-@dataclass(frozen=True, slots=True)
-class _SelectedRegion:
-    """A normalized, serializable region selection."""
-
-    rect: ScreenRect
-
-    def to_dict(self) -> dict[str, int]:
-        return {
-            "left": self.rect.left,
-            "top": self.rect.top,
-            "width": self.rect.width,
-            "height": self.rect.height,
-        }
-
-
 def load_control_center_assets() -> ControlCenterAssets:
     """Load the HTML/CSS/JS bundle from package data."""
 
@@ -140,6 +141,16 @@ def load_control_center_assets() -> ControlCenterAssets:
         javascript=asset_root.joinpath("control_center.js").read_text(encoding="utf-8"),
         html_path=html_path,
     )
+
+
+def control_center_document(assets: ControlCenterAssets | None = None) -> str:
+    """Return the window's HTML as one self-contained document.
+
+    Inlining the stylesheet and script is what lets the packaged build and a
+    zipped wheel serve the same page without a file server.
+    """
+
+    return _inline_assets(assets if assets is not None else load_control_center_assets())
 
 
 def _inline_assets(assets: ControlCenterAssets) -> str:
@@ -180,6 +191,11 @@ class ControlCenterBridge:
         diagnostics: Callable[[], Sequence[str]] | None = None,
         on_lifecycle_changed: Callable[[], None] | None = None,
         runtime: HanlyRuntime | None = None,
+        runtime_status: Callable[[], RuntimeStatus] | None = None,
+        on_retry_runtime: Callable[[], None] | None = None,
+        on_select_capture_area: CaptureAreaSelector | None = None,
+        on_quit: Callable[[], None] | None = None,
+        log_path: Path | None = None,
         ocr_provider: str = "EasyOCR",
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
@@ -191,6 +207,14 @@ class ControlCenterBridge:
             raise TypeError("diagnostics must be callable")
         if on_lifecycle_changed is not None and not callable(on_lifecycle_changed):
             raise TypeError("on_lifecycle_changed must be callable")
+        if runtime_status is not None and not callable(runtime_status):
+            raise TypeError("runtime_status must be callable")
+        if on_retry_runtime is not None and not callable(on_retry_runtime):
+            raise TypeError("on_retry_runtime must be callable")
+        if on_select_capture_area is not None and not callable(on_select_capture_area):
+            raise TypeError("on_select_capture_area must be callable")
+        if on_quit is not None and not callable(on_quit):
+            raise TypeError("on_quit must be callable")
 
         self._config_manager = config_manager
         self._config = config_manager.config if config_manager is not None else AppConfig()
@@ -201,6 +225,11 @@ class ControlCenterBridge:
         )
         self._ocr_provider = ocr_provider.strip()
         self._diagnostics = diagnostics
+        self._runtime_status = runtime_status
+        self._on_retry_runtime = on_retry_runtime
+        self._select_capture_area = on_select_capture_area
+        self._on_quit = on_quit
+        self._log_path = log_path
         self._on_lifecycle_changed = on_lifecycle_changed
         if update_service is not None and update_coordinator is not None:
             raise ValueError("pass update_service or update_coordinator, not both")
@@ -210,8 +239,6 @@ class ControlCenterBridge:
             else None
         )
         self._capture_running = False
-        self._target: str = "cursor"
-        self._region: _SelectedRegion | None = None
 
     def get_state(self) -> dict[str, Any]:
         """Return the complete UI snapshot in JSON-compatible primitives."""
@@ -223,14 +250,18 @@ class ControlCenterBridge:
                 "state": state_name,
                 "capture_running": self._is_capture_running(state_name),
                 "capture_mode": config.capture_mode.value,
-                "target": self._target,
-                "region": None if self._region is None else self._region.to_dict(),
+                "target": _target_name(config.capture_monitor),
+                "region": (
+                    None if config.capture_region is None else config.capture_region.to_dict()
+                ),
                 "targets": self._targets(),
             },
             "config": config.to_dict(),
             "runtime": {
                 "ocr_provider": self._ocr_provider,
                 "resources": self._resources(),
+                "status": self._status_snapshot(),
+                "log_path": None if self._log_path is None else str(self._log_path),
                 "diagnostics": (
                     list(self._diagnostics()) if self._diagnostics is not None else []
                 ),
@@ -274,24 +305,54 @@ class ControlCenterBridge:
         """Select the cursor target or one of the enumerated monitors."""
 
         if target == "cursor":
-            self._target = "cursor"
+            monitor: int | None = None
         else:
-            index = self._target_index(target)
-            if not any(item["index"] == index for item in self._targets()):
+            monitor = self._target_index(target)
+            if not any(item["index"] == monitor for item in self._targets()):
                 raise ValueError(f"unknown capture target: {target!r}")
-            self._target = f"monitor:{index}"
-        self._apply_capture_preferences()
+        self._update_config(capture_monitor=monitor)
         return self.get_state()
 
     def set_region(self, region: Mapping[str, object] | None) -> dict[str, Any]:
         """Store a validated screen-space region for the next capture."""
 
-        if region is None:
-            self._region = None
-        else:
-            self._region = _SelectedRegion(_screen_rect(region))
-        self._apply_capture_preferences()
+        self._update_config(
+            capture_region=None if region is None else _capture_region(region)
+        )
         return self.get_state()
+
+    def select_capture_area(self) -> dict[str, Any]:
+        """Choose what Hanly watches, from settings rather than at launch.
+
+        The selector suspends observation for the duration of the choice.
+        Cancelling leaves every previous choice in place.
+        """
+
+        if self._select_capture_area is None:
+            raise ControlCenterUnavailable(
+                "capture selection is not available in this build"
+            )
+
+        selection = self._select_capture_area()
+        if selection is not None:
+            self._apply_selection(selection)
+        return self.get_state()
+
+    def _apply_selection(self, selection: CaptureSelection) -> None:
+        """Persist one capture choice, keeping mode and region consistent."""
+
+        if selection.capture_mode is CaptureMode.REGION and selection.region is not None:
+            self._update_config(
+                capture_mode=CaptureMode.REGION,
+                capture_region=CaptureRegion(
+                    selection.region.left,
+                    selection.region.top,
+                    selection.region.width,
+                    selection.region.height,
+                ),
+            )
+            return
+        self._update_config(capture_mode=CaptureMode.FULL_MONITOR)
 
     def set_hover_delay(self, delay_ms: object) -> dict[str, Any]:
         """Persist the debounce delay in milliseconds."""
@@ -333,6 +394,28 @@ class ControlCenterBridge:
         if "hotkey" in values:
             values["hotkey"] = _validated_hotkey(values["hotkey"])
         self._update_config(**values)
+        return self.get_state()
+
+    def retry_runtime(self) -> dict[str, Any]:
+        """Re-attempt resource preparation and provider construction."""
+
+        if self._on_retry_runtime is None:
+            raise ControlCenterUnavailable(
+                "this Hanly build cannot retry runtime preparation"
+            )
+        self._on_retry_runtime()
+        return self.get_state()
+
+    def quit(self) -> dict[str, Any]:
+        """End the session from the main window.
+
+        The tray is not a guaranteed route on every desktop, so the window
+        that is always reachable carries the action that always works.
+        """
+
+        if self._on_quit is None:
+            raise ControlCenterUnavailable("this Hanly build cannot quit from the window")
+        self._on_quit()
         return self.get_state()
 
     def check_for_updates(self) -> dict[str, object]:
@@ -380,6 +463,31 @@ class ControlCenterBridge:
         webbrowser.open(url)
         return self.get_state()
 
+    def set_retry(self, on_retry_runtime: Callable[[], None]) -> None:
+        """Bind the retry action once startup preparation exists to retry."""
+
+        if not callable(on_retry_runtime):
+            raise TypeError("on_retry_runtime must be callable")
+        self._on_retry_runtime = on_retry_runtime
+
+    def attach_runtime(
+        self,
+        runtime: HanlyRuntime,
+        capture_service: MonitorSource | CaptureService,
+        update_coordinator: UpdateCoordinator | None = None,
+    ) -> None:
+        """Bind the services that exist only once the runtime is prepared.
+
+        The window opens before any of this exists, so the bridge starts with
+        no resources, no monitors, and no update channel and gains them here.
+        """
+
+        self._resource_manager = runtime.resource_manager
+        self._capture_service = capture_service
+        if update_coordinator is not None:
+            self._update_coordinator = update_coordinator
+        self._apply_live_config()
+
     def replace_capture_service(
         self,
         capture_service: MonitorSource | CaptureService,
@@ -418,17 +526,32 @@ class ControlCenterBridge:
         self._apply_capture_preferences()
 
     def _apply_capture_preferences(self) -> None:
-        """Forward target and region state through the app-owned seam."""
+        """Forward the persisted target and region through the app-owned seam."""
 
         if self._desktop_controller is None:
             return
-        monitor = None if self._target == "cursor" else self._target_index(self._target)
-        region = None if self._region is None else self._region.rect
+        config = self._current_config()
+        region = config.capture_region
         self._desktop_controller.set_capture_preferences(
-            capture_mode=self._current_config().capture_mode,
-            monitor=monitor,
-            region=region,
+            capture_mode=config.capture_mode,
+            monitor=config.capture_monitor,
+            region=(
+                None
+                if region is None
+                else ScreenRect(region.left, region.top, region.width, region.height)
+            ),
         )
+
+    def _status_snapshot(self) -> dict[str, str]:
+        """Report runtime readiness, which is not the capture lifecycle.
+
+        A desktop that is ``RUNNING`` may still be preparing providers, so the
+        two are reported separately rather than collapsed into one word.
+        """
+
+        if self._runtime_status is None:
+            return RuntimeStatus("idle").to_dict()
+        return self._runtime_status().to_dict()
 
     def _desktop_state(self) -> str:
         if self._desktop_controller is None:
@@ -530,8 +653,8 @@ def _region_bound(values: Mapping[str, object], field: str) -> int:
     return value
 
 
-def _screen_rect(values: Mapping[str, object]) -> ScreenRect:
-    return ScreenRect(
+def _capture_region(values: Mapping[str, object]) -> CaptureRegion:
+    return CaptureRegion(
         left=_region_bound(values, "left"),
         top=_region_bound(values, "top"),
         width=_region_bound(values, "width"),
@@ -539,107 +662,16 @@ def _screen_rect(values: Mapping[str, object]) -> ScreenRect:
     )
 
 
-class ControlCenterHost:
-    """Open the Control Center through pywebview's shared Qt event loop.
-
-    pywebview requires ``start`` on the process main thread. Process startup
-    must call :func:`prepare_control_center_qt` before constructing the shared
-    ``QApplication``. The Qt backend then reuses that application, so this host
-    must be opened by the Qt UI dispatcher and must not spawn a second Python
-    thread or a second GUI loop.
-    """
-
-    def __init__(
-        self,
-        bridge: ControlCenterBridge | object,
-        *,
-        title: str = "Hanly · Control Center",
-        width: int = 1080,
-        height: int = 760,
-        debug: bool = False,
-        webview_module: object | None = None,
-    ) -> None:
-        if width <= 0 or height <= 0:
-            raise ValueError("Control Center dimensions must be positive")
-        self._bridge = bridge
-        self._title = title
-        self._width = width
-        self._height = height
-        self._debug = debug
-        self._webview = webview_module
-        self._window: object | None = None
-        self._opened = False
-
-    @property
-    def opened(self) -> bool:
-        """Whether this host currently owns an open pywebview window."""
-
-        return self._opened
-
-    def open(self) -> None:
-        """Create and run the Qt-backed window on the process main thread."""
-
-        if threading.current_thread() is not threading.main_thread():
-            raise ControlCenterUnavailable(
-                "Control Center must be opened from the Qt/main thread"
-            )
-        if self._opened:
-            return
-        webview = self._load_webview()
-        assets = load_control_center_assets()
-        create_window = getattr(webview, "create_window", None)
-        start = getattr(webview, "start", None)
-        if not callable(create_window) or not callable(start):
-            raise ControlCenterUnavailable("pywebview does not expose create_window/start")
-
-        self._window = create_window(
-            title=self._title,
-            html=_inline_assets(assets),
-            js_api=self._bridge,
-            width=self._width,
-            height=self._height,
-            min_size=(760, 560),
-            background_color="#F7F8FC",
-        )
-        self._opened = True
-        try:
-            start(gui="qt", debug=self._debug)
-        except ImportError as error:
-            raise ControlCenterUnavailable(
-                "pywebview Qt support requires the qt6 optional extra"
-            ) from error
-        finally:
-            self._opened = False
-            self._window = None
-
-    def close(self) -> None:
-        """Close the window if pywebview has created one."""
-
-        window = self._window
-        destroy = getattr(window, "destroy", None)
-        if callable(destroy):
-            destroy()
-        self._opened = False
-
-    def _load_webview(self) -> object:
-        if self._webview is not None:
-            return self._webview
-        prepare_control_center_qt()
-        try:
-            import webview
-        except ImportError as error:
-            raise ControlCenterUnavailable(
-                "pywebview is required for the Control Center"
-            ) from error
-        self._webview = webview
-        return webview
+def _target_name(monitor: int | None) -> str:
+    return "cursor" if monitor is None else f"monitor:{monitor}"
 
 
 __all__ = [
+    "CaptureAreaSelector",
     "ControlCenterAssets",
     "ControlCenterBridge",
-    "ControlCenterHost",
     "ControlCenterUnavailable",
+    "control_center_document",
     "load_control_center_assets",
     "prepare_control_center_qt",
 ]

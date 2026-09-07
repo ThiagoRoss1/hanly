@@ -43,12 +43,14 @@ class JobExecutor(Generic[ItemT, ResultT]):
         on_error: Callable[[ItemT | None, Exception], None] | None = None,
         thread_name: str | None = None,
         trace_sink: RuntimeTraceSink | None = None,
+        on_initialization_error: Callable[[BaseException], None] | None = None,
     ) -> None:
         self._worker_factory = worker_factory
         self._on_result = on_result
         self._on_error = on_error
         self._thread_name = thread_name
         self._trace_sink = trace_sink
+        self._on_initialization_error = on_initialization_error
 
         self._condition = threading.Condition()
         self._state: ExecutorState = "new"
@@ -58,6 +60,7 @@ class JobExecutor(Generic[ItemT, ResultT]):
         self._thread_ident: int | None = None
         self._worker: Worker[ItemT, ResultT] | None = None
         self._worker_ready = False
+        self._initialization_error: BaseException | None = None
         self._ready_event = threading.Event()
 
     @property
@@ -115,6 +118,18 @@ class JobExecutor(Generic[ItemT, ResultT]):
 
         with self._condition:
             return self._worker_ready
+
+    @property
+    def initialization_error(self) -> BaseException | None:
+        """The worker-factory failure, retained after the thread has exited.
+
+        A construction failure happens before any item exists, so it has no
+        request to be reported against; keeping it here is what lets a caller
+        show the real cause instead of a generic "not ready".
+        """
+
+        with self._condition:
+            return self._initialization_error
 
     def wait_until_ready(self, timeout: float | None = None) -> bool:
         """Wait outside the UI thread for worker initialization to finish."""
@@ -265,8 +280,10 @@ class JobExecutor(Generic[ItemT, ResultT]):
                     self._state = "failed"
                     self._stop_requested = True
                     self._pending = _NO_ITEM
+                    self._initialization_error = error
                     self._ready_event.set()
                     self._condition.notify_all()
+                self._report_initialization_error(error)
                 self._report_error(None, error)
                 emit_trace(
                     self._trace_sink,
@@ -360,6 +377,16 @@ class JobExecutor(Generic[ItemT, ResultT]):
         except Exception:
             # Callback failures belong to the client boundary. They must not
             # prevent the executor from draining/shutting down its worker.
+            pass
+
+    def _report_initialization_error(self, error: BaseException) -> None:
+        if self._on_initialization_error is None:
+            return
+        try:
+            self._on_initialization_error(error)
+        except Exception:
+            # The startup reporter is a callback like any other; a failure to
+            # present the cause must not also strand the worker thread.
             pass
 
     def _report_error(self, item: ItemT | None, error: Exception) -> None:

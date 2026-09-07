@@ -69,6 +69,7 @@ class HotkeyRuntime(Protocol):
 
 
 PopupPresenter: TypeAlias = Callable[[LookupResult], object]
+InitializationErrorHandler: TypeAlias = Callable[[BaseException], None]
 CursorProvider: TypeAlias = Callable[[], Point]
 ShutdownScheduler: TypeAlias = Callable[[Callable[[], None]], None]
 HotkeyFactory: TypeAlias = Callable[
@@ -245,6 +246,20 @@ class ManualLookupRuntime:
         with self._lock:
             return self._started and not self._closed
 
+    def prepare(self) -> None:
+        """Start provider initialization without observing input yet.
+
+        Readiness and capture are separate concerns: the interface can report
+        that lookup is available before the user asks Hanly to watch the
+        screen. :meth:`start` remains safe afterwards -- starting an already
+        started controller is a no-op.
+        """
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("manual lookup runtime has been shut down")
+        self._controller.start()
+
     def start(self) -> None:
         """Start the worker and then register the sole lookup hotkey."""
 
@@ -415,6 +430,7 @@ def create_manual_lookup(
     app_config: AppConfig | None = None,
     hover_listener_factory: MouseListenerFactory | None = None,
     hover_on_error: HoverErrorHandler | None = None,
+    on_initialization_error: InitializationErrorHandler | None = None,
     trace_sink: RuntimeTraceSink | None = None,
 ) -> ManualLookupRuntime:
     """Compose a manual path from the existing runtime and desktop seams."""
@@ -424,6 +440,7 @@ def create_manual_lookup(
         _as_result_handler(popup),
         dispatcher,
         trace_sink=trace_sink,
+        on_initialization_error=on_initialization_error,
     )
     configured_capture = (
         capture_service
@@ -476,6 +493,7 @@ def create_qt_manual_lookup(
     app_config: AppConfig | None = None,
     hover_listener_factory: MouseListenerFactory | None = None,
     hover_on_error: HoverErrorHandler | None = None,
+    on_initialization_error: InitializationErrorHandler | None = None,
     trace_sink: RuntimeTraceSink | None = None,
 ) -> ManualLookupRuntime:
     """Build the real Qt alpha composition on the caller's UI thread.
@@ -509,6 +527,7 @@ def create_qt_manual_lookup(
         _as_result_handler(present_result),
         dispatcher,
         trace_sink=trace_sink,
+        on_initialization_error=on_initialization_error,
     )
 
     def current_cursor() -> Point:
@@ -583,21 +602,28 @@ def _create_runtime_controller(
     dispatcher: ResultDispatcher,
     *,
     trace_sink: RuntimeTraceSink | None,
+    on_initialization_error: InitializationErrorHandler | None = None,
 ) -> LookupController:
-    """Pass tracing only when enabled, preserving narrow custom runtimes."""
+    """Pass optional seams only when used, preserving narrow custom runtimes."""
 
-    if trace_sink is None:
+    if trace_sink is None and on_initialization_error is None:
         return runtime.create_lookup_controller(
             on_result,
             result_dispatcher=dispatcher,
             thread_name="hanly-manual-lookup",
         )
-    traced_creator = cast(Any, runtime.create_lookup_controller)
-    return traced_creator(
+
+    options: dict[str, Any] = {}
+    if trace_sink is not None:
+        options["trace_sink"] = trace_sink
+    if on_initialization_error is not None:
+        options["on_initialization_error"] = on_initialization_error
+    extended_creator = cast(Any, runtime.create_lookup_controller)
+    return extended_creator(
         on_result,
         result_dispatcher=dispatcher,
         thread_name="hanly-manual-lookup",
-        trace_sink=trace_sink,
+        **options,
     )
 
 
@@ -629,6 +655,7 @@ __all__ = [
     "HotkeyRuntime",
     "HoverLookupRuntime",
     "HoverErrorHandler",
+    "InitializationErrorHandler",
     "ManualLookupRuntime",
     "ManualLookupStartupError",
     "PopupPresenter",

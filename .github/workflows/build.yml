@@ -44,11 +44,13 @@ jobs:
 
       # PyInstaller inspects PyQt6.QtWidgets during Linux collection. The
       # Ubuntu hosted image does not include the loader that owns libEGL.so.1.
+      # Xvfb is the display the frozen window gate runs in; a hosted Linux
+      # runner has no session of its own.
       - name: Install Linux packaging dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libegl1
+          sudo apt-get install --yes --no-install-recommends libegl1 xvfb
 
       - name: Install development dependencies
         run: |
@@ -88,6 +90,35 @@ jobs:
       - name: Build application package
         run: python tools/build_package.py --platform ${{ matrix.platform }}
 
+      - name: Check the frozen bundle inventory
+        run: >
+          python tools/smoke_packaged_runtime.py
+          dist/${{ matrix.platform }}/hanly-desktop --inventory-only
+
+      - name: Smoke the frozen lookup runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/reports
+          python tools/smoke_packaged_runtime.py \
+            "dist/${{ matrix.platform }}/hanly-desktop" \
+            --image tests/hanly_fixtures/assets/korean_reading_roi.png \
+            --timeout 2400 \
+            | tee "dist/reports/hanly-smoke-${{ matrix.platform }}.json"
+
+      - name: Smoke the frozen Control Center
+        continue-on-error: ${{ matrix.platform != 'windows' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/reports
+          display=""
+          if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
+          $display python tools/smoke_packaged_runtime.py \
+            "dist/${{ matrix.platform }}/hanly-desktop" \
+            --window-only \
+            | tee "dist/reports/hanly-window-${{ matrix.platform }}.json"
+
       - name: Verify the release archive exists
         shell: bash
         run: |
@@ -105,6 +136,44 @@ jobs:
           }
           echo "release archive: $archive ($archive_size bytes)"
 
+      - name: Record the artifact identity
+        shell: bash
+        env:
+          RUNNER_PLATFORM: ${{ matrix.platform }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCHITECTURE: ${{ runner.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/reports
+          archive=""
+          for candidate in "dist/hanly-desktop-${RUNNER_PLATFORM}".{zip,tar.gz}; do
+            if [ -f "$candidate" ]; then archive="$candidate"; fi
+          done
+          python - "$archive" > "dist/reports/hanly-artifact-${RUNNER_PLATFORM}.json" <<'PY'
+          import hashlib, json, os, platform, sys
+
+          path = sys.argv[1]
+          digest = hashlib.sha256()
+          with open(path, "rb") as stream:
+              for chunk in iter(lambda: stream.read(1 << 20), b""):
+                  digest.update(chunk)
+          json.dump(
+              {
+                  "platform": os.environ["RUNNER_PLATFORM"],
+                  "runner_os": os.environ["RUNNER_OS_NAME"],
+                  "runner_arch": os.environ["RUNNER_ARCHITECTURE"],
+                  "os_version": platform.platform(),
+                  "machine": platform.machine(),
+                  "python": platform.python_version(),
+                  "archive": os.path.basename(path),
+                  "archive_bytes": os.path.getsize(path),
+                  "archive_sha256": digest.hexdigest(),
+              },
+              sys.stdout,
+              indent=2,
+          )
+          PY
+
       # Only the archive is retained. The uncompressed onedir tree beside it is
       # the same payload again, and PyInstaller's work cache is not releasable.
       - name: Retain platform artifact
@@ -114,5 +183,8 @@ jobs:
           path: |
             dist/hanly-desktop-${{ matrix.platform }}.zip
             dist/hanly-desktop-${{ matrix.platform }}.tar.gz
+            dist/reports/hanly-smoke-${{ matrix.platform }}.json
+            dist/reports/hanly-window-${{ matrix.platform }}.json
+            dist/reports/hanly-artifact-${{ matrix.platform }}.json
           if-no-files-found: error
           retention-days: 14

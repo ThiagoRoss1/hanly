@@ -91,6 +91,7 @@ class LookupController:
         on_result: ResultHandler | None = None,
         *,
         on_error: Callable[[LookupRequest, BaseException], None] | None = None,
+        on_initialization_error: Callable[[BaseException], None] | None = None,
         result_dispatcher: ResultDispatcher | None = None,
         thread_name: str | None = None,
         trace_sink: RuntimeTraceSink | None = None,
@@ -99,6 +100,8 @@ class LookupController:
             raise TypeError("worker_factory must be callable")
         if on_result is not None and not callable(on_result):
             raise TypeError("on_result must be callable")
+        if on_initialization_error is not None and not callable(on_initialization_error):
+            raise TypeError("on_initialization_error must be callable")
         if result_dispatcher is not None and not callable(result_dispatcher):
             raise TypeError("result_dispatcher must be callable")
 
@@ -108,7 +111,9 @@ class LookupController:
             on_error=self._on_executor_error,
             thread_name=thread_name,
             trace_sink=trace_sink,
+            on_initialization_error=self._on_initialization_failure,
         )
+        self._on_initialization_error = on_initialization_error
         self._on_result = on_result
         self._on_error = on_error
         self._result_dispatcher = result_dispatcher or _inline_dispatch
@@ -135,6 +140,17 @@ class LookupController:
         """Whether resident providers are constructed and prewarmed."""
 
         return self._executor.worker_ready
+
+    @property
+    def initialization_error(self) -> BaseException | None:
+        """The provider-construction failure, if the worker never started.
+
+        This is deliberately not a lookup result: it happens before any hover
+        or hotkey request exists, and presenting it as one would fabricate a
+        dictionary answer nobody asked for.
+        """
+
+        return self._executor.initialization_error
 
     def wait_until_ready(self, timeout: float | None = None) -> bool:
         """Wait for resident provider readiness from a non-UI thread."""
@@ -300,6 +316,24 @@ class LookupController:
             self._current_request_id = request.request_id
             self._current_request = request
             return request
+
+    def _on_initialization_failure(self, error: BaseException) -> None:
+        """Report a worker-factory failure through its own channel.
+
+        Startup failures are dispatched like results so the interface mutates
+        on the UI thread, but they carry the original exception rather than a
+        synthesized ``LookupResult``.
+        """
+
+        callback = self._on_initialization_error
+        if callback is None:
+            return
+        emit_trace(
+            self._trace_sink,
+            "lookup_initialization_error",
+            error_type=type(error).__name__,
+        )
+        self._result_dispatcher(lambda: callback(error))
 
     def _on_executor_result(self, request: object, result: object) -> None:
         """Validate currency immediately before handing a result to the sink."""
