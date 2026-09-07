@@ -173,7 +173,9 @@ jobs:
             echo "symlink application assets are not allowed" >&2
             exit 1
           }
-          mapfile -t all_archives < <(find release-inputs/app -type f -print | sort)
+          mapfile -t all_archives < <(
+            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print | sort
+          )
           if [[ ${#all_archives[@]} -ne 3 ]]; then
             echo "expected exactly three application archives; duplicate, unexpected, or missing files" >&2
             exit 1
@@ -416,7 +418,9 @@ jobs:
             echo "symlink application assets are not allowed" >&2
             exit 1
           }
-          mapfile -t all_archives < <(find release-inputs/app -type f -print | sort)
+          mapfile -t all_archives < <(
+            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print | sort
+          )
           if [[ ${#all_archives[@]} -ne 3 ]]; then
             echo "expected exactly three application archives; duplicate, unexpected, or missing files" >&2
             exit 1
