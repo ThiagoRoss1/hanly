@@ -97,6 +97,17 @@ def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:
     assert "paddle" not in source
 
 
+def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
+    """A setuptools upgrade can leave an empty ``pkg_resources`` directory
+    behind. PyInstaller collects it as a namespace package and its runtime hook
+    then fails on ``pkg_resources.NullProvider`` before the app starts."""
+
+    source = SPEC.read_text(encoding="utf-8")
+
+    assert 'EXCLUDED_MODULES = ("tests", "test", "spikes", "pkg_resources")' in source
+    assert "excludes=list(EXCLUDED_MODULES)" in source
+
+
 def test_runtime_hook_preloads_the_ocr_runtime_without_importing_qt() -> None:
     source = RUNTIME_HOOK.read_text(encoding="utf-8")
 

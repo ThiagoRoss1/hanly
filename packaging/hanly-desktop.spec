@@ -33,6 +33,8 @@ MANDATORY_PACKAGES = ("kiwipiepy", "kiwipiepy_model")
 
 MANDATORY_EXTENSION_MODULES = ("_kiwipiepy",)
 
+EXCLUDED_MODULES = ("tests", "test", "spikes", "pkg_resources")
+
 
 def _unique(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Preserve collection order while avoiding duplicate source/dest pairs."""
@@ -125,7 +127,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     runtime_hooks=[str(RUNTIME_HOOK)],
-    excludes=["tests", "test", "spikes"],
+    excludes=list(EXCLUDED_MODULES),
     noarchive=False,
 )
 pyz = PYZ(a.pure)
