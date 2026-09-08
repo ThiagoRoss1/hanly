@@ -133,6 +133,11 @@
       status.message || (status.stage ? "Working on " + formatStatus(status.stage) + "." : "");
     // Retrying is only meaningful once preparation has actually given up.
     byId("retry-runtime").hidden = status.phase !== "failed";
+    // Starting before the runtime is ready would only be refused, so the
+    // button says so instead of offering an action that cannot work.
+    const start = byId("start-capture");
+    start.disabled = status.phase !== "ready";
+    start.title = start.disabled ? "Hanly is still preparing its lookup runtime." : "";
     byId("log-path").textContent = runtime.log_path ? "Log: " + runtime.log_path : "V1 / local";
   }
 

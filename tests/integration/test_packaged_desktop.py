@@ -21,6 +21,7 @@ from hanly_app.self_check import SELF_CHECK_MODES
 from tools.build_package import PackageLayout, host_platform
 from tools.smoke_packaged_runtime import (
     UI_TIMEOUT_SECONDS,
+    _executable_in,
     inspect_bundle,
     run_packaged_self_check,
 )
@@ -80,11 +81,13 @@ def _predates_the_window_check(report: Mapping[str, object]) -> bool:
 
 
 def _executable() -> Path:
+    """Find the program, wherever this platform's build keeps it."""
+
     bundle = _require_bundle()
-    executable = bundle / ("hanly-desktop.exe" if sys.platform == "win32" else "hanly-desktop")
-    if not executable.is_file():
+    try:
+        return _executable_in(bundle)
+    except FileNotFoundError:
         pytest.skip(f"no Hanly executable in {bundle}")
-    return executable
 
 
 def _failures(report: Mapping[str, object]) -> tuple[list[Mapping[str, object]], str]:

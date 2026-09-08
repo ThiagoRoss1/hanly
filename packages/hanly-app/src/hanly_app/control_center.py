@@ -40,6 +40,11 @@ class ControlCenterUnavailable(RuntimeError):
     """Raised when an intentionally deferred Control Center action is used."""
 
 
+#: What a capture action is told when no prepared runtime exists yet. Starting
+#: before preparation finishes is an ordinary rejection, not a lifecycle fault.
+RUNTIME_NOT_READY = "Hanly is still preparing its lookup runtime."
+
+
 #: Shows the selection overlay and returns the choice, or ``None`` if the user
 #: cancelled. Supplied by composition so the bridge stays free of Qt. The
 #: selector owns suspending and restoring observation for the choice: the
@@ -192,6 +197,7 @@ class ControlCenterBridge:
         on_lifecycle_changed: Callable[[], None] | None = None,
         runtime: HanlyRuntime | None = None,
         runtime_status: Callable[[], RuntimeStatus] | None = None,
+        capture_ready: Callable[[], bool] | None = None,
         on_retry_runtime: Callable[[], None] | None = None,
         on_select_capture_area: CaptureAreaSelector | None = None,
         on_quit: Callable[[], None] | None = None,
@@ -209,6 +215,8 @@ class ControlCenterBridge:
             raise TypeError("on_lifecycle_changed must be callable")
         if runtime_status is not None and not callable(runtime_status):
             raise TypeError("runtime_status must be callable")
+        if capture_ready is not None and not callable(capture_ready):
+            raise TypeError("capture_ready must be callable")
         if on_retry_runtime is not None and not callable(on_retry_runtime):
             raise TypeError("on_retry_runtime must be callable")
         if on_select_capture_area is not None and not callable(on_select_capture_area):
@@ -226,6 +234,7 @@ class ControlCenterBridge:
         self._ocr_provider = ocr_provider.strip()
         self._diagnostics = diagnostics
         self._runtime_status = runtime_status
+        self._capture_ready = capture_ready
         self._on_retry_runtime = on_retry_runtime
         self._select_capture_area = on_select_capture_area
         self._on_quit = on_quit
@@ -274,7 +283,15 @@ class ControlCenterBridge:
         }
 
     def start_capture(self) -> dict[str, Any]:
-        """Start capture through the existing desktop lifecycle controller."""
+        """Start capture through the existing desktop lifecycle controller.
+
+        A build that reports readiness is asked before anything is touched, so
+        an action arriving while resources are still being prepared is refused
+        with a sentence instead of leaving the page showing a running capture.
+        """
+
+        if self._capture_ready is not None and not self._capture_ready():
+            raise ControlCenterUnavailable(RUNTIME_NOT_READY)
 
         controller = self._desktop_controller
         if controller is not None:
@@ -671,6 +688,7 @@ __all__ = [
     "ControlCenterAssets",
     "ControlCenterBridge",
     "ControlCenterUnavailable",
+    "RUNTIME_NOT_READY",
     "control_center_document",
     "load_control_center_assets",
     "prepare_control_center_qt",

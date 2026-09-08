@@ -29,6 +29,7 @@ from hanly import (
 from hanly.errors import LookupCancelled
 from hanly.word_resolver import TargetResolver, WordResolver
 
+from .diagnostics import StartupTimeline
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 
@@ -89,6 +90,7 @@ class LookupWorker:
         confidence_threshold: float | None = None,
         skip_flat_rois: bool = False,
         trace_sink: RuntimeTraceSink | None = None,
+        timeline: StartupTimeline | None = None,
     ) -> None:
         for name, factory in (
             ("ocr_provider_factory", ocr_provider_factory),
@@ -101,21 +103,27 @@ class LookupWorker:
             raise TypeError("word_resolver_factory must be callable")
         providers: list[object] = []
         self._trace_wrappers: tuple[object, ...] = ()
+        # Construction and warming are the bulk of the wait between an opened
+        # window and a ready runtime, so each one is timed by role.
+        startup = timeline or StartupTimeline()
         try:
             # These calls are intentionally in worker construction, not in the
             # composition root. JobExecutor invokes its worker factory on its
             # own thread.
-            ocr_provider = ocr_provider_factory()
+            with startup.phase("ocr provider"):
+                ocr_provider = ocr_provider_factory()
             providers.append(ocr_provider)
-            morphology_provider = morphology_provider_factory()
+            with startup.phase("morphology provider"):
+                morphology_provider = morphology_provider_factory()
             providers.append(morphology_provider)
-            dictionary_provider = dictionary_provider_factory()
+            with startup.phase("dictionary provider"):
+                dictionary_provider = dictionary_provider_factory()
             providers.append(dictionary_provider)
             # Warming happens here, inside worker construction, so a provider
             # with lazy first-inference cost pays it before the executor
             # reports ready and hover starts capturing.
-            _prewarm_provider(ocr_provider, "ocr", trace_sink)
-            _prewarm_provider(morphology_provider, "morphology", trace_sink)
+            _prewarm_provider(ocr_provider, "ocr", trace_sink, startup)
+            _prewarm_provider(morphology_provider, "morphology", trace_sink, startup)
             resolver = (
                 word_resolver_factory() if word_resolver_factory is not None else WordResolver()
             )
@@ -360,6 +368,7 @@ def create_lookup_worker_factory(
     confidence_threshold: float | None = None,
     skip_flat_rois: bool = False,
     trace_sink: RuntimeTraceSink | None = None,
+    timeline: StartupTimeline | None = None,
 ) -> Callable[[], LookupWorker]:
     """Return a JobExecutor worker factory with deferred provider creation."""
 
@@ -371,6 +380,7 @@ def create_lookup_worker_factory(
         confidence_threshold=confidence_threshold,
         skip_flat_rois=skip_flat_rois,
         trace_sink=trace_sink,
+        timeline=timeline,
     )
 
 
@@ -392,6 +402,7 @@ def create_lookup_controller(
     result_dispatcher: ResultDispatcher | None = None,
     thread_name: str | None = None,
     trace_sink: RuntimeTraceSink | None = None,
+    timeline: StartupTimeline | None = None,
 ) -> LookupController:
     """Compose a controller whose providers are deferred to its worker thread."""
 
@@ -402,6 +413,7 @@ def create_lookup_controller(
         word_resolver_factory=word_resolver_factory,
         confidence_threshold=confidence_threshold,
         trace_sink=trace_sink,
+        timeline=timeline,
     )
     return LookupController(
         worker_factory,
@@ -427,16 +439,19 @@ def _prewarm_provider(
     provider: object,
     stage: str,
     trace_sink: RuntimeTraceSink | None,
+    timeline: StartupTimeline | None = None,
 ) -> None:
     """Run an optional provider warm hook during worker construction."""
 
     prewarm = getattr(provider, "prewarm", None)
     if not callable(prewarm):
         return
+    startup = timeline or StartupTimeline()
     started_ns = _trace_clock()
     emit_trace(trace_sink, "provider_prewarm_started", stage=stage)
     try:
-        prewarm()
+        with startup.phase(f"{stage} prewarm"):
+            prewarm()
     except BaseException as error:
         emit_trace(
             trace_sink,

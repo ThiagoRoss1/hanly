@@ -461,14 +461,14 @@ def test_release_rejects_oversized_application_assets_before_mutating_the_draft(
 
 
 def test_staging_needs_no_dictionary_and_no_resource_producer() -> None:
-    """A first release stages three application archives and nothing else, so a
+    """A first release stages four application archives and nothing else, so a
     missing KRDICT pair cannot stop the draft from being created."""
 
     workflow = _release()
     code = _release_code("stage")
     rendered = str(workflow)
 
-    assert "refusing to stage a draft without the three application archives" in code
+    assert "refusing to stage a draft without the four application archives" in code
     # No source archive, no producer run, and no way to ask for either.
     for obsolete in (
         "source_url",
@@ -583,7 +583,7 @@ def test_finalizing_validates_every_resource_field_before_writing_checksums() ->
     assert steps.index(validation) < steps.index(publish)
 
 
-def test_publication_is_the_last_act_and_only_over_exactly_six_assets() -> None:
+def test_publication_is_the_last_act_and_only_over_exactly_seven_assets() -> None:
     publish = _step(_release(), "finalize", step_id="publish")
     code = _shell_code(publish["run"])
 
@@ -591,15 +591,18 @@ def test_publication_is_the_last_act_and_only_over_exactly_six_assets() -> None:
     assert "--clobber" in code
     for asset in (
         "hanly-desktop-windows.zip",
-        "hanly-desktop-macos.tar.gz",
+        # Both macOS products: the updater's ZIP and the human's disk image.
+        "hanly-desktop-macos.zip",
+        "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
         "hanly-resources.json",
         "SHA256SUMS",
     ):
         assert asset in code, asset
+    assert "hanly-desktop-macos.tar.gz" not in code
     assert "RESOURCE_ASSET_NAME" in code
-    assert "expected exactly six release assets" in code
-    assert code.index("expected exactly six release assets") < code.index("--draft=false")
+    assert "expected exactly seven release assets" in code
+    assert code.index("expected exactly seven release assets") < code.index("--draft=false")
     assert code.count("--draft=false") == 1
     # A failed check leaves the draft; nothing here removes one.
     assert "gh release delete" not in code
@@ -788,3 +791,25 @@ def test_the_tag_is_only_addressed_once_one_release_is_known_to_hold_it(job: str
 
     assert addressed, job
     assert min(addressed) > classify, (job, addressed, classify)
+
+
+def test_the_release_lane_carries_exactly_the_four_application_products() -> None:
+    """One name changed in one place would otherwise stage a broken release."""
+
+    build = "\n".join(step.get("run", "") for step in _steps(_workflow("build.yml"), "build"))
+    lanes = (build, _release_code("stage"), _release_code("finalize"))
+
+    for name in (
+        "hanly-desktop-windows.zip",
+        "hanly-desktop-macos.zip",
+        "hanly-desktop-macos.dmg",
+        "hanly-desktop-linux.tar.gz",
+    ):
+        for lane in lanes:
+            assert name in lane, name
+    # The legacy macOS product is gone from every lane, not merely unused.
+    for lane in lanes:
+        assert "hanly-desktop-macos.tar.gz" not in lane
+    # The digests cover the six payload assets; SHA256SUMS is not its own.
+    sums = _release_code("finalize").split("> release-output/SHA256SUMS")[0]
+    assert sums.count("release-output/hanly-desktop-") == 4

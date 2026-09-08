@@ -12,6 +12,7 @@ import json
 import sys
 import threading
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from threading import Event, RLock
 from time import monotonic
@@ -29,16 +30,21 @@ from .app_update import (
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .capture_selector import CaptureSelection, select_capture_area
 from .config import AppConfig, CaptureMode, ConfigError, ConfigManager
-from .control_center import ControlCenterBridge, ControlCenterUnavailable
+from .control_center import (
+    RUNTIME_NOT_READY,
+    ControlCenterBridge,
+    ControlCenterUnavailable,
+)
 from .control_center_host import ControlCenterHost
 from .desktop_controller import DesktopController, DesktopState
-from .diagnostics import DiagnosticLog
+from .diagnostics import DiagnosticLog, StartupTimeline
 from .first_run import (
     persist_installed_resource,
     provision_runtime_config,
 )
 from .lookup_controller import ResultDispatcher
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
+from .ocr_preload import record_preload_timing
 from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
@@ -52,7 +58,7 @@ from .runtime import (
     HanlyRuntime,
     load_runtime,
 )
-from .runtime_status import RuntimeStatusPublisher, watch_worker_readiness
+from .runtime_status import RuntimeStatus, RuntimeStatusPublisher, watch_worker_readiness
 from .runtime_trace import RuntimeTraceSink
 from .signal_bridge import QtSignalBridge
 from .startup import StartupCoordinator
@@ -245,6 +251,8 @@ class DesktopApplication:
 
         try:
             self.start_capture()
+        except ControlCenterUnavailable as refusal:
+            self._diagnostics.add(str(refusal))
         except Exception as error:
             self._diagnostics.report("Start capture", error)
 
@@ -334,6 +342,7 @@ class _DesktopSession:
         dispatcher: ResultDispatcher,
         roi_size: tuple[int, int] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
+        timeline: StartupTimeline | None = None,
     ) -> None:
         self._settings = settings
         self._diagnostics = diagnostics
@@ -341,6 +350,7 @@ class _DesktopSession:
         self._dispatcher = dispatcher
         self._roi_size = roi_size
         self._trace_sink = trace_sink
+        self._timeline = timeline or StartupTimeline()
 
         self._controller: DesktopController | None = None
         self._manual: ManualLookupRuntime | None = None
@@ -348,25 +358,32 @@ class _DesktopSession:
         self._runtime_path: Path | None = None
         self._previous_state = DesktopState.NEW
         self._closing: Event | None = None
+        # Identifies the runtime composed here; only the Qt thread changes it.
+        self._generation = 0
+        self._pending_release: list[DesktopController] = []
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
             desktop_controller=self,
             diagnostics=diagnostics.snapshot,
             runtime_status=lambda: status.status,
+            capture_ready=lambda: self.can_start_capture,
             on_select_capture_area=self._select_capture_area,
             on_quit=self.quit,
             log_path=diagnostics.path,
             on_lifecycle_changed=self.refresh_tray,
             ocr_provider=OCR_DISPLAY_NAME,
         )
-        self.host = ControlCenterHost(self.bridge, diagnostics=diagnostics)
+        self.host = ControlCenterHost(
+            self.bridge, diagnostics=diagnostics, timeline=self._timeline
+        )
         self.tray = TrayService(
             lambda: self.state,
             dispatcher=dispatcher,
             detail_provider=lambda: status.status.message or None,
+            ready_provider=lambda: status.status.ready,
             on_start=lambda: self.desktop.request_capture(),
-            on_resume=lambda: self.desktop.resume_capture(),
+            on_resume=lambda: self.desktop.request_capture(),
             on_pause=lambda: self.desktop.pause_capture(),
             on_open_control_center=lambda: self.desktop.open_control_center(),
             on_quit=lambda: self.desktop.quit(),
@@ -400,8 +417,19 @@ class _DesktopSession:
         # Providers warm now so the interface can report READY, but nothing
         # observes the screen until the user asks Hanly to start.
         manual.prepare()
-        watch_worker_readiness(manual.controller, self._status)
+        self._watch_readiness(manual)
         self.refresh_tray()
+
+    def _watch_readiness(self, manual: ManualLookupRuntime) -> None:
+        """Report this runtime's readiness, and only while it is still ours."""
+
+        self._generation += 1
+        generation = self._generation
+        watch_worker_readiness(
+            manual.controller,
+            self._status,
+            is_current=lambda: self._generation == generation,
+        )
 
     def release(self) -> None:
         """Drop a failed attempt's services so a retry starts from nothing.
@@ -425,6 +453,9 @@ class _DesktopSession:
             self._manual = None
             self._controller = None
             self._updates = None
+            # A watcher still waiting on the runtime being dropped no longer
+            # speaks for what this session shows.
+            self._generation += 1
             self.desktop.attach_updates(None)
             if controller is not None:
                 controller.begin_shutdown()
@@ -439,10 +470,27 @@ class _DesktopSession:
         self._on_qt(detach)
         for coordinator in retired:
             coordinator.shutdown(wait=True)
-        for controller in released:
+        self._await_released(released)
+
+    def _await_released(self, released: list[DesktopController]) -> None:
+        """Wait out every runtime this session has stopped using.
+
+        A runtime that has not let go of its models and database handles keeps
+        ownership of them: it is carried into the next release rather than
+        forgotten, and preparation stops instead of composing a replacement
+        over resources that are still open.
+        """
+
+        pending = self._pending_release + released
+        self._pending_release = []
+        for index, controller in enumerate(pending):
             if not controller.await_shutdown(_SHUTDOWN_WAIT_SECONDS):
+                self._pending_release = pending[index:]
                 self._diagnostics.add(
                     "The previous lookup runtime did not release its resources in time."
+                )
+                raise DesktopApplicationError(
+                    "the previous lookup runtime did not release its resources in time"
                 )
 
     @property
@@ -450,14 +498,20 @@ class _DesktopSession:
         controller = self._controller
         return DesktopState.NEW if controller is None else controller.state
 
+    @property
+    def can_start_capture(self) -> bool:
+        """Whether a prepared runtime exists for a capture action to reach."""
+
+        return self._controller is not None
+
     def start(self) -> None:
-        self._on_qt(lambda: self._require_controller().start())
+        self._start_or_resume()
 
     def pause(self) -> None:
         self._on_qt(lambda: self._with_controller(DesktopController.pause))
 
     def resume(self) -> None:
-        self._on_qt(lambda: self._require_controller().resume())
+        self._start_or_resume()
 
     def apply_config(self, config: AppConfig) -> None:
         def apply(controller: DesktopController) -> None:
@@ -550,6 +604,32 @@ class _DesktopSession:
             timeout=timeout,
         )
 
+    def _start_or_resume(self) -> None:
+        """Begin observing, whether this attempt has ever run or was paused.
+
+        Start and Resume are one action here because only the Qt thread may
+        read the controller's state, and a retry replaces a paused runtime
+        with a new one that has never started.
+        """
+
+        rejected: list[str] = []
+
+        def begin() -> None:
+            controller = self._controller
+            if controller is None:
+                # Preparation can finish, or fail, between the caller's check
+                # and this dispatch; the reply is still an ordinary refusal.
+                rejected.append(RUNTIME_NOT_READY)
+                return
+            if controller.state is DesktopState.PAUSED:
+                controller.resume()
+            else:
+                controller.start()
+
+        self._on_qt(begin)
+        if rejected:
+            raise ControlCenterUnavailable(rejected[0])
+
     def _with_controller(self, action: Callable[[DesktopController], None]) -> None:
         """Apply one action to the controller, if a prepared runtime has one."""
 
@@ -560,9 +640,7 @@ class _DesktopSession:
     def _require_controller(self) -> DesktopController:
         controller = self._controller
         if controller is None:
-            raise ControlCenterUnavailable(
-                "Hanly is still preparing its lookup runtime"
-            )
+            raise ControlCenterUnavailable(RUNTIME_NOT_READY)
         return controller
 
     def _build_manual(self, runtime: RuntimeComposition) -> ManualLookupRuntime:
@@ -623,7 +701,7 @@ class _DesktopSession:
             self._status.update(
                 "preparing", "lookup providers", "Loading the lookup engine..."
             )
-            watch_worker_readiness(manual.controller, self._status)
+            self._watch_readiness(manual)
             controller = self._require_controller()
             controller.replace_runtime(manual)
             self.bridge.replace_capture_service(manual.capture_service)
@@ -666,6 +744,7 @@ def run_desktop(
     """
 
     diagnostics = diagnostics if diagnostics is not None else DiagnosticLog()
+    timeline = StartupTimeline(diagnostics)
     resolve = runtime_resolver if runtime_resolver is not None else resolve_runtime_config
     explicit_runtime = (
         None if runtime_config is None else Path(runtime_config).expanduser().resolve()
@@ -674,13 +753,18 @@ def run_desktop(
     # One bootstrap owns the OCR-before-Qt ordering, the WebEngine attribute,
     # and the shared application's program name.
     try:
-        application = cast(QtApplication, ensure_qt_application(diagnostics=diagnostics))
+        with timeline.phase("qt bootstrap"):
+            application = cast(QtApplication, ensure_qt_application(diagnostics=diagnostics))
 
-        from .qt_popup import QtResultDispatcher
+            from .qt_popup import QtResultDispatcher
     except (ImportError, ControlCenterUnavailable) as error:
         raise DesktopApplicationError(
             "Hanly Desktop requires the hanly-app runtime extra with Qt6"
         ) from error
+
+    # A source launch preloads OCR inside the bootstrap above; a packaged one
+    # did it in the runtime hook, where the CLI has already claimed it.
+    record_preload_timing(timeline)
 
     dispatcher = QtResultDispatcher()
     status = RuntimeStatusPublisher(dispatcher)
@@ -698,7 +782,9 @@ def run_desktop(
         dispatcher=dispatcher,
         roi_size=roi_size,
         trace_sink=trace_sink,
+        timeline=timeline,
     )
+    status.subscribe(_readiness_milestone(timeline))
     desktop = DesktopApplication(
         application,
         session,
@@ -709,12 +795,15 @@ def run_desktop(
     session.attach(desktop)
 
     startup = StartupCoordinator(
-        lambda explicit: load_runtime(resolve(explicit)),
+        # The prepared runtime carries the timeline, so provider construction
+        # reports what it cost from the worker thread that pays for it.
+        lambda explicit: replace(load_runtime(resolve(explicit)), timeline=timeline),
         session.activate,
         status=status,
         dispatcher=dispatcher,
         diagnostics=diagnostics,
         release=session.release,
+        timeline=timeline,
     )
     session.bridge.set_retry(startup.retry)
     desktop.attach_startup(startup)
@@ -728,6 +817,21 @@ def run_desktop(
 
     startup.start(explicit_runtime)
     return desktop.run()
+
+
+def _readiness_milestone(timeline: StartupTimeline) -> Callable[[RuntimeStatus], None]:
+    """Record when the runtime first became usable, once per session."""
+
+    reported = False
+
+    def observe(status: RuntimeStatus) -> None:
+        nonlocal reported
+
+        if status.ready and not reported:
+            reported = True
+            timeline.reached("runtime ready")
+
+    return observe
 
 
 def _load_settings(path: Path, diagnostics: DiagnosticLog) -> ConfigManager:

@@ -19,6 +19,27 @@ RUNTIME_CONFIG_NAME = "runtime.json"
 #: platform log location so one profile directory holds the whole session.
 LOG_DIRECTORY_NAME = "logs"
 
+#: Where a macOS program sits inside the application that contains it.
+_BUNDLE_PROGRAM_PARENTS = ("MacOS", "Contents")
+
+
+def macos_bundle_root(executable: str | Path | None = None) -> Path | None:
+    """Return the ``.app`` a macOS program runs from, or ``None``.
+
+    The answer is read from the path's shape rather than from the current
+    platform, so the two things that care - where configuration may be written,
+    and what an update replaces - agree about one installation.
+    """
+
+    program = Path(sys.executable if executable is None else executable).resolve()
+    directory = program.parent
+    if directory.name != _BUNDLE_PROGRAM_PARENTS[0]:
+        return None
+    contents = directory.parent
+    if contents.name != _BUNDLE_PROGRAM_PARENTS[1] or contents.parent.suffix != ".app":
+        return None
+    return contents.parent
+
 
 def default_app_config_path(
     environment: Mapping[str, str] | None = None,
@@ -61,11 +82,16 @@ def discover_runtime_config(
     per-user settings. Explicit ``--runtime-config`` still wins over both.
     """
 
-    beside_executable = (
-        Path(sys.executable if executable is None else executable).resolve().parent
-        / RUNTIME_CONFIG_NAME
-    )
-    for candidate in (beside_executable, default_runtime_config_path(environment)):
+    candidates = [default_runtime_config_path(environment)]
+    # Beside the executable of a macOS application is inside the signed bundle,
+    # which an update replaces; such an installation uses the per-user path only.
+    if macos_bundle_root(executable) is None:
+        beside_executable = (
+            Path(sys.executable if executable is None else executable).resolve().parent
+            / RUNTIME_CONFIG_NAME
+        )
+        candidates.insert(0, beside_executable)
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None
@@ -78,4 +104,5 @@ __all__ = [
     "default_log_directory",
     "default_runtime_config_path",
     "discover_runtime_config",
+    "macos_bundle_root",
 ]

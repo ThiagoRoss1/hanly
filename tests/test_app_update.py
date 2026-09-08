@@ -19,12 +19,16 @@ import pytest
 from hanly_app import app_update
 from hanly_app.app_update import (
     APPLICATION_STEM,
+    BUNDLE_IDENTIFIER,
+    BUNDLE_NAME,
     PRODUCT_PACKAGE,
     ApplicationInstaller,
     ApplicationUpdate,
     ApplicationUpdateError,
     StagedApplicationUpdate,
     check_application_update,
+    extract_application_bundle,
+    installation_root,
     installed_version,
     render_handoff_script,
 )
@@ -636,3 +640,202 @@ def test_the_rollback_relaunch_is_gated_on_the_rollback_actually_succeeding(
         rollback = script.split('mv "$backup" "$install"', 1)[1]
         assert rollback.index("exit 1") < rollback.index("exec ")
         assert script.count("exec ") == 2
+
+
+# --- the macOS update unit is the application bundle ------------------------
+
+_BUNDLE_PROGRAM = f"{BUNDLE_NAME}/Contents/MacOS/{APPLICATION_STEM}"
+
+
+def _macos_bundle_members(identifier: str = BUNDLE_IDENTIFIER) -> dict[str, bytes]:
+    """The files an .app must have for an update to be allowed to install it."""
+
+    import plistlib
+
+    return {
+        _BUNDLE_PROGRAM: b"new build",
+        f"{BUNDLE_NAME}/Contents/Info.plist": plistlib.dumps(
+            {"CFBundleIdentifier": identifier, "CFBundleName": "Hanly"}
+        ),
+        f"{BUNDLE_NAME}/Contents/_CodeSignature/CodeResources": b"<signature>",
+        f"{BUNDLE_NAME}/Contents/Resources/hanly.icns": b"icon",
+    }
+
+
+def _macos_archive(members: dict[str, bytes], links: dict[str, str] | None = None) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        for name, payload in members.items():
+            bundle.writestr(name, payload)
+        for name, target in (links or {}).items():
+            info = zipfile.ZipInfo(name)
+            # The high bits are the POSIX mode; 0o120000 is what marks a symlink.
+            info.external_attr = (0o120777 << 16) | 0o200000
+            bundle.writestr(info, target)
+    return buffer.getvalue()
+
+
+class _Ditto:
+    """Stands in for /usr/bin/ditto, which exists only on macOS."""
+
+    def __init__(self, returncode: int = 0) -> None:
+        self.returncode = returncode
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: list[str], **_options: Any) -> Any:
+        self.commands.append(command)
+        if self.returncode == 0:
+            archive, destination = Path(command[-2]), Path(command[-1])
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(destination)
+        return subprocess.CompletedProcess(command, self.returncode, b"", b"")
+
+
+def _macos_channel(
+    tmp_path: Path,
+    *,
+    members: dict[str, bytes] | None = None,
+    links: dict[str, str] | None = None,
+) -> _Channel:
+    archive = _macos_archive(members or _macos_bundle_members(), links)
+    asset_name = "hanly-desktop-macos.zip"
+    sums = f"{hashlib.sha256(archive).hexdigest()}  {asset_name}\n"
+
+    install_root = tmp_path / "Applications" / BUNDLE_NAME
+    program = install_root / "Contents" / "MacOS" / APPLICATION_STEM
+    program.parent.mkdir(parents=True)
+    program.write_bytes(b"old build")
+
+    payload = {
+        "tag_name": "v0.2.0",
+        "html_url": RELEASE_URL,
+        "assets": [{"name": asset_name}, {"name": "SHA256SUMS"}],
+    }
+    downloader = _FakeDownloader({asset_name: archive, "SHA256SUMS": sums.encode()})
+    return _Channel(payload, downloader, install_root, APPLICATION_STEM)
+
+
+def _macos_installer(channel: _Channel, spawned: list[Any] | None = None) -> ApplicationInstaller:
+    installer = _installer(channel, "darwin", spawned)
+    # ditto is macOS's own tool; the shape of the call is what is asserted here.
+    installer._extract_bundle = lambda archive, parent, payload: extract_application_bundle(
+        archive, parent, payload, runner=_Ditto()
+    )
+    return installer
+
+
+def test_a_macos_installation_is_the_app_not_the_directory_holding_the_program(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing Contents/MacOS would leave a broken bundle behind."""
+
+    program = tmp_path / "Applications" / BUNDLE_NAME / "Contents" / "MacOS" / APPLICATION_STEM
+    program.parent.mkdir(parents=True)
+    program.write_bytes(b"frozen")
+    monkeypatch.setattr(app_update.sys, "frozen", True, raising=False)
+
+    assert installation_root(program) == tmp_path / "Applications" / BUNDLE_NAME
+    # A onedir installation is unchanged.
+    assert installation_root(tmp_path / "dist" / "hanly-desktop" / APPLICATION_STEM) == (
+        tmp_path / "dist" / "hanly-desktop"
+    )
+
+
+def test_the_macos_updater_takes_the_zip_and_relaunches_the_bundles_program(
+    tmp_path: Path,
+) -> None:
+    channel = _macos_channel(tmp_path)
+    spawned: list[Any] = []
+    installer = _macos_installer(channel, spawned)
+
+    staged = installer.stage(_check(channel, "darwin"))
+    installer.apply(staged)
+
+    assert channel.downloader.requested[0] == "hanly-desktop-macos.zip"
+    assert staged.staged_path.name == f"{BUNDLE_NAME}.staged"
+    assert (staged.staged_path / "Contents" / "MacOS" / APPLICATION_STEM).is_file()
+    # The running installation is untouched until the handoff runs.
+    assert (channel.install_root / "Contents" / "MacOS" / APPLICATION_STEM).read_bytes() == (
+        b"old build"
+    )
+    script = Path(spawned[0][0][1]).read_text(encoding="ascii")
+    assert f"Contents/MacOS/{APPLICATION_STEM}" in script
+
+
+def test_a_downloaded_application_that_is_not_hanly_is_never_staged(tmp_path: Path) -> None:
+    channel = _macos_channel(
+        tmp_path, members=_macos_bundle_members(identifier="com.example.other")
+    )
+
+    with pytest.raises(ApplicationUpdateError, match="not Hanly"):
+        _macos_installer(channel).stage(_check(channel, "darwin"))
+
+    assert not (channel.install_root.parent / f"{BUNDLE_NAME}.staged").exists()
+
+
+def test_an_unsigned_application_is_refused_before_the_swap(tmp_path: Path) -> None:
+    members = _macos_bundle_members()
+    del members[f"{BUNDLE_NAME}/Contents/_CodeSignature/CodeResources"]
+    channel = _macos_channel(tmp_path, members=members)
+
+    with pytest.raises(ApplicationUpdateError, match="no signature"):
+        _macos_installer(channel).stage(_check(channel, "darwin"))
+
+
+def test_an_internal_relative_link_survives_the_preflight(tmp_path: Path) -> None:
+    """Qt frameworks are full of them; rejecting those would reject every build."""
+
+    channel = _macos_channel(
+        tmp_path,
+        links={f"{BUNDLE_NAME}/Contents/Frameworks/Qt.framework/Current": "../Versions/A"},
+    )
+
+    staged = _macos_installer(channel).stage(_check(channel, "darwin"))
+
+    assert (staged.staged_path / "Contents" / "MacOS" / APPLICATION_STEM).is_file()
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["/etc/passwd", "../../../elsewhere", "../../../Other.app/Contents/MacOS/program"],
+)
+def test_a_link_out_of_the_bundle_is_refused_before_anything_is_written(
+    tmp_path: Path, target: str
+) -> None:
+    channel = _macos_channel(
+        tmp_path, links={f"{BUNDLE_NAME}/Contents/Resources/link": target}
+    )
+
+    with pytest.raises(ApplicationUpdateError, match="links outside itself"):
+        _macos_installer(channel).stage(_check(channel, "darwin"))
+
+
+def test_a_member_outside_the_expected_bundle_is_refused(tmp_path: Path) -> None:
+    members = _macos_bundle_members()
+    members["../escaped.txt"] = b"nope"
+    channel = _macos_channel(tmp_path, members=members)
+
+    with pytest.raises(ApplicationUpdateError, match="unsafe path"):
+        _macos_installer(channel).stage(_check(channel, "darwin"))
+
+
+def test_the_native_unpacker_is_invoked_as_ditto_and_cleans_up_when_it_fails(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "app.zip"
+    archive.write_bytes(_macos_archive(_macos_bundle_members()))
+    parent = tmp_path / "parent"
+    parent.mkdir()
+
+    working = _Ditto()
+    extracted = extract_application_bundle(archive, parent, BUNDLE_NAME, runner=working)
+
+    assert working.commands[0][:3] == ["/usr/bin/ditto", "-x", "-k"]
+    assert (extracted / BUNDLE_NAME / "Contents" / "MacOS" / APPLICATION_STEM).is_file()
+
+    with pytest.raises(ApplicationUpdateError, match="could not unpack"):
+        extract_application_bundle(archive, parent, BUNDLE_NAME, runner=_Ditto(returncode=1))
+
+    # Only the successful extraction is left behind.
+    assert [item.name for item in parent.iterdir()] == [extracted.name]

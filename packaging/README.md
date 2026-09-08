@@ -1,13 +1,45 @@
 # Hanly Desktop packaging
 
-`hanly-desktop.spec` is the production PyInstaller definition. It builds a
-platform-native **onedir** application and includes the `hanly` engine,
-`hanly_app`, Control Center assets, and the native EasyOCR/torch and Qt
-runtime libraries. The frozen startup hook preserves the required
-OCR-before-Qt ordering.
+`hanly-desktop.spec` is the production PyInstaller definition. Windows and
+Linux build a **onedir** application; macOS wraps the same collection in
+**`Hanly.app`**, whose program is `Hanly.app/Contents/MacOS/hanly-desktop`. It
+includes the `hanly` engine, `hanly_app`, Control Center assets, and the native
+EasyOCR/torch and Qt runtime libraries. The frozen startup hook preserves the
+required OCR-before-Qt ordering.
 `hanly-desktop.exe` is the whole interface: it calls `hanly_app.cli:main`, the
 same function the installed `hanly` script calls, so it accepts the same flags
 and opens the same window. No launcher script is shipped beside it.
+
+The macOS bundle identifier is `io.github.thiagoross1.hanly`, and its
+`CFBundleShortVersionString`/`CFBundleVersion` come from the installed
+`hanly-app` metadata that `tools/release_version.py` checks against the tag.
+Builds are signed ad hoc (`codesign_identity="-"`), which is what an
+unnotarized build can honestly claim; a Developer ID and notarization are
+separate, later work.
+
+## Build inputs a frozen bundle cannot fetch
+
+A packaged Hanly verifies TLS against a bundled `certifi` store and reads its
+EasyOCR weights from `hanly_app/assets/easyocr_models`, with downloading
+switched off. Both are therefore build inputs:
+
+```bash
+python tools/prepare_easyocr_models.py
+```
+
+That fetches exactly two files over HTTPS - `craft_mlt_25k.pth` and
+`korean_g2.pth` - checks each against the MD5 EasyOCR 1.7.2 publishes for it,
+extracts only that one member from the release archive, and reuses a file that
+already matches. The digests identify the content EasyOCR itself re-checks on
+load; they are not a claim of cryptographic authenticity. The spec refuses to
+build without both files rather than producing a bundle that cannot read
+anything.
+
+`packaging/release-constraints.txt` pins the three inputs that decide what a
+released bundle contains - `easyocr`, `pyinstaller`, and
+`pyinstaller-hooks-contrib` - and the build workflow installs with
+`-c packaging/release-constraints.txt`. It is a release-build constraint file,
+not a lock file for the whole dependency graph.
 
 Morphology is collected unconditionally. `kiwipiepy`, `kiwipiepy_model`, and
 the top-level `_kiwipiepy` extension are imported by name at runtime, so
@@ -76,20 +108,61 @@ what makes a check succeed. That makes the worker run *cold*: it fetches its
 own models. `--model-cache DIR` copies a named EasyOCR model directory into
 the isolated profile instead, which is the deterministic offline scenario.
 
+On macOS the checks run against the application unpacked back out of the
+published ZIP, not the build directory it was made from, and the disk image is
+mounted read-only and reported on beside it:
+
+```bash
+python tools/smoke_packaged_runtime.py \
+    --from-archive dist/hanly-desktop-macos.zip \
+    --reconstruct-into dist/reconstructed \
+    --disk-image dist/hanly-desktop-macos.dmg \
+    --inventory-only
+python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --window-only
+```
+
+The inventory also names the two build inputs a frozen bundle cannot fetch:
+`certifi/cacert.pem` and both EasyOCR weights. A bundle missing them has
+working code and no way to verify a certificate or read a word.
+
 `tests/integration/test_packaged_desktop.py` is the same gate as a test. It
-uses `dist/<platform>/hanly-desktop` by default, or the bundle named by
+uses the platform's build output (`dist/<platform>/hanly-desktop`, or
+`dist/macos/Hanly.app`) by default, or the bundle named by
 `HANLY_PACKAGED_APP`.
 
 ## Artifact and resource conventions
 
-The onedir output is written under `dist/<platform>/hanly-desktop/`. The tool
-then creates one application archive at the root of `dist/`:
+Windows and Linux write a onedir tree under `dist/<platform>/hanly-desktop/`;
+macOS writes `dist/macos/Hanly.app`. The tool then creates the platform's
+products at the root of `dist/`:
 
-| Platform | Application archive |
+| Platform | Products |
 | --- | --- |
 | Windows | `hanly-desktop-windows.zip` |
-| macOS | `hanly-desktop-macos.tar.gz` |
+| macOS | `hanly-desktop-macos.zip`, `hanly-desktop-macos.dmg` |
 | Linux | `hanly-desktop-linux.tar.gz` |
+
+macOS publishes two products from the one built application. The **ZIP** is
+made with `ditto --keepParent`, so it holds `Hanly.app` with its symlinks and
+permissions intact; that is what the in-app updater downloads and installs.
+The **DMG** is made with `hdiutil` from the same application and is what a
+person downloads and drags to Applications. The disk image is never an update
+input, and neither product modifies the built application.
+
+A release therefore holds seven assets: four application products, one
+`krdict-<version>.sqlite3.zst`, `hanly-resources.json`, and `SHA256SUMS`
+(which lists the six payload digests).
+
+### Updating from a 0.1.1 macOS installation
+
+0.1.1 shipped `hanly-desktop-macos.tar.gz` and installed a plain directory. A
+release with the new products has no such asset, so a 0.1.1 macOS build reports
+the new version and says the installation updates itself outside Hanly, rather
+than downloading something it cannot install. That migration is manual and
+happens once: download `hanly-desktop-macos.dmg`, drag `Hanly.app` to
+Applications, and remove the old directory. Settings, diagnostics, and the
+KRDICT database live in the per-user profile, not inside the application, so
+nothing has to be moved with it.
 
 Release tooling publishes those files under the stable
 `hanly-desktop-<platform>` stem. Resource delivery is separate and uses one
@@ -139,14 +212,15 @@ resource. It runs in two halves around that manual step.
    `hanly-resources.json`, replacing any carried pair.
 4. `finalize` waits on the `hanly-release` environment. Approving it under
    **Review deployments** re-resolves the tag and its build from scratch,
-   re-downloads the three archives from that exact run, takes the resource pair
+   re-downloads the four application products from that exact run, takes the
+   resource pair
    from the draft, validates the manifest shape, filename, version, size,
    SHA-256, schema version and entry count, writes `SHA256SUMS` only once all
-   five payload assets pass, uploads the six assets, asserts the draft holds
-   exactly those six, and only then clears the draft flag.
+   six payload assets pass, uploads the seven assets, asserts the draft holds
+   exactly those seven, and only then clears the draft flag.
 
 A first release has no previous resource to copy, so its draft is created with
-the three archives alone and waits for the operator's two files. Missing
+the four application products alone and waits for the operator's two files. Missing
 resources fail at finalization, never at draft creation.
 
 ### Recovery, dry runs, and idempotency

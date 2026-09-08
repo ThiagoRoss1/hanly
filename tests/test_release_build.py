@@ -302,7 +302,10 @@ def test_manual_recovery_refuses_a_tag_that_is_already_public() -> None:
 RESOURCE_ASSET_NAME = "krdict-20260819-v1.sqlite3.zst"
 PUBLISHED_ASSETS = (
     "hanly-desktop-windows.zip",
-    "hanly-desktop-macos.tar.gz",
+    # macOS publishes both products: the ZIP the updater installs, and the disk
+    # image a person downloads.
+    "hanly-desktop-macos.zip",
+    "hanly-desktop-macos.dmg",
     "hanly-desktop-linux.tar.gz",
     RESOURCE_ASSET_NAME,
     "hanly-resources.json",
@@ -338,14 +341,14 @@ def test_a_public_release_this_lane_did_not_publish_is_refused() -> None:
 @pytest.mark.parametrize(
     ("assets", "message"),
     [
-        (PUBLISHED_ASSETS[:-1], "not the exact six"),
+        (PUBLISHED_ASSETS[:-1], "not the exact seven"),
         (PUBLISHED_ASSETS + ("krdict-other.sqlite3.zst",), "exactly one KRDICT asset"),
         (
             tuple(name for name in PUBLISHED_ASSETS if name != RESOURCE_ASSET_NAME),
             "exactly one KRDICT",
         ),
         (PUBLISHED_ASSETS + ("hanly-desktop-windows.zip",), "duplicate asset name"),
-        (PUBLISHED_ASSETS + ("krdict.sqlite3",), "not the exact six"),
+        (PUBLISHED_ASSETS + ("krdict.sqlite3",), "not the exact seven"),
     ],
 )
 def test_a_partial_or_inconsistent_public_release_fails_rather_than_no_ops(
@@ -364,7 +367,7 @@ def test_a_release_payload_without_an_asset_list_is_refused() -> None:
         classify_release(published, commit=COMMIT, event="workflow_run")
 
 
-def test_the_exact_six_asset_names_are_what_a_release_is() -> None:
+def test_the_exact_seven_asset_names_are_what_a_release_is() -> None:
     assert verify_published_assets(list(PUBLISHED_ASSETS)) == RESOURCE_ASSET_NAME
 
 

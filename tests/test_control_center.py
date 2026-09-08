@@ -588,3 +588,28 @@ def test_the_page_says_when_a_region_scope_has_no_region_to_read() -> None:
 
     assert "reads the whole monitor" in assets.javascript
     assert 'app.capture_mode === "region"' in assets.javascript
+
+
+def test_start_capture_is_refused_while_the_runtime_is_still_preparing() -> None:
+    """A preparing runtime refuses Start rather than reporting a live capture."""
+
+    runtime = _Runtime()
+    controller = _Controller(runtime)
+    ready = [False]
+    bridge = ControlCenterBridge(
+        desktop_controller=controller,
+        capture_ready=lambda: ready[0],
+        runtime_status=lambda: RuntimeStatus("preparing", "resources", "Preparing..."),
+    )
+
+    with pytest.raises(ControlCenterUnavailable, match="still preparing"):
+        bridge.start_capture()
+
+    assert runtime.events == []
+    assert bridge.get_state()["app"]["capture_running"] is False
+
+    ready[0] = True
+    state = bridge.start_capture()
+
+    assert runtime.events == ["start"]
+    assert state["app"]["capture_running"] is True

@@ -30,11 +30,14 @@ APPLICATION_WORKFLOW = ".github/workflows/build.yml"
 #: draft without it is not this workflow's draft, whatever its tag says.
 COMMIT_MARKER = "Hanly-Release-Commit:"
 
-#: What a finished Hanly release holds, beside its one KRDICT resource.
+#: What a finished Hanly release holds, beside its one KRDICT resource. macOS
+#: publishes two products from one build: the ZIP the updater installs, and the
+#: disk image a person downloads.
 FIXED_RELEASE_ASSETS = frozenset(
     {
         "hanly-desktop-windows.zip",
-        "hanly-desktop-macos.tar.gz",
+        "hanly-desktop-macos.zip",
+        "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
         "hanly-resources.json",
         "SHA256SUMS",
@@ -248,7 +251,7 @@ def verify_published_assets(names: Sequence[str]) -> str:
     """Return the resource asset name, once ``names`` is exactly a release set.
 
     A partial or foreign public release must not be mistaken for a finished one,
-    so the six names are checked rather than counted.
+    so the seven names are checked rather than counted.
     """
 
     unique = set(names)
@@ -264,7 +267,7 @@ def verify_published_assets(names: Sequence[str]) -> str:
         missing = sorted(FIXED_RELEASE_ASSETS - unique)
         unexpected = sorted(unique - FIXED_RELEASE_ASSETS - {resources[0]})
         raise ReleaseStateError(
-            f"the published release is not the exact six assets; missing {missing}, "
+            f"the published release is not the exact seven assets; missing {missing}, "
             f"unexpected {unexpected}"
         )
     return resources[0]

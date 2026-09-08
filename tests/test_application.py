@@ -25,7 +25,7 @@ from hanly_app.application import (
     load_update_service,
 )
 from hanly_app.config import AppConfig, ConfigManager
-from hanly_app.control_center import ControlCenterBridge
+from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailable
 from hanly_app.desktop_controller import DesktopState
 from hanly_app.runtime_status import RuntimeStatusPublisher
 
@@ -820,3 +820,99 @@ def test_a_tray_without_a_way_back_leaves_the_window_closable() -> None:
 
     assert "control.restorable=True" not in events
     assert any("cannot restore" in message for message in desktop.diagnostics)
+
+
+def test_a_capture_action_before_activation_is_refused_not_a_lifecycle_failure(
+    tmp_path: Path,
+) -> None:
+    """Starting while resources are still being prepared is ordinary news."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+
+    assert session.can_start_capture is False
+    with pytest.raises(ControlCenterUnavailable, match="still preparing"):
+        session.start()
+    assert pending.empty()
+
+    controller = _QtOwnedController(DesktopState.PAUSED)
+    session._controller = controller
+    session.start()
+
+    assert session.can_start_capture is True
+    assert controller.calls == ["resume"]
+
+
+def test_the_tray_reports_a_refused_start_without_a_lifecycle_traceback() -> None:
+    """The tray runs in a Qt slot, so a refusal has to come back as a note."""
+
+    events: list[str] = []
+    diagnostics = DiagnosticLog()
+
+    class _Refusing(_Service):
+        def start(self) -> None:
+            raise ControlCenterUnavailable("Hanly is still preparing its lookup runtime.")
+
+    desktop = DesktopApplication(
+        _Qt(),
+        _Refusing("controller", events),
+        _Service("tray", events),
+        _Service("control", events),
+        diagnostics=diagnostics,
+    )
+    desktop.request_capture()
+
+    assert diagnostics.snapshot() == ("Hanly is still preparing its lookup runtime.",)
+    assert "controller.start" not in events
+
+
+def test_a_runtime_that_never_lets_go_keeps_its_resources_and_stops_the_retry(
+    tmp_path: Path,
+) -> None:
+    """A replacement must not be composed over providers that are still open."""
+
+    class _Stubborn(_QtOwnedController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.waits = 0
+
+        def await_shutdown(self, _timeout: float | None = None) -> bool:
+            self.waits += 1
+            return False
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    controller = _Stubborn()
+    session._controller = controller
+
+    with pytest.raises(application_module.DesktopApplicationError):
+        session.release()
+
+    assert controller.calls == ["begin_shutdown"]
+    assert session._pending_release == [controller]
+
+    with pytest.raises(application_module.DesktopApplicationError):
+        session.release()
+
+    # The runtime nobody could stop is waited for again, not forgotten.
+    assert controller.waits == 2
+    assert session._pending_release == [controller]
+
+
+def test_a_macos_bundle_never_keeps_mutable_configuration_inside_itself(
+    tmp_path: Path,
+) -> None:
+    """Writing beside the program would write into the signed, replaced bundle."""
+
+    program = tmp_path / "Applications" / "Hanly.app" / "Contents" / "MacOS" / "hanly-desktop"
+    program.parent.mkdir(parents=True)
+    program.write_bytes(b"frozen")
+    inside = program.parent / RUNTIME_CONFIG_NAME
+    inside.write_text("{}", encoding="utf-8")
+
+    environment = {"LOCALAPPDATA": str(tmp_path / "settings")}
+    per_user = default_runtime_config_path(environment)
+    per_user.parent.mkdir(parents=True)
+    per_user.write_text("{}", encoding="utf-8")
+
+    assert discover_runtime_config(environment, program) == per_user

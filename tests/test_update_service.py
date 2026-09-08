@@ -5,12 +5,14 @@ import io
 import json
 import os
 import sqlite3
+import ssl
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import certifi
 import pytest
 import zstandard
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
@@ -638,6 +640,27 @@ def test_a_redirect_cannot_downgrade_the_https_transport() -> None:
     for rejected in ("http://example.test/asset", "ftp://example.test/asset"):
         with pytest.raises(ResourceUpdateError, match="must be delivered over https"):
             handler.redirect_request(request, None, 302, "Found", {}, rejected)
+
+
+def test_default_opener_uses_certifi_for_verified_https() -> None:
+    # The opener is a bound ``OpenerDirector.open``, and the handler keeps its
+    # context privately; both are read through Any rather than described here.
+    director = cast(Any, update_service._https_opener()).__self__
+    https_handler = next(
+        handler
+        for handler in director.handlers
+        if isinstance(handler, urllib.request.HTTPSHandler)
+    )
+    context: ssl.SSLContext = cast(Any, https_handler)._context
+
+    assert context.verify_mode is ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert context.cert_store_stats()["x509_ca"] > 0
+    assert any(
+        isinstance(handler, update_service._HTTPSOnlyRedirectHandler)
+        for handler in director.handlers
+    )
+    assert Path(certifi.where()).is_file()
 
 
 def test_checksum_verification_streams_multi_chunk_artifacts(tmp_path: Path) -> None:

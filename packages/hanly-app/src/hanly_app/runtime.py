@@ -16,6 +16,7 @@ and is not visible to ``LookupPipeline``.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,7 @@ from hanly.resource_manager import (
 from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
 from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
 from .composition import create_lookup_controller as _create_lookup_controller
+from .diagnostics import StartupTimeline
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from .runtime_trace import RuntimeTraceSink
 
@@ -46,6 +48,11 @@ class RuntimeConfigError(ValueError):
 OCR_DISPLAY_NAME = "EasyOCR"
 #: EasyOCR resolves its own models, so KRDICT is the only managed resource.
 KRDICT_RESOURCE_ID = "krdict"
+
+#: The weights a packaged build carries beside this package, and reads instead
+#: of downloading. They are what EasyOCR 1.7.2 loads for Korean on CPU.
+PACKAGED_MODEL_DIRECTORY = Path(__file__).resolve().parent / "assets" / "easyocr_models"
+PACKAGED_MODEL_FILES = ("craft_mlt_25k.pth", "korean_g2.pth")
 
 _EASYOCR_FIELDS = frozenset(
     {
@@ -74,6 +81,9 @@ class HanlyRuntime:
     easyocr_config: EasyOCRConfig | None = None
     confidence_threshold: float | None = None
     skip_flat_rois: bool = False
+    #: Where worker-thread provider construction reports what it cost. The
+    #: desktop attaches its session timeline; other clients leave it out.
+    timeline: StartupTimeline | None = None
 
     def _ocr_factory(self) -> OCRProviderFactory:
         easyocr_config = self.easyocr_config
@@ -107,6 +117,7 @@ class HanlyRuntime:
             confidence_threshold=threshold,
             skip_flat_rois=self.skip_flat_rois,
             trace_sink=trace_sink,
+            timeline=self.timeline,
         )
 
     def create_lookup_controller(
@@ -141,6 +152,7 @@ class HanlyRuntime:
             result_dispatcher=result_dispatcher,
             thread_name=thread_name,
             trace_sink=trace_sink,
+            timeline=self.timeline,
         )
 
 
@@ -327,10 +339,47 @@ def _easyocr_config(raw: Mapping[str, object], root: Path) -> EasyOCRConfig:
         for key, value in values.items()
         if key not in _EASYOCR_FIELDS | {"confidence_threshold"}
     }
+    if _frozen():
+        options.update(_packaged_model_options())
+
     try:
         return EasyOCRConfig(**options)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"invalid easyocr options: {exc}") from exc
+
+
+def _frozen() -> bool:
+    """Whether this is a packaged build rather than a source checkout."""
+
+    return bool(getattr(sys, "frozen", False))
+
+
+def _packaged_model_options() -> dict[str, Any]:
+    """Point EasyOCR at the bundled weights and forbid downloading more.
+
+    Both settings override the configuration file, including a ``runtime.json``
+    written by an older Hanly that stored a user model directory and left
+    downloading on. ``user_network_directory`` is left alone: EasyOCR 1.7.2
+    creates it under a writable ``~/.EasyOCR`` and reads it only for custom
+    recognition networks.
+    """
+
+    missing = [
+        name
+        for name in PACKAGED_MODEL_FILES
+        if not (PACKAGED_MODEL_DIRECTORY / name).is_file()
+    ]
+    if missing:
+        raise RuntimeConfigError(
+            "this Hanly build is missing its bundled EasyOCR weights: "
+            + ", ".join(missing)
+            + f" (expected in {PACKAGED_MODEL_DIRECTORY})"
+        )
+
+    return {
+        "model_storage_directory": PACKAGED_MODEL_DIRECTORY,
+        "download_enabled": False,
+    }
 
 
 _RESOURCE_FIELDS = frozenset(
@@ -507,6 +556,8 @@ def _configuration_string(
 __all__ = [
     "KRDICT_RESOURCE_ID",
     "OCR_DISPLAY_NAME",
+    "PACKAGED_MODEL_DIRECTORY",
+    "PACKAGED_MODEL_FILES",
     "HanlyRuntime",
     "RuntimeConfigError",
     "create_lookup_controller_from_config",

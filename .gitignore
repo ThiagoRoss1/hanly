@@ -13,6 +13,10 @@ resources/dev/models/
 resources/dev/runtime-local.json
 resources/dev/app-config.json
 artifacts/benchmarks/
+artifacts/investigation-2026-09-05
 data/source/
 data/generated/
+
+# Build inputs fetched by tools/prepare_easyocr_models.py.
+packages/hanly-app/src/hanly_app/assets/easyocr_models/
 data/reports/

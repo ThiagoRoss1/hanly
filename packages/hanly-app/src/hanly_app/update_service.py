@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import sqlite3
+import ssl
 import tarfile
 import tempfile
 import urllib.parse
@@ -27,6 +28,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+import certifi
 import zstandard
 from hanly.krdict_schema import (
     KRDICT_SCHEMA_VERSION,
@@ -678,7 +680,11 @@ class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _https_opener() -> Callable[..., Any]:
     """Build the default opener used for every remote read."""
 
-    return urllib.request.build_opener(_HTTPSOnlyRedirectHandler).open
+    context = ssl.create_default_context(cafile=certifi.where())
+    return urllib.request.build_opener(
+        _HTTPSOnlyRedirectHandler,
+        urllib.request.HTTPSHandler(context=context),
+    ).open
 
 
 def _require_https(url: str) -> str:

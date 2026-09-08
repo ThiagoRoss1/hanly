@@ -13,9 +13,11 @@ from __future__ import annotations
 import sys
 import threading
 import traceback
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 from .paths import default_log_directory
 
@@ -168,6 +170,65 @@ class DiagnosticLog:
         self._file.write(f"{_timestamp()} {record}")
 
 
+class StartupTimeline:
+    """Record how long each named startup phase took, into the session log.
+
+    These are diagnostics, not an SLA: they exist so a launch that felt slow
+    can be read back from the log a user already sends. A timeline without a
+    log records nothing, which is what a component with no diagnostics wants.
+    """
+
+    def __init__(
+        self,
+        log: DiagnosticLog | None = None,
+        *,
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        self._log = log
+        self._clock = clock
+        self._started = clock()
+
+    @contextmanager
+    def phase(self, name: str, *, attempt: int | None = None) -> Iterator[None]:
+        """Time one phase, recording a failure with the same duration."""
+
+        started = self._clock()
+        try:
+            yield
+        except BaseException as error:
+            self.mark(
+                name,
+                self._clock() - started,
+                outcome=f"failed: {type(error).__name__}",
+                attempt=attempt,
+            )
+            raise
+        self.mark(name, self._clock() - started, attempt=attempt)
+
+    def mark(
+        self,
+        name: str,
+        seconds: float,
+        *,
+        outcome: str = "ok",
+        attempt: int | None = None,
+    ) -> None:
+        """Record an already-measured phase, such as one timed before this log."""
+
+        if self._log is None:
+            return
+        detail = outcome if attempt is None else f"{outcome}, attempt {attempt}"
+        self._log.add(f"startup {name}: {seconds * 1000:.0f} ms ({detail})")
+
+    def reached(self, name: str) -> None:
+        """Record a milestone as elapsed time, not as a cost of its own."""
+
+        if self._log is None:
+            return
+        elapsed = (self._clock() - self._started) * 1000
+        self._log.add(f"startup {name} at {elapsed:.0f} ms")
+
+
 def open_diagnostics(
     directory: str | Path | None = None,
     *,
@@ -271,6 +332,7 @@ __all__ = [
     "MEMORY_LIMIT",
     "DiagnosticLog",
     "DiagnosticSink",
+    "StartupTimeline",
     "RotatingLogFile",
     "install_qt_message_handler",
     "open_diagnostics",

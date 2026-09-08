@@ -174,15 +174,16 @@ jobs:
             exit 1
           }
           mapfile -t all_archives < <(
-            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print | sort
+            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.dmg' \) -print | sort
           )
-          if [[ ${#all_archives[@]} -ne 3 ]]; then
-            echo "expected exactly three application archives; duplicate, unexpected, or missing files" >&2
+          if [[ ${#all_archives[@]} -ne 4 ]]; then
+            echo "expected exactly four application archives; duplicate, unexpected, or missing files" >&2
             exit 1
           fi
           expected_archives=(
             hanly-desktop-windows.zip
-            hanly-desktop-macos.tar.gz
+            hanly-desktop-macos.zip
+            hanly-desktop-macos.dmg
             hanly-desktop-linux.tar.gz
           )
           max_release_asset_bytes=2147483648
@@ -271,12 +272,13 @@ jobs:
 
           upload=(
             release-output/hanly-desktop-windows.zip
-            release-output/hanly-desktop-macos.tar.gz
+            release-output/hanly-desktop-macos.zip
+            release-output/hanly-desktop-macos.dmg
             release-output/hanly-desktop-linux.tar.gz
           )
           for asset in "${upload[@]}"; do
             [[ -f "$asset" ]] || {
-              echo "refusing to stage a draft without the three application archives" >&2
+              echo "refusing to stage a draft without the four application archives" >&2
               exit 1
             }
           done
@@ -419,15 +421,16 @@ jobs:
             exit 1
           }
           mapfile -t all_archives < <(
-            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print | sort
+            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.dmg' \) -print | sort
           )
-          if [[ ${#all_archives[@]} -ne 3 ]]; then
-            echo "expected exactly three application archives; duplicate, unexpected, or missing files" >&2
+          if [[ ${#all_archives[@]} -ne 4 ]]; then
+            echo "expected exactly four application archives; duplicate, unexpected, or missing files" >&2
             exit 1
           fi
           expected_archives=(
             hanly-desktop-windows.zip
-            hanly-desktop-macos.tar.gz
+            hanly-desktop-macos.zip
+            hanly-desktop-macos.dmg
             hanly-desktop-linux.tar.gz
           )
           max_release_asset_bytes=2147483648
@@ -473,7 +476,8 @@ jobs:
 
           allowed=(
             hanly-desktop-windows.zip
-            hanly-desktop-macos.tar.gz
+            hanly-desktop-macos.zip
+            hanly-desktop-macos.dmg
             hanly-desktop-linux.tar.gz
             "$resource_asset_name"
             hanly-resources.json
@@ -598,7 +602,8 @@ jobs:
 
           for asset in \
               release-output/hanly-desktop-windows.zip \
-              release-output/hanly-desktop-macos.tar.gz \
+              release-output/hanly-desktop-macos.zip \
+              release-output/hanly-desktop-macos.dmg \
               release-output/hanly-desktop-linux.tar.gz \
               "release-output/$RESOURCE_ASSET_NAME" \
               release-output/hanly-resources.json; do
@@ -628,7 +633,8 @@ jobs:
           set -euo pipefail
           expected_assets=(
             hanly-desktop-windows.zip
-            hanly-desktop-macos.tar.gz
+            hanly-desktop-macos.zip
+            hanly-desktop-macos.dmg
             hanly-desktop-linux.tar.gz
             "$RESOURCE_ASSET_NAME"
             hanly-resources.json
@@ -646,13 +652,13 @@ jobs:
           actual_assets_file="$RUNNER_TEMP/actual-release-assets"
           gh api "repos/$REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort > "$actual_assets_file"
           mapfile -t actual_assets < "$actual_assets_file"
-          if [[ ${#actual_assets[@]} -ne 6 ]]; then
-            echo "partial draft: expected exactly six release assets" >&2
+          if [[ ${#actual_assets[@]} -ne 7 ]]; then
+            echo "partial draft: expected exactly seven release assets" >&2
             exit 1
           fi
           mapfile -t sorted_expected < <(printf '%s\n' "${expected_assets[@]}" | sort)
           [[ "$(printf '%s\n' "${actual_assets[@]}")" == "$(printf '%s\n' "${sorted_expected[@]}")" ]] || {
-            echo "partial draft: release asset list is not exactly the expected six" >&2
+            echo "partial draft: release asset list is not exactly the expected seven" >&2
             exit 1
           }
 

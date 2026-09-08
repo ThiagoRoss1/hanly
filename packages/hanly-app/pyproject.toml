@@ -8,7 +8,7 @@ version = "0.1.1"
 description = "Hanly desktop application"
 readme = {text = "Hanly desktop application package.", content-type = "text/plain"}
 requires-python = ">=3.10"
-dependencies = ["hanly==0.1.1", "zstandard>=0.23,<1"]
+dependencies = ["certifi>=2024.2.2", "hanly==0.1.1", "zstandard>=0.23,<1"]
 
 [project.scripts]
 hanly = "hanly_app.cli:main"

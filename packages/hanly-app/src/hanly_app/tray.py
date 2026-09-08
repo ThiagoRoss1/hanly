@@ -38,6 +38,9 @@ class TrayStatus:
 
 TrayStatusProvider: TypeAlias = Callable[[], DesktopState]
 TrayDetailProvider: TypeAlias = Callable[[], str | None]
+#: Whether the runtime can accept a capture action at all. A build that does
+#: not report readiness leaves Start/Resume governed by lifecycle state alone.
+TrayReadyProvider: TypeAlias = Callable[[], bool]
 TrayCallback: TypeAlias = Callable[[], None]
 TrayDispatcher: TypeAlias = Callable[[TrayCallback], None]
 TrayMenuAction: TypeAlias = Callable[..., None]
@@ -108,6 +111,7 @@ class TrayService:
         on_open_control_center: TrayCallback | None = None,
         on_quit: TrayCallback | None = None,
         detail_provider: TrayDetailProvider | None = None,
+        ready_provider: TrayReadyProvider | None = None,
         name: str = "hanly",
         title: str = "Hanly",
         icon_factory: TrayIconFactory | None = None,
@@ -118,6 +122,8 @@ class TrayService:
             raise TypeError("status_provider must be callable")
         if detail_provider is not None and not callable(detail_provider):
             raise TypeError("detail_provider must be callable")
+        if ready_provider is not None and not callable(ready_provider):
+            raise TypeError("ready_provider must be callable")
         if not callable(dispatcher):
             raise TypeError("dispatcher must be callable")
         if not name.strip() or not title.strip():
@@ -125,6 +131,7 @@ class TrayService:
 
         self._status_provider = status_provider
         self._detail_provider = detail_provider
+        self._ready_provider = ready_provider
         self._dispatcher = dispatcher
         self._on_start = on_start
         self._on_resume = on_resume
@@ -177,6 +184,12 @@ class TrayService:
 
         detail = None if self._detail_provider is None else self._detail_provider()
         return normalize_status(self._status_provider(), detail)
+
+    @property
+    def can_start(self) -> bool:
+        """Whether starting or resuming capture is offered right now."""
+
+        return True if self._ready_provider is None else bool(self._ready_provider())
 
     def start(self) -> None:
         """Create and start the tray icon once."""
@@ -232,6 +245,9 @@ class TrayService:
         menu_item = backend.MenuItem
         menu_factory = backend.Menu
         status = self.status
+        # A menu is rebuilt on every refresh, and readiness changes without a
+        # lifecycle change, so the offer is resolved here rather than cached.
+        can_start = self.can_start
         return menu_factory(
             menu_item(
                 f"Status: {status.label}",
@@ -241,7 +257,8 @@ class TrayService:
             menu_item(
                 "Start / Resume",
                 self._start_or_resume,
-                enabled=lambda _item: status.state in {TrayState.NEW, TrayState.PAUSED},
+                enabled=lambda _item: can_start
+                and status.state in {TrayState.NEW, TrayState.PAUSED},
             ),
             menu_item(
                 "Pause",
@@ -257,6 +274,8 @@ class TrayService:
     def _start_or_resume(self, *_args: object) -> None:
         status = self.status
         callback = self._on_start if status.state is TrayState.NEW else self._on_resume
+        if not self.can_start:
+            return
         if callback is not None and status.state in {TrayState.NEW, TrayState.PAUSED}:
             self._dispatch(callback)
 
@@ -313,6 +332,7 @@ __all__ = [
     "TrayCallback",
     "TrayDetailProvider",
     "TrayDispatcher",
+    "TrayReadyProvider",
     "TrayBackend",
     "TrayIcon",
     "TrayIconFactory",

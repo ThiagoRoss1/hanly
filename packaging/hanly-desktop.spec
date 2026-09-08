@@ -1,20 +1,25 @@
-"""Production onedir definition for Hanly Desktop.
+"""Production application definition for Hanly Desktop.
+
+Windows and Linux collect a onedir tree; macOS wraps the same collection in a
+``Hanly.app`` bundle, which is the unit macOS installs, signs, and updates.
 
 Only application code, Python package data, and native runtime dependencies
-are collected here. The KRDICT database is
-external resource artifacts and must be named by ``--runtime-config``.
+are collected here, plus the two files a frozen build cannot fetch for itself:
+the certifi trust store and the EasyOCR weights. The KRDICT database is an
+external resource artifact and must be named by ``--runtime-config``.
 """
 
 from __future__ import annotations
 
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 from PyInstaller.building.build_main import Analysis, COLLECT, EXE, PYZ
+from PyInstaller.building.osx import BUNDLE
 from PyInstaller.utils.hooks import (
     collect_all,
     collect_data_files,
-    collect_dynamic_libs,
     collect_submodules,
     copy_metadata,
 )
@@ -28,6 +33,16 @@ ENGINE_SOURCE = ROOT / "packages" / "hanly" / "src"
 ENTRYPOINT = ROOT / "packaging" / "entrypoint.py"
 RUNTIME_HOOK = ROOT / "packaging" / "runtime_hook.py"
 APPLICATION_STEM = "hanly-desktop"
+
+#: The macOS product. The executable inside it keeps the cross-platform stem,
+#: so ``Hanly.app/Contents/MacOS/hanly-desktop`` is the one program everywhere.
+BUNDLE_NAME = "Hanly.app"
+BUNDLE_DISPLAY_NAME = "Hanly"
+BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
+
+#: The weights a frozen build loads; it cannot download them.
+MODEL_DIRECTORY = APP_SOURCE / "hanly_app" / "assets" / "easyocr_models"
+MODEL_FILES = ("craft_mlt_25k.pth", "korean_g2.pth")
 
 MANDATORY_PACKAGES = ("kiwipiepy", "kiwipiepy_model")
 
@@ -48,14 +63,25 @@ def _unique(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return result
 
 
+missing_models = [name for name in MODEL_FILES if not (MODEL_DIRECTORY / name).is_file()]
+if missing_models:
+    raise SystemExit(
+        "Hanly packaging: missing EasyOCR weights "
+        + ", ".join(missing_models)
+        + f" in {MODEL_DIRECTORY}. Run: python tools/prepare_easyocr_models.py"
+    )
+
 datas = collect_data_files(
     "hanly_app",
     includes=[
         "assets/control_center/*.html",
         "assets/control_center/*.css",
         "assets/control_center/*.js",
+        "assets/easyocr_models/*.pth",
     ],
 )
+
+datas.extend(collect_data_files("certifi"))
 
 for distribution in ("hanly-app", "hanly"):
     datas.extend(copy_metadata(distribution))
@@ -69,7 +95,7 @@ for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
-for package_name in ("easyocr", "torch", "torchvision"):
+for package_name in ("easyocr", "torchvision"):
     try:
         package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
     except Exception:
@@ -113,12 +139,13 @@ else:
     hiddenimports.extend(
         ["pynput.keyboard._xorg", "pynput.mouse._xorg", "pystray._xorg"]
     )
-binaries.extend(collect_dynamic_libs("PyQt6"))
 
 datas = _unique(datas)
 binaries = _unique(binaries)
 hiddenimports = sorted(set(hiddenimports))
 
+
+APPLICATION_VERSION = version("hanly-app")
 
 a = Analysis(
     [str(ENTRYPOINT)],
@@ -141,11 +168,27 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    codesign_identity="-" if sys.platform == "darwin" else None,
 )
-COLLECT(
+coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
     a.zipfiles,
     name=APPLICATION_STEM,
 )
+if sys.platform == "darwin":
+    BUNDLE(
+        coll,
+        name=BUNDLE_NAME,
+        bundle_identifier=BUNDLE_IDENTIFIER,
+        version=APPLICATION_VERSION,
+        info_plist={
+            "CFBundleName": BUNDLE_DISPLAY_NAME,
+            "CFBundleDisplayName": BUNDLE_DISPLAY_NAME,
+            "CFBundleShortVersionString": APPLICATION_VERSION,
+            "CFBundleVersion": APPLICATION_VERSION,
+            "NSHighResolutionCapable": True,
+            "LSBackgroundOnly": False,
+        },
+    )

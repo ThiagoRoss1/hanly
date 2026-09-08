@@ -11,7 +11,7 @@ from .control_center import (
     ControlCenterUnavailable,
     control_center_document,
 )
-from .diagnostics import DiagnosticLog
+from .diagnostics import DiagnosticLog, StartupTimeline
 from .qt_bootstrap import ensure_qt_application
 
 #: The backend module Hanly's single-Qt design requires. pywebview falls back
@@ -35,6 +35,7 @@ class ControlCenterHost:
         debug: bool = False,
         webview_module: object | None = None,
         diagnostics: DiagnosticLog | None = None,
+        timeline: StartupTimeline | None = None,
         on_error: ErrorReporter | None = None,
     ) -> None:
         if width <= 0 or height <= 0:
@@ -49,6 +50,8 @@ class ControlCenterHost:
         self._debug = debug
         self._webview = webview_module
         self._diagnostics = diagnostics
+        self._timeline = timeline or StartupTimeline()
+        self._shown_once = False
         self._on_error = on_error
 
         self._lock = threading.RLock()
@@ -236,6 +239,12 @@ class ControlCenterHost:
     def _on_shown(self) -> None:
         with self._lock:
             self._visible = True
+            first_time = not self._shown_once
+            self._shown_once = True
+        # Only the first appearance is a startup milestone; showing the window
+        # again from the tray is not.
+        if first_time:
+            self._timeline.reached("window visible")
 
     def _on_closing(self) -> bool:
         """Hide instead of closing, but only when the window can come back.

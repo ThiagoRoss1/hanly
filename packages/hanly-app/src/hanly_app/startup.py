@@ -13,7 +13,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from .diagnostics import DiagnosticLog
+from .diagnostics import DiagnosticLog, StartupTimeline
 from .runtime import HanlyRuntime
 from .runtime_status import RuntimeStatusPublisher, StatusDispatcher
 
@@ -46,6 +46,7 @@ class StartupCoordinator:
         dispatcher: StatusDispatcher,
         diagnostics: DiagnosticLog | None = None,
         release: RuntimeReleaser | None = None,
+        timeline: StartupTimeline | None = None,
     ) -> None:
         for name, seam in (
             ("prepare", prepare),
@@ -63,19 +64,27 @@ class StartupCoordinator:
         self._status = status
         self._dispatcher = dispatcher
         self._diagnostics = diagnostics or DiagnosticLog()
+        self._timeline = timeline or StartupTimeline()
 
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._explicit_runtime: Path | None = None
         self._attempts = 0
+        self._reserved = False
         self._release_pending = False
         self._closing = threading.Event()
 
     @property
     def preparing(self) -> bool:
-        """Whether a preparation attempt is currently running."""
+        """Whether a preparation attempt is currently running.
+
+        A thread is not alive until it has actually been started, so the
+        reservation, not the thread, is what says the slot is taken.
+        """
 
         with self._lock:
+            if self._reserved:
+                return True
             thread = self._thread
         return thread is not None and thread.is_alive()
 
@@ -93,21 +102,9 @@ class StartupCoordinator:
         cannot start a duplicate download or a second worker.
         """
 
-        with self._lock:
-            if self._closing.is_set():
-                return
-            if self._thread is not None and self._thread.is_alive():
-                return
-            self._explicit_runtime = explicit_runtime
-            self._attempts += 1
-            attempt = self._attempts
-            thread = threading.Thread(
-                target=self._run,
-                args=(explicit_runtime, attempt),
-                name="hanly-startup",
-                daemon=True,
-            )
-            self._thread = thread
+        thread = self._reserve(explicit_runtime)
+        if thread is None:
+            return
 
         self._status.update(
             "preparing", PREPARING_STAGE, "Preparing Hanly's resources..."
@@ -117,20 +114,53 @@ class StartupCoordinator:
     def retry(self) -> None:
         """Release the failed attempt's services and prepare again.
 
-        Releasing happens on the preparation thread, ahead of the new attempt,
-        rather than beside it: a replacement must never be composed while the
-        previous providers still hold their models and database handles.
+        Retrying answers a failure, so an attempt that is still preparing, or
+        one that already succeeded, is left alone. Releasing happens on the
+        preparation thread, ahead of the new attempt, rather than beside it: a
+        replacement must never be composed while the previous providers still
+        hold their models and database handles.
         """
 
         with self._lock:
-            if self._closing.is_set() or (
-                self._thread is not None and self._thread.is_alive()
-            ):
+            if not self._status.status.failed:
                 return
-            explicit = self._explicit_runtime
-            self._release_pending = self._release is not None
+            thread = self._reserve(self._explicit_runtime, release_previous=True)
+        if thread is None:
+            return
 
-        self.start(explicit)
+        self._status.update(
+            "preparing", PREPARING_STAGE, "Preparing Hanly's resources..."
+        )
+        thread.start()
+
+    def _reserve(
+        self,
+        explicit_runtime: Path | None,
+        *,
+        release_previous: bool = False,
+    ) -> threading.Thread | None:
+        """Take the single preparation slot, or return ``None`` if it is taken.
+
+        Admission and the attempt number are decided together under one lock,
+        so two retries arriving at once cannot both be let in during the moment
+        between creating a thread and starting it.
+        """
+
+        with self._lock:
+            if self._closing.is_set() or self.preparing:
+                return None
+            self._reserved = True
+            self._explicit_runtime = explicit_runtime
+            self._release_pending = release_previous and self._release is not None
+            self._attempts += 1
+            thread = threading.Thread(
+                target=self._run,
+                args=(explicit_runtime, self._attempts),
+                name="hanly-startup",
+                daemon=True,
+            )
+            self._thread = thread
+            return thread
 
     def begin_shutdown(self) -> None:
         """Stop reporting and stop activating, without waiting for the thread."""
@@ -148,11 +178,21 @@ class StartupCoordinator:
         return not thread.is_alive()
 
     def _run(self, explicit_runtime: Path | None, attempt: int) -> None:
+        try:
+            self._prepare_attempt(explicit_runtime, attempt)
+        finally:
+            # The slot is held for the whole attempt, and activation is only
+            # retryable once it has published a failure of its own.
+            with self._lock:
+                self._reserved = False
+
+    def _prepare_attempt(self, explicit_runtime: Path | None, attempt: int) -> None:
         if not self._release_previous(attempt):
             return
 
         try:
-            runtime = self._prepare(explicit_runtime)
+            with self._timeline.phase(PREPARING_STAGE, attempt=attempt):
+                runtime = self._prepare(explicit_runtime)
         except BaseException as error:
             self._fail(PREPARING_STAGE, error, attempt)
             return
@@ -177,7 +217,8 @@ class StartupCoordinator:
             "preparing", RELEASING_STAGE, "Closing the previous attempt..."
         )
         try:
-            release()
+            with self._timeline.phase(RELEASING_STAGE, attempt=attempt):
+                release()
         except BaseException as error:
             self._fail(RELEASING_STAGE, error, attempt)
             return False
@@ -190,7 +231,8 @@ class StartupCoordinator:
         if self._superseded(attempt):
             return
         try:
-            self._activate(runtime)
+            with self._timeline.phase(ACTIVATING_STAGE, attempt=attempt):
+                self._activate(runtime)
         except BaseException as error:
             self._fail(ACTIVATING_STAGE, error, attempt)
 

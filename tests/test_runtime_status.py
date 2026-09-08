@@ -143,3 +143,20 @@ def test_readiness_watching_publishes_ready_for_a_working_worker() -> None:
     assert publisher.status.ready
     assert controller.initialization_error is None
     controller.stop()
+
+
+def test_a_retired_watcher_cannot_report_over_the_current_runtime() -> None:
+    """A retry leaves the old worker's watcher waiting; it must stay quiet."""
+
+    publisher = RuntimeStatusPublisher()
+    publisher.update("preparing", "resources", "Preparing Hanly's resources...")
+    controller = _failing_controller()
+
+    controller.start()
+    watch_worker_readiness(controller, publisher, is_current=lambda: False).join(
+        _READY_TIMEOUT_SECONDS
+    )
+
+    assert publisher.status == RuntimeStatus(
+        "preparing", "resources", "Preparing Hanly's resources..."
+    )

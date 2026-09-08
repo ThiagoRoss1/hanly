@@ -10,7 +10,9 @@ import json
 from pathlib import Path
 
 import pytest
+from hanly_app import runtime as runtime_module
 from hanly_app.runtime import (
+    PACKAGED_MODEL_FILES,
     RuntimeConfigError,
     load_runtime,
 )
@@ -60,3 +62,76 @@ def test_invalid_declared_optional_resource_also_blocks_runtime_startup(
 
     with pytest.raises(RuntimeConfigError, match="unused_asset.*does not exist"):
         load_runtime(valid)
+
+
+def _packaged_build(
+    monkeypatch: pytest.MonkeyPatch,
+    directory: Path,
+    *,
+    weights: tuple[str, ...] = PACKAGED_MODEL_FILES,
+) -> None:
+    """Stand in for a frozen build carrying the given weight files."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in weights:
+        (directory / name).write_bytes(b"weights")
+    monkeypatch.setattr(runtime_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(runtime_module, "PACKAGED_MODEL_DIRECTORY", directory)
+
+
+def _config_with_old_easyocr_settings(tmp_path: Path) -> Path:
+    """A runtime.json written by an older Hanly that downloaded its models."""
+
+    config = _valid_config(tmp_path)
+    payload = json.loads(config.read_text(encoding="utf-8"))
+    payload["easyocr"] = {
+        "languages": ["ko"],
+        "model_storage_directory": "models",
+        "download_enabled": True,
+    }
+    config.write_text(json.dumps(payload), encoding="utf-8")
+    return config
+
+
+def test_a_packaged_build_uses_its_own_weights_and_cannot_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old persisted download settings do not survive into a packaged launch."""
+
+    config = _config_with_old_easyocr_settings(tmp_path)
+    models = tmp_path / "bundled"
+    _packaged_build(monkeypatch, models)
+
+    easyocr_config = load_runtime(config).easyocr_config
+
+    assert easyocr_config is not None
+    assert easyocr_config.model_storage_directory == models
+    assert easyocr_config.download_enabled is False
+    assert easyocr_config.user_network_directory is None
+
+
+def test_a_packaged_build_missing_a_weight_fails_instead_of_downloading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _valid_config(tmp_path)
+    models = tmp_path / "bundled"
+    _packaged_build(monkeypatch, models, weights=("craft_mlt_25k.pth",))
+
+    with pytest.raises(RuntimeConfigError, match="korean_g2.pth"):
+        load_runtime(config)
+
+
+def test_a_source_checkout_keeps_its_configured_easyocr_behaviour(
+    tmp_path: Path,
+) -> None:
+    """Development is unchanged: EasyOCR still resolves and fetches its own."""
+
+    config = _config_with_old_easyocr_settings(tmp_path)
+
+    easyocr_config = load_runtime(config).easyocr_config
+
+    assert easyocr_config is not None
+    assert easyocr_config.model_storage_directory == tmp_path / "models"
+    assert easyocr_config.download_enabled is True

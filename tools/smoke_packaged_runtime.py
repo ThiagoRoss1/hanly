@@ -20,9 +20,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 #: Packages the desktop imports by name at runtime. Their absence is exactly
 #: the defect that shipped in v0.1.0: readiness waits on morphology forever.
@@ -35,8 +36,41 @@ REQUIRED_EXTENSION_STEM = "_kiwipiepy"
 #: exhaustive: these three are enough to catch a data-free collection.
 REQUIRED_MODEL_FILES = ("sj.morph", "default.dict", "combiningRule.txt")
 
+#: The two files a frozen build cannot obtain for itself: the trust store its
+#: HTTPS verification needs, and the weights its OCR loads with downloading off.
+REQUIRED_DATA_FILES = (
+    "certifi/cacert.pem",
+    "hanly_app/assets/easyocr_models/craft_mlt_25k.pth",
+    "hanly_app/assets/easyocr_models/korean_g2.pth",
+)
+
 #: PyInstaller 6 places collected packages under this directory.
 _INTERNAL_DIRECTORY = "_internal"
+
+#: The application executable, and where a macOS bundle keeps it.
+APPLICATION_STEM = "hanly-desktop"
+BUNDLE_NAME = "Hanly.app"
+_BUNDLE_PROGRAM_PARTS = ("Contents", "MacOS", APPLICATION_STEM)
+
+#: Reported for a macOS bundle only: the seal an installed application needs.
+BUNDLE_SIGNATURE = "Contents/_CodeSignature/CodeResources"
+
+#: Where a collection can sit: ``_internal`` in a onedir build, or split
+#: across ``Frameworks`` and ``Resources`` in a cross-linked macOS bundle.
+_COLLECTION_ROOTS = (
+    (),
+    (_INTERNAL_DIRECTORY,),
+    ("Contents", "Frameworks"),
+    ("Contents", "Frameworks", _INTERNAL_DIRECTORY),
+    ("Contents", "Resources"),
+    ("Contents", "Resources", _INTERNAL_DIRECTORY),
+)
+
+#: macOS's own tools, used only to reconstruct and inspect what was published.
+DITTO = "/usr/bin/ditto"
+HDIUTIL = "/usr/bin/hdiutil"
+
+CommandRunner = Callable[..., Any]
 
 #: A cold frozen start imports torch and warms two models.
 DEFAULT_TIMEOUT_SECONDS = 900
@@ -105,6 +139,15 @@ def inspect_bundle(application_directory: str | Path) -> BundleInventory:
         found = model_root is not None and (model_root / model_file).is_file()
         (present if found else missing).append(f"kiwipiepy_model/{model_file}")
 
+    for data_file in REQUIRED_DATA_FILES:
+        (present if _find_data_file(root, data_file) is not None else missing).append(data_file)
+
+    if root.suffix == ".app":
+        # An application without one is not installable by Hanly's own updater,
+        # and PyInstaller only warns when it could not sign the bundle.
+        signature = root / "Contents" / "_CodeSignature" / "CodeResources"
+        (present if signature.is_file() else missing).append(BUNDLE_SIGNATURE)
+
     return BundleInventory(root, tuple(present), tuple(missing))
 
 
@@ -163,9 +206,22 @@ def run_packaged_self_check(
     return report
 
 
+def _collection_roots(root: Path) -> tuple[Path, ...]:
+    return tuple(root.joinpath(*parts) for parts in _COLLECTION_ROOTS)
+
+
 def _find_package(root: Path, package_name: str) -> Path | None:
-    for candidate in (root / _INTERNAL_DIRECTORY / package_name, root / package_name):
+    for directory in _collection_roots(root):
+        candidate = directory / package_name
         if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _find_data_file(root: Path, relative_path: str) -> Path | None:
+    for directory in _collection_roots(root):
+        candidate = directory.joinpath(*relative_path.split("/"))
+        if candidate.is_file():
             return candidate
     return None
 
@@ -173,7 +229,7 @@ def _find_package(root: Path, package_name: str) -> Path | None:
 def _find_extension(root: Path, stem: str) -> Path | None:
     """Locate the native extension without assuming one platform's suffix."""
 
-    for directory in (root / _INTERNAL_DIRECTORY, root):
+    for directory in _collection_roots(root):
         if not directory.is_dir():
             continue
         for entry in directory.iterdir():
@@ -194,9 +250,10 @@ class _ProfileContext:
     frozen bundle read the developer's ``~/.EasyOCR`` cache and pass a check
     the released artifact would fail on a user's machine.
 
-    ``model_cache`` seeds the isolated model directory from a named directory,
-    which is the deterministic offline scenario. Without it the run is cold and
-    the bundle has to fetch its own models.
+    A packaged build carries its own EasyOCR weights and cannot download, so a
+    clean profile has to succeed on what the bundle ships. ``model_cache``
+    seeds the isolated model directory for a build that still resolves models
+    through the environment; a current frozen bundle ignores it.
     """
 
     def __init__(
@@ -242,6 +299,93 @@ class _ProfileContext:
         if self._temporary is not None:
             self._temporary.cleanup()
             self._temporary = None
+
+
+def reconstruct_application(
+    archive: str | Path,
+    destination: str | Path,
+    *,
+    payload_name: str = BUNDLE_NAME,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Unpack a published macOS ZIP and return the application inside it.
+
+    The point is to check what was actually published: the same ZIP the
+    updater downloads, unpacked with the same tool, rather than the build
+    directory it was made from.
+    """
+
+    source = Path(archive).resolve()
+    target = Path(destination).resolve()
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+
+    _run_native(
+        runner,
+        [DITTO, "-x", "-k", str(source), str(target)],
+        f"could not unpack {source.name}",
+    )
+    application = target / payload_name
+    if not application.joinpath(*_BUNDLE_PROGRAM_PARTS).is_file():
+        raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
+    return application
+
+
+def verify_disk_image(
+    image: str | Path,
+    *,
+    payload_name: str = BUNDLE_NAME,
+    runner: CommandRunner = subprocess.run,
+) -> dict[str, object]:
+    """Mount the published disk image read-only and report what it holds.
+
+    A DMG is never an update input, so this proves only that the download a
+    person opens contains the application they are meant to drag out of it.
+    """
+
+    source = Path(image).resolve()
+    with tempfile.TemporaryDirectory(prefix="hanly-dmg-") as scratch:
+        mountpoint = Path(scratch) / "mount"
+        mountpoint.mkdir()
+        _run_native(
+            runner,
+            [
+                HDIUTIL,
+                "attach",
+                str(source),
+                "-readonly",
+                "-nobrowse",
+                "-mountpoint",
+                str(mountpoint),
+            ],
+            f"could not mount {source.name}",
+        )
+        try:
+            application = mountpoint / payload_name
+            program = application.joinpath(*_BUNDLE_PROGRAM_PARTS)
+            report = {
+                "image": source.name,
+                "application": payload_name,
+                "ok": program.is_file(),
+                "contents": sorted(item.name for item in mountpoint.iterdir()),
+            }
+        finally:
+            _run_native(
+                runner,
+                [HDIUTIL, "detach", str(mountpoint), "-force"],
+                f"could not unmount {source.name}",
+            )
+    return report
+
+
+def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None:
+    completed = runner(command, check=False, capture_output=True)
+    if getattr(completed, "returncode", 1) != 0:
+        detail = getattr(completed, "stderr", b"") or b""
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", "replace")
+        raise RuntimeError(f"{failure}: {detail.strip() or command[0]}")
 
 
 def isolated_environment(
@@ -299,7 +443,26 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "application_directory",
         type=Path,
-        help="the PyInstaller onedir directory, e.g. dist/windows/hanly-desktop",
+        nargs="?",
+        help=(
+            "the built application, e.g. dist/windows/hanly-desktop or "
+            "dist/macos/Hanly.app"
+        ),
+    )
+    parser.add_argument(
+        "--from-archive",
+        type=Path,
+        help="published macOS ZIP to unpack and check instead of a built directory",
+    )
+    parser.add_argument(
+        "--reconstruct-into",
+        type=Path,
+        help="where --from-archive unpacks (default: a temporary directory)",
+    )
+    parser.add_argument(
+        "--disk-image",
+        type=Path,
+        help="published macOS DMG to mount read-only and report on",
     )
     parser.add_argument(
         "--runtime-config",
@@ -321,7 +484,8 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "EasyOCR model directory (the '.EasyOCR/model' one) to copy into "
-            "the isolated profile, making an otherwise cold run deterministic"
+            "the isolated profile; a packaged build reads its bundled weights "
+            "instead and ignores it"
         ),
     )
     parser.add_argument(
@@ -347,8 +511,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Report the bundle's inventory and, unless skipped, its self-check."""
 
     args = _build_parser().parse_args(None if argv is None else list(argv))
-    inventory = inspect_bundle(args.application_directory)
-    output: dict[str, object] = {"inventory": inventory.to_dict()}
+    if (args.application_directory is None) == (args.from_archive is None):
+        print(
+            "Hanly smoke: name either an application directory or --from-archive",
+            file=sys.stderr,
+        )
+        return 2
+
+    output: dict[str, object] = {}
+    reconstruction: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        application = args.application_directory
+        if args.from_archive is not None:
+            if args.reconstruct_into is None:
+                reconstruction = tempfile.TemporaryDirectory(prefix="hanly-reconstruct-")
+                destination = Path(reconstruction.name) / "app"
+            else:
+                destination = args.reconstruct_into
+            application = reconstruct_application(args.from_archive, destination)
+            output["reconstructed"] = {
+                "archive": Path(args.from_archive).name,
+                "application": str(application),
+            }
+        if args.disk_image is not None:
+            output["disk_image"] = verify_disk_image(args.disk_image)
+
+        return _report(args, application, output)
+    finally:
+        if reconstruction is not None:
+            reconstruction.cleanup()
+
+
+def _report(
+    args: argparse.Namespace,
+    application: Path,
+    output: dict[str, object],
+) -> int:
+    inventory = inspect_bundle(application)
+    output["inventory"] = inventory.to_dict()
 
     if not inventory.ok:
         # ASCII-escaped: the report names Korean, and a Windows console
@@ -392,11 +592,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _executable_in(application_directory: Path) -> Path:
-    stem = "hanly-desktop"
-    candidate = application_directory / (f"{stem}.exe" if os.name == "nt" else stem)
-    if not candidate.is_file():
-        raise FileNotFoundError(f"no Hanly executable in {application_directory}")
-    return candidate
+    """Find the one program, whether it sits in a onedir tree or a bundle."""
+
+    candidates = (
+        application_directory / f"{APPLICATION_STEM}.exe",
+        application_directory / APPLICATION_STEM,
+        application_directory.joinpath(*_BUNDLE_PROGRAM_PARTS),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"no Hanly executable in {application_directory}")
 
 
 if __name__ == "__main__":
@@ -404,10 +610,14 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "APPLICATION_STEM",
+    "BUNDLE_NAME",
+    "BUNDLE_SIGNATURE",
     "DEFAULT_TIMEOUT_SECONDS",
     "EASYOCR_MODEL_SUBDIRECTORY",
     "EASYOCR_PATH_VARIABLES",
     "HOME_VARIABLES",
+    "REQUIRED_DATA_FILES",
     "REQUIRED_EXTENSION_STEM",
     "REQUIRED_MODEL_FILES",
     "REQUIRED_PACKAGES",
@@ -416,5 +626,7 @@ __all__ = [
     "inspect_bundle",
     "isolated_environment",
     "main",
+    "reconstruct_application",
     "run_packaged_self_check",
+    "verify_disk_image",
 ]

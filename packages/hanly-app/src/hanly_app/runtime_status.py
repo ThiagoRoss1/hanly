@@ -134,15 +134,23 @@ def watch_worker_readiness(
     stage: str = "lookup providers",
     ready_message: str = "Hanly is ready.",
     thread_name: str = "hanly-runtime-readiness",
+    is_current: Callable[[], bool] | None = None,
 ) -> threading.Thread:
     """Publish ready or failed once worker construction settles.
 
     The wait happens on its own daemon thread because provider construction
     warms EasyOCR and Kiwi, which must never run on the UI thread.
+
+    ``is_current`` is the composition's answer to "does this worker still own
+    the runtime?". A retried or replaced attempt leaves its watcher waiting on
+    a runtime nobody is using any more, and that watcher must not report the
+    readiness of the live one.
     """
 
     def wait() -> None:
         ready = source.wait_until_ready()
+        if is_current is not None and not is_current():
+            return
         if ready:
             publisher.update("ready", stage, ready_message)
             return

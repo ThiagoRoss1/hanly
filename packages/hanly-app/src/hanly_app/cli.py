@@ -21,8 +21,9 @@ from .application import (
     run_desktop,
 )
 from .control_center import ControlCenterUnavailable
-from .diagnostics import DiagnosticLog, open_diagnostics
+from .diagnostics import DiagnosticLog, StartupTimeline, open_diagnostics
 from .first_run import FirstRunError
+from .ocr_preload import record_preload_timing
 from .runtime import RuntimeConfigError
 from .self_check import (
     RUNTIME_SELF_CHECK_MODES,
@@ -106,6 +107,9 @@ def main(argv: Sequence[str] | None = None) -> NoReturn:
     # Opened before the OCR runtime and Qt so a native initialization failure
     # is already being written somewhere the user can find it.
     diagnostics = open_diagnostics()
+    # The packaged runtime hook preloads OCR before this log exists, so its
+    # measurement is claimed here rather than measured a second time.
+    record_preload_timing(StartupTimeline(diagnostics))
     try:
         status = _start(
             args,

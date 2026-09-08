@@ -468,8 +468,9 @@ def _write_json_atomically(path: Path, payload: Mapping[str, Any]) -> None:
 def _default_runtime_payload() -> dict[str, Any]:
     """Return the configuration a first launch writes.
 
-    EasyOCR resolves its own models through its storage directory, so a first
-    run provisions only KRDICT.
+    Only KRDICT is provisioned: a packaged build carries its EasyOCR weights
+    and resolves them itself, and a source checkout lets EasyOCR use its own
+    storage directory. Neither needs a model entry here.
     """
 
     return {

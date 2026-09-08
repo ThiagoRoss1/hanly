@@ -25,6 +25,7 @@ from hanly_app.composition import (
     create_lookup_controller,
     create_lookup_worker_factory,
 )
+from hanly_app.diagnostics import DiagnosticLog, StartupTimeline
 from hanly_app.job_executor import JobExecutor
 from hanly_app.lookup_controller import LookupRequest
 
@@ -421,3 +422,50 @@ def test_an_adapter_without_a_sensitive_variant_still_composes() -> None:
     worker = LookupWorker(PlainOCR, Morphology, Dictionary)
     assert worker(LookupRequest(1, _large_roi(), Point(100, 50))).status is LookupStatus.EMPTY
     worker.close()
+
+
+class _FakeStartupClock:
+    """Advanced by the test, so no provider is ever really constructed here."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_worker_construction_reports_what_each_provider_cost() -> None:
+    """The wait between an open window and a ready runtime is broken down."""
+
+    clock = _FakeStartupClock()
+
+    class WarmingOCR:
+        def recognize(self, _image: ROIImage) -> tuple[OCRResult, ...]:
+            return ()
+
+        def prewarm(self) -> None:
+            clock.advance(3.0)
+
+    def ocr_factory() -> WarmingOCR:
+        clock.advance(2.0)
+        return WarmingOCR()
+
+    log = DiagnosticLog()
+    threads: dict[str, list[int]] = {}
+    LookupWorker(
+        ocr_factory,
+        lambda: _MorphologyProvider("morphology", threads),
+        lambda: _DictionaryProvider("dictionary", threads),
+        timeline=StartupTimeline(log, clock=clock),
+    )
+
+    assert log.snapshot() == (
+        "startup ocr provider: 2000 ms (ok)",
+        "startup morphology provider: 0 ms (ok)",
+        "startup dictionary provider: 0 ms (ok)",
+        "startup ocr prewarm: 3000 ms (ok)",
+        "startup morphology prewarm: 0 ms (ok)",
+    )

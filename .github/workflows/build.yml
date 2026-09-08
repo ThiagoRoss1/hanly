@@ -55,7 +55,7 @@ jobs:
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --group dev
+          python -m pip install --group dev -c packaging/release-constraints.txt
 
       - name: Install CPU-only OCR runtime on Linux
         if: matrix.platform == 'linux'
@@ -64,7 +64,7 @@ jobs:
       - name: Install packages
         run: |
           python -m pip install --editable packages/hanly
-          python -m pip install --editable "packages/hanly-app[runtime]"
+          python -m pip install --editable "packages/hanly-app[runtime]" -c packaging/release-constraints.txt
 
       # A tag push is the release identity, so the tag and the product
       # version must agree before any artifact is produced under that name.
@@ -76,7 +76,9 @@ jobs:
         run: python tools/release_version.py --tag "$RELEASE_TAG"
 
       - name: Install packaging tool
-        run: python -m pip install "pyinstaller>=6,<7"
+        run: >
+          python -m pip install "pyinstaller>=6,<7" pyinstaller-hooks-contrib
+          -c packaging/release-constraints.txt
 
       - name: Run tests
         run: python -m pytest
@@ -87,13 +89,36 @@ jobs:
       - name: Run type checks
         run: python -m mypy packages packaging tests tools benchmarks
 
+      - name: Prepare the bundled EasyOCR weights
+        run: python tools/prepare_easyocr_models.py
+
       - name: Build application package
+        env:
+          PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR: "1"
         run: python tools/build_package.py --platform ${{ matrix.platform }}
 
+      - name: Resolve the frozen application to smoke
+        shell: bash
+        env:
+          RUNNER_PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/reports
+          if [ "$RUNNER_PLATFORM" = "macos" ]; then
+            python tools/smoke_packaged_runtime.py \
+              --from-archive dist/hanly-desktop-macos.zip \
+              --reconstruct-into dist/reconstructed \
+              --disk-image dist/hanly-desktop-macos.dmg \
+              --inventory-only \
+              | tee "dist/reports/hanly-products-macos.json"
+            echo "SMOKE_APP=dist/reconstructed/Hanly.app" >> "$GITHUB_ENV"
+          else
+            echo "SMOKE_APP=dist/$RUNNER_PLATFORM/hanly-desktop" >> "$GITHUB_ENV"
+          fi
+
       - name: Check the frozen bundle inventory
-        run: >
-          python tools/smoke_packaged_runtime.py
-          dist/${{ matrix.platform }}/hanly-desktop --inventory-only
+        shell: bash
+        run: python tools/smoke_packaged_runtime.py "$SMOKE_APP" --inventory-only
 
       - name: Smoke the frozen lookup runtime
         shell: bash
@@ -101,7 +126,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/reports
           python tools/smoke_packaged_runtime.py \
-            "dist/${{ matrix.platform }}/hanly-desktop" \
+            "$SMOKE_APP" \
             --image tests/hanly_fixtures/assets/korean_reading_roi.png \
             --timeout 2400 \
             | tee "dist/reports/hanly-smoke-${{ matrix.platform }}.json"
@@ -115,26 +140,32 @@ jobs:
           display=""
           if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
           $display python tools/smoke_packaged_runtime.py \
-            "dist/${{ matrix.platform }}/hanly-desktop" \
+            "$SMOKE_APP" \
             --window-only \
             | tee "dist/reports/hanly-window-${{ matrix.platform }}.json"
 
       - name: Verify the release archive exists
         shell: bash
+        env:
+          RUNNER_PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
-          archive=""
-          for candidate in "dist/hanly-desktop-${{ matrix.platform }}".{zip,tar.gz}; do
-            if [ -f "$candidate" ]; then archive="$candidate"; fi
-          done
-          test -n "$archive" || { echo "no release archive for ${{ matrix.platform }}" >&2; exit 1; }
-          archive_size="$(wc -c < "$archive")"
+          case "$RUNNER_PLATFORM" in
+            windows) products=(dist/hanly-desktop-windows.zip) ;;
+            macos) products=(dist/hanly-desktop-macos.zip dist/hanly-desktop-macos.dmg) ;;
+            linux) products=(dist/hanly-desktop-linux.tar.gz) ;;
+            *) echo "unsupported platform $RUNNER_PLATFORM" >&2; exit 1 ;;
+          esac
           max_release_asset_bytes=2147483648
-          test "$archive_size" -lt "$max_release_asset_bytes" || {
-            echo "release archive exceeds GitHub's per-asset size limit: $archive_size bytes" >&2
-            exit 1
-          }
-          echo "release archive: $archive ($archive_size bytes)"
+          for archive in "${products[@]}"; do
+            test -f "$archive" || { echo "no release archive at $archive" >&2; exit 1; }
+            archive_size="$(wc -c < "$archive")"
+            test "$archive_size" -lt "$max_release_asset_bytes" || {
+              echo "release archive exceeds GitHub's per-asset size limit: $archive_size bytes" >&2
+              exit 1
+            }
+            echo "release archive: $archive ($archive_size bytes)"
+          done
 
       - name: Record the artifact identity
         shell: bash
@@ -145,18 +176,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/reports
-          archive=""
-          for candidate in "dist/hanly-desktop-${RUNNER_PLATFORM}".{zip,tar.gz}; do
-            if [ -f "$candidate" ]; then archive="$candidate"; fi
-          done
-          python - "$archive" > "dist/reports/hanly-artifact-${RUNNER_PLATFORM}.json" <<'PY'
+          case "$RUNNER_PLATFORM" in
+            windows) products=(dist/hanly-desktop-windows.zip) ;;
+            macos) products=(dist/hanly-desktop-macos.zip dist/hanly-desktop-macos.dmg) ;;
+            linux) products=(dist/hanly-desktop-linux.tar.gz) ;;
+            *) echo "unsupported platform $RUNNER_PLATFORM" >&2; exit 1 ;;
+          esac
+          python - "${products[@]}" > "dist/reports/hanly-artifact-${RUNNER_PLATFORM}.json" <<'PY'
           import hashlib, json, os, platform, sys
 
-          path = sys.argv[1]
-          digest = hashlib.sha256()
-          with open(path, "rb") as stream:
-              for chunk in iter(lambda: stream.read(1 << 20), b""):
-                  digest.update(chunk)
+          def described(path):
+              digest = hashlib.sha256()
+              with open(path, "rb") as stream:
+                  for chunk in iter(lambda: stream.read(1 << 20), b""):
+                      digest.update(chunk)
+              return {
+                  "archive": os.path.basename(path),
+                  "archive_bytes": os.path.getsize(path),
+                  "archive_sha256": digest.hexdigest(),
+              }
+
           json.dump(
               {
                   "platform": os.environ["RUNNER_PLATFORM"],
@@ -165,9 +204,7 @@ jobs:
                   "os_version": platform.platform(),
                   "machine": platform.machine(),
                   "python": platform.python_version(),
-                  "archive": os.path.basename(path),
-                  "archive_bytes": os.path.getsize(path),
-                  "archive_sha256": digest.hexdigest(),
+                  "archives": [described(path) for path in sys.argv[1:]],
               },
               sys.stdout,
               indent=2,
@@ -182,9 +219,11 @@ jobs:
           name: hanly-desktop-${{ matrix.platform }}
           path: |
             dist/hanly-desktop-${{ matrix.platform }}.zip
+            dist/hanly-desktop-${{ matrix.platform }}.dmg
             dist/hanly-desktop-${{ matrix.platform }}.tar.gz
             dist/reports/hanly-smoke-${{ matrix.platform }}.json
             dist/reports/hanly-window-${{ matrix.platform }}.json
             dist/reports/hanly-artifact-${{ matrix.platform }}.json
+            dist/reports/hanly-products-${{ matrix.platform }}.json
           if-no-files-found: error
           retention-days: 14

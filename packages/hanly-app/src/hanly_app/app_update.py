@@ -16,16 +16,20 @@ into place by a small handoff script once this process has exited.
 from __future__ import annotations
 
 import os
+import plistlib
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib import metadata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from .paths import macos_bundle_root
 from .update_service import (
     DownloadProgress,
     ProgressCallback,
@@ -41,6 +45,11 @@ PRODUCT_PACKAGE = "hanly-app"
 #: from ``tools/build_package.py``; a release archive unpacks to exactly this.
 APPLICATION_STEM = "hanly-desktop"
 
+#: The macOS product, and the identity its Info.plist must carry. Both come
+#: from ``packaging/hanly-desktop.spec``.
+BUNDLE_NAME = "Hanly.app"
+BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
+
 #: The release asset that lists a SHA-256 digest for every published asset.
 CHECKSUM_ASSET = "SHA256SUMS"
 
@@ -51,11 +60,47 @@ _VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 _CHECKSUM_LINE = re.compile(r"^([0-9a-f]{64})\s+\*?(\S+)$")
 
-#: Which release archive belongs to which platform, and how to unpack it.
-_PLATFORM_ASSETS: Mapping[str, tuple[str, str]] = {
-    "win32": ("hanly-desktop-windows.zip", "zip"),
-    "darwin": ("hanly-desktop-macos.tar.gz", "gztar"),
-    "linux": ("hanly-desktop-linux.tar.gz", "gztar"),
+
+@dataclass(frozen=True, slots=True)
+class _InstallLayout:
+    """What one platform publishes, and what an installation of it looks like.
+
+    Everything that differs between platforms is here, so the installer reads
+    an installation's shape instead of testing for macOS at each step.
+    """
+
+    asset_name: str
+    #: ``zip``/``gztar`` unpack through the shared extractor; ``bundle`` is the
+    #: macOS application, which only ``ditto`` reproduces intact.
+    archive_format: str
+    #: What the archive unpacks to, and what is moved into place.
+    payload_name: str
+    #: The program inside that payload, relative to it.
+    executable_parts: tuple[str, ...]
+
+    @property
+    def executable_path(self) -> str:
+        """The program's location as the handoff script reads it."""
+
+        return "/".join(self.executable_parts)
+
+
+#: Which release archive belongs to which platform, and what it installs.
+_PLATFORM_LAYOUTS: Mapping[str, _InstallLayout] = {
+    "win32": _InstallLayout(
+        "hanly-desktop-windows.zip", "zip", APPLICATION_STEM, (f"{APPLICATION_STEM}.exe",)
+    ),
+    # A DMG is what a person downloads; the updater takes the ZIP, which is
+    # what carries an .app's links and permissions through a release.
+    "darwin": _InstallLayout(
+        "hanly-desktop-macos.zip",
+        "bundle",
+        BUNDLE_NAME,
+        ("Contents", "MacOS", APPLICATION_STEM),
+    ),
+    "linux": _InstallLayout(
+        "hanly-desktop-linux.tar.gz", "gztar", APPLICATION_STEM, (APPLICATION_STEM,)
+    ),
 }
 
 ReleaseSource = Callable[[], Mapping[str, Any]]
@@ -129,15 +174,19 @@ def installed_version() -> str:
 
 
 def installation_root(executable: str | Path | None = None) -> Path | None:
-    """Return the onedir bundle this process runs from, or None outside one.
+    """Return the installation this process runs from, or None outside one.
 
-    A source checkout, a ``pip install``, and a test run all answer None: there
-    is no self-contained directory whose replacement would be an application
-    update.
+    On macOS that is the ``.app`` containing the program, not the directory the
+    program sits in: the bundle is what is installed, signed, and replaced. A
+    source checkout, a ``pip install``, and a test run all answer None - there
+    is no self-contained directory whose replacement would be an update.
     """
 
     if not getattr(sys, "frozen", False):
         return None
+    bundle = macos_bundle_root(executable)
+    if bundle is not None:
+        return bundle
     return Path(sys.executable if executable is None else executable).resolve().parent
 
 
@@ -156,10 +205,10 @@ def _release_url(payload: Mapping[str, Any]) -> str | None:
     return url if isinstance(url, str) and url.startswith("https://") else None
 
 
-def _platform_asset(platform: str) -> tuple[str, str] | None:
-    for prefix, asset in _PLATFORM_ASSETS.items():
+def _platform_layout(platform: str) -> _InstallLayout | None:
+    for prefix, layout in _PLATFORM_LAYOUTS.items():
         if platform.startswith(prefix):
-            return asset
+            return layout
     return None
 
 
@@ -210,11 +259,11 @@ def check_application_update(
             message=f"Hanly {current} is up to date.",
         )
 
-    asset = _platform_asset(platform)
+    layout = _platform_layout(platform)
     installable = (
         install_root is not None
-        and asset is not None
-        and _release_advertises(payload, asset[0])
+        and layout is not None
+        and _release_advertises(payload, layout.asset_name)
         and _release_advertises(payload, CHECKSUM_ASSET)
     )
     if installable:
@@ -251,15 +300,17 @@ class ApplicationInstaller:
         platform: str = sys.platform,
         spawn: Spawn | None = None,
     ) -> None:
-        asset = _platform_asset(platform)
-        if asset is None:
+        layout = _platform_layout(platform)
+        if layout is None:
             raise ApplicationUpdateError(f"no published application archive for {platform}")
         self._downloader = downloader
         self._release_source = release_source
         self._install_root = install_root.resolve()
-        self._asset_name, self._archive_format = asset
+        self._layout = layout
+        self._asset_name = layout.asset_name
         self._windows = platform.startswith("win32")
         self._spawn = spawn if spawn is not None else _spawn_detached
+        self._extract_bundle = extract_application_bundle
 
     def stage(
         self,
@@ -285,9 +336,7 @@ class ApplicationInstaller:
             verify_checksum(download, self._expected_digest(version, parent))
 
             _emit(on_progress, "installing")
-            extracted = extract_archive(
-                download, parent, "hanly-update", archive_format=self._archive_format
-            )
+            extracted = self._unpack(download, parent)
             staged = self._place(extracted, parent)
         except UpdateServiceError as error:
             raise ApplicationUpdateError(f"could not stage Hanly {version}: {error}") from error
@@ -310,7 +359,9 @@ class ApplicationInstaller:
         one if that fails, and relaunches Hanly.
         """
 
-        script = _write_handoff_script(staged, windows=self._windows)
+        script = _write_handoff_script(
+            staged, windows=self._windows, executable=self._layout.executable_path
+        )
         launcher = ["cmd.exe", "/c"] if self._windows else ["/bin/sh"]
         try:
             self._spawn([*launcher, str(script), *handoff_arguments(staged)], script.parent)
@@ -359,20 +410,28 @@ class ApplicationInstaller:
             raise ApplicationUpdateError(f"{CHECKSUM_ASSET} has no digest for {self._asset_name}")
         return digest
 
-    def _place(self, extracted: Path, parent: Path) -> Path:
-        """Move the unpacked bundle to the fixed name the handoff script reads."""
+    def _unpack(self, download: Path, parent: Path) -> Path:
+        """Unpack the verified download the way its own format requires."""
 
-        bundle = extracted / APPLICATION_STEM
-        if not (bundle / self._executable_name()).is_file():
+        if self._layout.archive_format == "bundle":
+            return self._extract_bundle(download, parent, self._layout.payload_name)
+        return extract_archive(
+            download, parent, "hanly-update", archive_format=self._layout.archive_format
+        )
+
+    def _place(self, extracted: Path, parent: Path) -> Path:
+        """Move the unpacked build to the fixed name the handoff script reads."""
+
+        payload = extracted / self._layout.payload_name
+        if not payload.joinpath(*self._layout.executable_parts).is_file():
             raise ApplicationUpdateError("the downloaded archive is not a Hanly bundle")
+        if self._layout.archive_format == "bundle":
+            _require_signed_hanly_bundle(payload)
 
         staged = parent / f"{self._install_root.name}.staged"
         _remove(staged)
-        os.replace(bundle, staged)
+        os.replace(payload, staged)
         return staged
-
-    def _executable_name(self) -> str:
-        return f"{APPLICATION_STEM}.exe" if self._windows else APPLICATION_STEM
 
 
 def _emit(
@@ -444,7 +503,12 @@ def handoff_arguments(staged: StagedApplicationUpdate) -> list[str]:
     ]
 
 
-def _write_handoff_script(staged: StagedApplicationUpdate, *, windows: bool) -> Path:
+def _write_handoff_script(
+    staged: StagedApplicationUpdate,
+    *,
+    windows: bool,
+    executable: str = APPLICATION_STEM,
+) -> Path:
     if windows:
         offending = _CMD_UNSAFE.intersection(str(staged.install_root))
         if offending:
@@ -457,7 +521,7 @@ def _write_handoff_script(staged: StagedApplicationUpdate, *, windows: bool) -> 
     # Line endings are pinned rather than left to the platform: ``cmd.exe``
     # mis-parses a batch file with bare newlines.
     script.write_text(
-        render_handoff_script(windows=windows),
+        render_handoff_script(windows=windows, executable=executable),
         encoding="ascii",
         newline="\r\n" if windows else "\n",
     )
@@ -466,7 +530,7 @@ def _write_handoff_script(staged: StagedApplicationUpdate, *, windows: bool) -> 
     return script
 
 
-def render_handoff_script(*, windows: bool) -> str:
+def render_handoff_script(*, windows: bool, executable: str = APPLICATION_STEM) -> str:
     """Render the swap script, kept separate from spawning so it can be read.
 
     The body is fixed ASCII and takes its paths from :func:`handoff_arguments`.
@@ -482,9 +546,9 @@ def render_handoff_script(*, windows: bool) -> str:
         return _WINDOWS_HANDOFF.format(
             wait=_HANDOFF_WAIT_SECONDS,
             attempts=_HANDOFF_SWAP_ATTEMPTS,
-            executable=APPLICATION_STEM,
+            executable=executable,
         )
-    return _POSIX_HANDOFF.format(wait=_HANDOFF_WAIT_SECONDS, executable=APPLICATION_STEM)
+    return _POSIX_HANDOFF.format(wait=_HANDOFF_WAIT_SECONDS, executable=executable)
 
 
 _POSIX_HANDOFF = """#!/bin/sh
@@ -556,6 +620,133 @@ exit /b 1
 """
 
 
+#: ``ditto`` reproduces an application's symlinks and permissions from a ZIP.
+#: ``zipfile`` writes a symlink out as a regular file, producing a bundle that
+#: no longer launches or verifies.
+_DITTO = "/usr/bin/ditto"
+
+CommandRunner = Callable[..., Any]
+
+
+def extract_application_bundle(
+    archive: Path,
+    parent: Path,
+    payload_name: str,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Unpack one macOS application ZIP into a fresh directory under ``parent``.
+
+    The archive is already proved against ``SHA256SUMS``; what is checked here
+    is shape. Every member belongs to the expected bundle, no member or link
+    escapes it, and nothing written reaches outside the extraction root.
+    """
+
+    target = Path(tempfile.mkdtemp(prefix=".hanly-update.", dir=parent))
+    try:
+        _preflight_bundle_members(archive, payload_name)
+        completed = runner(
+            [_DITTO, "-x", "-k", str(archive), str(target)],
+            check=False,
+            capture_output=True,
+        )
+        if getattr(completed, "returncode", 1) != 0:
+            raise ApplicationUpdateError("could not unpack the downloaded application")
+        _require_contained_tree(target)
+    except Exception:
+        _remove(target)
+        raise
+    return target
+
+
+def _preflight_bundle_members(archive: Path, payload_name: str) -> None:
+    """Read the archive's own table of contents before anything is written."""
+
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            members = bundle.infolist()
+            for member in members:
+                _require_bundle_member(member.filename, payload_name)
+                if _is_symlink(member):
+                    _require_link_inside(
+                        member.filename,
+                        bundle.read(member).decode("utf-8", "replace"),
+                        payload_name,
+                    )
+    except zipfile.BadZipFile as error:
+        raise ApplicationUpdateError(
+            f"the downloaded application is unreadable: {error}"
+        ) from error
+    if not members:
+        raise ApplicationUpdateError("the downloaded application archive is empty")
+
+
+def _require_bundle_member(name: str, payload_name: str) -> None:
+    """Every path in the archive is relative, and inside the expected bundle."""
+
+    if not name or name.startswith("/") or "\\" in name or ":" in name:
+        raise ApplicationUpdateError("the downloaded application has an unsafe path")
+    parts = PurePosixPath(name).parts
+    if ".." in parts or parts[0] != payload_name:
+        raise ApplicationUpdateError("the downloaded application has an unsafe path")
+
+
+def _require_link_inside(name: str, target: str, payload_name: str) -> None:
+    """A link may point within its own bundle, and nowhere else.
+
+    The link is not followed: its target is resolved textually against the
+    location it will be written to, because nothing has been written yet.
+    """
+
+    if not target or target.startswith("/"):
+        raise ApplicationUpdateError("the downloaded application links outside itself")
+
+    resolved: list[str] = list(PurePosixPath(name).parent.parts)
+    for part in PurePosixPath(target).parts:
+        if part == "..":
+            if not resolved:
+                raise ApplicationUpdateError("the downloaded application links outside itself")
+            resolved.pop()
+        elif part not in ("", "."):
+            resolved.append(part)
+    if not resolved or resolved[0] != payload_name:
+        raise ApplicationUpdateError("the downloaded application links outside itself")
+
+
+def _is_symlink(member: zipfile.ZipInfo) -> bool:
+    return (member.external_attr >> 16) & 0o170000 == 0o120000
+
+
+def _require_contained_tree(target: Path) -> None:
+    """Prove that nothing written under ``target`` leads out of it."""
+
+    root = target.resolve()
+    for directory, _subdirectories, files in os.walk(target, followlinks=False):
+        for name in (directory, *(os.path.join(directory, item) for item in files)):
+            resolved = Path(name).resolve()
+            if resolved != root and root not in resolved.parents:
+                raise ApplicationUpdateError("the unpacked application escapes its directory")
+
+
+def _require_signed_hanly_bundle(bundle: Path) -> None:
+    """Refuse a staged bundle that is not this application, intact.
+
+    Identity and a structural signature are both read from the staged copy
+    before anything is moved: the swap itself has no way to undo a wrong build.
+    """
+
+    if not (bundle / "Contents" / "_CodeSignature" / "CodeResources").is_file():
+        raise ApplicationUpdateError("the downloaded application carries no signature")
+    try:
+        information = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException) as error:
+        raise ApplicationUpdateError(
+            f"the downloaded application has no readable Info.plist: {error}"
+        ) from error
+    if information.get("CFBundleIdentifier") != BUNDLE_IDENTIFIER:
+        raise ApplicationUpdateError("the downloaded application is not Hanly")
+
+
 def _spawn_detached(command: list[str], directory: Path) -> None:
     """Start the handoff so it outlives the process it is waiting for."""
 
@@ -570,6 +761,8 @@ def _spawn_detached(command: list[str], directory: Path) -> None:
 
 __all__ = [
     "APPLICATION_STEM",
+    "BUNDLE_IDENTIFIER",
+    "BUNDLE_NAME",
     "CHECKSUM_ASSET",
     "PRODUCT_PACKAGE",
     "ApplicationInstaller",
@@ -578,6 +771,7 @@ __all__ = [
     "StagedApplicationUpdate",
     "backup_path",
     "check_application_update",
+    "extract_application_bundle",
     "handoff_arguments",
     "installation_root",
     "installed_version",

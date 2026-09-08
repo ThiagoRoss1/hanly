@@ -52,6 +52,12 @@ def _coordinator(
     return coordinator, status, dispatcher
 
 
+def _report_failure(status: RuntimeStatusPublisher) -> None:
+    """Report the failure that makes retrying meaningful, as the watcher does."""
+
+    status.fail("lookup providers", RuntimeError("the lookup providers did not start"))
+
+
 def test_preparation_runs_off_the_calling_thread_and_activates_after_it() -> None:
     prepared_on: list[str] = []
     activated: list[_Runtime] = []
@@ -127,7 +133,7 @@ def test_retry_releases_the_previous_attempt_before_preparing_again() -> None:
         attempts.append(explicit)
         return _Runtime()
 
-    coordinator, _, _ = _coordinator(
+    coordinator, status, _ = _coordinator(
         prepare,
         lambda _runtime: order.append("activate"),
         release=lambda: order.append("release"),
@@ -136,6 +142,7 @@ def test_retry_releases_the_previous_attempt_before_preparing_again() -> None:
     coordinator.start(explicit)
     coordinator.await_shutdown(_WAIT_SECONDS)
 
+    _report_failure(status)
     coordinator.retry()
     coordinator.await_shutdown(_WAIT_SECONDS)
 
@@ -213,7 +220,7 @@ def test_a_retry_releases_on_its_own_thread_rather_than_through_the_ui() -> None
     def release() -> None:
         released.append(threading.current_thread().name)
 
-    coordinator, _, dispatcher = _coordinator(
+    coordinator, status, dispatcher = _coordinator(
         lambda _explicit: _Runtime(),
         lambda _runtime: None,
         release=release,
@@ -222,6 +229,7 @@ def test_a_retry_releases_on_its_own_thread_rather_than_through_the_ui() -> None
     assert coordinator.await_shutdown(_WAIT_SECONDS)
     dispatched_before_retry = len(dispatcher.threads)
 
+    _report_failure(status)
     coordinator.retry()
     assert coordinator.await_shutdown(_WAIT_SECONDS)
 
@@ -247,9 +255,56 @@ def test_a_failed_release_stops_the_retry_instead_of_replacing_a_live_runtime(
     coordinator.start()
     assert coordinator.await_shutdown(_WAIT_SECONDS)
 
+    _report_failure(status)
     coordinator.retry()
     assert coordinator.await_shutdown(_WAIT_SECONDS)
 
     assert prepared == ["activate"]
     assert status.status.phase == "failed"
     assert "previous runtime" in status.status.stage
+
+
+def test_retrying_is_refused_unless_preparation_actually_failed() -> None:
+    """Retry is the answer to a failure, not a second way to start."""
+
+    prepared: list[str] = []
+    coordinator, status, _ = _coordinator(
+        lambda _explicit: _Runtime(),
+        lambda _runtime: prepared.append("activate"),
+        release=lambda: prepared.append("release"),
+    )
+    coordinator.start()
+    assert coordinator.await_shutdown(_WAIT_SECONDS)
+
+    coordinator.retry()
+    assert coordinator.await_shutdown(_WAIT_SECONDS)
+
+    assert prepared == ["activate"]
+    assert coordinator.attempts == 1
+
+    _report_failure(status)
+    coordinator.retry()
+    assert coordinator.await_shutdown(_WAIT_SECONDS)
+
+    assert prepared == ["activate", "release", "activate"]
+    assert coordinator.attempts == 2
+
+
+def test_the_preparation_slot_is_taken_before_its_thread_is_started() -> None:
+    """A thread is not alive until it runs, so admission cannot rely on that."""
+
+    observed: list[bool] = []
+    coordinator, status, _ = _coordinator(lambda _explicit: _Runtime(), lambda _r: None)
+
+    def watch(snapshot: RuntimeStatus) -> None:
+        # Delivered inline from inside start(), between reserving the slot and
+        # starting the thread: exactly where a second attempt used to fit.
+        if snapshot.phase == "preparing":
+            observed.append(coordinator.preparing)
+
+    status.subscribe(watch)
+    coordinator.start()
+    assert coordinator.await_shutdown(_WAIT_SECONDS)
+
+    assert observed[0] is True
+    assert coordinator.attempts == 1

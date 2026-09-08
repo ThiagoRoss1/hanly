@@ -1,8 +1,10 @@
-"""Build the Hanly Desktop onedir application with the repository's spec.
+"""Build the Hanly Desktop application with the repository's spec.
 
-The command intentionally builds only the executable application. OCR model
-directories and the KRDICT database are resource artifacts, not package data;
-the packaged process receives their paths through ``--runtime-config``.
+Windows and Linux produce a onedir tree; macOS produces ``Hanly.app``, and
+every path below follows that difference so callers ask the layout rather than
+rebuilding the convention. The command intentionally builds only the
+application: the KRDICT database is a resource artifact, not package data, and
+the packaged process receives its path through ``--runtime-config``.
 """
 
 from __future__ import annotations
@@ -11,12 +13,33 @@ import argparse
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 APPLICATION_STEM = "hanly-desktop"
 RESOURCE_ARCHIVE_STEM = "hanly-resources"
 SUPPORTED_PLATFORMS = ("windows", "macos", "linux")
+
+#: The macOS product directory, and the executable inside it.
+BUNDLE_NAME = "Hanly.app"
+BUNDLE_EXECUTABLE_PARTS = ("Contents", "MacOS", APPLICATION_STEM)
+
+#: What a mounted Hanly disk image is called.
+BUNDLE_VOLUME_NAME = "Hanly"
+
+#: macOS's own tools: ``ditto`` carries an application's symlinks and
+#: permissions through a ZIP, ``hdiutil`` makes a disk image. Neither modifies
+#: the built application.
+DITTO = "/usr/bin/ditto"
+HDIUTIL = "/usr/bin/hdiutil"
+
+CommandRunner = Callable[..., Any]
+
+
+class PackagingError(RuntimeError):
+    """Raised when a native packaging tool could not produce its artifact."""
 
 
 def host_platform(platform_name: str | None = None) -> str:
@@ -60,20 +83,41 @@ class PackageLayout:
         return self.repo_root / "dist" / self.platform_name
 
     @property
+    def payload_name(self) -> str:
+        """What PyInstaller writes into ``dist_root``: an app, or a onedir."""
+
+        return BUNDLE_NAME if self.platform_name == "macos" else APPLICATION_STEM
+
+    @property
     def application_directory(self) -> Path:
-        return self.dist_root / APPLICATION_STEM
+        return self.dist_root / self.payload_name
 
     @property
     def executable(self) -> Path:
+        if self.platform_name == "macos":
+            return self.application_directory.joinpath(*BUNDLE_EXECUTABLE_PARTS)
         suffix = ".exe" if self.platform_name == "windows" else ""
         return self.application_directory / f"{APPLICATION_STEM}{suffix}"
 
     @property
     def application_archive(self) -> Path:
-        """The archive path reserved for release metadata."""
+        """The archive a release publishes, and the updater downloads.
 
-        extension = ".zip" if self.platform_name == "windows" else ".tar.gz"
+        macOS ships a ZIP for the same reason Windows does: it is the format
+        that survives a bundle's symlinks and is cheap to verify. The DMG
+        beside it is for people, never for the updater.
+        """
+
+        extension = ".tar.gz" if self.platform_name == "linux" else ".zip"
         return self.repo_root / "dist" / f"{APPLICATION_STEM}-{self.platform_name}{extension}"
+
+    @property
+    def application_dmg(self) -> Path:
+        """The macOS download a person opens; not an update input."""
+
+        if self.platform_name != "macos":
+            raise ValueError("a disk image is a macOS product only")
+        return self.repo_root / "dist" / f"{APPLICATION_STEM}-macos.dmg"
 
     @property
     def work_root(self) -> Path:
@@ -111,26 +155,111 @@ def build_command(
     return command
 
 
-def archive_application(layout: PackageLayout) -> Path:
-    """Archive a successful onedir output using the platform handoff format."""
+def archive_application(
+    layout: PackageLayout,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Archive a successful build using the platform handoff format.
+
+    The macOS application is archived with ``ditto`` rather than ``zipfile``:
+    a Python-written ZIP loses the bundle's symlinks and permission bits, and
+    what unpacks from it is no longer an application that launches or verifies.
+    """
 
     if not layout.application_directory.is_dir():
         raise FileNotFoundError(
             f"PyInstaller output directory does not exist: {layout.application_directory}"
         )
 
+    if layout.platform_name == "macos":
+        return _archive_bundle(layout, runner)
+
     archive_path = layout.application_archive
-    archive_format = "zip" if layout.platform_name == "windows" else "gztar"
+    archive_format = "gztar" if layout.platform_name == "linux" else "zip"
     archive_base = archive_path.parent / f"{APPLICATION_STEM}-{layout.platform_name}"
     created = Path(
         shutil.make_archive(
             str(archive_base),
             archive_format,
             root_dir=layout.dist_root,
-            base_dir=APPLICATION_STEM,
+            base_dir=layout.payload_name,
         )
     )
     return created.resolve()
+
+
+def _archive_bundle(layout: PackageLayout, runner: CommandRunner) -> Path:
+    """Write the ZIP the updater consumes, from the application as built."""
+
+    archive = layout.application_archive
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.unlink(missing_ok=True)
+    _run_native(
+        runner,
+        [
+            DITTO,
+            "-c",
+            "-k",
+            "--sequesterRsrc",
+            # The archive holds ``Hanly.app/...`` so what unpacks from it is the
+            # application itself, which is what the updater installs.
+            "--keepParent",
+            str(layout.application_directory),
+            str(archive),
+        ],
+        "could not archive the application bundle",
+    )
+    return archive.resolve()
+
+
+def create_disk_image(
+    layout: PackageLayout,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Build the disk image a person downloads, from the same application.
+
+    The DMG is never an update input: it is a container a human mounts and
+    drags out of. The signed application is read, not modified.
+    """
+
+    if not layout.application_directory.is_dir():
+        raise FileNotFoundError(
+            f"PyInstaller output directory does not exist: {layout.application_directory}"
+        )
+
+    image = layout.application_dmg
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.unlink(missing_ok=True)
+    _run_native(
+        runner,
+        [
+            HDIUTIL,
+            "create",
+            "-volname",
+            BUNDLE_VOLUME_NAME,
+            "-srcfolder",
+            str(layout.application_directory),
+            "-ov",
+            "-format",
+            "UDZO",
+            str(image),
+        ],
+        "could not create the application disk image",
+    )
+    return image.resolve()
+
+
+def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None:
+    """Run one macOS packaging tool, reporting what it said when it fails."""
+
+    completed = runner(command, check=False, capture_output=True)
+    if getattr(completed, "returncode", 1) != 0:
+        detail = getattr(completed, "stderr", b"") or b""
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", "replace")
+        raise PackagingError(f"{failure}: {detail.strip() or command[0]}")
 
 
 def run_build(
@@ -150,11 +279,16 @@ def run_build(
         return completed.returncode
 
     try:
-        archive = archive_application(layout)
-    except OSError as error:
+        products = [archive_application(layout)]
+        if layout.platform_name == "macos":
+            # Two products from one build: the ZIP the updater installs, and
+            # the disk image a person downloads.
+            products.append(create_disk_image(layout))
+    except (OSError, PackagingError) as error:
         print(f"Hanly packaging: could not create application archive: {error}", file=sys.stderr)
         return 1
-    print(f"Hanly packaging: application archive written to {archive}")
+    for product in products:
+        print(f"Hanly packaging: application artifact written to {product}")
     return 0
 
 
