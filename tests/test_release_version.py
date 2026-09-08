@@ -21,7 +21,18 @@ from tools.release_version import (
     version_for_tag,
 )
 
-PACKAGES = Path(__file__).parents[1] / "packages"
+ROOT = Path(__file__).parents[1]
+PACKAGES = ROOT / "packages"
+
+#: Documents that tell a reader which version to install. A historical mention
+#: elsewhere - the release a migration note is written about, an old
+#: investigation - is deliberately out of scope.
+_INSTALL_DOCUMENTS = (ROOT / "README.md", ROOT / "benchmarks" / "dev" / "README.md")
+
+#: The two shapes those documents state a version in: the product heading, and
+#: the engine pin a reader would otherwise copy by hand.
+_DOCUMENTED_PRODUCT = re.compile(r"^\*\*(\d+\.\d+\.\d+)\*\*", re.MULTILINE)
+_DOCUMENTED_PIN = re.compile(r"hanly(?:\[\w+\])?==(\d+\.\d+\.\d+)")
 
 #: `[project] version = "..."` without requiring a TOML parser on Python 3.10.
 _DECLARED_VERSION = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -47,6 +58,26 @@ def test_installed_metadata_matches_the_declared_source_of_truth() -> None:
         f"{PRODUCT_PACKAGE} metadata reports {product_version()} but "
         f"pyproject.toml declares {declared}; reinstall the editable packages"
     )
+
+
+def test_the_install_documents_name_the_version_they_pin() -> None:
+    """A reader following the README installs what the packages declare.
+
+    Prose drifts silently: both documents still pinned 0.1.0 two releases on.
+    """
+
+    declared = _declared_version("hanly-app")
+    for path in _INSTALL_DOCUMENTS:
+        text = path.read_text(encoding="utf-8")
+        documented = set(_DOCUMENTED_PRODUCT.findall(text)) | set(
+            _DOCUMENTED_PIN.findall(text)
+        )
+
+        assert documented, f"{path.name} states no version to check"
+        assert documented == {declared}, (
+            f"{path.name} documents {sorted(documented)} but the packages "
+            f"declare {declared}"
+        )
 
 
 def test_the_application_pins_the_engine_to_the_same_version() -> None:
