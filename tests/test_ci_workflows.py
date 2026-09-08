@@ -171,11 +171,12 @@ def test_linux_build_installs_only_what_freezing_and_the_window_gate_need(
     step = linux_dependencies[0]
     assert step["if"] == "matrix.platform == 'linux'"
     commands = [line.strip() for line in step["run"].splitlines() if line.strip()]
-    # libegl1 is what PyInstaller's Qt collection needs; xvfb is the display
-    # the frozen window opens in. Nothing else belongs on a hosted runner.
+    # libegl1 is what PyInstaller's Qt collection needs, libxcb-cursor0 what
+    # Qt 6.5 and later need to load the xcb plugin, and xvfb is the display the
+    # frozen window opens in. Nothing else belongs on a hosted runner.
     assert commands == [
         "sudo apt-get update",
-        "sudo apt-get install --yes --no-install-recommends libegl1 xvfb",
+        "sudo apt-get install --yes --no-install-recommends libegl1 libxcb-cursor0 xvfb",
     ]
     build = next(item for item in steps if item.get("name") == "Build application package")
     assert steps.index(step) < steps.index(build)

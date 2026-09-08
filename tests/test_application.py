@@ -479,6 +479,8 @@ def test_native_startup_reporter_preloads_ocr_before_opening_the_qt_dialog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
+    # A session that can present a dialog at all; the headless case is below.
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     class _Application:
         @classmethod
@@ -916,3 +918,26 @@ def test_a_macos_bundle_never_keeps_mutable_configuration_inside_itself(
     per_user.write_text("{}", encoding="utf-8")
 
     assert discover_runtime_config(environment, program) == per_user
+
+
+def test_a_headless_session_reports_to_stderr_instead_of_aborting_on_qt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Qt aborts the process when no platform plugin loads, and an abort is not
+    an exception this can catch, so Qt is never asked without a display."""
+
+    def refuse() -> object:
+        raise AssertionError("Qt must not be started without a display")
+
+    monkeypatch.setattr(application_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(application_module.sys, "platform", "linux")
+    monkeypatch.setattr(application_module, "ensure_qt_application", refuse)
+    for name in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
+        monkeypatch.delenv(name, raising=False)
+
+    application_module.report_startup_error(RuntimeError("no dictionary"))
+
+    assert "no dictionary" in capsys.readouterr().err
+    assert application_module._can_show_native_dialog({"DISPLAY": ":0"}) is True
+    assert application_module._can_show_native_dialog({}) is False

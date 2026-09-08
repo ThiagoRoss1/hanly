@@ -9,6 +9,7 @@ does not construct providers outside the worker-owned runtime factories.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 from collections.abc import Callable, Mapping
@@ -1083,8 +1084,27 @@ def report_startup_error(error: BaseException, *, log_path: Path | None = None) 
     _show_native_startup_error(message)
 
 
+def _can_show_native_dialog(environment: Mapping[str, str] | None = None) -> bool:
+    """Whether asking Qt for a window here could work at all.
+
+    Qt does not raise when it cannot load a platform plugin: it aborts the
+    process, which no ``except`` can catch. A session with no display is
+    therefore answered before Qt is asked rather than after it has killed the
+    process that was reporting an error.
+    """
+
+    if sys.platform in {"win32", "darwin"}:
+        return True
+    env = os.environ if environment is None else environment
+    return any(env.get(name) for name in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"))
+
+
 def _show_native_startup_error(message: str) -> None:
     """Show a minimal native error dialog for a windowed packaged launch."""
+
+    if not _can_show_native_dialog():
+        # stderr already carries the message; a dialog is not possible here.
+        return
 
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox

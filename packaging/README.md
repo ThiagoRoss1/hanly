@@ -61,17 +61,20 @@ it never installs dependencies, downloads models, or contacts a remote service.
 
 PyInstaller loads `PyQt6.QtWidgets` while analyzing a Linux build, which needs
 the system `libEGL.so.1` loader. On Ubuntu 22.04 and 24.04 that loader is
-provided by `libegl1`. The build workflow installs only that package, without
-recommended extras, on its Linux job. A local Ubuntu builder can prepare the
-same dependency with:
+provided by `libegl1`. The build workflow installs only what the build and the
+window gate need, without recommended extras, on its Linux job. A local Ubuntu
+builder can prepare the same dependencies with:
 
 ```bash
 sudo apt-get update
-sudo apt-get install --yes --no-install-recommends libegl1 xvfb
+sudo apt-get install --yes --no-install-recommends libegl1 libxcb-cursor0 xvfb
 ```
 
-`libegl1` is what PyInstaller's Qt collection needs; `xvfb` is the display the
-frozen window check opens in.
+`libegl1` is what PyInstaller's Qt collection needs, `libxcb-cursor0` is what
+Qt 6.5 and later require before the xcb platform plugin will load, and `xvfb`
+is the display the frozen window check opens in. Without the cursor library Qt
+does not raise: it aborts the process, so the window check dies with SIGABRT
+rather than reporting a failure.
 
 ## Proving a build before it ships
 
