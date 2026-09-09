@@ -70,13 +70,9 @@ class QtResultDispatcher:
         self._bridge.callback_ready.emit(callback)
 
 
-#: The popup is a transient result surface, not a window the user works in.
-#: ``Tool`` keeps it out of the window list and the taskbar, ``StaysOnTop``
-#: lets it sit over the application the user is actually reading, and
-#: ``WindowDoesNotAcceptFocus`` is what stops showing it from taking the
-#: keyboard: on macOS a Qt tool window is an ``NSPanel``, and a panel that may
-#: become key is made key by ``show()``, which activates the whole process and
-#: pulls the Control Center to the front with it.
+#: A transient result surface that stays above the reader without taking focus.
+#: WindowDoesNotAcceptFocus is load-bearing: a Qt tool window is an NSPanel, and
+#: one that may become key is made key by show(), which activates all of Hanly.
 POPUP_WINDOW_FLAGS = (
     Qt.WindowType.FramelessWindowHint
     | Qt.WindowType.Tool
@@ -86,12 +82,7 @@ POPUP_WINDOW_FLAGS = (
 
 
 class QtPopupView(QFrame):
-    """Borderless, always-on-top, never-focused V1 popup view.
-
-    The popup has no parent widget on purpose. Parenting it to the Control
-    Center would tie its stacking and lifetime to a window the user is meant
-    to leave behind, and Hanly's composition already owns it.
-    """
+    """Borderless, always-on-top, never-focused V1 popup view."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent, POPUP_WINDOW_FLAGS)
@@ -123,15 +114,8 @@ class QtPopupView(QFrame):
         self.setFixedSize(320, 180)
         self._keep_visible_when_inactive()
 
-    def paintEvent(self, a0: QPaintEvent | None) -> None:
-        """Paint the panel itself, which a translucent widget has to do.
-
-        ``WA_TranslucentBackground`` is what gives the popup rounded corners
-        instead of a square card, and it clears the widget to transparent: the
-        stylesheet's background and border are then only drawn if the widget
-        asks the style for them. Without this the popup renders as bare text
-        floating over whatever is behind it.
-        """
+    def paintEvent(self, _event: QPaintEvent | None) -> None:
+        """Ask Qt's style to paint a background on the translucent widget."""
 
         style = self.style()
         if style is None:
@@ -143,15 +127,10 @@ class QtPopupView(QFrame):
         style.drawPrimitive(QStyle.PrimitiveElement.PE_Widget, option, painter, self)
 
     def _keep_visible_when_inactive(self) -> None:
-        """Stop macOS from withdrawing the panel once Hanly has lost focus.
+        """Stop macOS from withdrawing the panel once Hanly loses focus."""
 
-        The test is the Qt platform plugin rather than the operating system:
-        ``winId()`` is an ``NSView`` only under ``cocoa``, and handing the
-        offscreen plugin's handle to an Objective-C message send would take
-        the process down. ``winId()`` is also what creates the native window,
-        so the property lands on the ``NSWindow`` this widget then keeps.
-        """
-
+        # winId() is an NSView only under Cocoa; messaging an offscreen handle
+        # as Objective-C would abort rather than raise.
         if sys.platform != "darwin" or QGuiApplication.platformName() != "cocoa":
             return
 
@@ -263,7 +242,6 @@ class QtPopupRuntime:
 
 
 __all__ = [
-    "POPUP_WINDOW_FLAGS",
     "QtPopupRuntime",
     "QtPopupTrigger",
     "QtPopupView",

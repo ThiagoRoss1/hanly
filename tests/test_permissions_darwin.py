@@ -7,11 +7,18 @@ invocation are the boundary, and each one is substituted.
 
 from __future__ import annotations
 
+import ctypes
+import subprocess
 import sys
 
 import pytest
 from hanly_app import permissions_darwin
-from hanly_app.permissions import Permission, PermissionState, UnsupportedPermission
+from hanly_app.permissions import (
+    Permission,
+    PermissionActionFailed,
+    PermissionState,
+    UnsupportedPermission,
+)
 
 
 @pytest.fixture
@@ -94,7 +101,7 @@ def test_opening_a_pane_launches_the_url_without_a_shell(
 
     def fake_run(command: list[str], **kwargs: object) -> None:
         calls.append(command)
-        assert kwargs["check"] is False
+        assert kwargs["check"] is True
 
     monkeypatch.setattr(permissions_darwin.subprocess, "run", fake_run)
 
@@ -108,12 +115,42 @@ def test_opening_a_pane_launches_the_url_without_a_shell(
     ]
 
 
+def test_a_failed_settings_launch_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The user clicked Grant, so a silent no-op is the one unacceptable answer.
+
+    The message is what reaches the Control Center, so it names the pane to
+    open by hand rather than surfacing the launcher's exit status.
+    """
+
+    def fake_run(command: list[str], **_kwargs: object) -> None:
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(permissions_darwin.subprocess, "run", fake_run)
+
+    with pytest.raises(PermissionActionFailed, match="System Settings"):
+        permissions_darwin.open_privacy_settings(Permission.ACCESSIBILITY)
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="the frameworks are macOS-only")
 def test_the_real_frameworks_answer_both_questions_without_prompting() -> None:
     """The ctypes bridge itself: both calls return a boolean, whatever it is."""
 
     assert isinstance(permissions_darwin.screen_recording_granted(), bool)
     assert isinstance(permissions_darwin.accessibility_trusted(), bool)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the frameworks are macOS-only")
+def test_the_real_accessibility_options_have_one_prompt_entry() -> None:
+    options = permissions_darwin._prompt_options()
+    assert options is not None
+    core_foundation = permissions_darwin._framework("CoreFoundation")
+    core_foundation.CFDictionaryGetCount.restype = ctypes.c_long
+    core_foundation.CFDictionaryGetCount.argtypes = [ctypes.c_void_p]
+
+    try:
+        assert core_foundation.CFDictionaryGetCount(options) == 1
+    finally:
+        core_foundation.CFRelease(options)
 
 
 def test_a_permission_macos_does_not_gate_is_refused(

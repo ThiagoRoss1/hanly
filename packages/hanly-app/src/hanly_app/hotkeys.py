@@ -362,9 +362,10 @@ class HotkeyService:
     ) -> None:
         """Replace one binding without interrupting an active service.
 
-        A replacement listener is started before the previous listener is
-        stopped. If construction or registration fails, the old listener and
-        binding remain authoritative.
+        Backends with an in-place rebind operation may use it when their native
+        API makes duplicate registration impossible. Other backends start the
+        replacement before stopping the previous listener. Either path restores
+        or retains the previous binding when registration fails.
         """
 
         normalized_action = _coerce_action(action)
@@ -393,6 +394,15 @@ class HotkeyService:
                 )
                 for configured_action, binding_value in next_bindings.items()
             }
+            active_listener = self._listener
+            if active_listener is None:
+                raise RuntimeError("registered hotkey service has no listener")
+            active_rebind = getattr(active_listener, "rebind", None)
+            if callable(active_rebind):
+                active_rebind(callbacks)
+                self._bindings = next_bindings
+                return
+
             listener = self._listener_factory(callbacks)
             try:
                 listener.start()

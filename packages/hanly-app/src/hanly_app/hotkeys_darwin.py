@@ -1,19 +1,8 @@
 """macOS global hotkeys through Carbon's ``RegisterEventHotKey``.
 
-pynput's macOS keyboard listener reads the current keyboard layout from its own
-listener thread. Since macOS 26 the Text Services Manager asserts that the
-input-source list is only built on the main dispatch queue, so that call aborts
-the process with ``EXC_BREAKPOINT`` rather than raising -- a Python ``except``
-never sees it. Hanly only needs key combinations, not typed characters, so this
-backend registers them with the window server instead of watching every key.
-
-``RegisterEventHotKey`` is the system's own global-hotkey mechanism: it needs no
-Accessibility or Input Monitoring grant, it consumes the combination instead of
-passing it on to the focused application, and it delivers through the Carbon
-event dispatcher on the main run loop, which Qt already runs.
-
-Combinations are virtual key codes, which name physical keys rather than the
-characters a layout prints on them, exactly as every other macOS shortcut does.
+pynput's keyboard listener asks for the input-source list off the main queue,
+which macOS 26 aborts instead of raising. Carbon needs no privacy grant and
+delivers physical-key combinations on the Qt-owned main run loop.
 """
 
 from __future__ import annotations
@@ -59,8 +48,7 @@ _VIRTUAL_KEY_CODES = {
 }
 
 _NO_ERROR = 0
-#: Returned so a combination this listener does not own reaches the next
-#: handler, which matters while ``rebind`` briefly has two installed.
+#: Returned so a combination this listener does not own reaches the next handler.
 _EVENT_NOT_HANDLED = -9874
 _HOT_KEY_EXISTS = -9878
 
@@ -199,7 +187,7 @@ class _CarbonHotkeyListener:
         # would call freed memory if this reference were dropped while the
         # handler is still installed.
         self._handler_proc = _EventHandlerProc(self._handle_event)
-        self._hotkey_refs: list[ctypes.c_void_p] = []
+        self._hotkey_refs: dict[str, tuple[ctypes.c_void_p, int]] = {}
         self._callbacks: dict[int, Callable[[], None]] = {}
 
     def start(self) -> None:
@@ -226,6 +214,51 @@ class _CarbonHotkeyListener:
 
     def join(self, timeout: float | None = None) -> None:
         """Satisfy the listener seam; this backend owns no thread."""
+
+    def rebind(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+        """Replace one active registration without installing a second handler."""
+
+        bindings = {
+            binding: (carbon_binding(binding), callback)
+            for binding, callback in callbacks.items()
+        }
+        with self._lock:
+            if self._handler_ref is None or self._carbon is None:
+                self._bindings = bindings
+                return
+
+            removed = self._bindings.keys() - bindings.keys()
+            added = bindings.keys() - self._bindings.keys()
+            if len(removed) != 1 or len(added) != 1:
+                raise RuntimeError("macOS hotkey rebind must replace exactly one binding")
+
+            old_binding = next(iter(removed))
+            new_binding = next(iter(added))
+            old_combination, old_callback = self._bindings[old_binding]
+            new_combination, new_callback = bindings[new_binding]
+            carbon = self._carbon
+
+            self._unregister_one(carbon, old_binding)
+            try:
+                self._register_one(
+                    carbon, new_binding, new_combination, new_callback
+                )
+            except Exception:
+                try:
+                    self._register_one(
+                        carbon, old_binding, old_combination, old_callback
+                    )
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        "macOS hotkey rebind failed and the previous binding "
+                        "could not be restored"
+                    ) from rollback_error
+                raise
+
+            for binding in self._bindings.keys() & bindings.keys():
+                _reference, hotkey_id = self._hotkey_refs[binding]
+                self._callbacks[hotkey_id] = bindings[binding][1]
+            self._bindings = bindings
 
     def _install_handler(self, carbon: ctypes.CDLL) -> None:
         spec = _EventTypeSpec(_EVENT_CLASS_KEYBOARD, _EVENT_HOT_KEY_PRESSED)
@@ -264,22 +297,32 @@ class _CarbonHotkeyListener:
         )
         if status != _NO_ERROR:
             raise _registration_error(status, binding)
-        self._hotkey_refs.append(reference)
+        self._hotkey_refs[binding] = (reference, hotkey_id)
         self._callbacks[hotkey_id] = callback
+
+    def _unregister_one(self, carbon: ctypes.CDLL, binding: str) -> None:
+        reference, hotkey_id = self._hotkey_refs[binding]
+        status = carbon.UnregisterEventHotKey(reference)
+        if status != _NO_ERROR:
+            raise RuntimeError(
+                f"macOS refused to unregister the hotkey {binding} (error {status})"
+            )
+        del self._hotkey_refs[binding]
+        self._callbacks.pop(hotkey_id, None)
 
     def _teardown(self) -> None:
         carbon = self._carbon
         handler_ref = self._handler_ref
-        hotkey_refs = self._hotkey_refs
+        hotkey_refs = self._hotkey_refs.values()
         self._carbon = None
         self._handler_ref = None
-        self._hotkey_refs = []
+        self._hotkey_refs = {}
         # Dropped before the hot keys are released, so a combination that
         # arrives while teardown is still running finds nothing left to run.
         self._callbacks = {}
         if carbon is None:
             return
-        for reference in hotkey_refs:
+        for reference, _hotkey_id in hotkey_refs:
             carbon.UnregisterEventHotKey(reference)
         if handler_ref is not None:
             carbon.RemoveEventHandler(handler_ref)
@@ -292,9 +335,12 @@ class _CarbonHotkeyListener:
     ) -> int:
         """Run the callback for one hot key, on the main run loop.
 
-        This is called from C, so an exception has nowhere to go: it would
-        cross a frame that cannot unwind it. Every failure therefore ends as a
-        declined event instead.
+        Carbon fixes the three-argument signature, so the two ignored ones have
+        to stay: declining the event replaces the handler chain, and the user
+        data is NULL because hot key ids already identify the callback.
+
+        Called from C, where an exception has nowhere to go, so every failure
+        ends as a declined event instead.
         """
 
         try:

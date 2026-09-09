@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import RLock, Thread
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, TypeAlias, cast
 
 from hanly import HanlyError, LookupResult, LookupStatus, Point
 
@@ -29,10 +29,8 @@ from .hover_controller import HoverScheduler
 from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
+from .popup import PopupController
 from .runtime_trace import RuntimeTraceSink, emit_trace
-
-if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QWidget
 
 
 class RuntimeComposition(Protocol):
@@ -97,7 +95,6 @@ class ManualLookupRuntime:
         hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
         hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
-        hover_runtime: HoverLookupRuntime | None = None,
         trace_sink: RuntimeTraceSink | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
@@ -118,8 +115,6 @@ class ManualLookupRuntime:
             raise TypeError("dispatcher must be callable")
         if not isinstance(hotkey, str) or not hotkey.strip():
             raise TypeError("hotkey must be a non-empty string")
-        if hover_runtime is not None and not isinstance(hover_runtime, HoverLookupRuntime):
-            raise TypeError("hover_runtime must be a HoverLookupRuntime")
 
         self._controller = controller
         self._capture_service = (
@@ -133,7 +128,7 @@ class ManualLookupRuntime:
         self._current_cursor = current_cursor
         self._dispatcher = dispatcher
         self._shutdown_scheduler = shutdown_scheduler or _schedule_shutdown
-        self._hover_runtime = hover_runtime
+        self._hover_runtime: HoverLookupRuntime | None = None
         self._trace_sink = trace_sink
         self._hotkeys = (hotkey_factory or _create_hotkey)(
             self._handle_action,
@@ -145,9 +140,6 @@ class ManualLookupRuntime:
         self._closed = False
         self._hotkey = hotkey
         self._capture_mode = CaptureMode.FULL_MONITOR
-        self._hover_delay_ms: float | None = (
-            hover_runtime.delay_ms if hover_runtime is not None else None
-        )
 
     @property
     def controller(self) -> LookupController:
@@ -207,7 +199,6 @@ class ManualLookupRuntime:
         )
         with self._lock:
             self._hotkey = config.hotkey
-            self._hover_delay_ms = float(config.hover_delay_ms)
 
     def set_capture_preferences(
         self,
@@ -521,7 +512,6 @@ def create_qt_manual_lookup(
     capture_service: CaptureSource,
     *,
     hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
-    parent: QWidget | None = None,
     hotkey_factory: HotkeyFactory | None = None,
     shutdown_scheduler: ShutdownScheduler | None = None,
     hover_enabled: bool = True,
@@ -542,12 +532,11 @@ def create_qt_manual_lookup(
 
     from PyQt6.QtGui import QCursor
 
-    from .popup import PopupController
     from .qt_hover_scheduler import QtHoverScheduler
     from .qt_popup import QtPopupTrigger, QtPopupView, QtResultDispatcher
 
-    dispatcher = QtResultDispatcher(parent)
-    view = QtPopupView(parent)
+    dispatcher = QtResultDispatcher()
+    view = QtPopupView()
     popup_controller = PopupController(view, popup_size=view.popup_size)
     popup_trigger = QtPopupTrigger(popup_controller, trace_sink=trace_sink)
 
@@ -598,7 +587,7 @@ def create_qt_manual_lookup(
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
                 # Debounce on the Qt UI thread that already dispatches movement
                 # rather than spawning a timer thread per cursor event.
-                scheduler=hover_scheduler or QtHoverScheduler(parent),
+                scheduler=hover_scheduler or QtHoverScheduler(),
                 dispatcher=dispatcher,
                 listener_factory=hover_listener_factory,
                 on_error=hover_on_error,

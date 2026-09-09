@@ -315,7 +315,7 @@ workflow downloads a source archive or builds the resource.
    `hanly-resources.json` to the draft, by hand, when the dictionary changed.
 3. `finalize` waits on the `hanly-release` environment. After approval it
    re-resolves the tag and its build, revalidates the manifest and every
-   checksum, writes `SHA256SUMS` last, and publishes exactly six assets.
+   checksum, writes `SHA256SUMS` last, and publishes exactly seven assets.
 
 `docs/execution/first-release-plan.md` is the operator runbook.
 

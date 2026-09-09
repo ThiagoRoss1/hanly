@@ -317,6 +317,49 @@ def test_the_service_still_delivers_darwin_actions_through_its_dispatcher(
     assert actions == [HotkeyAction.LOOKUP]
 
 
+def test_service_rebind_reuses_the_handler_and_replaces_the_registration(
+    carbon: _FakeCarbon,
+) -> None:
+    actions: list[HotkeyAction] = []
+    service = HotkeyService(
+        actions.append,
+        bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
+        listener_factory=darwin_listener_factory,
+    )
+    service.register()
+
+    service.rebind(HotkeyAction.LOOKUP, "cmd+alt+k")
+
+    assert carbon.installed == 1
+    assert carbon.removed == 0
+    assert len(carbon.unregistered) == 1
+    assert carbon.registered[-1][:2] == (40, 0x0900)
+    assert service.bindings[HotkeyAction.LOOKUP] == "<alt>+<cmd>+k"
+    assert carbon.press(carbon.registered[-1][2]) == 0
+    assert actions == [HotkeyAction.LOOKUP]
+
+
+def test_failed_service_rebind_restores_the_previous_carbon_registration(
+    carbon: _FakeCarbon,
+) -> None:
+    actions: list[HotkeyAction] = []
+    service = HotkeyService(
+        actions.append,
+        bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
+        listener_factory=darwin_listener_factory,
+    )
+    service.register()
+    carbon.register_statuses = [_HOT_KEY_EXISTS, 0]
+
+    with pytest.raises(RuntimeError, match="already uses the hotkey"):
+        service.rebind(HotkeyAction.LOOKUP, "cmd+alt+k")
+
+    assert carbon.installed == 1
+    assert service.bindings[HotkeyAction.LOOKUP] == "<ctrl>+<shift>+<space>"
+    assert carbon.press(carbon.registered[-1][2]) == 0
+    assert actions == [HotkeyAction.LOOKUP]
+
+
 def test_service_shutdown_releases_the_carbon_registration(carbon: _FakeCarbon) -> None:
     service = HotkeyService(
         lambda _action: None,

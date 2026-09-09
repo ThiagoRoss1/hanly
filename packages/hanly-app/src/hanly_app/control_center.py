@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from hanly.resource_manager import ResourceManager
 
@@ -195,16 +195,12 @@ class ControlCenterBridge:
         *,
         config_manager: ConfigManager | None = None,
         desktop_controller: DesktopLifecycle | None = None,
-        capture_service: MonitorSource | CaptureService | None = None,
         resource_manager: ResourceManager | None = None,
-        update_service: object | None = None,
         update_coordinator: UpdateCoordinator | None = None,
         diagnostics: Callable[[], Sequence[str]] | None = None,
         on_lifecycle_changed: Callable[[], None] | None = None,
-        runtime: HanlyRuntime | None = None,
         runtime_status: Callable[[], RuntimeStatus] | None = None,
         capture_ready: Callable[[], bool] | None = None,
-        on_retry_runtime: Callable[[], None] | None = None,
         on_select_capture_area: CaptureAreaSelector | None = None,
         on_quit: Callable[[], None] | None = None,
         log_path: Path | None = None,
@@ -224,8 +220,6 @@ class ControlCenterBridge:
             raise TypeError("runtime_status must be callable")
         if capture_ready is not None and not callable(capture_ready):
             raise TypeError("capture_ready must be callable")
-        if on_retry_runtime is not None and not callable(on_retry_runtime):
-            raise TypeError("on_retry_runtime must be callable")
         if on_select_capture_area is not None and not callable(on_select_capture_area):
             raise TypeError("on_select_capture_area must be callable")
         if on_quit is not None and not callable(on_quit):
@@ -236,15 +230,15 @@ class ControlCenterBridge:
         self._config_manager = config_manager
         self._config = config_manager.config if config_manager is not None else AppConfig()
         self._desktop_controller = desktop_controller
-        self._capture_service = capture_service
-        self._resource_manager = resource_manager or (
-            runtime.resource_manager if runtime is not None else None
-        )
+        # Both arrive with the prepared runtime, through attach_runtime().
+        self._capture_service: MonitorSource | CaptureService | None = None
+        self._resource_manager = resource_manager
         self._ocr_provider = ocr_provider.strip()
         self._diagnostics = diagnostics
         self._runtime_status = runtime_status
         self._capture_ready = capture_ready
-        self._on_retry_runtime = on_retry_runtime
+        # Bound by set_retry() once startup exists to retry.
+        self._on_retry_runtime: Callable[[], None] | None = None
         self._select_capture_area = on_select_capture_area
         self._on_quit = on_quit
         self._log_path = log_path
@@ -252,13 +246,7 @@ class ControlCenterBridge:
         # caller below free of a platform test.
         self._permissions = permission_service or PermissionService()
         self._on_lifecycle_changed = on_lifecycle_changed
-        if update_service is not None and update_coordinator is not None:
-            raise ValueError("pass update_service or update_coordinator, not both")
-        self._update_coordinator = update_coordinator or (
-            UpdateCoordinator(cast(Any, update_service), resource_manager=self._resource_manager)
-            if update_service is not None
-            else None
-        )
+        self._update_coordinator = update_coordinator
         self._capture_running = False
 
     def get_state(self) -> dict[str, Any]:

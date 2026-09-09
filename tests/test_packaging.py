@@ -113,6 +113,8 @@ def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:
     assert "exclude_binaries=True" in source
     for backend in ("_win32", "_darwin", "_xorg"):
         assert backend in source
+    assert "pynput.mouse._darwin" in source
+    assert "pynput.keyboard._darwin" not in source
     assert "resources/dev" not in source
     assert "paddle" not in source
 

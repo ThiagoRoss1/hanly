@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import threading
 from collections.abc import Callable, Mapping
 from threading import Event, Thread
@@ -404,12 +403,14 @@ def test_failed_hotkey_registration_still_closes_popup_and_capture() -> None:
     assert hotkeys.shutdown_calls == 1
 
 
-def test_qt_composition_shares_one_dispatcher_between_hotkeys_and_results() -> None:
+def test_qt_composition_shares_one_dispatcher_between_hotkeys_and_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``create_qt_manual_lookup`` is the composition the alpha actually runs.
     Both the hotkey service and the lookup controller must post through the
     same Qt dispatcher instance."""
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PyQt6.QtWidgets")
     from hanly_app.qt_popup import QtResultDispatcher
     from PyQt6.QtWidgets import QApplication

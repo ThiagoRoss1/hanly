@@ -10,6 +10,7 @@ the script's timer lifecycle rather than in any Python seam.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,9 +20,12 @@ import pytest
 from hanly_app.control_center import load_control_center_assets
 
 _HARNESS = Path(__file__).parent / "hanly_fixtures" / "assets" / "control_center_harness.js"
+_NODE = shutil.which("node")
 
+if _NODE is None and os.environ.get("CI", "").lower() in {"1", "true"}:
+    raise RuntimeError("Node.js is required for the Control Center tests in CI")
 pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
+    _NODE is None,
     reason="the Control Center script is exercised in Node, which is not installed",
 )
 
@@ -101,7 +105,8 @@ def _run(
     page.write_text(load_control_center_assets().javascript, encoding="utf-8")
     scripted = tmp_path / "snapshots.json"
     scripted.write_text(json.dumps(snapshots), encoding="utf-8")
-    command = ["node", str(_HARNESS), str(page), str(scripted)]
+    assert _NODE is not None
+    command = [_NODE, str(_HARNESS), str(page), str(scripted)]
     if actions is not None:
         scripted_actions = tmp_path / "actions.json"
         scripted_actions.write_text(json.dumps(actions), encoding="utf-8")

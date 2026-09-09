@@ -42,6 +42,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
       # PyInstaller inspects PyQt6.QtWidgets during Linux collection. The
       # Ubuntu hosted image does not include the loader that owns libEGL.so.1.
       # Xvfb is the display the frozen window gate runs in; a hosted Linux

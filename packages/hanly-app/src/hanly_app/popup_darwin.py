@@ -1,20 +1,8 @@
-"""The one macOS window property Qt cannot set for a result popup.
+"""Keep the macOS popup panel visible while Hanly is inactive.
 
-Qt makes a ``Qt::Tool`` window an ``NSPanel``, and AppKit gives every utility
-panel ``hidesOnDeactivate = YES``: once the owning application has been
-deactivated, the window server stops compositing that panel, and ordering it
-front again while the application is still inactive does not bring it back.
-
-That is precisely a dictionary popup's situation -- Hanly is deliberately never
-the active application when a result appears -- and the failure is silent:
-``QWidget.isVisible()`` and ``NSWindow.isVisible`` both keep reporting true
-while ``CGWindowListCopyWindowInfo`` shows the panel is not on screen.
-
-Qt's own switch for this, ``WA_MacAlwaysShowToolWindow``, is not usable here:
-setting it makes ``show()`` activate the process again, which is the focus
-stealing this popup exists to avoid. So the property is cleared directly, with
-``ctypes`` rather than a new dependency, exactly as
-:mod:`hanly_app.hotkeys_darwin` reaches Carbon.
+Qt tool windows are ``NSPanel`` objects that normally hide on deactivation.
+Qt's always-show attribute steals focus here, so this adapter clears the native
+property directly without adding an Objective-C dependency.
 """
 
 from __future__ import annotations

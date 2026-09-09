@@ -1,12 +1,7 @@
-"""What the operating system must allow before Hanly can watch the screen.
+"""Platform-neutral permission policy, status caching, and UI data.
 
-macOS is the only platform that gates screen capture and global cursor
-observation behind a privacy grant, so this seam reports nothing at all
-elsewhere: Windows and Linux get an empty list rather than an invented one.
-
-The module owns the *policy* -- which permission each shipped feature needs,
-and what the user is told about it -- while :mod:`hanly_app.permissions_darwin`
-owns the platform calls behind :class:`PermissionProbe`.
+The macOS system calls live in :mod:`hanly_app.permissions_darwin`; other
+platforms expose no invented permission requirements.
 """
 
 from __future__ import annotations
@@ -22,6 +17,10 @@ from typing import Protocol
 
 class UnsupportedPermission(RuntimeError):
     """Raised when a permission is asked for that this platform does not manage."""
+
+
+class PermissionActionFailed(RuntimeError):
+    """Raised when a grant flow could not be started, with what to do instead."""
 
 
 class Permission(Enum):
@@ -271,6 +270,7 @@ __all__ = [
     "Permission",
     "PermissionProbe",
     "PermissionService",
+    "PermissionActionFailed",
     "PermissionSpec",
     "PermissionState",
     "PermissionStatus",

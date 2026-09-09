@@ -1,25 +1,4 @@
-"""macOS privacy status, through the system's own APIs rather than a guess.
-
-Hanly never bypasses or self-grants a privacy control. It asks macOS what the
-user has already decided, runs Apple's own request flow when the user asks for
-one, and otherwise sends them to the exact System Settings pane.
-
-Two frameworks answer the two questions:
-
-``CGPreflightScreenCaptureAccess``
-    Whether this process may capture other applications' windows. This is the
-    call that distinguishes a real capture from the wallpaper-only image macOS
-    hands an unauthorized process -- an image Hanly must never treat as a
-    failed OCR.
-
-``AXIsProcessTrusted``
-    Whether this process may observe input globally, which is what the pynput
-    mouse listener needs. The Carbon hotkey backend does not.
-
-They are reached through ``ctypes`` for the same reason
-:mod:`hanly_app.hotkeys_darwin` is: two C functions and one CoreFoundation
-dictionary do not justify a native extension in the dependency set.
-"""
+"""macOS screen-recording and Accessibility permission integration."""
 
 from __future__ import annotations
 
@@ -28,7 +7,12 @@ import ctypes.util
 import subprocess
 from threading import RLock
 
-from .permissions import Permission, PermissionState, UnsupportedPermission
+from .permissions import (
+    Permission,
+    PermissionActionFailed,
+    PermissionState,
+    UnsupportedPermission,
+)
 
 #: The URLs that open one privacy pane directly, so the user never has to know
 #: where in System Settings these controls live.
@@ -126,6 +110,13 @@ def request_accessibility() -> bool:
         core_foundation.CFRelease(options)
 
 
+def _export_address(library: ctypes.CDLL, name: str) -> ctypes.c_void_p:
+    """Return the address of an exported C object rather than its first word."""
+
+    symbol = ctypes.c_byte.in_dll(library, name)
+    return ctypes.c_void_p(ctypes.addressof(symbol))
+
+
 def _prompt_options() -> ctypes.c_void_p | None:
     """Build the one-entry ``{kAXTrustedCheckOptionPrompt: true}`` dictionary.
 
@@ -144,15 +135,14 @@ def _prompt_options() -> ctypes.c_void_p | None:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
+    core_foundation.CFRelease.restype = None
     core_foundation.CFRelease.argtypes = [ctypes.c_void_p]
 
     try:
         prompt_key = ctypes.c_void_p.in_dll(services, "kAXTrustedCheckOptionPrompt")
         true_value = ctypes.c_void_p.in_dll(core_foundation, "kCFBooleanTrue")
-        key_callbacks = ctypes.c_void_p.in_dll(
-            core_foundation, "kCFTypeDictionaryKeyCallBacks"
-        )
-        value_callbacks = ctypes.c_void_p.in_dll(
+        key_callbacks = _export_address(core_foundation, "kCFTypeDictionaryKeyCallBacks")
+        value_callbacks = _export_address(
             core_foundation, "kCFTypeDictionaryValueCallBacks"
         )
     except ValueError:
@@ -165,8 +155,8 @@ def _prompt_options() -> ctypes.c_void_p | None:
         keys,
         values,
         1,
-        ctypes.byref(key_callbacks),
-        ctypes.byref(value_callbacks),
+        key_callbacks,
+        value_callbacks,
     )
     return ctypes.c_void_p(options) if options else None
 
@@ -177,12 +167,20 @@ def open_privacy_settings(permission: Permission) -> None:
     pane = PRIVACY_PANES.get(permission)
     if pane is None:
         raise UnsupportedPermission(f"{permission.value} has no System Settings pane")
-    subprocess.run(
-        ["/usr/bin/open", pane],
-        check=False,
-        capture_output=True,
-        timeout=_OPEN_TIMEOUT_SECONDS,
-    )
+    try:
+        subprocess.run(
+            ["/usr/bin/open", pane],
+            check=True,
+            capture_output=True,
+            timeout=_OPEN_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        # This reaches the Control Center, where a CalledProcessError repr would
+        # tell the user nothing about what to do next.
+        raise PermissionActionFailed(
+            f"Hanly could not open the {permission.value.replace('_', ' ')} "
+            "settings; open System Settings > Privacy & Security yourself."
+        ) from error
 
 
 class DarwinPermissionProbe:
