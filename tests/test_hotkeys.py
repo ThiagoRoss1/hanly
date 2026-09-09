@@ -280,9 +280,13 @@ def test_action_handler_does_not_block_shutdown_from_another_thread() -> None:
     assert returned_while_handler_ran
 
 
-def test_register_reports_a_missing_pynput_installation(monkeypatch: pytest.MonkeyPatch) -> None:
-    # ``None`` in sys.modules is the documented way to make an import fail, and
-    # it keeps this test from touching real OS-level hotkey registration.
+def test_platforms_other_than_darwin_report_a_missing_pynput_installation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Reaching this error is also what says the default factory kept the pynput
+    # backend. ``None`` in sys.modules is the documented way to make an import
+    # fail, and it keeps this test from touching real hotkey registration.
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "pynput", None)
     service = HotkeyService(
         lambda _action: None,
@@ -293,3 +297,31 @@ def test_register_reports_a_missing_pynput_installation(monkeypatch: pytest.Monk
         service.register()
 
     assert service.registered is False
+
+
+def test_darwin_registers_through_the_carbon_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # pynput's macOS keyboard listener reads the keyboard layout off the main
+    # thread, which current macOS aborts the process for, so Darwin must not
+    # reach it.
+    built: list[Mapping[str, Callable[[], None]]] = []
+
+    def darwin_factory(callbacks: Mapping[str, Callable[[], None]]) -> _Listener:
+        built.append(callbacks)
+        return _Listener(callbacks)
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "hanly_app.hotkeys_darwin.darwin_listener_factory", darwin_factory
+    )
+    monkeypatch.setitem(sys.modules, "pynput", None)
+    service = HotkeyService(
+        lambda _action: None,
+        bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
+    )
+
+    service.register()
+
+    assert service.registered is True
+    assert list(built[0]) == ["<ctrl>+<shift>+<space>"]

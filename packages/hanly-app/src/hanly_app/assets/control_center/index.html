@@ -73,6 +73,13 @@
                 <button class="button button-quiet" id="select-area" type="button">Select capture area…</button>
               </div>
               <p class="hint hint-error" id="action-error" role="alert" hidden></p>
+              <div class="permissions" id="permissions" hidden>
+                <div class="permissions-head">
+                  <span class="eyebrow">Permissions</span>
+                  <button class="text-button" id="recheck-permissions" type="button">Check again</button>
+                </div>
+                <div class="permission-list" id="permission-list" aria-live="polite"></div>
+              </div>
               <div class="field-grid">
                 <label class="field">
                   <span>Capture scope</span>

@@ -226,7 +226,11 @@ download run the same code.
 | `qt_hover_scheduler.py` | Hover timing on the Qt thread |
 | `capture.py` | Screen ROI capture |
 | `capture_selector.py` | The "which area?" overlay, reached from settings |
-| `hotkeys.py` | Global hotkeys |
+| `hotkeys.py` | Global hotkeys, and the backend choice per platform |
+| `hotkeys_darwin.py` | The macOS backend: Carbon `RegisterEventHotKey` |
+| `popup_darwin.py` | Keeps the macOS popup panel on screen while Hanly is inactive |
+| `permissions.py` | Which grant each feature needs, and how it is reported |
+| `permissions_darwin.py` | The macOS status and grant flows, through ctypes |
 
 **Lookup execution**
 

@@ -31,6 +31,12 @@ from .config import (
 )
 from .desktop_controller import DesktopState
 from .hotkeys import HotkeyError, canonical_hotkey
+from .permissions import (
+    START_CAPTURE_PERMISSIONS,
+    PermissionService,
+    missing_permission_refusal,
+    permission_from_id,
+)
 from .runtime import HanlyRuntime
 from .runtime_status import RuntimeStatus
 from .update_coordinator import UpdateCoordinator
@@ -202,6 +208,7 @@ class ControlCenterBridge:
         on_select_capture_area: CaptureAreaSelector | None = None,
         on_quit: Callable[[], None] | None = None,
         log_path: Path | None = None,
+        permission_service: PermissionService | None = None,
         ocr_provider: str = "EasyOCR",
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
@@ -223,6 +230,8 @@ class ControlCenterBridge:
             raise TypeError("on_select_capture_area must be callable")
         if on_quit is not None and not callable(on_quit):
             raise TypeError("on_quit must be callable")
+        if permission_service is not None and not isinstance(permission_service, PermissionService):
+            raise TypeError("permission_service must be a PermissionService")
 
         self._config_manager = config_manager
         self._config = config_manager.config if config_manager is not None else AppConfig()
@@ -239,6 +248,9 @@ class ControlCenterBridge:
         self._select_capture_area = on_select_capture_area
         self._on_quit = on_quit
         self._log_path = log_path
+        # An empty service is the honest answer off macOS, and it keeps every
+        # caller below free of a platform test.
+        self._permissions = permission_service or PermissionService()
         self._on_lifecycle_changed = on_lifecycle_changed
         if update_service is not None and update_coordinator is not None:
             raise ValueError("pass update_service or update_coordinator, not both")
@@ -280,6 +292,7 @@ class ControlCenterBridge:
                 if self._update_coordinator is not None
                 else dict(self._UPDATE_STATUS)
             ),
+            "permissions": self._permissions_snapshot(),
         }
 
     def start_capture(self) -> dict[str, Any]:
@@ -292,6 +305,9 @@ class ControlCenterBridge:
 
         if self._capture_ready is not None and not self._capture_ready():
             raise ControlCenterUnavailable(RUNTIME_NOT_READY)
+        missing = self._permissions.missing(START_CAPTURE_PERMISSIONS)
+        if missing:
+            raise ControlCenterUnavailable(missing_permission_refusal(missing))
 
         controller = self._desktop_controller
         if controller is not None:
@@ -411,6 +427,22 @@ class ControlCenterBridge:
         if "hotkey" in values:
             values["hotkey"] = _validated_hotkey(values["hotkey"])
         self._update_config(**values)
+        return self.get_state()
+
+    def grant_permission(self, permission: object) -> dict[str, Any]:
+        """Run the operating system's own grant flow for one permission.
+
+        Hanly never grants anything itself: this opens Apple's request or the
+        exact System Settings pane and then reports what the system says.
+        """
+
+        self._permissions.request(permission_from_id(permission))
+        return self.get_state()
+
+    def refresh_permissions(self) -> dict[str, Any]:
+        """Re-read privacy status now, after the user changed it elsewhere."""
+
+        self._permissions.invalidate()
         return self.get_state()
 
     def retry_runtime(self) -> dict[str, Any]:
@@ -558,6 +590,18 @@ class ControlCenterBridge:
                 else ScreenRect(region.left, region.top, region.width, region.height)
             ),
         )
+
+    def _permissions_snapshot(self) -> dict[str, Any]:
+        """Report privacy status, and whether this platform gates anything.
+
+        ``supported`` is how the page knows to render nothing at all rather
+        than an empty and slightly ominous "Permissions" heading.
+        """
+
+        return {
+            "supported": self._permissions.supported,
+            "items": [status.to_dict() for status in self._permissions.statuses()],
+        }
 
     def _status_snapshot(self) -> dict[str, str]:
         """Report runtime readiness, which is not the capture lifecycle.

@@ -4,6 +4,7 @@ import os
 import threading
 from collections.abc import Callable, Mapping
 from threading import Event, Thread
+from typing import Any, cast
 
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
@@ -142,6 +143,9 @@ class _Runtime:
         *,
         result_dispatcher: ResultDispatcher | None = None,
         thread_name: str | None = None,
+        # The composition passes the optional seams through only when a caller
+        # supplied them, so this double has to accept them the same way.
+        **options: object,
     ) -> LookupController:
         assert on_result is not None
         assert result_dispatcher is not None
@@ -151,13 +155,38 @@ class _Runtime:
             on_result,
             result_dispatcher=result_dispatcher,
             thread_name=thread_name,
+            **cast(Any, options),
         )
         return self.controller
+
+
+class _TraceSink:
+    """Collect the runtime trace the manual path emits."""
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def emit(self, event: Mapping[str, object]) -> None:
+        self.events.append(dict(event))
+
+    def kinds(self, prefix: str) -> list[str]:
+        return [
+            str(event["event_kind"])
+            for event in self.events
+            if str(event["event_kind"]).startswith(prefix)
+        ]
+
+    def first(self, kind: str) -> dict[str, object]:
+        for event in self.events:
+            if event["event_kind"] == kind:
+                return event
+        raise AssertionError(f"no {kind} event was emitted")
 
 
 def _composition(
     *,
     worker: _Worker | None = None,
+    trace_sink: _TraceSink | None = None,
 ) -> tuple[ManualLookupRuntime, _QueueDispatcher, _HotkeyFactory, _Capture, _Popup, _Worker]:
     queue = _QueueDispatcher()
     hotkeys = _HotkeyFactory()
@@ -172,6 +201,7 @@ def _composition(
         current_cursor=lambda: _CURSOR,
         dispatcher=queue,
         hotkey_factory=hotkeys,
+        trace_sink=trace_sink,
     )
     return composition, queue, hotkeys, capture, popup, actual_worker
 
@@ -403,3 +433,113 @@ def test_qt_composition_shares_one_dispatcher_between_hotkeys_and_results() -> N
 
     composition.shutdown()
     assert capture.closed
+
+
+def test_the_manual_hotkey_path_traces_every_stage_it_reaches() -> None:
+    """The one-shot hotkey has no visible effect of its own until the popup.
+
+    A global key combination that is consumed by the window server looks
+    identical, from the outside, whether it reached capture, stopped at an
+    unavailable screen, or never arrived: the trace is what says which.
+    """
+
+    trace = _TraceSink()
+    composition, queue, hotkeys, capture, popup, worker = _composition(trace_sink=trace)
+    composition.start()
+    assert hotkeys.listener is not None
+
+    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    queue.drain_one()
+    assert worker.started.wait(timeout=2)
+    worker.release.set()
+    for _ in range(20):
+        if queue.pending:
+            break
+        Event().wait(0.01)
+    queue.drain_one()
+
+    assert trace.kinds("manual_") == [
+        "manual_action_received",
+        "manual_capture_completed",
+        "manual_submission",
+    ]
+    captured = trace.first("manual_capture_completed")
+    assert (captured["roi_width"], captured["roi_height"]) == (
+        _CAPTURE.image.width,
+        _CAPTURE.image.height,
+    )
+    assert trace.first("manual_submission")["lookup_request_id"] == 1
+    assert popup.results == [_success()]
+    composition.shutdown()
+
+
+def test_a_manual_lookup_that_cannot_capture_says_where_it_stopped() -> None:
+    trace = _TraceSink()
+    composition, queue, hotkeys, capture, popup, _ = _composition(trace_sink=trace)
+
+    def failing_capture(cursor: Point) -> CaptureResult:
+        raise RuntimeError("the screen is unavailable")
+
+    capture.capture_at_cursor = failing_capture  # type: ignore[method-assign]
+    composition.start()
+    assert hotkeys.listener is not None
+
+    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    queue.drain_one()
+
+    assert trace.kinds("manual_") == ["manual_action_received", "manual_action_error"]
+    error = trace.first("manual_action_error")
+    assert error["stage"] == "screen capture"
+    assert error["error_type"] == "RuntimeError"
+    # The user still hears about it, in the popup rather than only in a trace.
+    assert popup.results[0].status is LookupStatus.ERROR
+    composition.shutdown()
+
+
+def test_the_manual_hotkey_still_completes_a_lookup_while_hover_is_paused() -> None:
+    """Stop Capture pauses hover; the one-shot hotkey is a separate trigger.
+
+    This is the Stop-then-hotkey path a user takes to look one word up without
+    Hanly watching the screen, so the whole sequence has to still run.
+    """
+
+    trace = _TraceSink()
+    composition, queue, hotkeys, capture, popup, worker = _composition(trace_sink=trace)
+    composition.start()
+    assert hotkeys.listener is not None
+    composition.pause()
+
+    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    queue.drain_one()
+    assert worker.started.wait(timeout=2)
+    worker.release.set()
+    for _ in range(20):
+        if queue.pending:
+            break
+        Event().wait(0.01)
+    queue.drain_one()
+
+    assert trace.kinds("manual_") == [
+        "manual_action_received",
+        "manual_capture_completed",
+        "manual_submission",
+    ]
+    assert capture.cursors == [_CURSOR]
+    assert popup.results == [_success()]
+    composition.shutdown()
+
+
+def test_a_hotkey_that_arrives_before_start_is_traced_as_ignored() -> None:
+    trace = _TraceSink()
+    composition, queue, hotkeys, capture, _, _ = _composition(trace_sink=trace)
+    # register() without start() is what the hotkey factory double gives us,
+    # so the listener exists before the runtime accepts actions.
+    composition.hotkeys.register()
+    assert hotkeys.listener is not None
+
+    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    queue.drain_one()
+
+    assert trace.kinds("manual_") == ["manual_action_ignored"]
+    assert capture.called_on == []
+    composition.shutdown()

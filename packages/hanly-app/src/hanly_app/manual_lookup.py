@@ -29,7 +29,7 @@ from .hover_controller import HoverScheduler
 from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
-from .runtime_trace import RuntimeTraceSink
+from .runtime_trace import RuntimeTraceSink, emit_trace
 
 if TYPE_CHECKING:
     from PyQt6.QtWidgets import QWidget
@@ -98,6 +98,7 @@ class ManualLookupRuntime:
         hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
         hover_runtime: HoverLookupRuntime | None = None,
+        trace_sink: RuntimeTraceSink | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -133,6 +134,7 @@ class ManualLookupRuntime:
         self._dispatcher = dispatcher
         self._shutdown_scheduler = shutdown_scheduler or _schedule_shutdown
         self._hover_runtime = hover_runtime
+        self._trace_sink = trace_sink
         self._hotkeys = (hotkey_factory or _create_hotkey)(
             self._handle_action,
             {HotkeyAction.LOOKUP: hotkey},
@@ -383,13 +385,22 @@ class ManualLookupRuntime:
         self.start()
 
     def _handle_action(self, action: HotkeyAction) -> None:
-        """Capture and submit from the UI-dispatched application callback."""
+        """Capture and submit from the UI-dispatched application callback.
+
+        The trace events are what makes the one-shot hotkey path observable:
+        the global backend delivers a key combination with no visible effect
+        of its own, so each stage says where a lookup that never reached the
+        popup actually stopped.
+        """
 
         with self._lock:
             if self._closed or not self._started:
+                emit_trace(self._trace_sink, "manual_action_ignored", stage="manual_action")
                 return
         if action is not HotkeyAction.LOOKUP:
             return
+
+        emit_trace(self._trace_sink, "manual_action_received", stage="manual_action")
 
         stage = "cursor position"
         try:
@@ -398,10 +409,35 @@ class ManualLookupRuntime:
             capture = self._capture_service.capture_at_cursor(cursor)
             if not isinstance(capture, CaptureResult):
                 raise TypeError("capture service returned an invalid CaptureResult")
+            emit_trace(
+                self._trace_sink,
+                "manual_capture_completed",
+                stage="manual_capture",
+                roi_width=capture.image.width,
+                roi_height=capture.image.height,
+                region_left=capture.region.left,
+                region_top=capture.region.top,
+                target_x=capture.target.x,
+                target_y=capture.target.y,
+            )
             stage = "lookup submission"
-            self._controller.submit(capture.image, capture.target)
+            request = self._controller.submit(capture.image, capture.target)
         except Exception as error:
+            emit_trace(
+                self._trace_sink,
+                "manual_action_error",
+                stage=stage,
+                error_type=type(error).__name__,
+            )
             self._popup(_action_error(stage, error))
+            return
+
+        emit_trace(
+            self._trace_sink,
+            "manual_submission",
+            stage="manual_submission",
+            lookup_request_id=request.request_id,
+        )
 
     def _schedule_hotkey_shutdown(self) -> None:
         try:
@@ -459,6 +495,7 @@ def create_manual_lookup(
         hotkey=configured_hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
+        trace_sink=trace_sink,
     )
     if hover_enabled:
         manual.attach_hover(
@@ -551,6 +588,7 @@ def create_qt_manual_lookup(
         hotkey=configured_hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
+        trace_sink=trace_sink,
     )
     if hover_enabled:
         manual.attach_hover(

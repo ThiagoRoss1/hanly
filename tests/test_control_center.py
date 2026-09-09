@@ -23,6 +23,12 @@ from hanly_app.control_center import (
     load_control_center_assets,
 )
 from hanly_app.desktop_controller import DesktopState
+from hanly_app.permissions import (
+    Permission,
+    PermissionService,
+    PermissionState,
+    UnsupportedPermission,
+)
 from hanly_app.runtime_status import RuntimeStatus
 
 
@@ -613,3 +619,135 @@ def test_start_capture_is_refused_while_the_runtime_is_still_preparing() -> None
 
     assert runtime.events == ["start"]
     assert state["app"]["capture_running"] is True
+
+
+class _PermissionProbe:
+    """Scripted platform answers for the bridge's permission snapshot."""
+
+    def __init__(self, **states: PermissionState) -> None:
+        self.states = {Permission(name): state for name, state in states.items()}
+        self.requests: list[Permission] = []
+
+    def state(self, permission: Permission) -> PermissionState:
+        return self.states[permission]
+
+    def request(self, permission: Permission) -> PermissionState:
+        self.requests.append(permission)
+        self.states[permission] = PermissionState.GRANTED
+        return PermissionState.GRANTED
+
+
+def _permission_service(**states: PermissionState) -> PermissionService:
+    return PermissionService(
+        _PermissionProbe(**states),
+        permissions=(Permission.SCREEN_RECORDING, Permission.ACCESSIBILITY),
+        cache_seconds=0.0,
+    )
+
+
+def test_the_snapshot_reports_each_permission_with_its_own_state() -> None:
+    bridge = ControlCenterBridge(
+        permission_service=_permission_service(
+            screen_recording=PermissionState.GRANTED,
+            accessibility=PermissionState.REQUIRED,
+        )
+    )
+
+    permissions = bridge.get_state()["permissions"]
+
+    assert permissions["supported"] is True
+    assert [(item["id"], item["state"]) for item in permissions["items"]] == [
+        ("screen_recording", "granted"),
+        ("accessibility", "required"),
+    ]
+    accessibility = permissions["items"][1]
+    assert accessibility["label"] == "Accessibility"
+    assert accessibility["granted"] is False
+    assert accessibility["requirement"]
+
+
+def test_a_missing_screen_recording_grant_says_so_next_to_the_restart_note() -> None:
+    """macOS may not hand a running process a grant the user just gave."""
+
+    bridge = ControlCenterBridge(
+        permission_service=_permission_service(
+            screen_recording=PermissionState.REQUIRED,
+            accessibility=PermissionState.GRANTED,
+        )
+    )
+
+    items = {item["id"]: item for item in bridge.get_state()["permissions"]["items"]}
+
+    assert "restarted" in items["screen_recording"]["restart_note"]
+    assert items["accessibility"]["restart_note"] == ""
+
+
+def test_start_capture_is_refused_with_the_grant_that_is_missing() -> None:
+    runtime = _Runtime()
+    controller = _Controller(runtime)
+    bridge = ControlCenterBridge(
+        desktop_controller=controller,
+        permission_service=_permission_service(
+            screen_recording=PermissionState.REQUIRED,
+            accessibility=PermissionState.GRANTED,
+        ),
+    )
+
+    with pytest.raises(ControlCenterUnavailable, match="Screen Recording"):
+        bridge.start_capture()
+
+    assert runtime.events == []
+    assert bridge.get_state()["app"]["capture_running"] is False
+
+
+def test_granting_a_permission_flips_the_state_the_page_renders_next() -> None:
+    runtime = _Runtime()
+    controller = _Controller(runtime)
+    service = _permission_service(
+        screen_recording=PermissionState.REQUIRED,
+        accessibility=PermissionState.GRANTED,
+    )
+    bridge = ControlCenterBridge(desktop_controller=controller, permission_service=service)
+
+    state = bridge.grant_permission("screen_recording")
+
+    items = {item["id"]: item for item in state["permissions"]["items"]}
+    assert items["screen_recording"]["state"] == "granted"
+    assert bridge.start_capture()["app"]["capture_running"] is True
+
+
+def test_rechecking_permissions_asks_the_system_again() -> None:
+    probe = _PermissionProbe(
+        screen_recording=PermissionState.REQUIRED,
+        accessibility=PermissionState.GRANTED,
+    )
+    service = PermissionService(
+        probe,
+        permissions=(Permission.SCREEN_RECORDING, Permission.ACCESSIBILITY),
+        cache_seconds=3600.0,
+    )
+    bridge = ControlCenterBridge(permission_service=service)
+    assert bridge.get_state()["permissions"]["items"][0]["state"] == "required"
+
+    probe.states[Permission.SCREEN_RECORDING] = PermissionState.GRANTED
+    state = bridge.refresh_permissions()
+
+    assert state["permissions"]["items"][0]["state"] == "granted"
+
+
+def test_an_unknown_permission_name_from_the_page_is_refused() -> None:
+    bridge = ControlCenterBridge(permission_service=_permission_service())
+
+    with pytest.raises(UnsupportedPermission):
+        bridge.grant_permission("camera")
+
+
+def test_platforms_without_privacy_gates_neither_report_nor_refuse() -> None:
+    """No invented permission UI, and no refusal, off macOS."""
+
+    runtime = _Runtime()
+    bridge = ControlCenterBridge(desktop_controller=_Controller(runtime))
+
+    assert bridge.get_state()["permissions"] == {"supported": False, "items": []}
+    assert bridge.start_capture()["app"]["capture_running"] is True
+    assert runtime.events == ["start"]

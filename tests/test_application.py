@@ -27,6 +27,11 @@ from hanly_app.application import (
 from hanly_app.config import AppConfig, ConfigManager
 from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailable
 from hanly_app.desktop_controller import DesktopState
+from hanly_app.permissions import (
+    Permission,
+    PermissionService,
+    PermissionState,
+)
 from hanly_app.runtime_status import RuntimeStatusPublisher
 
 #: Bounded so a marshalling regression fails the test instead of hanging it.
@@ -702,11 +707,17 @@ class _Desktop:
 def _session(
     tmp_path: Path,
     pending: queue.Queue[Callable[[], None]],
+    *,
+    permission_service: PermissionService | None = None,
 ) -> tuple[Any, _Desktop]:
     """Build the real session over doubles, with a dispatcher we can drive.
 
     Composition itself dispatches the first status snapshot, so the queue is
     drained here and holds only what the action under test put there.
+
+    Permissions are supplied rather than probed: the default is the empty
+    service every non-macOS platform gets, so no test result depends on the
+    privacy settings of the machine it runs on.
     """
 
     session = application_module._DesktopSession(
@@ -714,6 +725,7 @@ def _session(
         diagnostics=DiagnosticLog(),
         status=RuntimeStatusPublisher(pending.put),
         dispatcher=pending.put,
+        permission_service=permission_service or PermissionService(),
     )
     desktop = _Desktop()
     session.attach(cast(Any, desktop))
@@ -941,3 +953,94 @@ def test_a_headless_session_reports_to_stderr_instead_of_aborting_on_qt(
     assert "no dictionary" in capsys.readouterr().err
     assert application_module._can_show_native_dialog({"DISPLAY": ":0"}) is True
     assert application_module._can_show_native_dialog({}) is False
+
+
+class _ScriptedProbe:
+    """Answers from the test rather than from this machine's privacy settings."""
+
+    def __init__(self, missing: Permission | None) -> None:
+        self._missing = missing
+
+    def state(self, permission: Permission) -> PermissionState:
+        return (
+            PermissionState.REQUIRED
+            if permission is self._missing
+            else PermissionState.GRANTED
+        )
+
+    def request(self, permission: Permission) -> PermissionState:
+        raise AssertionError("starting capture must not request a permission")
+
+
+def _scripted_permissions(missing: Permission | None) -> PermissionService:
+    return PermissionService(
+        _ScriptedProbe(missing),
+        permissions=(Permission.SCREEN_RECORDING, Permission.ACCESSIBILITY),
+        cache_seconds=0.0,
+    )
+
+
+def test_start_is_refused_before_the_qt_thread_when_a_grant_is_missing(
+    tmp_path: Path,
+) -> None:
+    """Both Start routes converge here, and the check must not reach Qt.
+
+    A privacy check is a round trip to the system, so it happens on the
+    caller's thread rather than inside the lifecycle dispatch.
+    """
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(
+        tmp_path,
+        pending,
+        permission_service=_scripted_permissions(Permission.SCREEN_RECORDING),
+    )
+    controller = _QtOwnedController(DesktopState.PAUSED)
+    session._controller = controller
+
+    with pytest.raises(ControlCenterUnavailable, match="Screen Recording"):
+        session.start()
+
+    assert controller.calls == []
+    assert pending.empty()
+
+
+def test_the_tray_start_is_refused_by_the_same_grant_check(tmp_path: Path) -> None:
+    """The tray does not go through the Control Center, so it needs the guard."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(
+        tmp_path,
+        pending,
+        permission_service=_scripted_permissions(Permission.ACCESSIBILITY),
+    )
+    session._controller = _QtOwnedController(DesktopState.PAUSED)
+    diagnostics = DiagnosticLog()
+    desktop = DesktopApplication(
+        _Qt(),
+        session,
+        _Service("tray", []),
+        _Service("control", []),
+        diagnostics=diagnostics,
+    )
+
+    desktop.request_capture()
+
+    assert diagnostics.snapshot() == (
+        "Hanly needs Accessibility access before it can watch the screen.",
+    )
+
+
+def test_a_granted_machine_starts_capture_normally(tmp_path: Path) -> None:
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(
+        tmp_path,
+        pending,
+        permission_service=_scripted_permissions(None),
+    )
+    controller = _QtOwnedController(DesktopState.PAUSED)
+    session._controller = controller
+
+    session.start()
+
+    assert controller.calls == ["resume"]
