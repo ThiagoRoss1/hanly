@@ -15,6 +15,7 @@ from hanly_app.capture_selector import CaptureSelection, CaptureSelectorError
 from hanly_app.cli import build_parser, parse_roi_size, run_hanly
 from hanly_app.config import CaptureMode
 from hanly_app.control_center import ControlCenterUnavailable
+from hanly_app.first_run import FirstRunError
 from hanly_app.runtime import RuntimeConfigError
 
 
@@ -333,6 +334,36 @@ def test_a_startup_failure_still_leaves_with_its_own_status(
     cli.main([])
 
     assert left == [2]
+
+
+def test_a_failed_self_check_reports_without_waiting_for_anyone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The packaged smoke drives --self-check with nobody at the machine. A
+    modal report there held the frozen process open until the harness's
+    deadline, turning a two-second failure into a forty-minute one."""
+
+    import hanly_app.cli as cli
+
+    left: list[int] = []
+    reported: list[bool] = []
+
+    def failing(*_args: object, **_kwargs: object) -> int:
+        raise FirstRunError("Hanly needs its Korean dictionary")
+
+    monkeypatch.setattr(cli, "_terminate_without_unloading", lambda _status: None)
+    monkeypatch.setattr(cli.os, "_exit", lambda status: left.append(status))
+    monkeypatch.setattr(cli, "resolve_runtime_config", failing)
+    monkeypatch.setattr(
+        cli,
+        "report_startup_error",
+        lambda *_a, interactive=True, **_k: reported.append(interactive),
+    )
+
+    cli.main(["--self-check", "worker"])
+
+    assert left == [2]
+    assert reported == [False]
 
 
 def test_leaving_terminates_before_it_falls_back_to_exiting(

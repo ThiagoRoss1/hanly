@@ -8,7 +8,9 @@ unable to become ready.
 
 Nothing here may fall back to the repository, the developer virtual
 environment, or developer model caches: the run uses a temporary profile and a
-working directory outside the checkout.
+working directory outside the checkout. What the run may be given is named on
+the command line -- a dictionary to install, a model directory to seed -- so
+determinism is always an explicit argument rather than an inherited accident.
 """
 
 from __future__ import annotations
@@ -72,8 +74,12 @@ HDIUTIL = "/usr/bin/hdiutil"
 
 CommandRunner = Callable[..., Any]
 
-#: A cold frozen start imports torch and warms two models.
-DEFAULT_TIMEOUT_SECONDS = 900
+#: A cold frozen start imports torch and warms two models. The work itself was
+#: measured at roughly 45 s; the rest of this is the platform reading a freshly
+#: frozen bundle's tens of thousands of new files for the first time, which has
+#: been observed to outlast 300 s on its own. It is the deadlock guard, not a
+#: budget: a self-check that fails now reports and exits rather than waiting.
+DEFAULT_TIMEOUT_SECONDS = 1200
 
 #: Opening the window imports Qt WebEngine and starts Chromium; it constructs
 #: no provider, so it is bounded far more tightly than the worker. It is not
@@ -93,6 +99,11 @@ EASYOCR_MODEL_SUBDIRECTORY = "model"
 
 #: Redirected so nothing resolves ``~`` back to the developer's account.
 HOME_VARIABLES = ("HOME", "USERPROFILE", "XDG_CACHE_HOME")
+
+#: How first-run provisioning is pointed at an already-built dictionary.
+#: Named here rather than imported: this harness runs against a frozen bundle
+#: and must not depend on the source package it is checking.
+LOCAL_KRDICT_VARIABLE = "HANLY_KRDICT_DB"
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +170,7 @@ def run_packaged_self_check(
     image: str | Path | None = None,
     profile: str | Path | None = None,
     model_cache: str | Path | None = None,
+    krdict: str | Path | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
     """Run one of the bundle's own ``--self-check`` modes and parse its report."""
@@ -169,7 +181,7 @@ def run_packaged_self_check(
     if image is not None:
         command.extend(["--self-check-image", str(Path(image).resolve())])
 
-    with _ProfileContext(profile, model_cache=model_cache) as (
+    with _ProfileContext(profile, model_cache=model_cache, krdict=krdict) as (
         environment,
         working_directory,
     ):
@@ -254,6 +266,11 @@ class _ProfileContext:
     clean profile has to succeed on what the bundle ships. ``model_cache``
     seeds the isolated model directory for a build that still resolves models
     through the environment; a current frozen bundle ignores it.
+
+    ``krdict`` names an already-built dictionary for the bundle to install.
+    The database is licensed and ships in neither the bundle nor the
+    repository, so without one a first run reaches the public release channel
+    -- a network dependency this check has no business carrying.
     """
 
     def __init__(
@@ -261,9 +278,11 @@ class _ProfileContext:
         profile: str | Path | None,
         *,
         model_cache: str | Path | None = None,
+        krdict: str | Path | None = None,
     ) -> None:
         self._profile = None if profile is None else Path(profile).resolve()
         self._model_cache = None if model_cache is None else Path(model_cache).resolve()
+        self._krdict = None if krdict is None else Path(krdict).resolve()
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> tuple[dict[str, str], Path]:
@@ -279,8 +298,12 @@ class _ProfileContext:
         for directory in (settings, work, home, models):
             directory.mkdir(parents=True, exist_ok=True)
         self._seed_models(models)
+        self._require_krdict()
 
-        return isolated_environment(os.environ, settings, home, models), work
+        return (
+            isolated_environment(os.environ, settings, home, models, krdict=self._krdict),
+            work,
+        )
 
     def _seed_models(self, models: Path) -> None:
         """Copy a named model directory in, for a deterministic offline run."""
@@ -294,6 +317,12 @@ class _ProfileContext:
         for source in self._model_cache.iterdir():
             if source.is_file():
                 shutil.copy2(source, destination / source.name)
+
+    def _require_krdict(self) -> None:
+        """Refuse a named dictionary that is not there, rather than downloading."""
+
+        if self._krdict is not None and not self._krdict.is_file():
+            raise FileNotFoundError(f"no KRDICT database at {self._krdict}")
 
     def __exit__(self, *_exc_info: object) -> None:
         if self._temporary is not None:
@@ -393,6 +422,8 @@ def isolated_environment(
     settings: Path,
     home: Path,
     models: Path,
+    *,
+    krdict: Path | None = None,
 ) -> dict[str, str]:
     """Build the child environment, with every developer path redirected."""
 
@@ -403,7 +434,12 @@ def isolated_environment(
         environment[variable] = str(home)
     for variable in EASYOCR_PATH_VARIABLES:
         environment[variable] = str(models)
-    environment.pop("HANLY_KRDICT_DB", None)
+    # An inherited value is a developer's own dictionary; the named one is the
+    # only dictionary a run is allowed to install.
+    if krdict is None:
+        environment.pop(LOCAL_KRDICT_VARIABLE, None)
+    else:
+        environment[LOCAL_KRDICT_VARIABLE] = str(krdict)
     # The report names Korean text; a Windows console codepage cannot.
     environment["PYTHONIOENCODING"] = "utf-8"
     return environment
@@ -486,6 +522,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "EasyOCR model directory (the '.EasyOCR/model' one) to copy into "
             "the isolated profile; a packaged build reads its bundled weights "
             "instead and ignores it"
+        ),
+    )
+    parser.add_argument(
+        "--krdict",
+        type=Path,
+        help=(
+            "already-built krdict.sqlite3 for the frozen run to install; "
+            "without one a clean machine provisions from the release channel "
+            "and the check depends on the network"
         ),
     )
     parser.add_argument(
@@ -579,6 +624,7 @@ def _report(
             image=args.image,
             profile=args.profile,
             model_cache=args.model_cache,
+            krdict=args.krdict,
             timeout=args.timeout,
         )
     output["self_check"] = report
@@ -617,6 +663,7 @@ __all__ = [
     "EASYOCR_MODEL_SUBDIRECTORY",
     "EASYOCR_PATH_VARIABLES",
     "HOME_VARIABLES",
+    "LOCAL_KRDICT_VARIABLE",
     "REQUIRED_DATA_FILES",
     "REQUIRED_EXTENSION_STEM",
     "REQUIRED_MODEL_FILES",

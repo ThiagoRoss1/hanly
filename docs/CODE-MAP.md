@@ -265,6 +265,8 @@ download run the same code.
 | Path | What it is |
 |---|---|
 | `tools/krdict/` | Builds, validates, and packages the dictionary |
+| `tools/smoke_packaged_runtime.py` | Proves a frozen bundle's inventory and its real providers |
+| `tools/build_smoke_krdict.py` | The small dictionary that smoke installs, so a clean machine needs no release channel |
 | `tools/dev_lookup.py` | Engine-only lookup rig |
 | `tools/build_package.py`, `tools/release_version.py` | Release tooling: freeze the bundle, prove a tag matches the packages |
 | `tools/release_build.py`, `tools/tagged_metadata.py` | The release lane's decisions — peel the tag, verify its build, classify an existing release, read the tagged identity |

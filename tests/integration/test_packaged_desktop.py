@@ -19,6 +19,7 @@ import pytest
 from hanly_app.self_check import SELF_CHECK_MODES
 
 from tools.build_package import PackageLayout, host_platform
+from tools.build_smoke_krdict import build_smoke_krdict
 from tools.smoke_packaged_runtime import (
     UI_TIMEOUT_SECONDS,
     _executable_in,
@@ -33,9 +34,6 @@ BUNDLE_VARIABLE = "HANLY_PACKAGED_APP"
 
 #: The Korean fixture the frozen OCR stack must actually read.
 FIXTURE_IMAGE = ROOT / "tests" / "hanly_fixtures" / "assets" / "korean_reading_roi.png"
-
-#: A cold frozen start imports torch, provisions KRDICT, and warms two models.
-_SMOKE_TIMEOUT_SECONDS = 1800
 
 #: The same bound the harness uses, rather than a second, smaller number: a
 #: cold or memory-pressured machine can take minutes to start Chromium, and a
@@ -108,11 +106,14 @@ def test_the_frozen_worker_becomes_ready_on_an_isolated_profile(tmp_path: Path) 
 
     executable = _executable()
 
+    # The dictionary is licensed and is in neither the bundle nor the
+    # repository, so a run given none provisions itself over the network. This
+    # gate refuses every other developer fallback; that one is no different.
     report = run_packaged_self_check(
         executable,
         image=FIXTURE_IMAGE,
         profile=tmp_path,
-        timeout=_SMOKE_TIMEOUT_SECONDS,
+        krdict=build_smoke_krdict(tmp_path / "seed" / "krdict.sqlite3"),
     )
 
     recorded, failures = _failures(report)

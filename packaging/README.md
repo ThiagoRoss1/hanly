@@ -88,8 +88,10 @@ python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop --inventory-on
 
 # Runs the executable itself on a temporary profile, outside the checkout,
 # with no developer virtual environment or model cache to fall back on.
+python tools/build_smoke_krdict.py /tmp/hanly-smoke/krdict.sqlite3
 python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop \
-    --image tests/hanly_fixtures/assets/korean_reading_roi.png
+    --image tests/hanly_fixtures/assets/korean_reading_roi.png \
+    --krdict /tmp/hanly-smoke/krdict.sqlite3
 
 # Opens the frozen main window and makes its page call the bridge.
 python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop --window-only
@@ -110,6 +112,17 @@ EasyOCR model locations into a temporary profile, so no developer cache can be
 what makes a check succeed. That makes the worker run *cold*: it fetches its
 own models. `--model-cache DIR` copies a named EasyOCR model directory into
 the isolated profile instead, which is the deterministic offline scenario.
+
+The dictionary is redirected for the same reason and answered the same way. It
+is licensed, so it ships in neither the bundle nor the repository, and a frozen
+run given none provisions itself from the public release channel — an
+unauthenticated GitHub API call that a hosted macOS runner is rate-limited on,
+which is how one release run reached its timeout instead of a result.
+`--krdict PATH` names an already-built database for the run to install through
+the ordinary local-seed path, and `tools/build_smoke_krdict.py` builds a small
+one carrying the words the self-check probes. What it writes is temporary and
+belongs to no bundle and no artifact; the released dictionary is still the
+independently published resource a real first run downloads.
 
 On macOS the checks run against the application unpacked back out of the
 published ZIP, not the build directory it was made from, and the disk image is

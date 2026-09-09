@@ -126,7 +126,9 @@ def main(argv: Sequence[str] | None = None) -> NoReturn:
         ValueError,
     ) as error:
         diagnostics.report("Startup", error)
-        report_startup_error(error, log_path=diagnostics.path)
+        # A self-check is machine-driven: reporting it through a modal dialog
+        # would leave the process waiting for a click nobody is there to make.
+        report_startup_error(error, log_path=diagnostics.path, interactive=not args.self_check)
         status = 2
     _leave(status)
 

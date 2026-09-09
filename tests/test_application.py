@@ -480,6 +480,25 @@ def test_windowed_startup_failure_uses_native_error_reporter(
     assert "resource release unavailable" in capsys.readouterr().err
 
 
+def test_a_machine_driven_startup_failure_never_opens_a_modal_dialog(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A frozen --self-check that raised one waited out the packaging harness's
+    whole deadline for a click nobody was there to make."""
+
+    def refuse(_message: str) -> None:
+        raise AssertionError("a modal dialog must not be opened for a self-check")
+
+    monkeypatch.setattr(application_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(application_module, "_show_native_startup_error", refuse)
+
+    application_module.report_startup_error(
+        RuntimeError("no dictionary"), interactive=False
+    )
+
+    assert "no dictionary" in capsys.readouterr().err
+
+
 def test_native_startup_reporter_preloads_ocr_before_opening_the_qt_dialog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -35,6 +35,7 @@ from tools.smoke_packaged_runtime import (
     EASYOCR_MODEL_SUBDIRECTORY,
     EASYOCR_PATH_VARIABLES,
     HOME_VARIABLES,
+    LOCAL_KRDICT_VARIABLE,
     REQUIRED_DATA_FILES,
     REQUIRED_MODEL_FILES,
     _executable_in,
@@ -264,6 +265,27 @@ def test_the_frozen_smoke_cannot_fall_back_to_a_developer_model_cache(
     assert "HANLY_KRDICT_DB" not in environment
     # Nothing left points anywhere the developer's own resources could be.
     assert str(developer) not in "".join(environment.values())
+
+
+def test_a_named_dictionary_is_the_only_one_the_frozen_run_may_install(
+    tmp_path: Path,
+) -> None:
+    """Without one the frozen bundle provisions itself from the release channel,
+    and the check depends on an unauthenticated GitHub API call."""
+
+    dictionary = tmp_path / "krdict.sqlite3"
+    dictionary.write_bytes(b"dictionary")
+
+    with _ProfileContext(tmp_path / "profile", krdict=dictionary) as (environment, _work):
+        assert environment[LOCAL_KRDICT_VARIABLE] == str(dictionary)
+
+
+def test_a_missing_dictionary_is_named_rather_than_quietly_downloaded(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(FileNotFoundError, match="no KRDICT database"):
+        with _ProfileContext(tmp_path / "profile", krdict=tmp_path / "absent.sqlite3"):
+            pass
 
 
 def test_a_named_model_cache_makes_the_isolated_run_deterministic(

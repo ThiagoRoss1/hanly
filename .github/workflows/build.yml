@@ -126,6 +126,10 @@ jobs:
         shell: bash
         run: python tools/smoke_packaged_runtime.py "$SMOKE_APP" --inventory-only
 
+      - name: Build the dictionary the frozen smoke installs
+        shell: bash
+        run: python tools/build_smoke_krdict.py "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3"
+
       - name: Smoke the frozen lookup runtime
         shell: bash
         run: |
@@ -134,7 +138,7 @@ jobs:
           python tools/smoke_packaged_runtime.py \
             "$SMOKE_APP" \
             --image tests/hanly_fixtures/assets/korean_reading_roi.png \
-            --timeout 2400 \
+            --krdict "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3" \
             | tee "dist/reports/hanly-smoke-${{ matrix.platform }}.json"
 
       - name: Smoke the frozen Control Center

@@ -1092,14 +1092,25 @@ def _report_startup_status(message: str) -> None:
     print(f"Hanly: {message}", file=sys.stderr, flush=True)
 
 
-def report_startup_error(error: BaseException, *, log_path: Path | None = None) -> None:
-    """Report startup failure even when the packaged app has no console."""
+def report_startup_error(
+    error: BaseException,
+    *,
+    log_path: Path | None = None,
+    interactive: bool = True,
+) -> None:
+    """Report startup failure even when the packaged app has no console.
+
+    ``interactive`` is False when nobody is at the machine -- the internal
+    ``--self-check`` modes are driven by the packaging harness. The dialog
+    below is modal, so raising one there holds a frozen process open until the
+    harness's deadline instead of letting it report the failure and leave.
+    """
 
     message = f"Hanly Desktop: {error}"
     if log_path is not None:
         message = f"{message}\n\nDiagnostics log: {log_path}"
     print(message, file=sys.stderr, flush=True)
-    if not getattr(sys, "frozen", False):
+    if not interactive or not getattr(sys, "frozen", False):
         return
 
     _show_native_startup_error(message)

@@ -257,6 +257,28 @@ def test_every_native_build_proves_the_frozen_runtime_before_retaining_it() -> N
     assert "korean_reading_roi.png" in steps[smoke]["run"]
 
 
+def test_the_frozen_smoke_installs_a_dictionary_built_on_the_runner() -> None:
+    """A clean machine has no KRDICT database, so a frozen first run reaches the
+    public release channel for one -- and a hosted macOS runner is rate-limited
+    there, which cost one release run forty minutes of waiting."""
+
+    steps = _steps(_workflow("build.yml"), "build")
+    names = [step.get("name", "") for step in steps]
+    build_dictionary = names.index("Build the dictionary the frozen smoke installs")
+    smoke = names.index("Smoke the frozen lookup runtime")
+
+    assert build_dictionary < smoke
+    for index in (build_dictionary, smoke):
+        assert "if" not in steps[index], "every platform needs the dictionary"
+    # The runner's own temporary space: it is never an artifact, never part of
+    # the bundle, and disappears with the job.
+    assert _uses_shell_variable(steps[build_dictionary]["run"], "RUNNER_TEMP")
+    assert "tools/build_smoke_krdict.py" in steps[build_dictionary]["run"]
+    assert "--krdict" in steps[smoke]["run"]
+    # The harness owns the deadline, so raising it cannot hide a hang in YAML.
+    assert "--timeout" not in steps[smoke]["run"]
+
+
 def test_every_native_build_opens_the_frozen_window_it_is_about_to_ship() -> None:
     """A bundle whose providers work and whose window aborts is still broken."""
 
