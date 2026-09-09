@@ -6,12 +6,21 @@ Import this module only when the desktop UI dependency is installed. The base
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 
 from hanly import LookupResult, Point
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtGui import QCursor, QGuiApplication, QPainter, QPaintEvent
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QLabel,
+    QStyle,
+    QStyleOption,
+    QVBoxLayout,
+    QWidget,
+)
 
 from .popup import (
     LookupStopper,
@@ -61,18 +70,27 @@ class QtResultDispatcher:
         self._bridge.callback_ready.emit(callback)
 
 
+#: A transient result surface that stays above the reader without taking focus.
+#: WindowDoesNotAcceptFocus is load-bearing: a Qt tool window is an NSPanel, and
+#: one that may become key is made key by show(), which activates all of Hanly.
+POPUP_WINDOW_FLAGS = (
+    Qt.WindowType.FramelessWindowHint
+    | Qt.WindowType.Tool
+    | Qt.WindowType.WindowStaysOnTopHint
+    | Qt.WindowType.WindowDoesNotAcceptFocus
+)
+
+
 class QtPopupView(QFrame):
-    """Borderless, always-on-top V1 popup view."""
+    """Borderless, always-on-top, never-focused V1 popup view."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        flags = (
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.Tool
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        super().__init__(parent, flags)
+        super().__init__(parent, POPUP_WINDOW_FLAGS)
         self.setObjectName("hanlyPopup")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # The cross-platform half of the same promise: Windows maps this onto
+        # WS_EX_NOACTIVATE, so a result never steals the caret being typed in.
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setStyleSheet(
             "QFrame#hanlyPopup { background: #20252b; border: 1px solid #59636e; "
             "border-radius: 8px; }"
@@ -94,6 +112,31 @@ class QtPopupView(QFrame):
         layout.addWidget(self._title)
         layout.addWidget(self._body)
         self.setFixedSize(320, 180)
+        self._keep_visible_when_inactive()
+
+    def paintEvent(self, _event: QPaintEvent | None) -> None:
+        """Ask Qt's style to paint a background on the translucent widget."""
+
+        style = self.style()
+        if style is None:
+            return
+
+        option = QStyleOption()
+        option.initFrom(self)
+        painter = QPainter(self)
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_Widget, option, painter, self)
+
+    def _keep_visible_when_inactive(self) -> None:
+        """Stop macOS from withdrawing the panel once Hanly loses focus."""
+
+        # winId() is an NSView only under Cocoa; messaging an offscreen handle
+        # as Objective-C would abort rather than raise.
+        if sys.platform != "darwin" or QGuiApplication.platformName() != "cocoa":
+            return
+
+        from .popup_darwin import keep_visible_when_inactive
+
+        keep_visible_when_inactive(int(self.winId()))
 
     @property
     def popup_size(self) -> PopupSize:
@@ -109,8 +152,11 @@ class QtPopupView(QFrame):
     def _show_at(self, result: LookupResult, position: PopupPosition) -> None:
         self._render(result)
         self.move(position.x, position.y)
+        # Never raise_(): on macOS that is a second, independent activation of
+        # the process. The always-on-top flag already puts the popup above
+        # ordinary windows, so raising it buys nothing and costs the user's
+        # foreground application.
         self.show()
-        self.raise_()
 
     def show_result(self, result: LookupResult, position: PopupPosition) -> None:
         self._show_at(result, position)

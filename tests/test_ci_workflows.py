@@ -160,6 +160,21 @@ def test_build_runs_repository_gates_before_producing_an_artifact() -> None:
     assert gates and builds and max(gates) < min(builds)
 
 
+@pytest.mark.parametrize(
+    ("workflow_name", "job_name"),
+    [("ci.yml", "quality"), ("ci.yml", "windows-tests"), ("build.yml", "build")],
+)
+def test_every_pytest_job_declares_the_node_runtime_used_by_browser_tests(
+    workflow_name: str, job_name: str
+) -> None:
+    steps = _steps(_workflow(workflow_name), job_name)
+    setup = next(step for step in steps if "setup-node" in step.get("uses", ""))
+    tests = next(step for step in steps if "python -m pytest" in step.get("run", ""))
+
+    assert setup["with"]["node-version"] == "22"
+    assert steps.index(setup) < steps.index(tests)
+
+
 def test_linux_build_installs_only_what_freezing_and_the_window_gate_need(
 ) -> None:
     steps = _steps(_workflow("build.yml"), "build")
@@ -693,7 +708,7 @@ def test_a_previous_resource_is_carried_only_into_a_brand_new_draft() -> None:
     code = _shell_code(repair["run"])
 
     assert "steps.preflight.outputs.action == 'create'" in carried["if"]
-    # The repair uploads the three archives unconditionally, and the carried
+    # The repair uploads the four application products unconditionally, and the carried
     # pair only on the branch that just created the draft.
     assert 'PREFLIGHT_ACTION" == "create" && "$CARRIED" == "true"' in code
     upload = code.split("upload=(", 1)[1].split("gh release upload", 1)[0]

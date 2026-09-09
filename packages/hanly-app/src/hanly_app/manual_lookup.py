@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import RLock, Thread
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, TypeAlias, cast
 
 from hanly import HanlyError, LookupResult, LookupStatus, Point
 
@@ -29,10 +29,8 @@ from .hover_controller import HoverScheduler
 from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
-from .runtime_trace import RuntimeTraceSink
-
-if TYPE_CHECKING:
-    from PyQt6.QtWidgets import QWidget
+from .popup import PopupController
+from .runtime_trace import RuntimeTraceSink, emit_trace
 
 
 class RuntimeComposition(Protocol):
@@ -97,7 +95,7 @@ class ManualLookupRuntime:
         hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
         hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
-        hover_runtime: HoverLookupRuntime | None = None,
+        trace_sink: RuntimeTraceSink | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -117,8 +115,6 @@ class ManualLookupRuntime:
             raise TypeError("dispatcher must be callable")
         if not isinstance(hotkey, str) or not hotkey.strip():
             raise TypeError("hotkey must be a non-empty string")
-        if hover_runtime is not None and not isinstance(hover_runtime, HoverLookupRuntime):
-            raise TypeError("hover_runtime must be a HoverLookupRuntime")
 
         self._controller = controller
         self._capture_service = (
@@ -132,7 +128,8 @@ class ManualLookupRuntime:
         self._current_cursor = current_cursor
         self._dispatcher = dispatcher
         self._shutdown_scheduler = shutdown_scheduler or _schedule_shutdown
-        self._hover_runtime = hover_runtime
+        self._hover_runtime: HoverLookupRuntime | None = None
+        self._trace_sink = trace_sink
         self._hotkeys = (hotkey_factory or _create_hotkey)(
             self._handle_action,
             {HotkeyAction.LOOKUP: hotkey},
@@ -143,9 +140,6 @@ class ManualLookupRuntime:
         self._closed = False
         self._hotkey = hotkey
         self._capture_mode = CaptureMode.FULL_MONITOR
-        self._hover_delay_ms: float | None = (
-            hover_runtime.delay_ms if hover_runtime is not None else None
-        )
 
     @property
     def controller(self) -> LookupController:
@@ -205,7 +199,6 @@ class ManualLookupRuntime:
         )
         with self._lock:
             self._hotkey = config.hotkey
-            self._hover_delay_ms = float(config.hover_delay_ms)
 
     def set_capture_preferences(
         self,
@@ -383,13 +376,22 @@ class ManualLookupRuntime:
         self.start()
 
     def _handle_action(self, action: HotkeyAction) -> None:
-        """Capture and submit from the UI-dispatched application callback."""
+        """Capture and submit from the UI-dispatched application callback.
+
+        The trace events are what makes the one-shot hotkey path observable:
+        the global backend delivers a key combination with no visible effect
+        of its own, so each stage says where a lookup that never reached the
+        popup actually stopped.
+        """
 
         with self._lock:
             if self._closed or not self._started:
+                emit_trace(self._trace_sink, "manual_action_ignored", stage="manual_action")
                 return
         if action is not HotkeyAction.LOOKUP:
             return
+
+        emit_trace(self._trace_sink, "manual_action_received", stage="manual_action")
 
         stage = "cursor position"
         try:
@@ -398,10 +400,35 @@ class ManualLookupRuntime:
             capture = self._capture_service.capture_at_cursor(cursor)
             if not isinstance(capture, CaptureResult):
                 raise TypeError("capture service returned an invalid CaptureResult")
+            emit_trace(
+                self._trace_sink,
+                "manual_capture_completed",
+                stage="manual_capture",
+                roi_width=capture.image.width,
+                roi_height=capture.image.height,
+                region_left=capture.region.left,
+                region_top=capture.region.top,
+                target_x=capture.target.x,
+                target_y=capture.target.y,
+            )
             stage = "lookup submission"
-            self._controller.submit(capture.image, capture.target)
+            request = self._controller.submit(capture.image, capture.target)
         except Exception as error:
+            emit_trace(
+                self._trace_sink,
+                "manual_action_error",
+                stage=stage,
+                error_type=type(error).__name__,
+            )
             self._popup(_action_error(stage, error))
+            return
+
+        emit_trace(
+            self._trace_sink,
+            "manual_submission",
+            stage="manual_submission",
+            lookup_request_id=request.request_id,
+        )
 
     def _schedule_hotkey_shutdown(self) -> None:
         try:
@@ -459,6 +486,7 @@ def create_manual_lookup(
         hotkey=configured_hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
+        trace_sink=trace_sink,
     )
     if hover_enabled:
         manual.attach_hover(
@@ -484,7 +512,6 @@ def create_qt_manual_lookup(
     capture_service: CaptureSource,
     *,
     hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
-    parent: QWidget | None = None,
     hotkey_factory: HotkeyFactory | None = None,
     shutdown_scheduler: ShutdownScheduler | None = None,
     hover_enabled: bool = True,
@@ -505,12 +532,11 @@ def create_qt_manual_lookup(
 
     from PyQt6.QtGui import QCursor
 
-    from .popup import PopupController
     from .qt_hover_scheduler import QtHoverScheduler
     from .qt_popup import QtPopupTrigger, QtPopupView, QtResultDispatcher
 
-    dispatcher = QtResultDispatcher(parent)
-    view = QtPopupView(parent)
+    dispatcher = QtResultDispatcher()
+    view = QtPopupView()
     popup_controller = PopupController(view, popup_size=view.popup_size)
     popup_trigger = QtPopupTrigger(popup_controller, trace_sink=trace_sink)
 
@@ -551,6 +577,7 @@ def create_qt_manual_lookup(
         hotkey=configured_hotkey,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
+        trace_sink=trace_sink,
     )
     if hover_enabled:
         manual.attach_hover(
@@ -560,7 +587,7 @@ def create_qt_manual_lookup(
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
                 # Debounce on the Qt UI thread that already dispatches movement
                 # rather than spawning a timer thread per cursor event.
-                scheduler=hover_scheduler or QtHoverScheduler(parent),
+                scheduler=hover_scheduler or QtHoverScheduler(),
                 dispatcher=dispatcher,
                 listener_factory=hover_listener_factory,
                 on_error=hover_on_error,

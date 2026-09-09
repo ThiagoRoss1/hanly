@@ -7,6 +7,7 @@ means; this module only translates a global key combination into that action.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Mapping
 from enum import Enum
 from threading import RLock
@@ -37,9 +38,10 @@ class DuplicateHotkeyError(HotkeyError):
 class HotkeyListener(Protocol):
     """The listener lifecycle hidden behind the desktop hotkey seam.
 
-    ``join`` is part of the seam, not an optional extra: the concrete backend
-    runs on its own thread and shutdown must be bounded rather than fire and
-    forget.
+    ``join`` is part of the seam, not an optional extra: a backend that runs on
+    its own thread must make shutdown bounded rather than fire and forget. A
+    backend delivered on the main run loop has nothing to wait for and returns
+    immediately.
     """
 
     def start(self) -> None:
@@ -202,6 +204,23 @@ def _normalize_bindings(bindings: HotkeyBindings) -> dict[HotkeyAction, str]:
     return normalized
 
 
+def _default_listener_factory(
+    callbacks: Mapping[str, Callable[[], None]],
+) -> HotkeyListener:
+    """Pick the backend the running operating system can actually use.
+
+    pynput's macOS keyboard listener reads the keyboard layout from its own
+    thread, which current macOS aborts the process for; see
+    :mod:`hanly_app.hotkeys_darwin`. Every other platform keeps pynput.
+    """
+
+    if sys.platform == "darwin":
+        from .hotkeys_darwin import darwin_listener_factory
+
+        return darwin_listener_factory(callbacks)
+    return _pynput_listener_factory(callbacks)
+
+
 def _pynput_listener_factory(
     callbacks: Mapping[str, Callable[[], None]],
 ) -> HotkeyListener:
@@ -248,11 +267,11 @@ def _stop_listener(listener: HotkeyListener) -> None:
 class HotkeyService:
     """Register global hotkeys and deliver normalized actions safely.
 
-    ``dispatcher`` must post and return without waiting. It exists so a
-    pynput listener thread need not run application/UI orchestration directly.
-    The default dispatcher is inline, which does run the handler on the
-    listener thread; desktop composition is expected to supply a real UI
-    dispatcher.
+    ``dispatcher`` must post and return without waiting. It exists so whichever
+    thread the backend delivers a combination on need not run application or UI
+    orchestration directly. The default dispatcher is inline, which does run
+    the handler on that thread; desktop composition is expected to supply a
+    real UI dispatcher.
     """
 
     def __init__(
@@ -274,7 +293,7 @@ class HotkeyService:
         self._bindings = _normalize_bindings(configured)
         self._on_action = on_action
         self._dispatcher = dispatcher or _inline_dispatch
-        self._listener_factory = listener_factory or _pynput_listener_factory
+        self._listener_factory = listener_factory or _default_listener_factory
         self._lock = RLock()
         self._listener: HotkeyListener | None = None
         self._registered = False
@@ -343,9 +362,10 @@ class HotkeyService:
     ) -> None:
         """Replace one binding without interrupting an active service.
 
-        A replacement listener is started before the previous listener is
-        stopped. If construction or registration fails, the old listener and
-        binding remain authoritative.
+        Backends with an in-place rebind operation may use it when their native
+        API makes duplicate registration impossible. Other backends start the
+        replacement before stopping the previous listener. Either path restores
+        or retains the previous binding when registration fails.
         """
 
         normalized_action = _coerce_action(action)
@@ -374,6 +394,15 @@ class HotkeyService:
                 )
                 for configured_action, binding_value in next_bindings.items()
             }
+            active_listener = self._listener
+            if active_listener is None:
+                raise RuntimeError("registered hotkey service has no listener")
+            active_rebind = getattr(active_listener, "rebind", None)
+            if callable(active_rebind):
+                active_rebind(callbacks)
+                self._bindings = next_bindings
+                return
+
             listener = self._listener_factory(callbacks)
             try:
                 listener.start()

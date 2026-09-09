@@ -135,6 +135,18 @@ h2 { margin-bottom: 8px; font-size: 20px; letter-spacing: -0.025em; }
 .region-fields .field input { padding: 7px 8px; font-size: 12px; }
 .region-actions { display: flex; gap: 15px; }
 .hint { margin: 11px 0 0; color: var(--muted); font-size: 12px; }
+.permissions { margin-top: 15px; padding: 12px 13px; border: 1px solid var(--soft-line); background: rgba(231, 234, 244, 0.34); }
+.permissions-head { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; }
+.permissions-head .text-button { margin-top: 0; }
+.permission-list { display: grid; gap: 9px; margin-top: 10px; }
+.permission-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 9px 0 9px 12px; border-left: 3px solid var(--jade); background: rgba(255, 255, 255, 0.6); }
+.permission-row[data-state="required"], .permission-row[data-state="unknown"] { border-left-color: var(--seal); }
+.permission-name { font-size: 13px; font-weight: 650; }
+.permission-detail { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.permission-side { display: grid; justify-items: end; gap: 2px; text-align: right; }
+.permission-badge { color: var(--jade); font-family: "Cascadia Mono", monospace; font-size: 11px; }
+.permission-row[data-state="required"] .permission-badge, .permission-row[data-state="unknown"] .permission-badge { color: var(--seal); }
+.permission-side .text-button { margin-top: 0; }
 .resource-list { display: grid; gap: 11px; }
 .resource-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 0 13px 14px; border-left: 3px solid var(--jade); background: rgba(231, 234, 244, 0.48); }
 .resource-row[data-status="MISSING"], .resource-row[data-status="OUTDATED"], .resource-row[data-status="INCOMPATIBLE"] { border-left-color: var(--seal); }

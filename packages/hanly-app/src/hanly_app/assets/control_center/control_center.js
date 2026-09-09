@@ -5,11 +5,32 @@
     app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
     config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space" },
     runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" } },
-    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false }
+    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
+    permissions: { supported: false, items: [] }
   };
+
+  // How often the page asks for a new snapshot while something asynchronous
+  // is still running.
+  const REFRESH_INTERVAL_MS = 500;
+
+  // Runtime phases that are still expected to change without the user doing
+  // anything. Naming the unsettled phases rather than the settled ones keeps a
+  // phase this page does not know about from polling forever.
+  const RUNTIME_PENDING_PHASES = ["preparing", "stopping"];
+
+  // Update statuses that mean an update worker is still running.
+  const UPDATE_BUSY_STATUSES = ["checking", "downloading", "verifying", "installing", "validating"];
+
+  // How many refreshes to spend watching for a permission the user just went
+  // off to grant. Privacy settings are changed outside this window and nothing
+  // tells the page about it, so the page watches for a while and then stops:
+  // a permission the user decided not to grant must not poll the system for
+  // the rest of the session.
+  const PERMISSION_WATCH_TICKS = 60;
 
   let currentState = fallbackState;
   let refreshTimer = null;
+  let permissionWatchTicks = 0;
 
   // pywebview injects its api after the document is parsed, so the bridge has
   // to be resolved per call. Capturing it here would pin it to null forever.
@@ -73,6 +94,10 @@
     notes.hidden = !application.release_url;
   }
 
+  function updatesBusy(updates) {
+    return UPDATE_BUSY_STATUSES.indexOf((updates || {}).status) !== -1;
+  }
+
   function renderUpdates(updates) {
     const updateState = updates || fallbackState.updates;
     const resources = updateState.resources || [];
@@ -98,7 +123,7 @@
       });
       select.value = updateState.active_resource_id || available[0].id;
     }
-    const busy = ["checking", "downloading", "verifying", "installing", "validating"].indexOf(updateState.status) !== -1;
+    const busy = updatesBusy(updateState);
     select.disabled = busy || available.length === 0;
     check.disabled = busy;
     install.disabled = busy || available.length === 0;
@@ -114,14 +139,65 @@
         progressBar.value = progress.fraction;
       }
     }
-    if (busy) {
-      if (refreshTimer === null) {
-        refreshTimer = window.setInterval(function () { invoke("get_state"); }, 500);
+  }
+
+  function permissionStateLabel(permission) {
+    if (permission.granted) return "Granted";
+    return permission.state === "unknown" ? "Unknown" : "Required";
+  }
+
+  // Only macOS gates anything Hanly does, so a platform that reports no
+  // permissions gets no heading, no rows, and no reassuring green ticks for
+  // grants that do not exist.
+  function renderPermissions(permissions) {
+    const state = permissions || fallbackState.permissions;
+    const panel = byId("permissions");
+    const list = byId("permission-list");
+    const items = state.items || [];
+    // Nothing left to wait for stops the watching even if the countdown had
+    // time on it, so a grant ends the polling on the very next render.
+    if (!items.some(function (item) { return !item.granted; })) permissionWatchTicks = 0;
+    panel.hidden = !state.supported;
+    list.innerHTML = "";
+    if (!state.supported) return;
+
+    items.forEach(function (permission) {
+      const row = document.createElement("div");
+      row.className = "permission-row";
+      row.dataset.state = permission.state;
+      row.dataset.permission = permission.id;
+
+      const text = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "permission-name";
+      name.textContent = permission.label;
+      const detail = document.createElement("div");
+      detail.className = "permission-detail";
+      detail.textContent = permission.granted
+        ? permission.requirement
+        : [permission.requirement, permission.restart_note].filter(Boolean).join(" ");
+      text.appendChild(name);
+      text.appendChild(detail);
+
+      const side = document.createElement("div");
+      side.className = "permission-side";
+      const badge = document.createElement("span");
+      badge.className = "permission-badge";
+      badge.textContent = permissionStateLabel(permission);
+      side.appendChild(badge);
+      if (!permission.granted) {
+        const grant = document.createElement("button");
+        grant.className = "text-button";
+        grant.type = "button";
+        grant.dataset.grant = permission.id;
+        grant.textContent = "Grant access";
+        side.appendChild(grant);
       }
-    } else if (refreshTimer !== null) {
-      window.clearInterval(refreshTimer);
-      refreshTimer = null;
-    }
+
+      row.appendChild(text);
+      row.appendChild(side);
+      list.appendChild(row);
+    });
   }
 
   function renderRuntimeStatus(runtime) {
@@ -184,6 +260,44 @@
     renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
+    renderPermissions(currentState.permissions);
+    syncRefreshTimer(currentState);
+  }
+
+  // Nothing pushes a snapshot to this page; the bridge only answers questions.
+  // Runtime preparation and update installation both finish on their own, so
+  // one place decides whether the page is still waiting for news. Letting each
+  // renderer own the timer meant the idle one cancelled the refresh the other
+  // still needed.
+  function refreshRequired(state) {
+    const runtime = state.runtime || fallbackState.runtime;
+    const status = runtime.status || fallbackState.runtime.status;
+    return (
+      RUNTIME_PENDING_PHASES.indexOf(status.phase) !== -1 ||
+      updatesBusy(state.updates || fallbackState.updates) ||
+      permissionWatchTicks > 0
+    );
+  }
+
+  function syncRefreshTimer(state) {
+    const required = refreshRequired(state);
+    if (required === (refreshTimer !== null)) return;
+    if (required) {
+      refreshTimer = window.setInterval(refresh, REFRESH_INTERVAL_MS);
+      return;
+    }
+    window.clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+
+  // A poll is not a user action: it must not clear an error the user is still
+  // reading, and a failed one is not worth reporting because the next tick
+  // asks again.
+  function refresh() {
+    if (permissionWatchTicks > 0) permissionWatchTicks -= 1;
+    const api = bridge();
+    if (!api || typeof api.get_state !== "function") return;
+    api.get_state().then(renderState).catch(function () {});
   }
 
   function invoke(name, value) {
@@ -209,6 +323,26 @@
   byId("clear-region").addEventListener("click", function () { invoke("set_region", null); });
   byId("select-area").addEventListener("click", function () { invoke("select_capture_area"); });
   byId("retry-runtime").addEventListener("click", function () { invoke("retry_runtime"); });
+  // One delegated listener, because the rows are rebuilt on every snapshot and
+  // a listener per button per render would accumulate for the whole session.
+  byId("permission-list").addEventListener("click", function (event) {
+    const permission = event.target && event.target.dataset ? event.target.dataset.grant : null;
+    if (!permission) return;
+    // The grant happens in System Settings, so the page starts watching for
+    // the change it will never be told about.
+    permissionWatchTicks = PERMISSION_WATCH_TICKS;
+    invoke("grant_permission", permission);
+  });
+  byId("recheck-permissions").addEventListener("click", function () { invoke("refresh_permissions"); });
+  // Coming back from System Settings is the moment the answer changed. This is
+  // not a user action on the page, so it must not clear an error the user is
+  // still reading, and a platform with no permissions has nothing to recheck.
+  window.addEventListener("focus", function () {
+    const api = bridge();
+    if (!api || !(currentState.permissions || fallbackState.permissions).supported) return;
+    if (typeof api.refresh_permissions !== "function") return;
+    api.refresh_permissions().then(renderState).catch(function () {});
+  });
   // The tray is not a route back on every desktop, so the window the user is
   // already looking at carries the action that always ends the session.
   byId("quit-hanly").addEventListener("click", function () { invoke("quit"); });

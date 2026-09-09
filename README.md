@@ -126,13 +126,13 @@ same program with the same behaviour.
 python tools/build_package.py
 ```
 
-This produces a self-contained onedir application under
-`dist/<platform>/hanly-desktop/` and one archive at the root of `dist/`:
-`hanly-desktop-windows.zip`, `hanly-desktop-macos.tar.gz`, or
-`hanly-desktop-linux.tar.gz`. Unpack it anywhere and run `hanly-desktop.exe`
-(or `hanly-desktop`) — it is the same command as `hanly`, so it opens the same
-window and accepts the same flags. Unpacking an archive does not put `hanly` on
-your PATH; installing the Python package does.
+This produces a self-contained application under `dist/<platform>/` and the
+release products at the root of `dist/`: a Windows `.zip`, a Linux `.tar.gz`,
+and both a macOS `.zip` and `.dmg` containing `Hanly.app`. Run
+`hanly-desktop.exe` on Windows, `hanly-desktop` on Linux, or `Hanly.app` on
+macOS. Each is the same program as `hanly`, so it opens the same window and
+accepts the same flags. Unpacking an archive does not put `hanly` on your PATH;
+installing the Python package does.
 
 The build bundles Python, the engine, Qt, and the OCR runtime. It does **not**
 bundle the dictionary — a packaged install acquires that the same way a source

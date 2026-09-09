@@ -1,5 +1,9 @@
 # GitHub Release Automation Implementation Plan
 
+> **Historical implementation plan:** later macOS distribution work replaced
+> its three-archive/six-asset contract. The current seven-asset contract is in
+> `docs/execution/first-release-plan.md` and `packaging/README.md`.
+
 > **For agentic workers:** Execute this plan through the Hanly execution flow in
 > `docs/execution/05-execution-plan.md`. Do not add a second decomposition layer.
 > Steps use checkbox (`- [ ]`) syntax for tracking.

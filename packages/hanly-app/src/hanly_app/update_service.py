@@ -496,7 +496,6 @@ class UpdateService:
             validation = self._validate_staged(
                 resource_id,
                 stage_path,
-                spec,
                 resource=resource,
                 expected_checksum=(resource.checksum if resource.kind != "directory" else None),
                 compressed=compressed,
@@ -584,7 +583,6 @@ class UpdateService:
         self,
         resource_id: str,
         path: Path,
-        spec: ResourceSpec,
         *,
         resource: RemoteResource,
         expected_checksum: str | None,

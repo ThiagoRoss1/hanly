@@ -53,6 +53,12 @@ from .paths import (
     default_runtime_config_path,
     discover_runtime_config,
 )
+from .permissions import (
+    START_CAPTURE_PERMISSIONS,
+    PermissionService,
+    create_permission_service,
+    missing_permission_refusal,
+)
 from .qt_bootstrap import ensure_qt_application
 from .runtime import (
     OCR_DISPLAY_NAME,
@@ -344,6 +350,7 @@ class _DesktopSession:
         roi_size: tuple[int, int] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
         timeline: StartupTimeline | None = None,
+        permission_service: PermissionService | None = None,
     ) -> None:
         self._settings = settings
         self._diagnostics = diagnostics
@@ -352,6 +359,11 @@ class _DesktopSession:
         self._roi_size = roi_size
         self._trace_sink = trace_sink
         self._timeline = timeline or StartupTimeline()
+        self._permissions = (
+            permission_service
+            if permission_service is not None
+            else create_permission_service()
+        )
 
         self._controller: DesktopController | None = None
         self._manual: ManualLookupRuntime | None = None
@@ -373,6 +385,7 @@ class _DesktopSession:
             on_quit=self.quit,
             log_path=diagnostics.path,
             on_lifecycle_changed=self.refresh_tray,
+            permission_service=self._permissions,
             ocr_provider=OCR_DISPLAY_NAME,
         )
         self.host = ControlCenterHost(
@@ -442,6 +455,11 @@ class _DesktopSession:
         shutdown timeout. Ownership is held until that wait returns, so a
         replacement is never activated over a resource the old attempt still
         has open, and the update worker is retired rather than orphaned.
+
+        Runtime status is left to the coordinator that asked for the release:
+        waiting out the previous providers takes seconds, and reporting a
+        settled phase for that long tells the interface no further news is
+        coming while the retry is still under way.
         """
 
         released: list[DesktopController] = []
@@ -465,7 +483,6 @@ class _DesktopSession:
                 manual.begin_shutdown()
             if updates is not None:
                 retired.append(updates)
-            self._status.update("idle", "", "")
             self.refresh_tray()
 
         self._on_qt(detach)
@@ -612,6 +629,10 @@ class _DesktopSession:
         read the controller's state, and a retry replaces a paused runtime
         with a new one that has never started.
         """
+
+        missing = self._permissions.missing(START_CAPTURE_PERMISSIONS)
+        if missing:
+            raise ControlCenterUnavailable(missing_permission_refusal(missing))
 
         rejected: list[str] = []
 

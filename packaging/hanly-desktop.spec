@@ -132,9 +132,8 @@ if sys.platform == "win32":
         ["pynput.keyboard._win32", "pynput.mouse._win32", "pystray._win32"]
     )
 elif sys.platform == "darwin":
-    hiddenimports.extend(
-        ["pynput.keyboard._darwin", "pynput.mouse._darwin", "pystray._darwin"]
-    )
+    # Carbon owns keyboard shortcuts on macOS; pynput remains only for hover.
+    hiddenimports.extend(["pynput.mouse._darwin", "pystray._darwin"])
 else:
     hiddenimports.extend(
         ["pynput.keyboard._xorg", "pynput.mouse._xorg", "pystray._xorg"]
