@@ -4,18 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hanly-app"
-version = "0.1.2"
+version = "0.1.3"
 description = "Hanly desktop application"
 readme = {text = "Hanly desktop application package.", content-type = "text/plain"}
 requires-python = ">=3.10"
-dependencies = ["certifi>=2024.2.2", "hanly==0.1.2", "zstandard>=0.23,<1"]
+dependencies = ["certifi>=2024.2.2", "hanly==0.1.3", "zstandard>=0.23,<1"]
 
 [project.scripts]
 hanly = "hanly_app.cli:main"
 
 [project.optional-dependencies]
 runtime = [
-    "hanly[concrete]==0.1.2",
+    "hanly[concrete]==0.1.3",
     "mss>=10.2,<11",
     "pynput>=1.8,<2",
     "PyQt6>=6.7,<7",

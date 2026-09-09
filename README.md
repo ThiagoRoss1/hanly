@@ -1,6 +1,6 @@
 # Hanly
 
-**0.1.2** — a Korean OCR popup dictionary for the desktop. Hover over Korean
+**0.1.3** — a Korean OCR popup dictionary for the desktop. Hover over Korean
 text anywhere on screen and a dictionary popup tells you what the word under
 the cursor means.
 
@@ -40,7 +40,7 @@ they name directories instead of package names. The *third-party* libraries it
 depends on do come from PyPI, and pip fetches them for you; there is no
 `requirements.txt` because `pyproject.toml` already declares them.
 
-Install the engine **first**. `hanly-app` depends on `hanly==0.1.2`, which
+Install the engine **first**. `hanly-app` depends on `hanly==0.1.3`, which
 exists only in this checkout, so installing `hanly-app` on its own sends pip
 looking for a package index that does not have it.
 
