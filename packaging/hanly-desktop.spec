@@ -167,7 +167,6 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    codesign_identity="-" if sys.platform == "darwin" else None,
 )
 coll = COLLECT(
     exe,

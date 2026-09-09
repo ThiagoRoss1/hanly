@@ -13,9 +13,33 @@ and opens the same window. No launcher script is shipped beside it.
 The macOS bundle identifier is `io.github.thiagoross1.hanly`, and its
 `CFBundleShortVersionString`/`CFBundleVersion` come from the installed
 `hanly-app` metadata that `tools/release_version.py` checks against the tag.
-Builds are signed ad hoc (`codesign_identity="-"`), which is what an
-unnotarized build can honestly claim; a Developer ID and notarization are
-separate, later work.
+Builds are signed ad hoc, which is what an unnotarized build can honestly
+claim; a Developer ID and notarization are separate, later work. The spec names
+no `codesign_identity`, and that absence is deliberate. PyInstaller ad-hoc signs
+every macOS binary either way, but its `sign_binary` adds `--options=runtime`
+whenever an identity is named - the ad-hoc `"-"` included - and that hardened
+runtime is what an unsigned bundle cannot survive: library validation refuses to
+map the bundle's own ad-hoc signed libraries into a hardened process, and the
+app dies on `libpython3.13.dylib ... different Team IDs` before Python starts.
+Naming no identity keeps the ad-hoc signature and drops the restriction, so the
+0.x bundle needs no entitlements and carries none. It signs as
+`flags=0x2(adhoc)` and passes `codesign --verify --deep --strict`.
+
+### What Developer ID and notarization will need
+
+Notarization requires the hardened runtime, so the entitlement question returns
+then rather than now. Measured on this bundle under `--options=runtime`:
+
+- `com.apple.security.cs.disable-library-validation` was required, and should
+  stop being required once every nested binary carries one real Team ID.
+- `com.apple.security.cs.allow-jit` was still required with library validation
+  already disabled: QtWebEngine's V8 aborted with "Failed to reserve virtual
+  memory for CodeRange" without it.
+- `com.apple.security.cs.allow-unsigned-executable-memory` and
+  `com.apple.security.cs.allow-dyld-environment-variables` were **not** needed
+  in any configuration measured, hardened or not; PyInstaller's own PyQt6 hook
+  sets `DYLD_LIBRARY_PATH` for non-`.app` builds only. Neither should be
+  adopted without its own evidence.
 
 ## Build inputs a frozen bundle cannot fetch
 

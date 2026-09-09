@@ -131,6 +131,19 @@ def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
     assert "excludes=list(EXCLUDED_MODULES)" in source
 
 
+def test_the_macos_spec_does_not_force_the_hardened_runtime() -> None:
+    """PyInstaller adds ``--options=runtime`` for any named identity, the ad hoc
+    ``"-"`` included, and a hardened process then refuses to map the bundle's
+    own ad hoc signed libraries. Naming no identity keeps the ad hoc signature
+    without that restriction, which is why no entitlements file is needed."""
+
+    source = SPEC.read_text(encoding="utf-8")
+
+    assert "codesign_identity=" not in source
+    assert "entitlements_file=" not in source
+    assert not (ROOT / "packaging" / "entitlements.plist").exists()
+
+
 def test_runtime_hook_preloads_the_ocr_runtime_without_importing_qt() -> None:
     source = RUNTIME_HOOK.read_text(encoding="utf-8")
 
@@ -407,7 +420,7 @@ def test_archiving_a_onedir_build_still_needs_no_native_tool(tmp_path: Path) -> 
     assert archive.is_file()
 
 
-def test_the_spec_builds_a_signed_named_app_bundle_on_macos() -> None:
+def test_the_spec_builds_a_named_app_bundle_on_macos() -> None:
     source = SPEC.read_text(encoding="utf-8")
 
     assert 'BUNDLE_NAME = "Hanly.app"' in source
@@ -417,7 +430,6 @@ def test_the_spec_builds_a_signed_named_app_bundle_on_macos() -> None:
     # The plist version is the packaged product's own metadata, never a literal.
     assert 'APPLICATION_VERSION = version("hanly-app")' in source
     assert '"CFBundleShortVersionString": APPLICATION_VERSION' in source
-    assert 'codesign_identity="-" if sys.platform == "darwin" else None' in source
 
 
 def test_the_spec_collects_the_inputs_a_frozen_build_cannot_fetch() -> None:
