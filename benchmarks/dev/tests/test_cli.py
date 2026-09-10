@@ -82,7 +82,7 @@ def test_benchmark_cpu_thread_override_leaves_other_ocr_options_untouched() -> N
     assert configured.cpu_threads is None
 
 
-def test_package_parser_accepts_archive_and_bounded_duplicate_options() -> None:
+def test_package_parser_accepts_an_archive_to_measure_beside_the_tree() -> None:
     args = _parser().parse_args(
         [
             "package",
@@ -92,15 +92,10 @@ def test_package_parser_accepts_archive_and_bounded_duplicate_options() -> None:
             "report.json",
             "--archive",
             "dist/app.zip",
-            "--duplicate-candidates",
-            "--candidate-max-files",
-            "25",
         ]
     )
 
     assert args.archive == Path("dist/app.zip")
-    assert args.duplicate_candidates is True
-    assert args.candidate_max_files == 25
 
 
 @pytest.mark.parametrize("value", ["0", "65", "not-a-number"])

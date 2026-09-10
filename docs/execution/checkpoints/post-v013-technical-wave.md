@@ -14,6 +14,16 @@
   local commit cannot be verified to preserve the human identity. Never push,
   create a PR, or mutate Linear in this run.
 
+### Continuation run (2026-09-10)
+
+- The first HAN-40 block was committed as `4e2301d`, reviewed, and returned
+  **CONTINUE HAN-40**. The human accepted that verdict and authorized one
+  bounded continuation: the review's correctness and tooling fixes, then two
+  isolated Qt experiments, then stop.
+- Executor: Claude Opus, directly. HAN-41 remains outside the boundary.
+- Continuation changes are uncommitted working-tree state. Nothing was pushed,
+  no PR was opened, and Linear was not touched.
+
 ## Checkpoints
 
 | Checkpoint | Status | Evidence | Next step |
@@ -24,6 +34,12 @@
 | C-HAN40-TV | REVERT | Removing blanket torchvision collection saved only 14 files, 3,768,778 tree bytes, and 1,270,976 ZIP bytes; the removed content was `_C_stable.so`, `image_stable.so`, and six native dylibs while essentially all Python modules remained. Risk outweighed the 1.21 MiB download gain. | Restore torchvision collection and build the final accepted candidate. |
 | C-HAN40-GATE | COMPLETE | Final same-environment result: 157 files and 15,725,852 tree bytes removed; ZIP shrank 2,943,899 bytes and DMG shrank 5,292,888 bytes. Reconstructed ZIP inventory, mounted DMG, real frozen Korean OCR/Kiwi/KRDICT, EasyOCR 1.7.2 metadata, Control Center/bridge, strict codesign, and a native baseline-to-optimized macOS updater handoff passed. Full suite: 1,038 passed, 2 skipped; Ruff clean; mypy clean (177 files). | Write the HAN-40 Review Handoff and stop. |
 | C-HAN40-HANDOFF | STOP | `docs/execution/review-handoffs/han-40-packaged-size.md` records the implementation, exact artifacts, accepted/reverted experiments, and native-platform limits. | Human-selected Phase B review. Do not start HAN-41 in this run. |
+| C-HAN40-REVIEW | CONTINUE | Phase B review found the accepted cut honest and well-evidenced, but the QtWebEngine locale catalogues and Qt `.qm` translations were never examined, and five correctness/tooling findings stood. | Apply the fixes, then run the two Qt experiments in isolation. |
+| C-HAN40-FIXES | ACCEPTED | EasyOCR constrained to `ko`,`en`; `easyocr/character/ko_char.txt` added to the frozen inventory guard; analyzer taught the macOS `.app` layout; `same_size`/duplicate-hash/parameter-alias additions removed; three misleading comments corrected. Fresh build, inventory, real frozen OCR/Kiwi/KRDICT, Control Center/bridge, ZIP and DMG reconstruction, strict codesign all passed. | Build and measure the locale experiment. |
+| C-HAN40-LOCALES | ACCEPTED | Kept `en-US.pak` and `ko.pak` of 53. Incremental: 51 files, 44,336,655 tree bytes, 11,155,474 compressed member bytes, 11,192,784 ZIP bytes, 14,308,286 DMG bytes. Frozen boundary passed with zero stderr; the removed-locale fallback was exercised for real, this host being `pt_BR`. Native HAN-42 handoff swapped a fresh baseline bundle for the candidate. | Build and measure the `.qm` experiment separately. |
+| C-HAN40-QM | ACCEPTED | All 157 `.qm` catalogues dropped; nothing in the shipped process installs a `QTranslator`, so no string changes. Incremental: 157 files, 9,459,015 tree bytes, 2,636,985 compressed member bytes, 2,720,511 ZIP bytes, 8,068,388 DMG bytes. `qtwebengine_locales` verified intact. Frozen boundary passed with zero stderr. | Run the final gate. |
+| C-HAN40-FINAL | COMPLETE | Fresh baseline to final: 364 files, 69,521,154 tree bytes (4.89%), 16,648,976 compressed member bytes, 16,857,582 ZIP bytes (2.85%), 27,734,155 DMG bytes (4.11%). ZIP 563.52 -> 547.45 MiB. Full suite: 1,041 passed, 2 skipped; Ruff clean; mypy clean (177 files); `pip check` clean in both venvs. HAN-42 updater regression re-run on the final artifact. | Update the Review Handoff and stop. |
+| C-HAN40-COMPLETE | STOP | HAN-40 is complete for this wave: the obvious safe wins are exhausted, the product works, and every remaining candidate has materially worse risk/reward. | Human-selected Phase B review of the continuation. Do not start HAN-41. |
 
 ## HAN-40 fresh macOS baseline
 
@@ -78,11 +94,45 @@
   cleaned its transaction/backup, and left the optimized signed application at
   the install path.
 
+## HAN-40 continuation result
+
+Same disposable root, same constrained venv, same build command as the
+baseline above, so every figure is same-environment.
+
+| Metric | Fresh baseline | EasyOCR (`ko`) | + `ko`,`en` + fixes | + locales | + `.qm` — final |
+|---|---:|---:|---:|---:|---:|
+| Regular files | 5,266 | 5,109 | 5,110 | 5,059 | 4,902 |
+| Package-tree bytes | 1,422,843,054 | 1,407,117,202 | 1,407,117,570 | 1,362,780,915 | 1,353,321,900 |
+| ZIP members | 14,835 | 14,508 | 14,510 | 14,408 | 14,091 |
+| ZIP uncompressed member bytes | 1,424,239,137 | 1,408,485,575 | 1,408,486,106 | 1,364,141,138 | 1,354,656,165 |
+| ZIP compressed member bytes | 586,183,452 | 583,327,817 | 583,326,935 | 572,171,461 | 569,534,476 |
+| ZIP bytes on disk | 590,897,702 | 587,953,803 | 587,953,415 | 576,760,631 | 574,040,120 |
+| DMG bytes on disk | 674,651,423 | 669,358,535 | 669,293,942 | 654,985,656 | 646,917,268 |
+
+- The `ko` to `ko`,`en` column is the correctness fix, not an optimization: it
+  adds `en_char.txt` (104 bytes) and the signature entry naming it. Its
+  negative ZIP and DMG figures are compression and image-allocation noise.
+- Evidence reports: `fixes-`, `locales-` and `qm-package.json` beside the
+  earlier ones, with build logs and per-build `validate-*` directories.
+- Both accepted Qt rules act on `a.datas` after `Analysis` and before `PYZ`,
+  `COLLECT` and `BUNDLE`. Nothing is removed from a finished or signed bundle.
+- The `.qm` rule matches the file suffix, not the `translations` directory,
+  because Windows and Linux keep `qtwebengine_locales` inside that directory.
+
 ## Rejected or deferred HAN-40 candidates
 
-- `qtwebengine_devtools_resources.debug.pak`: absent from the constrained Qt
-  6.11.2 build, so no exclusion was added. The normal devtools resource is an
-  upstream-owned hook input and remains.
+- `qtwebengine_devtools_resources.debug.pak`: **deferred to the Windows lane.**
+  Absent from the tested fresh macOS/Qt 6.11.2 artifact, so no exclusion was
+  added. Historically present in the Windows artifact (81,573,852 / 15,334,066
+  bytes in the plan's Qt 6.10.2 Windows ZIP). That build differed in both
+  platform and Qt version, so the macOS absence attributes the difference to
+  neither, and no Windows-only exclusion was written from macOS evidence.
+  The normal devtools resource is an upstream-owned hook input and remains.
+- `qml/QtQuick3D` (2,875,531 / 605,071 bytes in the final artifact): visible
+  once analyzer grouping was fixed, deliberately left alone. A future
+  candidate, not approved work.
+- Broader QML pruning and the non-debug `qtwebengine_devtools_resources.pak`:
+  out of this wave.
 - macOS OpenCV FFmpeg dylibs: kept. The wheel owns them and `cv2.abi3.so` has
   non-weak direct and transitive links to the video stack; removing them risks
   breaking import and OCR. A custom OpenCV build is out of scope.
@@ -96,6 +146,12 @@
 - macOS: the native handoff script ran against the fresh baseline and accepted
   frozen bundles. Swap, LaunchServices relaunch, version acknowledgement,
   transaction cleanup, accepted-payload identity, and final codesign passed.
+- macOS, continuation: re-run twice on real bundles, once for the locale
+  candidate and once for the final artifact. Both installed a fresh baseline
+  `Hanly.app`, replaced it through the actual `app_update_handoff` script,
+  received the exact `0.1.3` acknowledgement, removed the transaction and
+  backup, and left a valid signature with the expected payload — `en-US.pak`
+  and `ko.pak` only, and no `.qm` files — at the installation path.
 
 - Windows: PowerShell execution, argument quoting, NTFS locking, console-less
   launch, and a frozen old-to-new swap require a real Windows lane.
@@ -107,6 +163,11 @@
 
 ## Resume rule
 
-HAN-40 Phase A is complete at its Review Handoff. Do not start HAN-41 in this
-run. Resume only with explicit human authorization for the separately selected
-HAN-40 Phase B reviewer or for a later phase.
+HAN-40 Phase A is complete at its Review Handoff, including the authorized
+continuation. The obvious safe wins are exhausted, the product works, and
+every remaining candidate has materially worse risk/reward, so no further
+package-size search is authorized — not even for candidates the repaired
+analyzer now makes visible.
+
+Do not start HAN-41 in this run. Resume only with explicit human authorization
+for the separately selected HAN-40 Phase B reviewer or for a later phase.

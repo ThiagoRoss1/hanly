@@ -177,6 +177,37 @@ def test_package_analyzer_unwraps_one_pyinstaller_internal_prefix(tmp_path: Path
     assert report["top_level"][1]["paths"] == ["_internal/easyocr/model.bin"]
 
 
+def test_package_analyzer_groups_a_macos_bundle_by_package_not_by_contents(
+    tmp_path: Path,
+) -> None:
+    """Every collected file in a ``.app`` sits under ``Contents``, so leaving
+    that prefix on reports one component holding the whole bundle and never
+    names an unrecognized one."""
+
+    files = {
+        "Contents/Frameworks/torch/lib/libtorch.dylib": b"1234567890",
+        "Contents/Frameworks/_internal/mystery/blob.bin": b"1234567890",
+        "Contents/Resources/easyocr/character/ko_char.txt": b"1234",
+        "Contents/MacOS/hanly-desktop": b"12",
+        "Contents/Info.plist": b"1",
+    }
+    for name, contents in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(contents)
+
+    report = analyze_package(tmp_path, large_component_threshold_bytes=8)
+
+    assert [row["path"] for row in report["top_level"]] == [
+        "mystery",
+        "torch",
+        "easyocr",
+        "hanly-desktop",
+        "Contents",
+    ]
+    assert [row["path"] for row in report["unexpected_large_components"]] == ["mystery"]
+
+
 def test_package_analyzer_separates_bundled_weights_and_kiwi_assets(
     tmp_path: Path,
 ) -> None:
@@ -259,9 +290,7 @@ def test_package_analyzer_reports_optional_zip_metrics(tmp_path: Path) -> None:
     json.dumps(report)
 
 
-def test_package_analyzer_reports_bounded_same_size_candidates_and_hashes(
-    tmp_path: Path,
-) -> None:
+def test_package_analyzer_reports_bounded_hash_duplicates(tmp_path: Path) -> None:
     (tmp_path / "a.bin").write_bytes(b"duplicate")
     (tmp_path / "b.bin").write_bytes(b"duplicate")
     (tmp_path / "c.bin").write_bytes(b"different")
@@ -271,26 +300,13 @@ def test_package_analyzer_reports_bounded_same_size_candidates_and_hashes(
         hash_duplicates=True,
         hash_max_files=2,
         hash_max_bytes=100,
-        duplicate_candidates=True,
-        candidate_max_files=2,
     )
 
-    candidates = report["duplicate_candidates"]
-    assert candidates["enabled"] is True
-    assert candidates["max_files"] == 2
-    assert candidates["same_size"] == [
-        {
-            "bytes": 9,
-            "files": [
-                {"path": "a.bin", "bytes": 9},
-                {"path": "b.bin", "bytes": 9},
-            ],
-        }
-    ]
     assert report["duplicates"][0]["files"] == [
         {"path": "a.bin", "bytes": 9},
         {"path": "b.bin", "bytes": 9},
     ]
+    assert report["duplicate_hashing"]["skipped_files"] == 1
 
 
 def test_package_analyzer_keeps_posix_symlink_targets_out_of_tree_totals(

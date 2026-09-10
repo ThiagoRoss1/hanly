@@ -38,12 +38,11 @@ REQUIRED_EXTENSION_STEM = "_kiwipiepy"
 #: exhaustive: these three are enough to catch a data-free collection.
 REQUIRED_MODEL_FILES = ("sj.morph", "default.dict", "combiningRule.txt")
 
-#: The two files a frozen build cannot obtain for itself: the trust store its
-#: HTTPS verification needs, and the weights its OCR loads with downloading off.
 REQUIRED_DATA_FILES = (
     "certifi/cacert.pem",
     "hanly_app/assets/easyocr_models/craft_mlt_25k.pth",
     "hanly_app/assets/easyocr_models/korean_g2.pth",
+    "easyocr/character/ko_char.txt",
 )
 
 #: PyInstaller 6 places collected packages under this directory.

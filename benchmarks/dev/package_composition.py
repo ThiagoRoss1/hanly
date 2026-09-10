@@ -25,6 +25,15 @@ _FAMILY_NAMES = (
 )
 _ARCHIVE_LARGEST_MEMBER_LIMIT = 10
 
+#: Payload prefixes stripped before grouping, outermost first so a macOS
+#: bundle directory is removed before the ``_internal`` it may contain.
+_PAYLOAD_PREFIXES = (
+    ("contents", "frameworks"),
+    ("contents", "resources"),
+    ("contents", "macos"),
+    ("_internal",),
+)
+
 
 def _family_for(path: Path) -> str | None:
     parts = tuple(part.casefold() for part in path.parts)
@@ -102,11 +111,18 @@ def _component_name(relative: str) -> str:
 
 
 def _logical_relative(relative: str) -> str:
-    """Drop one PyInstaller payload prefix for component grouping only."""
+    """Drop the frozen payload prefixes for component grouping only.
+
+    A macOS bundle splits one collection across ``Frameworks`` and
+    ``Resources``, either of which may hold an ``_internal`` of its own, so
+    more than one prefix can apply to the same path.
+    """
     parts = relative.split("/")
-    if len(parts) > 1 and parts[0].casefold() == "_internal":
-        return "/".join(parts[1:])
-    return relative
+    for prefix in _PAYLOAD_PREFIXES:
+        head = tuple(part.casefold() for part in parts[: len(prefix)])
+        if head == prefix and len(parts) > len(prefix):
+            parts = parts[len(prefix) :]
+    return "/".join(parts)
 
 
 def _empty_group() -> dict[str, Any]:
@@ -151,28 +167,6 @@ def _hash_duplicates(
         if len(paths) > 1
     ]
     return duplicates, hashed_files, hashed_bytes, skipped_files
-
-
-def _same_size_candidates(
-    entries: Iterable[tuple[str, Path, int]],
-    *,
-    max_files: int,
-) -> list[dict[str, Any]]:
-    """Return bounded groups whose members have the same logical byte size."""
-    by_size: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    candidate_files = 0
-    for relative, _path, size in entries:
-        if candidate_files >= max_files:
-            break
-        bucket = by_size[size]
-        bucket.append({"path": relative, "bytes": size})
-        candidate_files += 1
-
-    return [
-        {"bytes": size, "files": paths}
-        for size, paths in sorted(by_size.items())
-        if len(paths) > 1
-    ]
 
 
 def _archive_report(archive: str | os.PathLike[str]) -> dict[str, Any]:
@@ -230,10 +224,7 @@ def analyze_package(
     hash_duplicates: bool = False,
     hash_max_files: int = 10_000,
     hash_max_bytes: int = 2 * 1024 * 1024 * 1024,
-    duplicate_candidates: bool = False,
-    candidate_max_files: int = 10_000,
     archive: str | os.PathLike[str] | None = None,
-    archive_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Return exact file/byte totals and dependency-family groupings.
 
@@ -246,11 +237,8 @@ def analyze_package(
         raise NotADirectoryError(str(package_root))
     if large_component_threshold_bytes < 0:
         raise ValueError("large_component_threshold_bytes must be non-negative")
-    if hash_max_files < 0 or hash_max_bytes < 0 or candidate_max_files < 0:
+    if hash_max_files < 0 or hash_max_bytes < 0:
         raise ValueError("duplicate hashing limits must be non-negative")
-    if archive is not None and archive_path is not None:
-        raise ValueError("pass only one of archive or archive_path")
-    selected_archive = archive if archive is not None else archive_path
 
     entries = _files_under(package_root)
     top_level: dict[str, dict[str, Any]] = {}
@@ -289,19 +277,6 @@ def analyze_package(
         and row["path"] not in {package_root.name, f"{package_root.name}.exe"}
     ]
 
-    report_candidates = duplicate_candidates or hash_duplicates
-    if report_candidates:
-        same_size_candidates = _same_size_candidates(
-            entries,
-            max_files=candidate_max_files,
-        )
-        candidate_files = min(len(entries), candidate_max_files)
-        candidate_skipped_files = len(entries) - candidate_files
-    else:
-        same_size_candidates = []
-        candidate_files = 0
-        candidate_skipped_files = len(entries)
-
     if hash_duplicates:
         duplicates, hashed_files, hashed_bytes, skipped_files = _hash_duplicates(
             entries,
@@ -329,16 +304,7 @@ def analyze_package(
             "skipped_files": skipped_files,
         },
         "duplicates": duplicates,
-        "duplicate_candidates": {
-            "enabled": report_candidates,
-            "bounded": True,
-            "max_files": candidate_max_files if report_candidates else None,
-            "considered_files": candidate_files,
-            "skipped_files": candidate_skipped_files,
-            "same_size": same_size_candidates,
-            "hash": duplicates,
-        },
-        "archive": None if selected_archive is None else _archive_report(selected_archive),
+        "archive": None if archive is None else _archive_report(archive),
     }
 
 
