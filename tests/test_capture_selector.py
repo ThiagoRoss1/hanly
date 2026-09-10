@@ -63,6 +63,27 @@ def test_hanly_run_starts_the_desktop_without_asking_anything_first() -> None:
     assert options["runtime_resolver"] is resolve
 
 
+def test_an_update_relaunch_reaches_the_desktop_through_the_one_entry_point() -> None:
+    """The handoff relaunches Hanly the way anything else starts it. The
+    acknowledgement is an argument to that launch, not a second program."""
+
+    calls: list[dict[str, object]] = []
+
+    def desktop_runner(_runtime: object, **kwargs: object) -> int:
+        calls.append(kwargs)
+        return 0
+
+    run_hanly(
+        ["--update-ready", "/tmp/transaction/ready"],
+        runtime_resolver=lambda _explicit: Path("runtime.json"),
+        desktop_runner=desktop_runner,
+    )
+
+    assert calls[0]["update_ready"] == Path("/tmp/transaction/ready")
+    # An ordinary launch carries nothing for a handoff to read.
+    assert build_parser().parse_args([]).update_ready is None
+
+
 def test_launching_with_no_arguments_is_the_same_as_run() -> None:
     """The packaged executable is launched by double-clicking it, with no
     arguments at all. That must be the one command, not a second path."""

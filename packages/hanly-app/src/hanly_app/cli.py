@@ -83,6 +83,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="roi_size",
         help="capture ROI as WIDTHxHEIGHT, for comparing detection areas",
     )
+    # Internal: an update handoff relaunches Hanly through this one entry point
+    # and reads back the version that came up. Nothing else writes this path.
+    parser.add_argument(
+        "--update-ready",
+        dest="update_ready",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     # Internal: the packaging harness drives the real runtime through this one
     # entry point rather than through a second application.
     parser.add_argument(
@@ -209,6 +217,7 @@ def _start(
         roi_size=args.roi_size,
         diagnostics=diagnostics,
         runtime_resolver=runtime_resolver,
+        update_ready=getattr(args, "update_ready", None),
     )
 
 

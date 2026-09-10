@@ -82,6 +82,27 @@ def test_benchmark_cpu_thread_override_leaves_other_ocr_options_untouched() -> N
     assert configured.cpu_threads is None
 
 
+def test_package_parser_accepts_archive_and_bounded_duplicate_options() -> None:
+    args = _parser().parse_args(
+        [
+            "package",
+            "--root",
+            "dist/app",
+            "--output",
+            "report.json",
+            "--archive",
+            "dist/app.zip",
+            "--duplicate-candidates",
+            "--candidate-max-files",
+            "25",
+        ]
+    )
+
+    assert args.archive == Path("dist/app.zip")
+    assert args.duplicate_candidates is True
+    assert args.candidate_max_files == 25
+
+
 @pytest.mark.parametrize("value", ["0", "65", "not-a-number"])
 def test_live_hover_parser_rejects_invalid_cpu_thread_limit(value: str) -> None:
     with pytest.raises(SystemExit):

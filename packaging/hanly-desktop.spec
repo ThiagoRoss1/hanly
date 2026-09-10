@@ -83,7 +83,7 @@ datas = collect_data_files(
 
 datas.extend(collect_data_files("certifi"))
 
-for distribution in ("hanly-app", "hanly"):
+for distribution in ("hanly-app", "hanly", "easyocr"):
     datas.extend(copy_metadata(distribution))
 
 for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
@@ -95,7 +95,9 @@ for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
-for package_name in ("easyocr", "torchvision"):
+# EasyOCR's constrained hook keeps only Korean language data and its dynamic
+# recognition imports; the app supplies the two model weights explicitly above.
+for package_name in ("torchvision",):
     try:
         package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
     except Exception:
@@ -152,6 +154,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
+    hooksconfig={"easyocr": {"lang_codes": ["ko"]}},
     runtime_hooks=[str(RUNTIME_HOOK)],
     excludes=list(EXCLUDED_MODULES),
     noarchive=False,

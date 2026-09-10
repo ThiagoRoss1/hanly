@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import zipfile
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import Any, TextIO, cast
 
 _FAMILY_NAMES = (
     "EasyOCR",
+    "EasyOCR bundled weights",
+    "Kiwi/model assets",
     "Qt/PyQt6/QtWebEngine",
     "NumPy",
     "Pandas",
@@ -20,14 +23,27 @@ _FAMILY_NAMES = (
     "SciPy",
     "models/KRDICT",
 )
+_ARCHIVE_LARGEST_MEMBER_LIMIT = 10
 
 
 def _family_for(path: Path) -> str | None:
     parts = tuple(part.casefold() for part in path.parts)
     joined = "/".join(parts)
 
+    if any(part == "easyocr_models" for part in parts) or path.name.casefold() in {
+        "craft_mlt_25k.pth",
+        "korean_g2.pth",
+    }:
+        return "EasyOCR bundled weights"
     if any(part in {"easyocr"} for part in parts):
         return "EasyOCR"
+    if any(
+        part == "kiwipiepy"
+        or part == "kiwipiepy_model"
+        or part.startswith(("kiwipiepy-", "kiwipiepy_model-", "_kiwipiepy."))
+        for part in parts
+    ):
+        return "Kiwi/model assets"
     if any(part in {"pyqt6", "qt6", "qt", "qtwebengine", "pyqt6_qt6"} for part in parts):
         return "Qt/PyQt6/QtWebEngine"
     if any(part in {"numpy", "numpy.libs", "numpy_core"} for part in parts):
@@ -36,7 +52,7 @@ def _family_for(path: Path) -> str | None:
         return "Pandas"
     if any(part in {"cv2", "opencv", "opencv_python"} for part in parts):
         return "OpenCV"
-    if any(part in {"torch", "torch.libs"} for part in parts):
+    if any(part in {"torch", "torch.libs", "torchvision"} for part in parts):
         return "Torch"
     if any(part in {"scipy", "scipy.libs"} for part in parts):
         return "SciPy"
@@ -46,6 +62,8 @@ def _family_for(path: Path) -> str | None:
     # Distribution snapshots often contain names such as ``easyocr-1.7.2``.
     if "easyocr" in joined:
         return "EasyOCR"
+    if "kiwipiepy_model" in joined or "kiwipiepy" in joined or "_kiwipiepy" in joined:
+        return "Kiwi/model assets"
     if "qtwebengine" in joined or "pyqt6" in joined:
         return "Qt/PyQt6/QtWebEngine"
     if "numpy" in joined:
@@ -95,6 +113,14 @@ def _empty_group() -> dict[str, Any]:
     return {"bytes": 0, "files": 0, "paths": []}
 
 
+def _empty_archive_group() -> dict[str, Any]:
+    return {
+        "file_count": 0,
+        "uncompressed_member_bytes": 0,
+        "compressed_member_bytes": 0,
+    }
+
+
 def _hash_duplicates(
     entries: Iterable[tuple[str, Path, int]],
     *,
@@ -127,6 +153,76 @@ def _hash_duplicates(
     return duplicates, hashed_files, hashed_bytes, skipped_files
 
 
+def _same_size_candidates(
+    entries: Iterable[tuple[str, Path, int]],
+    *,
+    max_files: int,
+) -> list[dict[str, Any]]:
+    """Return bounded groups whose members have the same logical byte size."""
+    by_size: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    candidate_files = 0
+    for relative, _path, size in entries:
+        if candidate_files >= max_files:
+            break
+        bucket = by_size[size]
+        bucket.append({"path": relative, "bytes": size})
+        candidate_files += 1
+
+    return [
+        {"bytes": size, "files": paths}
+        for size, paths in sorted(by_size.items())
+        if len(paths) > 1
+    ]
+
+
+def _archive_report(archive: str | os.PathLike[str]) -> dict[str, Any]:
+    """Read ZIP metadata without extracting or reading member contents."""
+    archive_path = Path(archive).resolve()
+    if not archive_path.is_file():
+        raise FileNotFoundError(str(archive_path))
+
+    file_count = 0
+    uncompressed_member_bytes = 0
+    compressed_member_bytes = 0
+    families = {name: _empty_archive_group() for name in _FAMILY_NAMES}
+    largest_members: list[dict[str, Any]] = []
+    with zipfile.ZipFile(archive_path) as bundle:
+        for member in bundle.infolist():
+            if member.is_dir():
+                continue
+            file_count += 1
+            uncompressed_member_bytes += member.file_size
+            compressed_member_bytes += member.compress_size
+
+            largest_members.append(
+                {
+                    "path": member.filename,
+                    "uncompressed_bytes": member.file_size,
+                    "compressed_bytes": member.compress_size,
+                }
+            )
+            largest_members.sort(
+                key=lambda item: (-item["uncompressed_bytes"], item["path"])
+            )
+            del largest_members[_ARCHIVE_LARGEST_MEMBER_LIMIT:]
+            family = _family_for(Path(member.filename))
+            if family is not None:
+                family_group = families[family]
+                family_group["file_count"] += 1
+                family_group["uncompressed_member_bytes"] += member.file_size
+                family_group["compressed_member_bytes"] += member.compress_size
+
+    return {
+        "path": str(archive_path),
+        "file_count": file_count,
+        "uncompressed_member_bytes": uncompressed_member_bytes,
+        "compressed_member_bytes": compressed_member_bytes,
+        "archive_bytes": archive_path.stat().st_size,
+        "families": families,
+        "largest_members": largest_members,
+    }
+
+
 def analyze_package(
     root: str | os.PathLike[str],
     *,
@@ -134,6 +230,10 @@ def analyze_package(
     hash_duplicates: bool = False,
     hash_max_files: int = 10_000,
     hash_max_bytes: int = 2 * 1024 * 1024 * 1024,
+    duplicate_candidates: bool = False,
+    candidate_max_files: int = 10_000,
+    archive: str | os.PathLike[str] | None = None,
+    archive_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Return exact file/byte totals and dependency-family groupings.
 
@@ -146,8 +246,11 @@ def analyze_package(
         raise NotADirectoryError(str(package_root))
     if large_component_threshold_bytes < 0:
         raise ValueError("large_component_threshold_bytes must be non-negative")
-    if hash_max_files < 0 or hash_max_bytes < 0:
+    if hash_max_files < 0 or hash_max_bytes < 0 or candidate_max_files < 0:
         raise ValueError("duplicate hashing limits must be non-negative")
+    if archive is not None and archive_path is not None:
+        raise ValueError("pass only one of archive or archive_path")
+    selected_archive = archive if archive is not None else archive_path
 
     entries = _files_under(package_root)
     top_level: dict[str, dict[str, Any]] = {}
@@ -186,6 +289,19 @@ def analyze_package(
         and row["path"] not in {package_root.name, f"{package_root.name}.exe"}
     ]
 
+    report_candidates = duplicate_candidates or hash_duplicates
+    if report_candidates:
+        same_size_candidates = _same_size_candidates(
+            entries,
+            max_files=candidate_max_files,
+        )
+        candidate_files = min(len(entries), candidate_max_files)
+        candidate_skipped_files = len(entries) - candidate_files
+    else:
+        same_size_candidates = []
+        candidate_files = 0
+        candidate_skipped_files = len(entries)
+
     if hash_duplicates:
         duplicates, hashed_files, hashed_bytes, skipped_files = _hash_duplicates(
             entries,
@@ -213,6 +329,16 @@ def analyze_package(
             "skipped_files": skipped_files,
         },
         "duplicates": duplicates,
+        "duplicate_candidates": {
+            "enabled": report_candidates,
+            "bounded": True,
+            "max_files": candidate_max_files if report_candidates else None,
+            "considered_files": candidate_files,
+            "skipped_files": candidate_skipped_files,
+            "same_size": same_size_candidates,
+            "hash": duplicates,
+        },
+        "archive": None if selected_archive is None else _archive_report(selected_archive),
     }
 
 

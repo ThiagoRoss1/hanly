@@ -193,6 +193,41 @@ A release therefore holds seven assets: four application products, one
 `krdict-<version>.sqlite3.zst`, `hanly-resources.json`, and `SHA256SUMS`
 (which lists the six payload digests).
 
+### How an in-app update replaces an installation
+
+Everything the update writes goes into one uniquely named `.hanly-update-*`
+directory beside the installation: the download, the extracted build, the
+staged copy, the previous installation, and the file the new build answers
+through. A finished or abandoned update is that one directory being removed.
+The swap script itself is written to the system temporary directory and
+deletes itself, so it is never removing the directory it is running from.
+
+The swap runs after Hanly exits, because the installation holds the executable
+and the interpreter running it. It waits for that process, renames the
+installation into the transaction directory, renames the staged build into its
+place, relaunches it, and then **waits for the new build to report its own
+version**. Only then is the previous installation discarded. If the new build
+does not answer within ten minutes — the bound the packaged UI smoke allows a
+frozen build for the same milestone — the previous one goes back and is
+relaunched instead. A restore that itself fails launches nothing and leaves the
+previous installation under `.hanly-update-*/previous`, which is then the only
+working copy: move it back to the installation path by hand.
+
+Two limitations are deliberate and known:
+
+- **Explicit command-line arguments are not carried across an update.** A build
+  relaunched by the handoff starts the way a double-click starts it. An
+  installation driven with `--runtime-config` or `--app-config` needs those
+  passed again after updating.
+- **The handoff is not started under a supervisor.** If the script cannot start
+  at all, Hanly quits without being replaced; the installation is untouched and
+  reopening it works. If the machine loses power mid-swap, the transaction
+  directory is left in place for manual recovery rather than repaired on the
+  next launch.
+
+Per-user settings, diagnostics, and the KRDICT database live outside the
+installation, so an update - and a rollback - never touches them.
+
 ### Updating from a 0.1.1 macOS installation
 
 0.1.1 shipped `hanly-desktop-macos.tar.gz` and installed a plain directory. A

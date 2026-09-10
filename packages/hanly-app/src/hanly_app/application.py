@@ -26,6 +26,7 @@ from .app_update import (
     ApplicationUpdate,
     ApplicationUpdateError,
     check_application_update,
+    confirm_started,
     installation_root,
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
@@ -139,7 +140,7 @@ class _Startup(Protocol):
 class _ControlCenter(Protocol):
     """The main window and, in production, the process's only event loop."""
 
-    def run(self) -> int: ...
+    def run(self, on_started: Callable[[], None] | None = None) -> int: ...
 
     def show(self) -> None: ...
 
@@ -191,7 +192,7 @@ class DesktopApplication:
                 raise RuntimeError("signal bridge must be attached before startup")
             self._signals = bridge
 
-    def run(self) -> int:
+    def run(self, on_started: Callable[[], None] | None = None) -> int:
         """Show the interface and run the one GUI event loop.
 
         The loop belongs to the Control Center host: pywebview's Qt backend
@@ -199,6 +200,9 @@ class DesktopApplication:
         the nested loop the release warned about. Capture is deliberately not
         started: the window opens, the runtime prepares behind it, and the user
         decides when Hanly starts watching the screen.
+
+        ``on_started`` is pywebview's own post-start hook, which runs once the
+        window exists and off the UI thread.
         """
 
         with self._lock:
@@ -210,7 +214,7 @@ class DesktopApplication:
             signals.install()
         self._start_tray()
         try:
-            return self._control_center.run()
+            return self._control_center.run(on_started)
         finally:
             self.shutdown()
 
@@ -750,6 +754,7 @@ def run_desktop(
     trace_sink: RuntimeTraceSink | None = None,
     diagnostics: DiagnosticLog | None = None,
     runtime_resolver: Callable[[Path | None], Path] | None = None,
+    update_ready: str | Path | None = None,
 ) -> int:
     """Open the Hanly interface, then prepare its runtime behind it.
 
@@ -763,6 +768,9 @@ def run_desktop(
 
     ``diagnostics`` is the session log the entry point already opened. Passing
     ``None`` keeps everything in memory, which is what a test wants.
+
+    ``update_ready`` is set only by an update handoff, which keeps the previous
+    installation until this launch answers at that path.
     """
 
     diagnostics = diagnostics if diagnostics is not None else DiagnosticLog()
@@ -838,7 +846,31 @@ def run_desktop(
     desktop.attach_signal_bridge(signal_bridge)
 
     startup.start(explicit_runtime)
-    return desktop.run()
+    return desktop.run(_update_acknowledgement(update_ready, diagnostics))
+
+
+def _update_acknowledgement(
+    path: str | Path | None, diagnostics: DiagnosticLog
+) -> Callable[[], None] | None:
+    """Return what tells a waiting update handoff that this build came up.
+
+    The window existing is the milestone, not a ready runtime: Qt, WebEngine,
+    and the interpreter inside this build have all started by then, which is
+    what the swap replaced. Whether a resource downloads afterwards says
+    nothing about whether the new build works.
+    """
+
+    if path is None:
+        return None
+    ready = Path(path)
+
+    def acknowledge() -> None:
+        try:
+            confirm_started(ready)
+        except (ApplicationUpdateError, OSError) as error:
+            diagnostics.report("Update acknowledgement", error)
+
+    return acknowledge
 
 
 def _readiness_milestone(timeline: StartupTimeline) -> Callable[[RuntimeStatus], None]:

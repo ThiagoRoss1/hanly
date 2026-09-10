@@ -443,10 +443,13 @@ def test_the_spec_collects_the_inputs_a_frozen_build_cannot_fetch() -> None:
     assert "prepare_easyocr_models.py" in source
 
 
-def test_the_spec_leaves_torch_and_qt_libraries_to_their_own_hooks() -> None:
+def test_the_spec_uses_targeted_easyocr_hook_and_keeps_other_collections() -> None:
     source = SPEC.read_text(encoding="utf-8")
 
-    assert 'for package_name in ("easyocr", "torchvision"):' in source
+    assert 'for package_name in ("torchvision",):' in source
+    assert 'collect_all("easyocr")' not in source
+    assert 'hooksconfig={"easyocr": {"lang_codes": ["ko"]}}' in source
+    assert 'for distribution in ("hanly-app", "hanly", "easyocr"):' in source
     assert "collect_dynamic_libs" not in source
     # The uncertain surfaces stay collected; only duplication was removed.
     assert 'collect_all(package_name)' in source

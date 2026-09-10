@@ -5,9 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
-import shutil
 import subprocess
-import sys
 import tarfile
 import zipfile
 from dataclasses import dataclass
@@ -25,12 +23,12 @@ from hanly_app.app_update import (
     ApplicationInstaller,
     ApplicationUpdate,
     ApplicationUpdateError,
-    StagedApplicationUpdate,
     check_application_update,
+    confirm_started,
     extract_application_bundle,
+    extract_application_tar,
     installation_root,
     installed_version,
-    render_handoff_script,
 )
 
 RELEASE_URL = "https://github.com/ThiagoRoss1/hanly/releases/tag/v0.2.0"
@@ -142,17 +140,27 @@ class _FakeDownloader:
     def __init__(self, assets: dict[str, bytes]) -> None:
         self.assets = assets
         self.requested: list[str] = []
+        self.sizes: list[tuple[str, int | None]] = []
 
     def download(self, resource: Any, destination: Path, on_progress: Any = None) -> None:
         self.requested.append(resource.asset_name)
+        self.sizes.append((resource.asset_name, resource.size))
         destination.write_bytes(self.assets[resource.asset_name])
+
+
+#: A PyInstaller directory build reaches a POSIX release with hundreds of
+#: relative links between its bundled libraries; the tar fixture carries one.
+_INTERNAL_LINK = "hanly-desktop/libhanly.so"
 
 
 def _bundle_archive(archive_format: str, executable: str) -> bytes:
     """Build the archive shape ``tools/build_package.py`` publishes."""
 
     buffer = io.BytesIO()
-    members = ((f"hanly-desktop/{executable}", b"new build"), ("hanly-desktop/runtime.json", b"{}"))
+    members = (
+        (f"hanly-desktop/{executable}", b"new build"),
+        ("hanly-desktop/_internal/libhanly.so", b"library"),
+    )
     if archive_format == "zip":
         with zipfile.ZipFile(buffer, "w") as bundle:
             for name, payload in members:
@@ -162,7 +170,12 @@ def _bundle_archive(archive_format: str, executable: str) -> bytes:
         for name, payload in members:
             info = tarfile.TarInfo(name)
             info.size = len(payload)
+            info.mode = 0o755
             archive.addfile(info, io.BytesIO(payload))
+        link = tarfile.TarInfo(_INTERNAL_LINK)
+        link.type = tarfile.SYMTYPE
+        link.linkname = "_internal/libhanly.so"
+        archive.addfile(link)
     return buffer.getvalue()
 
 
@@ -195,7 +208,7 @@ def _channel(tmp_path: Path, platform: str, *, corrupt: bool = False) -> _Channe
     payload = {
         "tag_name": "v0.2.0",
         "html_url": RELEASE_URL,
-        "assets": [{"name": asset_name}, {"name": "SHA256SUMS"}],
+        "assets": [{"name": asset_name, "size": len(archive)}, {"name": "SHA256SUMS"}],
     }
     downloader = _FakeDownloader({asset_name: archive, "SHA256SUMS": sums.encode()})
     return _Channel(payload, downloader, install_root, executable)
@@ -249,6 +262,12 @@ def test_a_release_missing_this_platforms_archive_is_not_installable(tmp_path: P
     assert _check(channel, "linux").installable is False
 
 
+def _siblings(install_root: Path) -> list[str]:
+    """What the updater left beside the installation it was working on."""
+
+    return sorted(item.name for item in install_root.parent.iterdir())
+
+
 @pytest.mark.parametrize("platform", ["win32", "linux"])
 def test_staging_verifies_and_unpacks_a_build_without_touching_the_running_one(
     tmp_path: Path, platform: str
@@ -257,25 +276,95 @@ def test_staging_verifies_and_unpacks_a_build_without_touching_the_running_one(
     installer = _installer(channel, platform)
     phases: list[str] = []
 
-    staged = installer.stage(
+    transaction = installer.stage(
         _check(channel, platform), on_progress=lambda progress: phases.append(progress.phase)
     )
 
-    assert staged.version == "0.2.0"
-    assert (staged.staged_path / channel.executable).read_bytes() == b"new build"
+    assert transaction.version == "0.2.0"
+    assert (transaction.staged_path / channel.executable).read_bytes() == b"new build"
     assert (channel.install_root / channel.executable).read_bytes() == b"old build"
     assert phases == ["downloading", "verifying", "installing", "complete"]
     assert "SHA256SUMS" in channel.downloader.requested
 
 
-def test_an_archive_that_does_not_match_sha256sums_is_never_unpacked(tmp_path: Path) -> None:
-    channel = _channel(tmp_path, "linux", corrupt=True)
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_everything_staging_writes_lives_in_one_directory_it_owns(
+    tmp_path: Path, platform: str
+) -> None:
+    """The swap, the rollback, and the cleanup all address one directory, so a
+    finished or abandoned update is a single removal rather than a set of fixed
+    sibling names an interrupted attempt can leave behind."""
+
+    channel = _channel(tmp_path, platform)
+    transaction = _installer(channel, platform).stage(_check(channel, platform))
+
+    assert _siblings(channel.install_root) == sorted(
+        (channel.install_root.name, transaction.directory.name)
+    )
+    for path in (transaction.staged_path, transaction.backup_path, transaction.ready_path):
+        assert transaction.directory in path.parents
+    # Nothing about the name is fixed, so a second attempt cannot collide with,
+    # or delete, what an earlier one is still working in.
+    assert transaction.directory.name.startswith(".hanly-update-")
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_a_failed_download_leaves_no_trace_beside_the_installation(
+    tmp_path: Path, platform: str
+) -> None:
+    channel = _channel(tmp_path, platform, corrupt=True)
 
     with pytest.raises(ApplicationUpdateError, match="checksum does not match"):
-        _installer(channel, "linux").stage(_check(channel, "linux"))
+        _installer(channel, platform).stage(_check(channel, platform))
 
-    assert not (channel.install_root.parent / "hanly-desktop.staged").exists()
+    assert _siblings(channel.install_root) == [channel.install_root.name]
     assert (channel.install_root / channel.executable).read_bytes() == b"old build"
+
+
+def test_a_linux_build_keeps_the_internal_links_its_layout_is_made_of(
+    tmp_path: Path,
+) -> None:
+    """The resource extractor refuses every link, which is right for a resource
+    and wrong for a directory build: the archive is mostly links between its own
+    bundled libraries, and a copy without them does not run."""
+
+    channel = _channel(tmp_path, "linux")
+    transaction = _installer(channel, "linux").stage(_check(channel, "linux"))
+
+    link = transaction.staged_path / "libhanly.so"
+    assert link.is_symlink()
+    assert os.readlink(link) == "_internal/libhanly.so"
+    assert os.access(transaction.staged_path / channel.executable, os.X_OK)
+
+
+def test_a_tar_link_that_leaves_the_payload_is_refused_before_extraction(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "escape.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        escape = tarfile.TarInfo("hanly-desktop/passwd")
+        escape.type = tarfile.SYMTYPE
+        escape.linkname = "../../../etc/passwd"
+        bundle.addfile(escape)
+
+    with pytest.raises(ApplicationUpdateError, match="links outside itself"):
+        extract_application_tar(archive, tmp_path, APPLICATION_STEM)
+
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["escape.tar.gz"]
+
+
+def test_the_declared_asset_size_bounds_the_application_download(tmp_path: Path) -> None:
+    """The release says how large its archive is, and the downloader enforces
+    that as a ceiling; a body that keeps arriving is stopped before the disk is."""
+
+    channel = _channel(tmp_path, "linux")
+    installer = _installer(channel, "linux")
+    installer.stage(_check(channel, "linux"))
+
+    sizes = {name: size for name, size in channel.downloader.sizes}
+    assert sizes["hanly-desktop-linux.tar.gz"] == len(
+        channel.downloader.assets["hanly-desktop-linux.tar.gz"]
+    )
 
 
 def test_a_build_that_is_not_installable_is_refused_before_any_download(tmp_path: Path) -> None:
@@ -285,108 +374,6 @@ def test_a_build_that_is_not_installable_is_refused_before_any_download(tmp_path
         _installer(channel, "linux").stage(_check(channel, "linux", frozen=False))
 
     assert channel.downloader.requested == []
-
-
-@pytest.mark.parametrize("platform", ["win32", "linux"])
-def test_applying_hands_the_swap_to_a_detached_script(tmp_path: Path, platform: str) -> None:
-    """The bundle holds the running executable, so the swap cannot be in-process."""
-
-    channel = _channel(tmp_path, platform)
-    spawned: list[Any] = []
-    installer = _installer(channel, platform, spawned)
-    staged = installer.stage(_check(channel, platform))
-
-    installer.apply(staged)
-
-    command, directory = spawned[0]
-    launcher = ["cmd.exe", "/c"] if platform == "win32" else ["/bin/sh"]
-    script, pid, install, new_bundle, backup = command[len(launcher) :]
-
-    assert command[: len(launcher)] == launcher
-    assert directory == channel.install_root.parent
-    assert Path(script).exists()
-    assert [pid, install, new_bundle, backup] == [
-        str(os.getpid()),
-        str(channel.install_root),
-        str(staged.staged_path),
-        f"{channel.install_root}.previous",
-    ]
-
-
-@pytest.mark.parametrize("platform", ["win32", "linux"])
-def test_the_paths_travel_as_arguments_and_never_as_generated_script_text(
-    tmp_path: Path, platform: str
-) -> None:
-    """A batch file is parsed in the console code page, which would corrupt a
-    non-ASCII install path, and generated text is where a script would pick up
-    injection. Neither applies to a body that contains no paths at all."""
-
-    channel = _channel(tmp_path, platform)
-    spawned: list[Any] = []
-    installer = _installer(channel, platform, spawned)
-
-    installer.apply(installer.stage(_check(channel, platform)))
-
-    script = spawned[0][0][2 if platform == "win32" else 1]
-    body = Path(script).read_text(encoding="ascii")
-
-    assert str(channel.install_root) not in body
-    assert body.isascii()
-
-
-def test_a_windows_path_cmd_cannot_quote_is_refused_rather_than_mishandled(
-    tmp_path: Path,
-) -> None:
-    install = tmp_path / "Hanly & Co" / "hanly-desktop"
-    staged = StagedApplicationUpdate("0.2.0", install.with_suffix(".staged"), install)
-    installer = ApplicationInstaller(
-        _FakeDownloader({}),
-        dict,
-        install_root=install,
-        platform="win32",
-        spawn=lambda command, directory: None,
-    )
-
-    with pytest.raises(ApplicationUpdateError, match="cannot quote safely"):
-        installer.apply(staged)
-
-
-@pytest.mark.parametrize("windows", [True, False])
-def test_the_handoff_waits_then_swaps_then_relaunches_and_rolls_back_on_failure(
-    windows: bool,
-) -> None:
-    script = render_handoff_script(windows=windows)
-
-    wait, aside, swap_in, relaunch = (
-        ("tasklist", 'move "%INSTALL%" "%BACKUP%"', 'move "%STAGED%" "%INSTALL%"', "start ")
-        if windows
-        else ("kill -0", 'mv "$install" "$backup"', 'mv "$staged" "$install"', "exec ")
-    )
-    rollback = 'move "%BACKUP%" "%INSTALL%"' if windows else 'mv "$backup" "$install"'
-
-    # Wait for the old process, move the live bundle aside, move the new one
-    # in, and only then relaunch. The rollback is after the failing swap.
-    assert script.index(wait) < script.index(aside) < script.index(swap_in)
-    assert script.index(swap_in) < script.index(relaunch)
-    assert script.index(swap_in) < script.index(rollback)
-    assert script.count(rollback) == 1
-
-
-@pytest.mark.parametrize("windows", [True, False])
-def test_every_handoff_wait_is_bounded_so_a_stuck_swap_cannot_spin_forever(
-    windows: bool,
-) -> None:
-    script = render_handoff_script(windows=windows)
-
-    assert "120" in script
-    assert ("geq 120" in script) if windows else ("-ge 120" in script)
-    if windows:
-        # Windows keeps a directory locked briefly after the process using it
-        # exits, so the first move is retried rather than failed outright.
-        assert "geq 30" in script
-        # ``timeout`` needs console input a detached process does not have.
-        assert "timeout /t" not in script
-        assert "ping -n" in script
 
 
 def test_staging_is_refused_when_the_release_no_longer_offers_the_checked_build(
@@ -403,243 +390,7 @@ def test_staging_is_refused_when_the_release_no_longer_offers_the_checked_build(
         _installer(channel, "linux").stage(update)
 
     assert channel.downloader.requested == []
-    assert not (channel.install_root.parent / "hanly-desktop.staged").exists()
-
-
-def _dead_pid() -> str:
-    """Return a pid that has already exited, so the handoff stops waiting."""
-
-    finished = subprocess.Popen([sys.executable, "-c", ""])
-    finished.wait()
-    return str(finished.pid)
-
-
-def _bundle(root: Path, name: str, launched: Path) -> Path:
-    """Create a stub bundle whose executable records that it was launched."""
-
-    root.mkdir(parents=True)
-    executable = root / APPLICATION_STEM
-    executable.write_text(
-        f'#!/bin/sh\nprintf %s {name} >> "{launched}"\n', encoding="ascii", newline="\n"
-    )
-    executable.chmod(0o755)
-    return root
-
-
-#: Windows runs the ``.cmd`` handoff, and a Windows PATH can hand back a
-#: ``bash`` that cannot run a POSIX script at all — the hosted image resolves
-#: one to a WSL stub with no distribution behind it. Gate on the platform the
-#: script is written for, not on a name that happens to be on PATH.
-_posix_handoff = pytest.mark.skipif(
-    sys.platform == "win32" or shutil.which("bash") is None,
-    reason="the POSIX handoff runs only where Hanly uses it",
-)
-
-
-def _run_posix_handoff(
-    tmp_path: Path, *, break_staged: bool, break_rollback: bool, expect_status: int
-) -> str:
-    """Run the real handoff script and report which bundle it relaunched."""
-
-    launched = tmp_path / "launched"
-    launched.write_text("", encoding="ascii")
-    install = _bundle(tmp_path / "hanly-desktop", "old", launched)
-    staged = _bundle(tmp_path / "hanly-desktop.staged", "new", launched)
-    backup = tmp_path / "hanly-desktop.previous"
-    if break_staged:
-        shutil.rmtree(staged)
-
-    environment = dict(os.environ)
-    if break_rollback:
-        # Fail only the rollback move, so the branch under test is the one that
-        # cannot put the previous bundle back.
-        shim = tmp_path / "bin"
-        shim.mkdir()
-        (shim / "mv").write_text(
-            f'#!/bin/sh\ncase "$1" in "{backup}") exit 1 ;; esac\nexec /bin/mv "$@"\n',
-            encoding="ascii",
-            newline="\n",
-        )
-        (shim / "mv").chmod(0o755)
-        environment["PATH"] = f"{shim}{os.pathsep}{environment['PATH']}"
-
-    script = tmp_path / "hanly-update.sh"
-    script.write_text(render_handoff_script(windows=False), encoding="ascii", newline="\n")
-    finished = subprocess.run(
-        ["bash", str(script), _dead_pid(), str(install), str(staged), str(backup)],
-        check=False,
-        capture_output=True,
-        timeout=60,
-        env=environment,
-    )
-
-    # A shell that cannot run the script at all exits without touching anything,
-    # which reads as "nothing was relaunched" unless the status is checked.
-    assert finished.returncode == expect_status, finished.stderr.decode("utf-8", "replace")
-    return launched.read_text(encoding="ascii")
-
-
-@_posix_handoff
-def test_a_successful_update_relaunches_the_new_bundle(tmp_path: Path) -> None:
-    launched = _run_posix_handoff(
-        tmp_path, break_staged=False, break_rollback=False, expect_status=0
-    )
-
-    assert launched == "new"
-    assert "printf %s new" in (tmp_path / "hanly-desktop" / APPLICATION_STEM).read_text(
-        encoding="ascii"
-    )
-
-
-@_posix_handoff
-def test_a_failed_replacement_relaunches_the_bundle_the_rollback_restored(
-    tmp_path: Path,
-) -> None:
-    """A failed update costs the user the update, not their running Hanly."""
-
-    launched = _run_posix_handoff(
-        tmp_path, break_staged=True, break_rollback=False, expect_status=0
-    )
-
-    assert launched == "old"
-    assert "printf %s old" in (tmp_path / "hanly-desktop" / APPLICATION_STEM).read_text(
-        encoding="ascii"
-    )
-
-
-@_posix_handoff
-def test_a_failed_rollback_launches_nothing(tmp_path: Path) -> None:
-    """Neither bundle is at the install path, so nothing there is safe to start."""
-
-    launched = _run_posix_handoff(
-        tmp_path, break_staged=True, break_rollback=True, expect_status=1
-    )
-
-    assert launched == ""
-    assert not (tmp_path / "hanly-desktop").exists()
-    # The previous bundle is intact under its backup name, so a person can
-    # still put it back by hand.
-    assert (tmp_path / "hanly-desktop.previous" / APPLICATION_STEM).is_file()
-
-
-_windows_handoff = pytest.mark.skipif(
-    sys.platform != "win32", reason="the .cmd handoff runs only where Hanly uses it"
-)
-
-
-#: The line the test copy of the script replaces, and nothing else.
-_WINDOWS_RELAUNCH = f'start "" "%INSTALL%\\{APPLICATION_STEM}.exe"'
-
-#: Records which bundle the script reached the relaunch with. ``type`` is a
-#: shell built-in writing into the working directory, so nothing is spawned.
-_WINDOWS_RELAUNCH_MARKER = 'type "%INSTALL%\\bundle" >>launched.txt'
-
-
-def _windows_bundle(root: Path, name: str) -> Path:
-    """Create a stub bundle whose contents say which bundle it is."""
-
-    root.mkdir(parents=True)
-    (root / "bundle").write_text(name, encoding="ascii")
-    return root
-
-
-def _windows_handoff_script(tmp_path: Path) -> Path:
-    """Write the real .cmd with only its relaunch swapped for a marker.
-
-    ``start`` hands the path to the shell, which launches a real process when
-    the executable is there and raises a modal error when it is not. A unit test
-    may do neither, so the two relaunch lines -- and only those -- are replaced
-    by a command that records the bundle now at the install path. Their number
-    is asserted first, and their placement stays covered structurally by
-    ``test_the_rollback_relaunch_is_gated_on_the_rollback_actually_succeeding``.
-    """
-
-    body = render_handoff_script(windows=True)
-    assert body.count(_WINDOWS_RELAUNCH) == 2, body
-
-    script = tmp_path / "hanly-update.cmd"
-    script.write_text(
-        body.replace(_WINDOWS_RELAUNCH, _WINDOWS_RELAUNCH_MARKER),
-        encoding="ascii",
-        newline="\r\n",
-    )
-    return script
-
-
-def _run_windows_handoff(tmp_path: Path, *, break_staged: bool, expect_status: int) -> str:
-    """Run the .cmd handoff the way the installer spawns it, and report the
-    bundle it relaunched -- empty when it reached no relaunch at all."""
-
-    install = _windows_bundle(tmp_path / "hanly-desktop", "old")
-    staged = _windows_bundle(tmp_path / "hanly-desktop.staged", "new")
-    backup = tmp_path / "hanly-desktop.previous"
-    if break_staged:
-        shutil.rmtree(staged)
-
-    script = _windows_handoff_script(tmp_path)
-    finished = subprocess.run(
-        ["cmd.exe", "/c", str(script), _dead_pid(), str(install), str(staged), str(backup)],
-        check=False,
-        capture_output=True,
-        timeout=120,
-        cwd=tmp_path,
-    )
-
-    assert finished.returncode == expect_status, finished.stdout.decode("utf-8", "replace")
-    launched = tmp_path / "launched.txt"
-    return launched.read_text(encoding="ascii") if launched.exists() else ""
-
-
-@_windows_handoff
-def test_the_windows_handoff_moves_the_staged_bundle_onto_the_install_path(
-    tmp_path: Path,
-) -> None:
-    launched = _run_windows_handoff(tmp_path, break_staged=False, expect_status=0)
-
-    assert launched == "new"
-    assert (tmp_path / "hanly-desktop" / "bundle").read_text(encoding="ascii") == "new"
-    assert not (tmp_path / "hanly-desktop.staged").exists()
-    assert not (tmp_path / "hanly-desktop.previous").exists()
-
-
-@_windows_handoff
-def test_a_failed_windows_replacement_relaunches_the_bundle_the_rollback_restored(
-    tmp_path: Path,
-) -> None:
-    """A failed update costs the user the update, not their running Hanly."""
-
-    launched = _run_windows_handoff(tmp_path, break_staged=True, expect_status=1)
-
-    assert launched == "old"
-    assert (tmp_path / "hanly-desktop" / "bundle").read_text(encoding="ascii") == "old"
-    assert not (tmp_path / "hanly-desktop.previous").exists()
-
-
-# Failing the rollback needs the install path occupied between two moves inside
-# a script that is already running, which no fixture can arrange without racing
-# it -- so that branch is not executed here. It stays covered structurally by
-# the test below, which pins ``exit /b 1`` ahead of the relaunch, and by the
-# POSIX run above, where a shimmed ``mv`` makes the same failure reachable.
-
-
-@pytest.mark.parametrize("windows", [True, False])
-def test_the_rollback_relaunch_is_gated_on_the_rollback_actually_succeeding(
-    windows: bool,
-) -> None:
-    script = render_handoff_script(windows=windows)
-
-    if windows:
-        rollback = script.split(":rollback", 1)[1]
-        # The guard is on the same line as the restoring move, so no ordering
-        # mistake can let the relaunch run after a failed restore.
-        assert 'move "%BACKUP%" "%INSTALL%" >nul 2>&1 || exit /b 1' in rollback
-        assert rollback.index("exit /b 1") < rollback.index("start ")
-        assert script.count("start ") == 2
-    else:
-        assert 'mv "$backup" "$install" || exit 1' in script
-        rollback = script.split('mv "$backup" "$install"', 1)[1]
-        assert rollback.index("exit 1") < rollback.index("exec ")
-        assert script.count("exec ") == 2
+    assert _siblings(channel.install_root) == [channel.install_root.name]
 
 
 # --- the macOS update unit is the application bundle ------------------------
@@ -687,7 +438,16 @@ class _Ditto:
         if self.returncode == 0:
             archive, destination = Path(command[-2]), Path(command[-1])
             with zipfile.ZipFile(archive) as bundle:
-                bundle.extractall(destination)
+                # ``ditto -x -k`` consumes the ``__MACOSX`` sidecar rather than
+                # writing it, folding its attributes back into the files it
+                # creates. A plain extractor writes it out as a directory, which
+                # is the difference this double exists to keep.
+                bundle.extractall(
+                    destination,
+                    members=[
+                        name for name in bundle.namelist() if not name.startswith("__MACOSX/")
+                    ],
+                )
         return subprocess.CompletedProcess(command, self.returncode, b"", b"")
 
 
@@ -749,18 +509,20 @@ def test_the_macos_updater_takes_the_zip_and_relaunches_the_bundles_program(
     spawned: list[Any] = []
     installer = _macos_installer(channel, spawned)
 
-    staged = installer.stage(_check(channel, "darwin"))
-    installer.apply(staged)
+    transaction = installer.stage(_check(channel, "darwin"))
+    installer.apply(transaction)
 
     assert channel.downloader.requested[0] == "hanly-desktop-macos.zip"
-    assert staged.staged_path.name == f"{BUNDLE_NAME}.staged"
-    assert (staged.staged_path / "Contents" / "MacOS" / APPLICATION_STEM).is_file()
+    # The staged copy keeps the bundle's own name: macOS reads an application
+    # from its ``.app`` suffix, and a renamed one is a directory.
+    assert transaction.staged_path.name == BUNDLE_NAME
+    assert (transaction.staged_path / "Contents" / "MacOS" / APPLICATION_STEM).is_file()
     # The running installation is untouched until the handoff runs.
     assert (channel.install_root / "Contents" / "MacOS" / APPLICATION_STEM).read_bytes() == (
         b"old build"
     )
-    script = Path(spawned[0][0][1]).read_text(encoding="ascii")
-    assert f"Contents/MacOS/{APPLICATION_STEM}" in script
+    script = Path(spawned[0][0][1]).read_text(encoding="utf-8")
+    assert "/usr/bin/open" in script
 
 
 def test_a_downloaded_application_that_is_not_hanly_is_never_staged(tmp_path: Path) -> None:
@@ -771,7 +533,7 @@ def test_a_downloaded_application_that_is_not_hanly_is_never_staged(tmp_path: Pa
     with pytest.raises(ApplicationUpdateError, match="not Hanly"):
         _macos_installer(channel).stage(_check(channel, "darwin"))
 
-    assert not (channel.install_root.parent / f"{BUNDLE_NAME}.staged").exists()
+    assert _siblings(channel.install_root) == [channel.install_root.name]
 
 
 def test_an_unsigned_application_is_refused_before_the_swap(tmp_path: Path) -> None:
@@ -839,3 +601,91 @@ def test_the_native_unpacker_is_invoked_as_ditto_and_cleans_up_when_it_fails(
 
     # Only the successful extraction is left behind.
     assert [item.name for item in parent.iterdir()] == [extracted.name]
+
+
+def test_the_sidecar_ditto_writes_beside_the_bundle_is_read_and_never_extracted(
+    tmp_path: Path,
+) -> None:
+    """``tools/build_package.py`` archives with ``ditto --sequesterRsrc``, which
+    always emits a ``__MACOSX`` tree carrying the bundle's extended attributes.
+    Refusing it refuses every release archive Hanly actually publishes; ``ditto
+    -x`` folds it back into the files it writes and creates nothing by that name."""
+
+    members = _macos_bundle_members()
+    members[f"__MACOSX/{BUNDLE_NAME}/Contents/MacOS/._{APPLICATION_STEM}"] = b"\x00\x05\x16\x07"
+    channel = _macos_channel(tmp_path, members=members)
+
+    transaction = _macos_installer(channel).stage(_check(channel, "darwin"))
+
+    assert (transaction.staged_path / "Contents" / "MacOS" / APPLICATION_STEM).is_file()
+    assert sorted(item.name for item in transaction.directory.iterdir()) == [BUNDLE_NAME]
+
+
+def test_an_archive_that_unpacks_to_more_than_the_bundle_is_refused(tmp_path: Path) -> None:
+    """The sidecar is allowed into the table of contents, never onto disk.
+
+    The unpacker is checked on what it produced rather than trusted, so an
+    extractor that writes the sidecar out is caught even though the archive
+    itself was admitted.
+    """
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    archive = tmp_path / "app.zip"
+    members = _macos_bundle_members()
+    members[f"__MACOSX/{BUNDLE_NAME}/._Contents"] = b"attributes"
+    archive.write_bytes(_macos_archive(members))
+
+    def extract_everything(command: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
+        with zipfile.ZipFile(Path(command[-2])) as bundle:
+            bundle.extractall(Path(command[-1]))
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    with pytest.raises(ApplicationUpdateError, match="unexpected shape"):
+        extract_application_bundle(archive, parent, BUNDLE_NAME, runner=extract_everything)
+
+    assert list(parent.iterdir()) == []
+
+
+@pytest.mark.parametrize("marking", [{"draft": True}, {"prerelease": True}])
+def test_a_draft_or_prerelease_is_not_offered_as_an_update(marking: dict[str, bool]) -> None:
+    """Stable-only is the product policy, and neither payload is a stable build."""
+
+    result = check_application_update(
+        lambda: _release(**marking), current_version="0.1.0", platform="linux"
+    )
+
+    assert (result.available, result.installable, result.latest_version) == (False, False, None)
+    assert "no stable build" in result.message
+
+
+def test_a_relaunched_build_reports_the_version_that_actually_came_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """This file is the whole acknowledgement an update waits for: the handoff
+    keeps the previous installation until it reads back the version it staged."""
+
+    monkeypatch.setattr(metadata, "version", lambda name: "0.2.0")
+    ready = tmp_path / "transaction" / "ready"
+
+    confirm_started(ready)
+
+    assert ready.read_text(encoding="utf-8") == "0.2.0"
+
+
+def test_a_link_to_a_directory_that_escapes_is_caught_after_extraction(
+    tmp_path: Path,
+) -> None:
+    """The preflight rejects such a link from the archive's own table of
+    contents. This is the check behind it, on what was actually written -
+    and ``os.walk`` reports a link to a directory as a subdirectory it does
+    not descend, so a walk over files alone would never look at one."""
+
+    from hanly_app.app_update import _require_contained_tree
+
+    payload = tmp_path / BUNDLE_NAME / "Contents"
+    payload.mkdir(parents=True)
+    (payload / "escape").symlink_to("/etc", target_is_directory=True)
+
+    with pytest.raises(ApplicationUpdateError, match="escapes its directory"):
+        _require_contained_tree(tmp_path)

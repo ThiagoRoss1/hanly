@@ -92,8 +92,10 @@ class _Service:
     def close(self) -> None:
         self.events.append(f"{self.name}.close")
 
-    def run(self) -> int:
+    def run(self, on_started: Callable[[], None] | None = None) -> int:
         self.events.append(f"{self.name}.run")
+        if on_started is not None:
+            on_started()
         return 7
 
     def set_restorable(self, restorable: bool) -> None:
@@ -133,6 +135,53 @@ def test_desktop_application_runs_and_shuts_down_services_once() -> None:
         "controller.await_shutdown",
     ]
     assert qt.events == []
+
+
+def test_the_window_opening_is_what_answers_a_waiting_update_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The handoff keeps the previous installation until this build answers, so
+    the milestone is the window existing - Qt, WebEngine, and the interpreter
+    inside the new build have all started by then. A resource that downloads
+    afterwards says nothing about whether the swap produced a working Hanly."""
+
+    from importlib import metadata
+
+    monkeypatch.setattr(metadata, "version", lambda name: "0.2.0")
+    ready = tmp_path / "transaction" / "ready"
+    events: list[str] = []
+    desktop = DesktopApplication(
+        _Qt(),
+        _Service("controller", events),
+        _Service("tray", events),
+        _Service("control", events),
+    )
+    acknowledge = application_module._update_acknowledgement(ready, DiagnosticLog())
+
+    assert desktop.run(acknowledge) == 7
+
+    assert ready.read_text(encoding="utf-8") == "0.2.0"
+
+
+def test_a_launch_no_handoff_is_waiting_on_writes_no_acknowledgement() -> None:
+    assert application_module._update_acknowledgement(None, DiagnosticLog()) is None
+
+
+def test_an_unwritable_acknowledgement_is_reported_and_never_stops_the_launch(
+    tmp_path: Path,
+) -> None:
+    """Failing to answer costs the update, which rolls back. Refusing to open
+    would cost the user their Hanly for a file they never asked about."""
+
+    diagnostics = DiagnosticLog()
+    blocked = tmp_path / "file" / "ready"
+    blocked.parent.write_text("not a directory", encoding="utf-8")
+
+    acknowledge = application_module._update_acknowledgement(blocked, diagnostics)
+    assert acknowledge is not None
+    acknowledge()
+
+    assert any("Update acknowledgement" in entry for entry in diagnostics.snapshot())
 
 
 def test_desktop_actions_refresh_tray_and_capture_control_center_errors() -> None:

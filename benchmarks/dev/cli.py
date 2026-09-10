@@ -468,6 +468,9 @@ def run_package(args: argparse.Namespace) -> int:
         hash_duplicates=args.hash_duplicates,
         hash_max_files=args.hash_max_files,
         hash_max_bytes=args.hash_max_bytes,
+        duplicate_candidates=getattr(args, "duplicate_candidates", False),
+        candidate_max_files=getattr(args, "candidate_max_files", 10_000),
+        archive=getattr(args, "archive", None),
     )
     print(
         f"analyzed {report['file_count']} files / {report['total_bytes']} bytes -> {args.output}"
@@ -894,6 +897,19 @@ def _parser() -> argparse.ArgumentParser:
     package.add_argument("--hash-duplicates", action="store_true")
     package.add_argument("--hash-max-files", type=int, default=10_000)
     package.add_argument("--hash-max-bytes", type=int, default=2 * 1024**3)
+    package.add_argument(
+        "--duplicate-candidates",
+        action="store_true",
+        help="record bounded same-size duplicate candidates",
+    )
+    package.add_argument("--candidate-max-files", type=int, default=10_000)
+    package.add_argument(
+        "--archive",
+        "--archive-path",
+        dest="archive",
+        type=Path,
+        help="optional ZIP archive to measure alongside the package tree",
+    )
     package.set_defaults(handler=run_package)
     return parser
 
