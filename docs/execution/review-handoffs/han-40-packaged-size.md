@@ -43,7 +43,10 @@ pruning — see *Review findings and their outcome* below.
   real rather than assumed: this build host runs `AppleLocale = pt_BR` with
   `AppleLanguages = ("pt-BR", "ko-BR")`, and `pt-BR.pak` is one of the removed
   files. The frozen Control Center still opened, rendered its four controls,
-  answered the JavaScript bridge, and wrote nothing at all to stderr.
+  answered the JavaScript bridge, and wrote nothing at all to stderr. Later
+  confirmed at the source: the WebEngine renderer launches with `--lang=pt`
+  against `qtwebengine_locales` holding only `en-US.pak` and `ko.pak`, and
+  falls back without a complaint.
 - **Qt `.qm`.** Qt translates only through a `QTranslator` an application
   constructs and installs. Neither package, nor pywebview, nor pystray does
   (`grep -rn "QTranslator\|installTranslator"` finds nothing outside KRDICT's
@@ -194,7 +197,8 @@ few bytes each occupies.
   99,269,822). The next largest unrecognized component is the application's
   own 49,762,928-byte executable.
 - Evidence reports: `baseline`, `accepted`, `fixes`, `locales` and `qm`
-  `-package.json` under `/private/tmp/hanly-han40-baseline.3UfG6d/`, with
+  `-package.json` under `/private/tmp/hanly-han40-baseline.3UfG6d/` — **expired,
+  since purged by the operating system; every figure above is inline here** — with
   build logs and per-build `validate-*` directories beside them.
 
 ## Reverted or rejected experiments

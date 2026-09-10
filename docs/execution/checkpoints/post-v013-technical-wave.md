@@ -40,11 +40,22 @@
 | C-HAN40-QM | ACCEPTED | All 157 `.qm` catalogues dropped; nothing in the shipped process installs a `QTranslator`, so no string changes. Incremental: 157 files, 9,459,015 tree bytes, 2,636,985 compressed member bytes, 2,720,511 ZIP bytes, 8,068,388 DMG bytes. `qtwebengine_locales` verified intact. Frozen boundary passed with zero stderr. | Run the final gate. |
 | C-HAN40-FINAL | COMPLETE | Fresh baseline to final: 364 files, 69,521,154 tree bytes (4.89%), 16,648,976 compressed member bytes, 16,857,582 ZIP bytes (2.85%), 27,734,155 DMG bytes (4.11%). ZIP 563.52 -> 547.45 MiB. Full suite: 1,041 passed, 2 skipped; Ruff clean; mypy clean (177 files); `pip check` clean in both venvs. HAN-42 updater regression re-run on the final artifact. | Update the Review Handoff and stop. |
 | C-HAN40-COMPLETE | STOP | HAN-40 is complete for this wave: the obvious safe wins are exhausted, the product works, and every remaining candidate has materially worse risk/reward. | Human-selected Phase B review of the continuation. Do not start HAN-41. |
+| C-HAN41-REGRESSION | RESOLVED | The reported macOS slowdown was environmental. Four orphaned processes from the earlier agent session held ~96% CPU each for 15 h, pinning 4 of 6 cores. Removing them took warm lookup from 96.1 ms p50 to 30.1 ms. Branch HEAD, `main` and `337a346` measured against identical dependencies: 30.1 / 31.7 / 31.8 ms — the branch is not responsible. | Measure the real baseline and pursue safe improvements. |
+| C-HAN41-BASELINE | COMPLETE | Clean macOS: pipeline ~30 ms p50 (OCR 98.5% of it), hover total ~110 ms at the 80 ms dwell default, hotkey ~30 ms. Frozen idle: 0.1% CPU p50, 2 processes, 50 threads, no OCR/capture loop, clean exit. Frozen startup: window 3,245 ms, ready 10,102 ms. | Test the candidate optimizations. |
+| C-HAN41-THREADS | REJECT | Torch threads 1/2/4/6 measured twice. On the loaded host the default of 4 looked 29% slower than 1; on a clean host 30.7 / 33.4 / 31.9 ms are within noise. The default stands, and the loaded reading is kept as the counter-example. | Test the prewarm candidate. |
+| C-HAN41-PREWARM | REJECT | Recognition-inclusive prewarm buys ~13 ms on one lookup for ~28 ms more preparation and no warm change; both first-lookup figures sit far below the 80 ms dwell. Not material. | Fix the wave's outstanding CI items. |
+| C-WAVE-CI | COMPLETE | Windows probe compile fixed by escaping paths into real C string literals, with compiler stderr surfaced and the probe's own files kept ASCII; no test weakened. The frozen Control Center smoke now gates on all three platforms. | Clean-environment validation. |
+| C-WAVE-CLEAN | COMPLETE | Tracked-only tree, fresh Python 3.10.20 venv, release constraints. Gates: 1,019 passed, 14 environment skips, Ruff and mypy clean, `pip check` clean. Real frozen build, ZIP/DMG reconstruction, inventory, Korean OCR/Kiwi/KRDICT, Control Center/bridge, codesign, and a baseline-to-candidate updater handoff all passed. | Final wave handoff. |
+| C-WAVE-CLEANUP | COMPLETE | Bounded maintainability pass: `spikes/` (1,081 lines) removed with both historical reports annotated, dead analyzer alias/wrapper/`Pandas` classifier removed, two internal-only exports trimmed, handoff script writer consolidated so tests exercise the production writer (mutation-checked). Final item: the stale `"spikes"` entry in `EXCLUDED_MODULES`. Clean 3.10 rebuild gives an identical 4,906 files and 14,088 ZIP members; DMG variance shown to be `hdiutil` UDZO nondeterminism (1.8% across identical input). Gates: 1,043 passed, 2 skipped; Ruff, mypy, `pip check` clean. | Human integration and release decision. |
+| C-WAVE-HANDOFF | STOP | `docs/execution/review-handoffs/post-v013-technical-wave-final.md`. | Human integration and release decision. |
 
 ## HAN-40 fresh macOS baseline
 
 - Disposable source/build root:
-  `/private/tmp/hanly-han40-baseline.3UfG6d/source`.
+  `/private/tmp/hanly-han40-baseline.3UfG6d/source`. That tree and every
+  `-package.json` beside it have since been purged by the operating system;
+  the paths below are a record of how the evidence was produced, not something
+  a later reader can open. The figures themselves are inline.
 - Host: macOS 26.6.2, arm64; Python 3.13.11 (the only local interpreter;
   release CI remains Python 3.10).
 - PyInstaller 6.22.2; hooks-contrib 2026.7; EasyOCR 1.7.2; Torch 2.14.0;
@@ -161,13 +172,31 @@ baseline above, so every figure is same-environment.
   decision. They do not block HAN-40, and neither platform is recorded as
   passed.
 
+## Clean-environment validation
+
+- Source: `git ls-files` into `/private/tmp/hanly-clean-validation/source`, so
+  tracked files only carrying the current working tree. No `dist`, no `.venv`,
+  no PyInstaller cache, no developer artifacts.
+- Interpreter: Python **3.10.20** arm64, installed through pyenv because the
+  host had only 3.13 and packaging CI pins 3.10. Fresh venv, dependencies
+  installed the way `build.yml` does, under `packaging/release-constraints.txt`.
+- Resolved: EasyOCR 1.7.2, Torch 2.14.0, torchvision 0.29.0, OpenCV-headless
+  5.0.0.93, PyQt6/WebEngine 6.11.0 with Qt 6.11.2, Kiwi 0.23.2, PyInstaller
+  6.22.2, hooks-contrib 2026.7, certifi 2026.7.22, **numpy 2.2.6, scipy
+  1.15.3** — the last two differ from the developer 3.13 environment's numpy
+  2.5.2 / scipy 1.18.1, which is why the release artifact is smaller.
+- Release artifact: 4,906 files, 1,342,316,030 tree bytes, 14,088 ZIP members,
+  555,751,657 compressed member bytes, **560,234,863 ZIP bytes (534.28 MiB)**,
+  640,532,052 DMG bytes.
+- Warm lookup on the release dependency set: **31.7 ms p50, 37.2 ms p95** —
+  the same profile as the developer environment.
+
 ## Resume rule
 
-HAN-40 Phase A is complete at its Review Handoff, including the authorized
-continuation. The obvious safe wins are exhausted, the product works, and
-every remaining candidate has materially worse risk/reward, so no further
-package-size search is authorized — not even for candidates the repaired
-analyzer now makes visible.
+All three phases are complete at their Review Handoffs, and the wave has one
+final handoff at
+`docs/execution/review-handoffs/post-v013-technical-wave-final.md`.
 
-Do not start HAN-41 in this run. Resume only with explicit human authorization
-for the separately selected HAN-40 Phase B reviewer or for a later phase.
+No further optimization is authorized. What remains is native Windows and
+Linux execution, which this host cannot provide and which is assigned to the
+GitHub runners, plus the human's integration and release decision.

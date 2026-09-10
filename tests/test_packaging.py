@@ -127,7 +127,7 @@ def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
 
     source = SPEC.read_text(encoding="utf-8")
 
-    assert 'EXCLUDED_MODULES = ("tests", "test", "spikes", "pkg_resources")' in source
+    assert 'EXCLUDED_MODULES = ("tests", "test", "pkg_resources")' in source
     assert "excludes=list(EXCLUDED_MODULES)" in source
 
 

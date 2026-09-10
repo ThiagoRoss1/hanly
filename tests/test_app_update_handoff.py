@@ -22,6 +22,7 @@ from hanly_app.app_update_handoff import (
     READY_ARGUMENT,
     READY_WAIT_SECONDS,
     UpdateTransaction,
+    _write_handoff_script,
     handoff_arguments,
     render_handoff_script,
     start_handoff,
@@ -149,6 +150,43 @@ def test_the_paths_travel_as_arguments_and_never_as_generated_script_text(
     assert script.isascii()
 
 
+def test_a_windows_path_survives_being_compiled_into_the_probe() -> None:
+    """``-DLOG="C:\\Users\\..."`` is a string of escape sequences, not a path,
+    and ``\\U`` is not a valid one. This is what failed on the Windows runner
+    before the probe's paths were escaped."""
+
+    literal = _c_string(r"C:\Users\runneradmin\AppData\Local\Temp\launched.txt")
+
+    assert literal == r'"C:\\Users\\runneradmin\\AppData\\Local\\Temp\\launched.txt"'
+    assert _c_string('a "quoted" name') == r'"a \"quoted\" name"'
+
+
+def test_a_powershell_handoff_is_written_with_the_bom_and_line_endings_it_needs(
+    tmp_path: Path,
+) -> None:
+    """PowerShell reads a ``-File`` script as UTF-8 only when it starts with a
+    BOM; without one a non-ASCII path inside it is decoded as the console code
+    page. Asserted on the bytes, and on every host, because the platform that
+    would notice is the one this suite usually cannot run on."""
+
+    script = _write_handoff_script("Write-Output 'hi'\n", platform="win32", directory=tmp_path)
+    raw = script.read_bytes()
+
+    assert script.name == "hanly-update.ps1"
+    assert raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" in raw
+
+
+def test_a_posix_handoff_is_written_executable_without_a_bom(tmp_path: Path) -> None:
+    script = _write_handoff_script("#!/bin/sh\ntrue\n", platform="linux", directory=tmp_path)
+    raw = script.read_bytes()
+
+    assert script.name == "hanly-update.sh"
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" not in raw
+    assert script.stat().st_mode & 0o700 == 0o700
+
+
 def test_the_script_is_written_outside_the_directory_it_removes(tmp_path: Path) -> None:
     transaction = _transaction(tmp_path / "install")
     spawned: list[tuple[list[str], Path]] = []
@@ -226,7 +264,12 @@ class _Handoff:
         return self.launched
 
 
-def _transaction(install_root: Path, *, version: str = NEW_VERSION) -> UpdateTransaction:
+def _transaction(
+    install_root: Path,
+    *,
+    version: str = NEW_VERSION,
+    ready_root: Path | None = None,
+) -> UpdateTransaction:
     directory = install_root.parent / ".hanly-update-probe"
     directory.mkdir(parents=True, exist_ok=True)
     return UpdateTransaction(
@@ -234,27 +277,46 @@ def _transaction(install_root: Path, *, version: str = NEW_VERSION) -> UpdateTra
         install_root=install_root,
         staged_path=directory / install_root.name,
         backup_path=directory / "previous",
-        ready_path=directory / "ready",
+        ready_path=(ready_root or directory) / "ready",
         version=version,
     )
 
 
+def _c_string(value: object) -> str:
+    """Quote a value as a C string literal.
+
+    A Windows path is full of backslashes, so a macro expanding to
+    ``"C:\\Users\\runneradmin\\..."`` is a string of escape sequences rather
+    than a path -- and ``\\U`` is not even a valid one, which is how this
+    first failed to compile on the Windows runner.
+    """
+
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
 def _compile(source: Path, program: Path, *, identity: str, version: str, log: Path) -> None:
     program.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            str(_COMPILER),
-            f'-DIDENTITY="{identity}"',
-            f'-DVERSION="{version}"',
-            f'-DLOG="{log}"',
-            "-o",
-            str(program),
-            str(source),
-        ],
-        check=True,
-        capture_output=True,
-        timeout=120,
-    )
+    command = [
+        str(_COMPILER),
+        f"-DIDENTITY={_c_string(identity)}",
+        f"-DVERSION={_c_string(version)}",
+        # Forward slashes: every Windows CRT accepts them, and they leave the
+        # macro with nothing left to escape.
+        f"-DLOG={_c_string(log.as_posix())}",
+        "-o",
+        str(program),
+        str(source),
+    ]
+    finished = subprocess.run(command, capture_output=True, timeout=120)
+    if finished.returncode != 0:
+        # Without this the failure is a bare CalledProcessError and the
+        # compiler's own explanation is thrown away.
+        raise AssertionError(
+            "could not compile the update probe\n"
+            f"command: {' '.join(command)}\n"
+            f"stderr:\n{finished.stderr.decode('utf-8', 'replace')}"
+        )
 
 
 def _dead_pid() -> str:
@@ -284,21 +346,35 @@ def _macos_bundle(root: Path) -> None:
 
 
 def _prepare(
-    tmp_path: Path, platform: str, *, new_version: str = NEW_VERSION
+    tmp_path: Path,
+    platform: str,
+    *,
+    new_version: str = NEW_VERSION,
+    probe_root: Path | None = None,
 ) -> _Handoff:
-    """Build an old installation, a staged replacement, and the real script."""
+    """Build an old installation, a staged replacement, and the real script.
+
+    ``probe_root`` is where the probe's own two files live: the program's log
+    and the readiness file it writes. It is separate from ``tmp_path`` so the
+    installation under test can carry spaces and Hangul while the C probe --
+    which receives paths through a compile-time macro and an ANSI ``argv`` on
+    Windows -- only ever handles ASCII. What the handoff renames, relaunches
+    and cleans up is still the awkward path.
+    """
 
     tmp_path.mkdir(parents=True, exist_ok=True)
-    source = tmp_path / "probe.c"
+    probes = probe_root or tmp_path
+    probes.mkdir(parents=True, exist_ok=True)
+    source = probes / "probe.c"
     source.write_text(_PROBE_SOURCE, encoding="ascii")
-    log = tmp_path / "launched.txt"
+    log = probes / "launched.txt"
 
     darwin = platform == "darwin"
     name = BUNDLE_NAME if darwin else APPLICATION_STEM
     inside = _MACOS_PROGRAM if darwin else APPLICATION_STEM
 
     install_root = tmp_path / "install" / name
-    transaction = _transaction(install_root)
+    transaction = _transaction(install_root, ready_root=probes)
     for root, identity, version in (
         (install_root, "old", "0.1.0"),
         (transaction.staged_path, "new", new_version),
@@ -324,16 +400,9 @@ def _script(tmp_path: Path, *, executable: str, platform: str) -> Path:
         assert body.count(str(bound)) == 1, body
         body = body.replace(str(bound), "8")
 
-    windows = platform == "win32"
-    script = tmp_path / ("hanly-update.ps1" if windows else "hanly-update.sh")
-    script.write_text(
-        body,
-        encoding="utf-8-sig" if windows else "utf-8",
-        newline="\r\n" if windows else "\n",
-    )
-    if not windows:
-        script.chmod(0o700)
-    return script
+    # The production writer owns encoding, line endings and mode. Restating
+    # them here would let this suite stay green while the real one regressed.
+    return _write_handoff_script(body, platform=platform, directory=tmp_path)
 
 
 def _run(handoff: _Handoff, *, expect_status: int) -> _Handoff:
@@ -469,8 +538,12 @@ def test_a_rollback_that_itself_fails_launches_nothing_and_keeps_the_backup(
 def test_an_installation_path_with_spaces_and_non_ascii_survives_the_handoff(
     tmp_path: Path, platform: str
 ) -> None:
-    handoff = _run(_prepare(tmp_path / "한글 프로그램", platform), expect_status=0)
+    handoff = _run(
+        _prepare(tmp_path / "한글 프로그램", platform, probe_root=tmp_path / "probe"),
+        expect_status=0,
+    )
 
+    assert "한글 프로그램" in str(handoff.transaction.install_root)
     assert handoff.await_launched(["new"]) == ["new"]
     _assert_identity(handoff, "new")
 

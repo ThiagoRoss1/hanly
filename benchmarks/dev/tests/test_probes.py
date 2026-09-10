@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from benchmarks.dev.package_composition import PackageCompositionAnalyzer, analyze_package
+from benchmarks.dev.package_composition import analyze_package
 from benchmarks.dev.probes import (
     ProcessSampler,
     probe_capture,
@@ -150,14 +150,6 @@ def test_package_analyzer_does_not_flag_the_expected_application_executable(
     assert [row["path"] for row in report["unexpected_large_components"]] == [
         "mystery"
     ]
-
-
-def test_package_analyzer_object_exposes_analyze_method(tmp_path: Path) -> None:
-    (tmp_path / "one.bin").write_bytes(b"1")
-
-    report = PackageCompositionAnalyzer(tmp_path).analyze()
-
-    assert report["file_count"] == 1
 
 
 def test_package_analyzer_unwraps_one_pyinstaller_internal_prefix(tmp_path: Path) -> None:

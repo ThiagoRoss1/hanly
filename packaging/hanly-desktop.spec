@@ -48,7 +48,7 @@ MANDATORY_PACKAGES = ("kiwipiepy", "kiwipiepy_model")
 
 MANDATORY_EXTENSION_MODULES = ("_kiwipiepy",)
 
-EXCLUDED_MODULES = ("tests", "test", "spikes", "pkg_resources")
+EXCLUDED_MODULES = ("tests", "test", "pkg_resources")
 
 #: QtWebEngine ships one Chromium string catalogue per locale, and its hook
 #: collects the whole directory. The Control Center is app-authored HTML, so

@@ -135,14 +135,19 @@ def spawn_detached(command: list[str], directory: Path) -> None:
     subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
 
 
-def _write_script(*, executable: str, platform: str) -> Path:
+def _write_handoff_script(body: str, *, platform: str, directory: Path) -> Path:
+    """Write one rendered body with the encoding and mode its shell requires.
+
+    PowerShell reads a ``-File`` script as UTF-8 only with a BOM and expects
+    ``cmd``-era line endings; a POSIX shell needs the executable bit instead.
+    Taking the body as an argument is what lets the tests that execute a real
+    swap write their shortened one through this same boundary, rather than
+    restating these rules and leaving them unexercised.
+    """
+
     windows = platform.startswith("win32")
-    directory = Path(tempfile.mkdtemp(prefix="hanly-update."))
     script = directory / ("hanly-update.ps1" if windows else "hanly-update.sh")
-    body = render_handoff_script(executable=executable, platform=platform)
     try:
-        # PowerShell reads a ``-File`` script as UTF-8 only with a BOM, and
-        # ``cmd``-era line endings are what a Windows shell expects.
         script.write_text(
             body,
             encoding="utf-8-sig" if windows else "utf-8",
@@ -153,6 +158,12 @@ def _write_script(*, executable: str, platform: str) -> Path:
     except OSError as error:
         raise HandoffError(f"could not write the update handoff: {error}") from error
     return script
+
+
+def _write_script(*, executable: str, platform: str) -> Path:
+    directory = Path(tempfile.mkdtemp(prefix="hanly-update."))
+    body = render_handoff_script(executable=executable, platform=platform)
+    return _write_handoff_script(body, platform=platform, directory=directory)
 
 
 def _launcher(platform: str, script: Path) -> list[str]:
@@ -351,7 +362,6 @@ __all__ = [
     "EXIT_WAIT_SECONDS",
     "READY_ARGUMENT",
     "READY_WAIT_SECONDS",
-    "SWAP_ATTEMPTS",
     "HandoffError",
     "UpdateTransaction",
     "handoff_arguments",

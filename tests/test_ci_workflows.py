@@ -294,9 +294,10 @@ def test_every_native_build_opens_the_frozen_window_it_is_about_to_ship() -> Non
     assert "if" not in steps[window], "the window check runs on every platform"
     # A hosted Linux runner has no display of its own.
     assert "xvfb-run" in steps[window]["run"]
-    # Windows has a native run on record; the other two are recorded evidence
-    # for one release before they become gates.
-    assert steps[window]["continue-on-error"] == "${{ matrix.platform != 'windows' }}"
+    # All three are gates now. macOS and Linux were recorded-only for one
+    # release while their frozen windows were unproven; a smoke that cannot
+    # fail the build gates nothing, and a release must not be cut from a red one.
+    assert "continue-on-error" not in steps[window]
 
 
 def test_each_artifact_records_the_identity_it_was_built_from() -> None:

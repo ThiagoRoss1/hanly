@@ -66,8 +66,8 @@ before Qt; `first_run` provisions resources on a launch with no configuration.
 
 Developer-only benchmark instrumentation lives under `benchmarks/dev/`,
 including its tests (`benchmarks/dev/tests/`, collected by pytest) and the
-unwired hover HUD widgets (`benchmarks/dev/hud/`). Nothing dev-only
-belongs in `packages/`.
+hover HUD (`benchmarks/dev/hud/`), which the `dev-hud` command runs. Nothing
+dev-only belongs in `packages/`.
 
 The venv (`.venv/`, gitignored) runs Python 3.13 and already has `easyocr`, `torch`, `kiwipiepy`, `pillow`, `numpy`. The architecture targets Python **3.10+**, so don't rely on 3.13-only syntax.
 

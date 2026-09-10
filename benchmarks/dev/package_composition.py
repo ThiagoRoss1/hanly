@@ -17,7 +17,6 @@ _FAMILY_NAMES = (
     "Kiwi/model assets",
     "Qt/PyQt6/QtWebEngine",
     "NumPy",
-    "Pandas",
     "OpenCV",
     "Torch",
     "SciPy",
@@ -57,8 +56,6 @@ def _family_for(path: Path) -> str | None:
         return "Qt/PyQt6/QtWebEngine"
     if any(part in {"numpy", "numpy.libs", "numpy_core"} for part in parts):
         return "NumPy"
-    if any(part in {"pandas", "pandas.libs"} for part in parts):
-        return "Pandas"
     if any(part in {"cv2", "opencv", "opencv_python"} for part in parts):
         return "OpenCV"
     if any(part in {"torch", "torch.libs", "torchvision"} for part in parts):
@@ -77,8 +74,6 @@ def _family_for(path: Path) -> str | None:
         return "Qt/PyQt6/QtWebEngine"
     if "numpy" in joined:
         return "NumPy"
-    if "pandas" in joined:
-        return "Pandas"
     if "opencv" in joined or "cv2" in joined:
         return "OpenCV"
     if "torch" in joined:
@@ -331,28 +326,7 @@ def write_package_report(
     return report
 
 
-analyze_package_composition = analyze_package
-
-
-class PackageCompositionAnalyzer:
-    """Reusable configuration object for package composition reports."""
-
-    def __init__(self, root: str | os.PathLike[str], **options: Any) -> None:
-        self.root = root
-        self.options = dict(options)
-
-    def analyze(self) -> dict[str, Any]:
-        """Analyze the configured package tree."""
-        return analyze_package(self.root, **self.options)
-
-    def write(self, destination: str | os.PathLike[str] | TextIO) -> dict[str, Any]:
-        """Analyze and write the configured report as JSON."""
-        return write_package_report(self.root, destination, **self.options)
-
-
 __all__ = [
-    "PackageCompositionAnalyzer",
     "analyze_package",
-    "analyze_package_composition",
     "write_package_report",
 ]

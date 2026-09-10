@@ -729,7 +729,6 @@ __all__ = [
     "APPLICATION_STEM",
     "BUNDLE_IDENTIFIER",
     "BUNDLE_NAME",
-    "CHECKSUM_ASSET",
     "PRODUCT_PACKAGE",
     "ApplicationInstaller",
     "ApplicationUpdate",

@@ -4,6 +4,14 @@
 
 `DONE_WITH_CONCERNS`
 
+> **The harness was removed on 2026-09-10.** `spikes/packaging_feasibility.py`
+> probed PaddleOCR, which stopped being a Hanly backend on 2026-08-26, and the
+> packaging path it explored is now implemented and validated by
+> `packaging/hanly-desktop.spec`, `tools/build_package.py` and
+> `tools/smoke_packaged_runtime.py`. The findings and measurements recorded
+> below stand as history — only the obsolete executable experiment is gone, so
+> the commands quoted in this report can no longer be re-run as written.
+
 This is non-blocking Windows evidence for later PyInstaller planning. It is not
 production packaging, a release artifact, CI configuration, or a pytest test.
 The requested Luna `xhigh` runtime identity/reasoning metadata is unavailable in
