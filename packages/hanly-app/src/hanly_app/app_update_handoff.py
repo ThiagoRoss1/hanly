@@ -283,10 +283,25 @@ $program = Join-Path $Install '{executable}'
 function Start-Hanly {{
   param([string]$Arguments = '')
 
-  $options = @{{ FilePath = $program; WorkingDirectory = $Install }}
+  $options = @{{ FilePath = $program; WorkingDirectory = $Install; PassThru = $true }}
   if ($Arguments -ne '') {{ $options['ArgumentList'] = $Arguments }}
   try {{
-    Start-Process @options | Out-Null
+    return Start-Process @options
+  }} catch {{
+    return $null
+  }}
+}}
+
+# Windows refuses to rename a directory a running program was started from, so
+# a build that came up but is being rejected has to be stopped before the
+# previous one can go back. Without this the restore fails outright and leaves
+# the rejected build installed.
+function Stop-Hanly {{
+  param($Started)
+
+  if ($null -eq $Started) {{ return }}
+  try {{
+    Stop-Process -InputObject $Started -Force -ErrorAction SilentlyContinue
   }} catch {{
   }}
 }}
@@ -323,12 +338,12 @@ try {{
   [System.IO.Directory]::Move($Staged, $Install)
 }} catch {{
   try {{ [System.IO.Directory]::Move($Backup, $Install) }} catch {{ exit 1 }}
-  Start-Hanly
+  Start-Hanly | Out-Null
   Complete-Handoff
   exit 1
 }}
 
-Start-Hanly ('{ready_argument} \"' + $Ready + '\"')
+$candidate = Start-Hanly ('{ready_argument} \"' + $Ready + '\"')
 
 $deadline = (Get-Date).AddSeconds({ready_wait})
 while ((Get-Date) -lt $deadline) {{
@@ -345,14 +360,29 @@ while ((Get-Date) -lt $deadline) {{
 # The new build never reported starting. The previous one is known to work, so
 # it goes back. It is renamed aside rather than removed: a recursive delete
 # that fails part way through would leave the installation path in pieces with
-# nothing yet restored, and a rename either happens or does not.
+# nothing yet restored, and a rename either happens or does not. The rename is
+# retried for the same reason the first one is: stopping a process returns
+# before Windows has released the files it held.
+Stop-Hanly $candidate
+
+$aside = $false
+for ($attempt = 0; $attempt -lt {attempts}; $attempt++) {{
+  try {{
+    [System.IO.Directory]::Move($Install, (Join-Path $Transaction 'rejected'))
+    $aside = $true
+    break
+  }} catch {{
+    Start-Sleep -Seconds 1
+  }}
+}}
+if (-not $aside) {{ exit 1 }}
+
 try {{
-  [System.IO.Directory]::Move($Install, (Join-Path $Transaction 'rejected'))
   [System.IO.Directory]::Move($Backup, $Install)
 }} catch {{
   exit 1
 }}
-Start-Hanly
+Start-Hanly | Out-Null
 Complete-Handoff
 exit 1
 """

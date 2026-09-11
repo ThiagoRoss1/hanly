@@ -11,4 +11,7 @@ def configure_utf8_output() -> None:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            reconfigure(encoding="utf-8")
+            # ``reconfigure`` resets the error handler to strict unless it is
+            # named too, which silently turns a stream that tolerated
+            # undecodable bytes into one that raises on them.
+            reconfigure(encoding="utf-8", errors=getattr(stream, "errors", None) or "strict")

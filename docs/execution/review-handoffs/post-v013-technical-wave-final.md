@@ -44,8 +44,13 @@ replacing a full baseline `Hanly.app` with each candidate and receiving the
 exact `0.1.3` acknowledgement with clean transaction removal and a valid
 signature.
 
-**Remaining limitation.** The PowerShell body has still never executed. It is
-rendered-only until the Windows runner runs it — see *Windows* below.
+**Remaining limitation — since closed.** The PowerShell body had never
+executed. It has now: `han-42-windows-native-validation.md` records a native
+Windows run of the real script against the real frozen build, in both the
+accepted and the rejected direction. That run also found and fixed a rollback
+defect this document could not have seen — Windows refuses to rename the
+installation directory while the rejected build is still running from it, so
+the restore did nothing and left the rejected build installed.
 
 ---
 
@@ -289,12 +294,16 @@ ones to judge packaging changes by.
 
 ## Remaining risks
 
-1. **No native Windows or Linux execution happened in this wave.** Everything
-   for those platforms is source-and-workflow work validated on macOS and
-   assigned to the runners. The first Windows CI run after this branch is the
-   real test of both the PowerShell handoff and the repaired probe compile.
-2. **The Windows `debug.pak` question is still open** and is the largest known
-   remaining size item (~15 MiB compressed, if it is still there).
+1. **Linux still has no native execution.** ~~No native Windows or Linux
+   execution happened in this wave.~~ Windows is now covered — see
+   `han-42-windows-native-validation.md`: a real frozen build, the Korean
+   OCR/Kiwi/KRDICT and Control Center smokes, and both handoff directions ran
+   on Windows 10 x64 against Python 3.10.11. Linux remains source-and-workflow
+   work assigned to the runner.
+2. **The Windows `debug.pak` question is answered, and the file stays.** It is
+   present at 75,843,657 B, 14,716,243 B compressed in the ZIP — close to the
+   ~15 MiB estimated here. Nothing was observed to attribute to it, so it was
+   not removed. It remains the largest known Windows size item.
 3. **Popup, hover, hotkey, tray, capture and hide/restore are not exercised in
    a frozen artifact.** They need Accessibility and Screen Recording permission
    and a human at the machine; the packaged self-check has only `worker` and

@@ -222,7 +222,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # encoding may otherwise be cp1252 and reject normalized Korean output.
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if callable(reconfigure):
-        reconfigure(encoding="utf-8")
+        # Naming the error handler as well keeps the one the stream already
+        # had; ``reconfigure`` otherwise resets it to strict.
+        reconfigure(
+            encoding="utf-8", errors=getattr(sys.stdout, "errors", None) or "strict"
+        )
     print(output)
     return 0
 
