@@ -60,9 +60,27 @@ the desktop at one.
 **There is one entry point.** `hanly_app.cli:main` is it. The installed `hanly`
 script, `python -m hanly_app`, and the packaged executable all call that one
 function, and `tests/test_packaging.py` fails if a
-second way to start the desktop appears. `application.py` owns `run_desktop`
-and the composition; it is not an entry point. `ocr_preload` imports EasyOCR
-before Qt; `first_run` provisions resources on a launch with no configuration.
+second way to start the desktop appears. `main` calls
+`multiprocessing.freeze_support()` first, because a spawned child re-enters a
+frozen build through this same executable. `application.py` owns `run_desktop`
+and the composition; it is not an entry point. `first_run` provisions resources
+on a launch with no configuration.
+
+**Three processes (2026-09-11).** The persistent shell owns Qt Widgets, the
+tray, hotkeys, capture, hover, the popup, settings, updates, and the session
+log, and it holds the one event loop with `setQuitOnLastWindowClosed(False)`.
+It imports neither Qt WebEngine nor the OCR runtime. Two optional children do:
+`control_center_process.py` spawns the window, and `lookup_process.py` spawns
+the providers. Both use `multiprocessing.get_context("spawn")` with an
+inherited `Pipe`; `process_transport.py` is the only way they talk. The
+canonical `ControlCenterBridge` stays in the shell and the page reaches it
+through a fixed operation allowlist. `ocr_preload` imports EasyOCR first inside
+the lookup child, never in the shell.
+
+**Readiness is not residency.** `RuntimeStatus` says whether a lookup can happen
+at all; `LookupEngine.state` (sleeping / preparing / ready / error) says whether
+the providers are loaded. `config.LookupPreload` decides which one a launch pays
+for, and `ManualLookupRuntime` applies that policy.
 
 Developer-only benchmark instrumentation lives under `benchmarks/dev/`,
 including its tests (`benchmarks/dev/tests/`, collected by pytest) and the

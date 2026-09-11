@@ -24,10 +24,10 @@
 - [x] hover stability / popup persistence
 - [x] logs / diagnostics
 - [x] cleanup / disk hygiene
-- [ ] integration review
-- [ ] full source gates
-- [ ] clean macOS frozen build
-- [ ] final performance measurements
+- [x] integration review
+- [x] full source gates
+- [x] clean macOS frozen build
+- [x] final performance measurements
 - [ ] final review
 - [ ] final handoff
 - [ ] branch push
@@ -87,6 +87,100 @@ Files: This checkpoint; execution plan to follow investigation.
 Validation: `git fetch origin main`; HEAD and origin/main match.
 
 ## Progress Log
+
+### 2026-09-11 — Task 6: integration, the clean frozen build, and the numbers
+
+What changed: Reviewed the whole branch against `main`. `docs/CODE-MAP.md` now
+describes three processes, the transport, readiness against residency, the
+retained hover target, and every new module; `CLAUDE.md` no longer says the OCR
+runtime loads before Qt in the shell. New packaging contract tests assert that
+neither child entry point reaches first-run provisioning, update
+acknowledgement, `run_desktop` or hotkey registration, and that
+`application.py` carries neither heavy runtime. The new public types are
+exported from `hanly_app`.
+Source gates, working tree: pytest 1155 passed / 3 skipped in 70 s; Ruff clean;
+mypy clean over 190 files; `pip check` clean.
+Clean constrained environment: tracked-source `git archive` export, Python
+3.10.20, a fresh venv, `packaging/release-constraints.txt`, and the workflow's
+installation order. `pip check` clean, Ruff clean, mypy clean over 190 files,
+pytest **1137 passed / 8 skipped** in 130 s. The five extra skips are the
+environment saying so: no `tomllib` on 3.10 (2), no frozen bundle yet (3, later
+satisfied), a Windows-only abort code, a Windows-only rename rule, and the
+opt-in real-model inference test.
+Frozen build: `tools/build_package.py --platform macos` with
+`PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR=1` and the EasyOCR weights supplied as
+verified inputs. Products: `hanly-desktop-macos.zip` (560,295,588 bytes) and
+`hanly-desktop-macos.dmg` (639,494,440 bytes); the `.app` is 1.3 GB. The ZIP was
+reconstructed and the DMG mounted read-only; the inventory reported every
+expected entry and nothing missing, and `codesign --verify --deep --strict`
+returned `valid on disk` and `satisfies its Designated Requirement`
+(adhoc, `io.github.thiagoross1.hanly`, 6039 sealed files).
+Frozen self-checks, run outside the checkout and the developer profile:
+`--self-check worker` read **책을 읽습니다.** through the bundled EasyOCR
+(2229 ms), analyzed 한국어 through Kiwi (1354 ms) and found 1 dictionary entry
+(3 ms); `--self-check ui` opened the real window, rendered its four controls and
+completed a bridge round trip.
+Frozen process split, the new risk this wave had to retire:
+
+| Frozen state | Processes | Tree footprint | Shell |
+|---|---:|---:|---:|
+| dormant, window open, engine asleep | 4 | 372.0 MiB | 66.8 MiB |
+| window open, engine loaded (Always) | 5 | 1153.5 MiB | 63.0 MiB |
+
+The Control Center child was 248.5 MiB with 28 threads plus a 27.2 MiB
+`QtWebEngineProcess`; the lookup child was 810.8 MiB. Ready at 2040 ms with the
+engine asleep and 7333 ms with it loaded. `SIGINT` logged
+`Lookup engine: sleeping` and the process exited cleanly both times. No
+recursive shell launch in either run.
+Updater compatibility: the frozen build answered `--update-ready` in **3 s**
+with `0.1.3`. This is the contract the handoff waits on, and it moved in this
+wave from "the window opened" to "the shell's loop is running", so it was worth
+proving on the real artifact.
+Source-build lifecycle measurements, same host and dependency set as the before
+baseline. MiB means 2^20 bytes; footprint is libproc `RUSAGE_INFO_V2` and RSS is
+`ps`; they are different accounting measures and neither is a Windows working
+set. The process count includes CPython's POSIX `multiprocessing` resource
+tracker, a permanent ~29 MiB process that the spawn start method creates and
+that Windows does not have.
+
+| State | Processes | Tree footprint MiB | Shell footprint MiB |
+|---|---:|---:|---:|
+| A dormant, window closed, engine asleep | 2 | 69.3 | 60.4 |
+| B Control Center open | 4 | 383.3 | 64.9 |
+| C preparing, just after Start | 3 | 177.3 | 63.3 |
+| D capture ready, engine loaded | 3 | 895.4 | 63.2 |
+| E capture running after hover movement | 3 | 864.8 | 63.5 |
+| F paused | 2 | 72.5 | 63.6 |
+| G cold manual lookup, engine woken | 3 | 1210.2 | 63.5 |
+| H warm manual lookup | 3 | 1148.8 | 63.6 |
+| after shutdown, children gone | 2 | 72.3 | 63.4 |
+
+Against the before baseline: full idle was 1010-1036 MiB of parent footprint and
+a paused prepared runtime was 1011 MiB. Dormant is now 69 MiB across two
+processes and pause returns to 72 MiB. Startup to ready went from 12.55 s to
+1.44-1.78 s with the default policy. A cold manual lookup with capture off woke
+the engine and reached ready in **5.1-6.6 s**; a warm one answered inside the
+probe's 2 s sample window, and the dwell sweep measured the warm pipeline itself
+at 0.06 ms in the child and 0.54-0.83 ms through the process boundary.
+Honest limits of this sweep: the scripted hover step did not resolve a word on
+the final memory passes. A full-screen capture taken at the moment of failure
+showed only the desktop picture, so the fixture window was not on the Space
+being captured; that is probe staging, not product behaviour. Hover is proven
+natively by the dedicated dwell sweep recorded under task 4, which resolved the
+first and second word at 80, 40 and 20 ms and did no work during micro-movement.
+E is therefore labelled for what it measures -- capture running with the engine
+loaded -- rather than as a warm hover lookup.
+Global hot keys: registration is proven natively in both builds
+(`lookup <ctrl>+<shift>+<space>`, `toggle_hover <ctrl>+<shift>+<f9>` reported by
+the running session; the frozen run logged no shortcut failure). **Delivery
+could not be proven from an automated probe**: macOS does not match a synthetic
+`CGEvent` against a Carbon hot key, verified directly -- a registered service
+with a posted ctrl+shift+space fired nothing. The manual lookup path after the
+key is production code and was measured through it (G and H above). An actual
+key press remains a pending human check.
+Files: `docs/CODE-MAP.md`, `CLAUDE.md`, `tests/test_packaging.py`,
+`packages/hanly-app/src/hanly_app/__init__.py`.
+Next: the final handoff and the branch push.
 
 ### 2026-09-11 — Task 5: logs a user can read, and cleanup that refuses
 

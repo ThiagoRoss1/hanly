@@ -797,3 +797,38 @@ def test_a_disk_image_that_cannot_be_read_fails_without_leaving_a_mount(
 
     with pytest.raises(RuntimeError, match="could not mount"):
         verify_disk_image(image, runner=_NativeTool(returncode=1))
+
+
+def test_neither_child_process_does_the_shell_s_work() -> None:
+    """A child opens a window or builds providers. It must not provision a
+    first run, answer an update handoff, register a shortcut, or start a second
+    desktop: those belong to the one process that keeps running."""
+
+    forbidden = (
+        "provision_runtime_config",
+        "confirm_started",
+        "run_desktop",
+        "HotkeyService",
+        "hotkeys.register",
+    )
+    children = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center_process.py",
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup_process.py",
+    )
+    for path in children:
+        source = path.read_text(encoding="utf-8")
+        for name in forbidden:
+            assert name not in source, f"{path.name} reaches {name}"
+
+
+def test_the_shell_s_bootstrap_carries_neither_heavy_runtime() -> None:
+    """Memory a library never returns can only be returned by its process
+    exiting, so the process that never exits must not load one."""
+
+    application = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "application.py"
+    ).read_text(encoding="utf-8")
+
+    assert "QtWebEngine" not in application
+    assert "preload_ocr_runtime" not in application
+    assert "prepare_control_center_qt" not in application
