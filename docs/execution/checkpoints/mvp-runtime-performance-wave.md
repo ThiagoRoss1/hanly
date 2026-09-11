@@ -18,7 +18,7 @@
 - [x] macOS baseline
 - [x] implementation-ready execution plan
 - [x] runtime / Control Center lifecycle
-- [ ] heavy lookup worker
+- [x] heavy lookup worker
 - [ ] preload policies
 - [ ] hover activation / hotkeys
 - [ ] hover stability / popup persistence
@@ -87,6 +87,78 @@ Files: This checkpoint; execution plan to follow investigation.
 Validation: `git fetch origin main`; HEAD and origin/main match.
 
 ## Progress Log
+
+### 2026-09-11 — Task 2: the lookup engine is a child the shell can retire
+
+What changed: New `lookup_process.py`. `LookupSettings` is the plain value that
+crosses spawn (validated KRDICT path, `EasyOCRConfig`, threshold, flat-ROI gate);
+a `HanlyRuntime` never does. `LookupProcess` owns one child, its pipe and its
+generation; `LookupEngine` owns residency (sleeping / preparing / ready / error)
+and is itself the `JobExecutor` worker. `LookupController` and `JobExecutor` are
+unchanged: request IDs, latest-wins submission, the final currency check on the
+dispatch thread and one-running-plus-one-latest-pending all still happen in the
+shell. `composition.py` provider, cache and sensitive-retry logic is untouched
+and now runs in the child. `runtime.py` gained `lookup_settings`,
+`create_lookup_engine`, and a `create_lookup_controller` that takes an engine;
+a substituted `word_resolver_factory` is a callable and cannot cross spawn, so
+that one caller keeps the in-process composition it was already asking for.
+Why: Deleting an EasyOCR provider and closing the whole pipeline left the
+measured footprint unchanged. Only process exit returns that memory.
+Evidence/result: Native macOS, source build. Startup to Ready 7.6 s (before:
+12.55 s). Shell footprint steady at 58.6 MiB across the session (before: parent
+1010-1086 MiB). Capture-ready with the window open: 5 processes, 1122 MiB tree
+footprint. Closing the window: 3 processes, 888 MiB. Shutdown returns in 0.7 s
+and leaves 67 MiB. Real Korean lookup through a spawned child verified
+end to end.
+Defect found and fixed during the task: the first cut constructed the engine
+eagerly in `LookupEngine.__init__`, which runs on the Qt thread inside
+`_DesktopSession.activate`; the desktop then blocked the UI thread on provider
+construction and `tests/integration/test_desktop_startup.py` timed out.
+Residency is now honoured in `LookupEngine.attach`, which the executor calls on
+its own thread, exactly where the wait belonged.
+Defect found and fixed in passing: the desktop's controller path never
+forwarded `skip_flat_rois` (only `create_worker_factory` did), so a
+configuration asking for the flat-ROI gate was silently ignored. It travels in
+`LookupSettings` now.
+Test-harness defect fixed: `tests/conftest.py` points `EASYOCR_MODULE_PATH` at a
+temporary directory, which the desktop startup integration test inherited, so
+every run downloaded 99 MB of weights and the test took 105-193 s and had begun
+failing on the download. It now reads prepared weights with downloading off, and
+skips when there are none: 9.4 s.
+Files:
+- `packages/hanly-app/src/hanly_app/lookup_process.py` (new, L1-L700)
+- `packages/hanly-app/src/hanly_app/runtime.py:L124-L270`
+- `tests/hanly_fixtures/lookup_child.py` (new)
+- `tests/test_lookup_process.py` (new, 15 tests)
+- `tests/integration/test_lookup_process_spawn.py` (new)
+- `tests/test_easyocr_runtime.py:L238-L275`
+- `tests/integration/test_desktop_startup.py:L108-L185`
+Tests/measurements: full suite 1074 passed, 3 skipped in 81 s; Ruff and mypy
+clean over 185 files. Deterministic coverage: spawn, provider lifecycle on one
+child thread, a plain picklable boundary value, sleeping start, waking on
+demand, retire-and-wake, retirement during preparation, a failing child
+reported as error rather than a fabricated lookup, one automatic recovery then
+a persistent error, a replacement not refilling the budget, cancellation
+forwarded and applied between stages, only the latest pending request reaching
+the child, EOF releasing a blocked lookup, and a closed engine refusing to
+start another child.
+Next: task 3, preload policies and input configuration.
+
+### 2026-09-11 — Frozen spawn dispatch gate passed
+
+What changed: Built a minimal PyInstaller onedir program that calls
+`multiprocessing.freeze_support()` first and then `spawn_child`.
+Why: The plan required proving PyInstaller spawn dispatch before building
+settings on an unproven base.
+Evidence/result: The child reported `frozen: True`, ran only its target, and
+exited 0; the parent's own startup line was never printed a second time, so
+there is no recursive shell launch. PyInstaller 6.22.2 replaces
+`multiprocessing.freeze_support` with a cross-platform diverter in
+`pyi_rth_multiprocessing`, which is what makes the call in `cli.main` load
+bearing on macOS and Linux as well as Windows.
+Files: Scratch build only; no repository change.
+Tests/measurements: `dist/spawngate/spawngate` ran clean.
+Next: implement the lookup child on that basis.
 
 ### 2026-09-11 — Task 1: the shell owns the loop, the window owns a process
 
@@ -287,10 +359,11 @@ Next: Inspect concrete ownership, verify Claude dispatch, gather native before d
 
 ## Current Risks
 
-- PyInstaller spawn dispatch in a frozen build is proven only by reading
-  `pyi_rth_multiprocessing`, which replaces `multiprocessing.freeze_support`
-  with a cross-platform diverter. A frozen child smoke test is an explicit
-  early gate in task 2.
+- Frozen spawn dispatch is proven with a minimal PyInstaller program, not yet
+  with the real Hanly bundle; that is part of task 6.
+- Qt prints `Release of profile requested but WebEnginePage still not deleted`
+  while the Control Center child tears down. The child still exits and returns
+  its memory; the warning is recorded rather than suppressed.
 - Source UI permissions granted; frozen permission identity and clean release
   build still require validation.
 - Frozen child dispatch and deterministic WebEngine cleanup require design/proof.

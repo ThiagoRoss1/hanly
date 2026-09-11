@@ -34,9 +34,19 @@ from hanly.resource_manager import (
 
 from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
 from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
-from .composition import create_lookup_controller as _create_lookup_controller
+from .composition import create_lookup_controller as _create_in_process_controller
 from .diagnostics import StartupTimeline
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from .lookup_process import (
+    DiagnosticReporter,
+    LookupEngine,
+    LookupSettings,
+    StateReporter,
+)
+from .lookup_process import create_lookup_engine as _create_lookup_engine
+from .lookup_process import (
+    create_process_lookup_controller as _create_process_controller,
+)
 from .runtime_trace import RuntimeTraceSink
 
 
@@ -120,10 +130,55 @@ class HanlyRuntime:
             timeline=self.timeline,
         )
 
+    def lookup_settings(self, confidence_threshold: float | None = None) -> LookupSettings:
+        """Describe the providers as one plain value a spawned child can take.
+
+        The runtime itself must never cross that boundary: it carries a
+        ``ResourceManager``, factories, and a diagnostics timeline. Resource
+        validation has already happened here, so only validated paths and
+        explicit provider options travel.
+        """
+
+        easyocr_config = self.easyocr_config
+        if easyocr_config is None:
+            raise RuntimeConfigError(f"{self.config_path} carries no EasyOCR configuration")
+        threshold = (
+            self.confidence_threshold
+            if confidence_threshold is None
+            else confidence_threshold
+        )
+        _validate_confidence_threshold(threshold)
+        return LookupSettings(
+            krdict_path=self.krdict_path,
+            easyocr=easyocr_config,
+            confidence_threshold=threshold,
+            skip_flat_rois=self.skip_flat_rois,
+        )
+
+    def create_lookup_engine(
+        self,
+        *,
+        preload: bool = True,
+        confidence_threshold: float | None = None,
+        trace_sink: RuntimeTraceSink | None = None,
+        on_diagnostic: DiagnosticReporter | None = None,
+        on_state: StateReporter | None = None,
+    ) -> LookupEngine:
+        """Build the engine that owns where and whether providers are resident."""
+
+        return _create_lookup_engine(
+            self.lookup_settings(confidence_threshold),
+            preload=preload,
+            trace_sink=trace_sink,
+            on_diagnostic=on_diagnostic,
+            on_state=on_state,
+        )
+
     def create_lookup_controller(
         self,
         on_result: Callable[[LookupResult], None] | None = None,
         *,
+        engine: LookupEngine | None = None,
         word_resolver_factory: ResolverFactory | None = None,
         confidence_threshold: float | None = None,
         on_error: Callable[[LookupRequest, BaseException], None] | None = None,
@@ -131,8 +186,58 @@ class HanlyRuntime:
         result_dispatcher: ResultDispatcher | None = None,
         thread_name: str | None = None,
         trace_sink: RuntimeTraceSink | None = None,
+        on_diagnostic: DiagnosticReporter | None = None,
+        on_state: StateReporter | None = None,
     ) -> LookupController:
-        """Compose the existing bounded controller with real V1 factories."""
+        """Compose the existing bounded controller over a disposable child.
+
+        A substituted ``word_resolver_factory`` is a callable, which cannot
+        cross a spawn boundary, so that one caller keeps the in-process
+        composition it was already asking for.
+        """
+
+        if word_resolver_factory is not None:
+            return self._in_process_controller(
+                on_result,
+                word_resolver_factory=word_resolver_factory,
+                confidence_threshold=confidence_threshold,
+                on_error=on_error,
+                on_initialization_error=on_initialization_error,
+                result_dispatcher=result_dispatcher,
+                thread_name=thread_name,
+                trace_sink=trace_sink,
+            )
+
+        return _create_process_controller(
+            engine
+            if engine is not None
+            else self.create_lookup_engine(
+                confidence_threshold=confidence_threshold,
+                trace_sink=trace_sink,
+                on_diagnostic=on_diagnostic,
+                on_state=on_state,
+            ),
+            on_result,
+            on_error=on_error,
+            on_initialization_error=on_initialization_error,
+            result_dispatcher=result_dispatcher,
+            thread_name=thread_name,
+            trace_sink=trace_sink,
+        )
+
+    def _in_process_controller(
+        self,
+        on_result: Callable[[LookupResult], None] | None,
+        *,
+        word_resolver_factory: ResolverFactory | None,
+        confidence_threshold: float | None,
+        on_error: Callable[[LookupRequest, BaseException], None] | None,
+        on_initialization_error: Callable[[BaseException], None] | None,
+        result_dispatcher: ResultDispatcher | None,
+        thread_name: str | None,
+        trace_sink: RuntimeTraceSink | None,
+    ) -> LookupController:
+        """Keep providers on the executor thread, for a substituted resolver."""
 
         threshold = (
             self.confidence_threshold
@@ -140,7 +245,7 @@ class HanlyRuntime:
             else confidence_threshold
         )
         _validate_confidence_threshold(threshold)
-        return _create_lookup_controller(
+        return _create_in_process_controller(
             self._ocr_factory(),
             KiwiProvider,
             lambda: KRDICTProvider(self.krdict_path),

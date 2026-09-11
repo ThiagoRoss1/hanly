@@ -105,6 +105,34 @@ if __name__ == "__main__":
 '''
 
 
+#: The weights a packaged build ships, and what this test reads instead of
+#: downloading a hundred megabytes into a temporary cache on every run.
+MODEL_FILES = ("craft_mlt_25k.pth", "korean_g2.pth")
+
+
+def _existing_models() -> Path | None:
+    """Find prepared EasyOCR weights, which are an input rather than a download."""
+
+    candidates = [
+        Path(__file__).parents[2]
+        / "packages"
+        / "hanly-app"
+        / "src"
+        / "hanly_app"
+        / "assets"
+        / "easyocr_models",
+        Path.home() / ".EasyOCR" / "model",
+    ]
+    return next(
+        (
+            directory
+            for directory in candidates
+            if all((directory / name).is_file() for name in MODEL_FILES)
+        ),
+        None,
+    )
+
+
 def _existing_dictionary() -> Path | None:
     configured = os.environ.get("HANLY_KRDICT_DB")
     candidates = [Path(configured)] if configured else []
@@ -115,7 +143,7 @@ def _existing_dictionary() -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
-def _skip_without_a_desktop_runtime() -> Path:
+def _skip_without_a_desktop_runtime() -> tuple[Path, Path]:
     pytest.importorskip("PyQt6.QtWebEngineWidgets")
     pytest.importorskip("webview")
     pytest.importorskip("kiwipiepy")
@@ -126,13 +154,16 @@ def _skip_without_a_desktop_runtime() -> Path:
     dictionary = _existing_dictionary()
     if dictionary is None:
         pytest.skip("no built KRDICT database; see data/README.md")
-    return dictionary
+    models = _existing_models()
+    if models is None:
+        pytest.skip("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
+    return dictionary, models
 
 
 def test_the_desktop_opens_and_reaches_ready_without_starting_capture(
     tmp_path: Path,
 ) -> None:
-    dictionary = _skip_without_a_desktop_runtime()
+    dictionary, models = _skip_without_a_desktop_runtime()
 
     config = tmp_path / "runtime.json"
     config.write_text(
@@ -143,7 +174,11 @@ def test_the_desktop_opens_and_reaches_ready_without_starting_capture(
                 "resources": {
                     "krdict": {"kind": "krdict", "path": str(dictionary)},
                 },
-                "easyocr": {"languages": ["ko"]},
+                "easyocr": {
+                    "languages": ["ko"],
+                    "model_storage_directory": str(models),
+                    "download_enabled": False,
+                },
             }
         ),
         encoding="utf-8",
