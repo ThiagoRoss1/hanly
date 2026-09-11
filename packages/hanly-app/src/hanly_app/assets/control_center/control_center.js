@@ -3,8 +3,8 @@
 
   const fallbackState = {
     app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
-    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space" },
-    runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" } },
+    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", hover_activation: "hotkey", lookup_preload: "when_capture_starts" },
+    runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" }, engine: { state: "sleeping", message: "" }, hotkeys: {} },
     updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
     permissions: { supported: false, items: [] }
   };
@@ -200,6 +200,36 @@
     });
   }
 
+  // The engine is where the memory is, and it is allowed to be asleep while
+  // Hanly is perfectly ready: a lookup loads it. Saying so is the difference
+  // between "not working" and "not loaded yet".
+  const ENGINE_LABELS = {
+    sleeping: "Not loaded",
+    preparing: "Loading…",
+    ready: "Loaded",
+    error: "Error"
+  };
+
+  function renderEngine(runtime) {
+    const engine = runtime.engine || fallbackState.runtime.engine;
+    const item = byId("engine-item");
+    item.dataset.state = engine.state || "sleeping";
+    byId("engine-state").textContent = ENGINE_LABELS[engine.state] || formatStatus(engine.state);
+    byId("engine-message").textContent = engine.message || "";
+  }
+
+  // What the operating system actually accepted, which is not always what was
+  // asked for: a combination another application owns stays with that one.
+  function renderRegisteredHotkeys(runtime) {
+    const registered = runtime.hotkeys || {};
+    [["hotkey", "lookup"], ["hover-hotkey", "toggle_hover"]].forEach(function (pair) {
+      const hint = byId(pair[0] + "-registered");
+      const live = registered[pair[1]];
+      const asked = byId(pair[0]).value;
+      hint.textContent = live && live !== asked ? "Registered as " + live : "";
+    });
+  }
+
   function renderRuntimeStatus(runtime) {
     const status = runtime.status || fallbackState.runtime.status;
     const item = byId("runtime-item");
@@ -252,11 +282,16 @@
     byId("capture-mode").value = app.capture_mode || "full_monitor";
     byId("hover-delay").value = config.hover_delay_ms || 150;
     byId("hotkey").value = config.hotkey || "";
+    byId("hover-hotkey").value = config.hover_hotkey || "";
+    byId("hover-activation").value = config.hover_activation || "hotkey";
+    byId("lookup-preload").value = config.lookup_preload || "when_capture_starts";
     byId("region-hint").textContent = regionHint(app);
     ["left", "top", "width", "height"].forEach(function (field) {
       byId("region-" + field).value = app.region ? app.region[field] : "";
     });
     renderRuntimeStatus(runtime);
+    renderEngine(runtime);
+    renderRegisteredHotkeys(runtime);
     renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
@@ -311,6 +346,12 @@
       .catch(showActionError);
   }
 
+  // A rejected settings change has to put the control back to what is really
+  // stored, or the page keeps showing a choice that never took effect.
+  function settings(changes) {
+    return invoke("update_settings", changes).then(function () { renderState(currentState); });
+  }
+
   byId("start-capture").addEventListener("click", function () { invoke("start_capture"); });
   byId("stop-capture").addEventListener("click", function () { invoke("stop_capture"); });
   byId("capture-mode").addEventListener("change", function (event) { invoke("set_capture_mode", event.target.value); });
@@ -348,6 +389,9 @@
   byId("quit-hanly").addEventListener("click", function () { invoke("quit"); });
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
+  byId("hover-hotkey").addEventListener("change", function (event) { settings({ hover_hotkey: event.target.value }); });
+  byId("hover-activation").addEventListener("change", function (event) { settings({ hover_activation: event.target.value }); });
+  byId("lookup-preload").addEventListener("change", function (event) { settings({ lookup_preload: event.target.value }); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });
   byId("update-application").addEventListener("click", function () { invoke("install_application_update"); });
   byId("release-notes").addEventListener("click", function () { invoke("open_release_notes"); });

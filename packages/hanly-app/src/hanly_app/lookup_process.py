@@ -27,6 +27,7 @@ from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from queue import Empty, Queue
+from time import monotonic
 from typing import Any, Literal
 
 from hanly import LookupResult, PixelFormat, Point, ROIImage
@@ -382,6 +383,7 @@ class LookupEngine:
         self._failure: str | None = None
         self._preload = preload
         self._process: LookupProcess | None = None
+        self._last_used = monotonic()
 
     @property
     def state(self) -> EngineState:
@@ -453,6 +455,8 @@ class LookupEngine:
             self._state = "sleeping"
         if process is not None:
             process.close()
+        with self._lock:
+            self._last_used = monotonic()
         if not already_asleep:
             self._publish("sleeping", "The lookup engine is not loaded.")
 
@@ -467,12 +471,26 @@ class LookupEngine:
             self._budget = max(0, int(budget))
             self._blocked = False
 
+    def idle_seconds(self) -> float:
+        """How long since a lookup last finished, for an idle-expiry policy."""
+
+        with self._lock:
+            return monotonic() - self._last_used
+
     def __call__(self, item: LookupRequest) -> LookupResult:
         if not isinstance(item, LookupRequest):
             raise TypeError("lookup worker items must be LookupRequest values")
         if item.is_cancelled():
             raise LookupCancelled("lookup was superseded before worker execution")
-        return self._ensure().lookup(item)
+        process = self._ensure()
+        try:
+            return process.lookup(item)
+        finally:
+            # Measured from completion rather than from submission: a cold
+            # first lookup takes seconds, and an expiry that started counting
+            # before it finished would be counting the wrong thing.
+            with self._lock:
+                self._last_used = monotonic()
 
     def close(self) -> None:
         """Retire the current child for good; nothing starts another."""

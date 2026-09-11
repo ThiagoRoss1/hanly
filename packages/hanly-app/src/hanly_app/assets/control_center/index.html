@@ -45,6 +45,11 @@
             <p class="hint" id="runtime-message">Hanly is getting its resources ready.</p>
             <button class="text-button" id="retry-runtime" type="button" hidden>Try again</button>
           </div>
+          <div class="status-item engine-item" data-state="sleeping" id="engine-item">
+            <span class="status-label">Lookup engine</span>
+            <strong id="engine-state">Not loaded</strong>
+            <p class="hint" id="engine-message">Hanly loads it when a lookup needs it.</p>
+          </div>
           <div class="status-item">
             <span class="status-label">OCR provider</span>
             <strong id="ocr-provider">—</strong>
@@ -134,6 +139,28 @@
               <label class="field">
                 <span>Lookup hotkey</span>
                 <input id="hotkey" type="text" spellcheck="false" autocomplete="off">
+                <small class="field-hint" id="hotkey-registered"></small>
+              </label>
+              <label class="field">
+                <span>Hover toggle hotkey</span>
+                <input id="hover-hotkey" type="text" spellcheck="false" autocomplete="off">
+                <small class="field-hint" id="hover-hotkey-registered"></small>
+              </label>
+              <label class="field">
+                <span>Automatic hover</span>
+                <select id="hover-activation">
+                  <option value="hotkey">Off until switched on</option>
+                  <option value="always_active">On from launch</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Lookup engine</span>
+                <select id="lookup-preload">
+                  <option value="when_capture_starts">Load while watching the screen</option>
+                  <option value="always">Keep loaded</option>
+                  <option value="on_demand">Load only for a lookup</option>
+                </select>
+                <small class="field-hint">Keeping it loaded is faster and uses about a gigabyte.</small>
               </label>
             </div>
             <div class="update-panel" aria-live="polite">

@@ -13,6 +13,7 @@ import urllib.parse
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Protocol
@@ -28,9 +29,11 @@ from .config import (
     CaptureMode,
     CaptureRegion,
     ConfigManager,
+    HoverActivation,
+    LookupPreload,
 )
 from .desktop_controller import DesktopState
-from .hotkeys import HotkeyError, canonical_hotkey
+from .hotkeys import HotkeyError, validate_binding
 from .permissions import (
     START_CAPTURE_PERMISSIONS,
     PermissionService,
@@ -206,6 +209,8 @@ class ControlCenterBridge:
         log_path: Path | None = None,
         permission_service: PermissionService | None = None,
         ocr_provider: str = "EasyOCR",
+        engine_status: Callable[[], Mapping[str, str]] | None = None,
+        registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")
@@ -224,6 +229,10 @@ class ControlCenterBridge:
             raise TypeError("on_select_capture_area must be callable")
         if on_quit is not None and not callable(on_quit):
             raise TypeError("on_quit must be callable")
+        if engine_status is not None and not callable(engine_status):
+            raise TypeError("engine_status must be callable")
+        if registered_hotkeys is not None and not callable(registered_hotkeys):
+            raise TypeError("registered_hotkeys must be callable")
         if permission_service is not None and not isinstance(permission_service, PermissionService):
             raise TypeError("permission_service must be a PermissionService")
 
@@ -236,6 +245,8 @@ class ControlCenterBridge:
         self._ocr_provider = ocr_provider.strip()
         self._diagnostics = diagnostics
         self._runtime_status = runtime_status
+        self._engine_status = engine_status
+        self._registered_hotkeys = registered_hotkeys
         self._capture_ready = capture_ready
         # Bound by set_retry() once startup exists to retry.
         self._on_retry_runtime: Callable[[], None] | None = None
@@ -270,6 +281,8 @@ class ControlCenterBridge:
                 "ocr_provider": self._ocr_provider,
                 "resources": self._resources(),
                 "status": self._status_snapshot(),
+                "engine": self._engine_snapshot(),
+                "hotkeys": self._registered_bindings(),
                 "log_path": None if self._log_path is None else str(self._log_path),
                 "diagnostics": (
                     list(self._diagnostics()) if self._diagnostics is not None else []
@@ -401,6 +414,9 @@ class ControlCenterBridge:
             raise TypeError("settings must be a mapping")
         supported = {
             "hotkey",
+            "hover_hotkey",
+            "hover_activation",
+            "lookup_preload",
             "hover_delay_ms",
             "capture_mode",
             "theme",
@@ -412,8 +428,17 @@ class ControlCenterBridge:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"unsupported Control Center setting(s): {names}")
         values = dict(changes)
-        if "hotkey" in values:
-            values["hotkey"] = _validated_hotkey(values["hotkey"])
+        for field in ("hotkey", "hover_hotkey"):
+            if field in values:
+                values[field] = _validated_hotkey(values[field])
+        if "hover_activation" in values:
+            values["hover_activation"] = _validated_choice(
+                values["hover_activation"], HoverActivation, "hover activation"
+            )
+        if "lookup_preload" in values:
+            values["lookup_preload"] = _validated_choice(
+                values["lookup_preload"], LookupPreload, "lookup engine preload"
+            )
         self._update_config(**values)
         return self.get_state()
 
@@ -546,28 +571,75 @@ class ControlCenterBridge:
             self._on_lifecycle_changed()
 
     def _update_config(self, **changes: object) -> None:
-        if self._config_manager is not None:
-            self._config_manager.update(**changes)
-        else:
-            values: dict[str, Any] = self._config.to_dict()
-            values.update(changes)
-            self._config = AppConfig.from_dict(values)
+        """Change one or more preferences as a single transaction.
+
+        A shortcut has to be registered with the operating system before it is
+        stored, or a refused registration leaves the saved settings describing
+        keys the user's keyboard does not have. So: validate, register, persist,
+        and only then publish. A save that fails after a successful
+        registration puts the previous shortcuts back.
+        """
+
+        previous = self._current_config()
+        candidate = self._candidate(changes)
+        if not _rebinds(previous, candidate):
+            self._persist(candidate)
+            self._apply_live_config()
+            return
+
+        self._apply(candidate)
+        try:
+            self._persist(candidate)
+        except Exception:
+            self._restore(previous)
+            raise
         self._apply_live_config()
+
+    def _candidate(self, changes: Mapping[str, object]) -> AppConfig:
+        """Validate the change without storing or applying any part of it."""
+
+        if self._config_manager is not None:
+            return self._config_manager.candidate(**changes)
+        values: dict[str, Any] = self._config.to_dict()
+        values.update(changes)
+        return AppConfig.from_dict(values)
+
+    def _persist(self, config: AppConfig) -> None:
+        if self._config_manager is not None:
+            self._config_manager.save(config)
+        else:
+            self._config = config
+
+    def _restore(self, previous: AppConfig) -> None:
+        """Put the previous shortcuts back, and never call a loss a success."""
+
+        try:
+            self._apply(previous)
+        except Exception as error:
+            raise ControlCenterUnavailable(
+                "Hanly could not save that change, and could not put your previous "
+                f"shortcuts back either: {error}. Check the Shortcuts section for "
+                "what is registered now."
+            ) from error
+
+    def _apply(self, config: AppConfig) -> None:
+        """Apply one configuration to the running services, persisted or not."""
+
+        if self._desktop_controller is None:
+            return
+        self._desktop_controller.apply_config(config)
+        self._apply_capture_preferences(config)
 
     def _apply_live_config(self) -> None:
         """Forward persisted settings to a desktop controller when present."""
 
-        if self._desktop_controller is None:
-            return
-        self._desktop_controller.apply_config(self._current_config())
-        self._apply_capture_preferences()
+        self._apply(self._current_config())
 
-    def _apply_capture_preferences(self) -> None:
+    def _apply_capture_preferences(self, config: AppConfig) -> None:
         """Forward the persisted target and region through the app-owned seam."""
 
         if self._desktop_controller is None:
             return
-        config = self._current_config()
         region = config.capture_region
         self._desktop_controller.set_capture_preferences(
             capture_mode=config.capture_mode,
@@ -601,6 +673,30 @@ class ControlCenterBridge:
         if self._runtime_status is None:
             return RuntimeStatus("idle").to_dict()
         return self._runtime_status().to_dict()
+
+    def _engine_snapshot(self) -> dict[str, str]:
+        """Report where the lookup engine is, which is not shell readiness.
+
+        Hanly can be ready to look a word up while the providers are asleep:
+        the engine loads on demand. Collapsing the two would make the interface
+        say a lookup is impossible when it merely has to wait a moment.
+        """
+
+        if self._engine_status is None:
+            return {"state": "unknown", "message": ""}
+        return {str(key): str(value) for key, value in self._engine_status().items()}
+
+    def _registered_bindings(self) -> dict[str, str]:
+        """Report the shortcuts actually registered, not the stored intent.
+
+        After a rebind that the operating system refused, these are what the
+        user's keyboard will really do, and the page shows those rather than a
+        preference that never took effect.
+        """
+
+        if self._registered_hotkeys is None:
+            return {}
+        return {str(key): str(value) for key, value in self._registered_hotkeys().items()}
 
     def _desktop_state(self) -> str:
         if self._desktop_controller is None:
@@ -681,14 +777,39 @@ def _is_release_page(url: str) -> bool:
     )
 
 
+def _rebinds(previous: AppConfig, candidate: AppConfig) -> bool:
+    """Whether this change asks the operating system for different shortcuts."""
+
+    return (
+        previous.hotkey != candidate.hotkey
+        or previous.hover_hotkey != candidate.hover_hotkey
+    )
+
+
+def _validated_choice(value: object, choices: type[Enum], label: str) -> str:
+    """Reject a choice the page invented, naming what was actually offered."""
+
+    if isinstance(value, choices):
+        return str(value.value)
+    try:
+        return str(choices(value).value)
+    except ValueError as error:
+        offered = ", ".join(str(item.value) for item in choices)
+        raise ValueError(f"{label} must be one of: {offered}") from error
+
+
 def _validated_hotkey(hotkey: object) -> str:
-    """Reject a spelling the desktop hotkey listener could not register."""
+    """Reject a combination this machine's own backend could not register.
+
+    Checking the spelling alone would let a user save something that silently
+    does nothing, because the running platform has no key at that position.
+    """
 
     if not isinstance(hotkey, str):
         raise ValueError("hotkey must be a string")
     try:
-        canonical_hotkey(hotkey)
-    except HotkeyError as error:
+        validate_binding(hotkey)
+    except (HotkeyError, RuntimeError) as error:
         raise ValueError(f"unsupported hotkey: {error}") from error
     return hotkey
 

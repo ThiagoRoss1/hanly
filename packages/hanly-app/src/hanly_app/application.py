@@ -15,7 +15,7 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, RLock
@@ -34,7 +34,7 @@ from .app_update import (
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .capture_selector import CaptureSelection, select_capture_area
-from .config import AppConfig, CaptureMode, ConfigError, ConfigManager
+from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, HoverActivation
 from .control_center import (
     RUNTIME_NOT_READY,
     ControlCenterBridge,
@@ -60,8 +60,10 @@ from .paths import (
     discover_runtime_config,
 )
 from .permissions import (
+    CAPTURE_PERMISSIONS,
     START_CAPTURE_PERMISSIONS,
     PermissionService,
+    PermissionStatus,
     create_permission_service,
     missing_permission_refusal,
 )
@@ -414,6 +416,8 @@ class _DesktopSession:
         # Identifies the runtime composed here; only the Qt thread changes it.
         self._generation = 0
         self._pending_release: list[DesktopController] = []
+        self._engine_state: tuple[str, str] = ("sleeping", "")
+        self._activation = settings.config.hover_activation
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
@@ -427,6 +431,8 @@ class _DesktopSession:
             on_lifecycle_changed=self.refresh_tray,
             permission_service=self._permissions,
             ocr_provider=OCR_DISPLAY_NAME,
+            engine_status=self.engine_status,
+            registered_hotkeys=self.registered_hotkeys,
         )
         self.host = ControlCenterProcess(
             bridge_operations(self.bridge),
@@ -479,11 +485,78 @@ class _DesktopSession:
         self.bridge.attach_runtime(runtime, manual.capture_service, self._updates)
         self.desktop.attach_updates(self._updates)
 
-        # Providers warm now so the interface can report READY, but nothing
-        # observes the screen until the user asks Hanly to start.
+        # The session comes up with its shortcuts registered and its lookup
+        # path built. Whether the providers load now is the preload policy's
+        # decision, and nothing observes the screen unless the user asked for
+        # hover to be on from launch.
         manual.prepare()
         self._watch_readiness(manual)
+        self._start_if_always_active()
         self.refresh_tray()
+
+    def _start_if_always_active(self) -> None:
+        """Honour always-active hover at launch, or say why it cannot start."""
+
+        if self._settings.config.hover_activation is not HoverActivation.ALWAYS_ACTIVE:
+            return
+        missing = self._permissions.missing(START_CAPTURE_PERMISSIONS)
+        if missing:
+            self._report_permission_refusal(missing)
+            return
+        try:
+            self._start_or_resume()
+        except Exception as error:
+            self._diagnostics.report("Automatic hover", error)
+
+    def _report_permission_refusal(self, missing: Sequence[PermissionStatus]) -> None:
+        """Say what is missing rather than starting into a picture of wallpaper."""
+
+        self._diagnostics.add(
+            f"Automatic hover did not start. {missing_permission_refusal(missing)}"
+        )
+
+    def _capture_refusal(self) -> str | None:
+        """Why a manual lookup cannot read the screen, if it cannot.
+
+        Only the screen grant matters here: the manual shortcut does not follow
+        the cursor across applications, so Accessibility is hover's concern.
+        """
+
+        missing = self._permissions.missing(CAPTURE_PERMISSIONS)
+        return missing_permission_refusal(missing) if missing else None
+
+    def engine_status(self) -> dict[str, str]:
+        """Report where the lookup engine is, separately from shell readiness."""
+
+        state, message = self._engine_state
+        return {"state": state, "message": message}
+
+    def registered_hotkeys(self) -> dict[str, str]:
+        """Report the shortcuts the operating system actually accepted."""
+
+        manual = self._manual
+        if manual is None:
+            return {}
+        return {
+            action.value: binding for action, binding in manual.hotkeys.bindings.items()
+        }
+
+    def toggle_capture(self) -> None:
+        """Turn watching the screen on or off, from the one hover shortcut."""
+
+        controller = self._controller
+        if controller is None:
+            raise ControlCenterUnavailable(RUNTIME_NOT_READY)
+        if controller.state is DesktopState.RUNNING:
+            self.desktop.pause_capture()
+            return
+        self.desktop.request_capture()
+
+    def _on_engine_state(self, state: str, message: str) -> None:
+        """Take engine news from whichever thread reported it, onto Qt."""
+
+        self._engine_state = (state, message)
+        self._dispatcher(self.refresh_tray)
 
     def _watch_readiness(self, manual: ManualLookupRuntime) -> None:
         """Report this runtime's readiness, and only while it is still ours."""
@@ -583,10 +656,29 @@ class _DesktopSession:
         self._start_or_resume()
 
     def apply_config(self, config: AppConfig) -> None:
+        """Apply live settings, and let a changed hover activation act.
+
+        Changing a binding, a dwell, or a preload choice alone must leave a
+        running capture session exactly as it was. Only the activation choice
+        is about whether Hanly watches the screen, so only that one starts or
+        pauses it.
+        """
+
         def apply(controller: DesktopController) -> None:
             controller.apply_config(config)
 
         self._on_qt(lambda: self._with_controller(apply))
+        self._on_qt(lambda: self._apply_activation(config.hover_activation))
+
+    def _apply_activation(self, activation: HoverActivation) -> None:
+        previous, self._activation = self._activation, activation
+        if activation is previous:
+            return
+        if activation is HoverActivation.ALWAYS_ACTIVE:
+            self._start_if_always_active()
+            return
+        self._with_controller(DesktopController.pause)
+        self.refresh_tray()
 
     def set_capture_preferences(
         self,
@@ -733,6 +825,11 @@ class _DesktopSession:
                     self._status, self._diagnostics, error
                 ),
                 trace_sink=self._trace_sink,
+                on_toggle_hover=self.toggle_capture,
+                on_error=self._diagnostics.report,
+                capture_refusal=self._capture_refusal,
+                on_diagnostic=self._diagnostics.add,
+                on_engine_state=self._on_engine_state,
             )
         except Exception:
             capture.close()
@@ -949,6 +1046,10 @@ def _load_settings(path: Path, diagnostics: DiagnosticLog) -> ConfigManager:
         settings.load()
     except ConfigError as error:
         diagnostics.report("Preferences", error)
+    for note in settings.migrations:
+        # A shortcut that had to move is the user's business, not a silent
+        # rewrite of the keys under their fingers.
+        diagnostics.add(note)
     return settings
 
 

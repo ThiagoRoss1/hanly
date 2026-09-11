@@ -25,6 +25,11 @@ class HotkeyAction(str, Enum):
     LOOKUP = "lookup"
     START_CAPTURE = "start_capture"
     PAUSE_CAPTURE = "pause_capture"
+    #: One binding that turns automatic hover on and off. Separate actions for
+    #: starting and pausing are kept for callers that bind them, but a toggle
+    #: is what a user reaches for, and it is the only one the desktop registers
+    #: alongside the manual lookup key.
+    TOGGLE_HOVER = "toggle_hover"
 
 
 class HotkeyError(ValueError):
@@ -67,6 +72,12 @@ DEFAULT_HOTKEYS: Mapping[HotkeyAction | str, str] = MappingProxyType(
         HotkeyAction.LOOKUP: "ctrl+shift+space",
         HotkeyAction.START_CAPTURE: "ctrl+shift+f9",
         HotkeyAction.PAUSE_CAPTURE: "ctrl+shift+f10",
+        # Every action in this map has to be registrable alongside every other,
+        # so the toggle's default here avoids the two capture keys. What the
+        # desktop actually registers is the user's ``hover_hotkey`` preference,
+        # which defaults to ctrl+shift+f9 because the desktop binds no separate
+        # start and pause keys.
+        HotkeyAction.TOGGLE_HOVER: "ctrl+shift+f11",
     }
 )
 
@@ -77,6 +88,7 @@ _ACTION_ALIASES = {
     "lookup": HotkeyAction.LOOKUP,
     "start_capture": HotkeyAction.START_CAPTURE,
     "pause_capture": HotkeyAction.PAUSE_CAPTURE,
+    "toggle_hover": HotkeyAction.TOGGLE_HOVER,
 }
 
 _MODIFIER_ALIASES = {
@@ -178,6 +190,24 @@ def canonical_hotkey(value: str) -> str:
     # modifier-first spelling expected by pynput and configuration files.
     modifier_order = {"<ctrl>": 0, "<shift>": 1, "<alt>": 2, "<cmd>": 3}
     return "+".join(sorted(parts, key=lambda part: (modifier_order.get(part, 4), part)))
+
+
+def validate_binding(value: str) -> str:
+    """Canonicalize a binding and check the running platform can register it.
+
+    ``canonical_hotkey`` only proves the spelling is one this service
+    understands. A combination can still be unusable on the machine in front of
+    the user -- macOS has no key at that position, or the backend cannot express
+    the modifier -- and finding that out when the user saves is much better than
+    finding it out when the shortcut silently does nothing.
+    """
+
+    binding = canonical_hotkey(value)
+    if sys.platform == "darwin":
+        from .hotkeys_darwin import carbon_binding
+
+        carbon_binding(binding)
+    return binding
 
 
 def _normalize_bindings(bindings: HotkeyBindings) -> dict[HotkeyAction, str]:
@@ -459,4 +489,5 @@ __all__ = [
     "HotkeyListenerFactory",
     "HotkeyService",
     "canonical_hotkey",
+    "validate_binding",
 ]

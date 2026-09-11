@@ -19,8 +19,8 @@
 - [x] implementation-ready execution plan
 - [x] runtime / Control Center lifecycle
 - [x] heavy lookup worker
-- [ ] preload policies
-- [ ] hover activation / hotkeys
+- [x] preload policies
+- [x] hover activation / hotkeys
 - [ ] hover stability / popup persistence
 - [ ] logs / diagnostics
 - [ ] cleanup / disk hygiene
@@ -87,6 +87,65 @@ Files: This checkpoint; execution plan to follow investigation.
 Validation: `git fetch origin main`; HEAD and origin/main match.
 
 ## Progress Log
+
+### 2026-09-11 — Task 3: preload policies, one toggle, transactional rebinding
+
+What changed: `config.py` gained `LookupPreload` (when_capture_starts, always,
+on_demand), `HoverActivation` (hotkey, always_active) and `hover_hotkey`, plus
+`AppConfig.migrate` and `ConfigManager.migrations`. A profile written before
+this keeps its lookup key untouched; only the new toggle moves, and only when
+the lookup key already sits on the toggle's default, in which case it takes the
+next position in a fixed list and says so in the log. `hotkeys.py` gained
+`HotkeyAction.TOGGLE_HOVER` and `validate_binding`, which asks the running
+platform's own backend whether a combination is registrable rather than only
+checking its spelling. `ManualLookupRuntime` now separates the session from
+capture: `prepare()` registers both shortcuts and builds the lookup path,
+`start()` applies the policy and begins observing, `pause()` retires the engine
+unless the policy is Always, and a manual lookup with capture off arms a
+60-second idle expiry measured from completion. A shortcut another application
+owns is reported and costs only that shortcut. A manual lookup without Screen
+Recording says so instead of reading the wallpaper and reporting no Korean text.
+The Control Center bridge makes a settings change a transaction: validate,
+register with the operating system, persist, then publish; a save that fails
+after a successful registration puts the previous shortcuts back, and a failure
+of that too is reported rather than called a success. The page gained controls
+for all three new preferences, a lookup-engine status row separate from shell
+readiness, and a hint showing what was actually registered when it differs from
+what was asked for.
+Why: Readiness used to imply resident providers, so the engine was loaded even
+when nothing was watching the screen, and Pause left it loaded.
+Evidence/result: Native macOS, source build, default policy: ready at
+**1.76 s** (before: 12.55 s); dormant with the window closed **73.6 MiB tree
+footprint over 2 processes** (before: 1010-1036 MiB parent footprint); Start
+Capture goes preparing 174 MiB then ready 888 MiB; Pause returns to 76.2 MiB
+and `sleeping`. With Always: ready at 7.17 s, resident at launch, and still
+882 MiB after Pause, which is the residency that choice deliberately buys.
+Registered shortcuts reported as `lookup <ctrl>+<shift>+<space>` and
+`toggle_hover <ctrl>+<shift>+<f9>`.
+Defect found and fixed during the task: `prepare()` re-applied the preload
+policy on every call, so `start()` (which prepares first) published a second
+redundant residency decision. Preparation is now once per session.
+Files:
+- `packages/hanly-app/src/hanly_app/config.py:L23-L120,L150-L330`
+- `packages/hanly-app/src/hanly_app/hotkeys.py:L22-L80,L183-L210`
+- `packages/hanly-app/src/hanly_app/manual_lookup.py:L60-L200,L250-L560`
+- `packages/hanly-app/src/hanly_app/lookup_process.py:L360-L420`
+- `packages/hanly-app/src/hanly_app/control_center.py:L195-L260,L430-L460,L560-L660`
+- `packages/hanly-app/src/hanly_app/application.py:L430-L560`
+- `packages/hanly-app/src/hanly_app/assets/control_center/*`
+Tests/measurements: full suite 1105 passed, 3 skipped in 75 s; Ruff and mypy
+clean over 186 files. New `tests/test_lookup_policy.py` (16) covers the whole
+matrix: shortcuts registered with the session rather than with capture, a
+shortcut another application owns, each of the three policies at launch, start
+and pause, the recovery-budget refresh on deliberate activation, idle expiry and
+its re-arm, capture keeping the engine warm, the toggle routing to the capture
+lifecycle, a refused manual lookup without Screen Recording, live policy changes
+in both directions, a manual session surviving a policy change, and a binding
+change leaving a running session alone. `tests/test_app_config.py` gained the
+migration cases; `tests/test_control_center.py` gained register-before-store,
+refused registration, save rollback, rollback failure, the engine snapshot, an
+invented choice, and a check that every new preference has a control on the page.
+Next: task 4, popup stability and dwell.
 
 ### 2026-09-11 — Task 2: the lookup engine is a child the shell can retire
 
