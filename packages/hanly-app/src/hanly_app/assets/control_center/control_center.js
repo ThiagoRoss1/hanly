@@ -359,6 +359,10 @@
   window.addEventListener("pywebviewready", function () {
     invoke("get_state");
   });
+  // Hanly itself pushes a nudge when state it owns moved under the page --
+  // readiness settling, capture starting from the tray, an update finishing --
+  // so a visible window stays current without polling for it.
+  window.hanlyRefresh = refresh;
   renderState(fallbackState);
 
   // The ready event may already have fired before this script ran.

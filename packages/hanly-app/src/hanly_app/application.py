@@ -1,9 +1,12 @@
 """Production Hanly Desktop V1 composition and lifecycle root.
 
-The module keeps native UI imports inside :func:`run_desktop` so
-``preload_ocr_runtime`` can run before Qt.  It composes existing engine,
-capture, lookup, popup, Control Center, update, tray, and shutdown seams; it
-does not construct providers outside the worker-owned runtime factories.
+This is the persistent shell: Qt Widgets, the tray, global hotkeys, capture,
+hover state, the popup, settings, update orchestration, and the session log.
+It owns the one event loop, and it deliberately carries neither Qt WebEngine
+nor the OCR runtime -- those live in child processes it can retire.
+
+It composes existing engine, capture, lookup, popup, Control Center, update,
+tray, and shutdown seams; it does not construct providers itself.
 """
 
 from __future__ import annotations
@@ -37,7 +40,10 @@ from .control_center import (
     ControlCenterBridge,
     ControlCenterUnavailable,
 )
-from .control_center_host import ControlCenterHost
+from .control_center_process import (
+    ControlCenterProcess,
+    bridge_operations,
+)
 from .desktop_controller import DesktopController, DesktopState
 from .diagnostics import DiagnosticLog, StartupTimeline
 from .first_run import (
@@ -46,7 +52,6 @@ from .first_run import (
 )
 from .lookup_controller import ResultDispatcher
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
-from .ocr_preload import record_preload_timing
 from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
@@ -105,6 +110,8 @@ class QtApplication(Protocol):
 
     def exit(self, return_code: int = 0) -> None: ...
 
+    def setQuitOnLastWindowClosed(self, closed: bool) -> None: ...
+
 
 class _Lifecycle(Protocol):
     def start(self) -> None: ...
@@ -138,15 +145,15 @@ class _Startup(Protocol):
 
 
 class _ControlCenter(Protocol):
-    """The main window and, in production, the process's only event loop."""
-
-    def run(self, on_started: Callable[[], None] | None = None) -> int: ...
+    """The optional window process the shell opens, closes, and outlives."""
 
     def show(self) -> None: ...
 
     def close(self) -> None: ...
 
-    def set_restorable(self, restorable: bool) -> None: ...
+    def shutdown(self) -> None: ...
+
+    def notify_state_changed(self) -> None: ...
 
 
 class DesktopApplication:
@@ -173,6 +180,7 @@ class DesktopApplication:
         self._started = False
         self._shutdown = False
         self._connected = False
+        self._tray_usable = False
         self._closing = Event()
         self._lock = RLock()
 
@@ -192,17 +200,14 @@ class DesktopApplication:
                 raise RuntimeError("signal bridge must be attached before startup")
             self._signals = bridge
 
-    def run(self, on_started: Callable[[], None] | None = None) -> int:
-        """Show the interface and run the one GUI event loop.
+    def run(self) -> int:
+        """Run the shell's own event loop, which outlives every window.
 
-        The loop belongs to the Control Center host: pywebview's Qt backend
-        calls ``QApplication.exec`` itself, so a second ``exec`` here would be
-        the nested loop the release warned about. Capture is deliberately not
-        started: the window opens, the runtime prepares behind it, and the user
-        decides when Hanly starts watching the screen.
-
-        ``on_started`` is pywebview's own post-start hook, which runs once the
-        window exists and off the UI thread.
+        The loop belongs here, not to a window: the Control Center lives in a
+        child process and closing it must leave the tray, hotkeys, capture,
+        and popup running. Capture is deliberately not started either -- the
+        window opens, the runtime prepares behind it, and the user decides
+        when Hanly starts watching the screen.
         """
 
         with self._lock:
@@ -212,9 +217,13 @@ class DesktopApplication:
             signals = self._signals
         if signals is not None:
             signals.install()
+        # Every Hanly window is transient -- the popup, the capture overlay,
+        # and a Control Center that is not even in this process.
+        self._qt.setQuitOnLastWindowClosed(False)
         self._start_tray()
+        self.open_control_center()
         try:
-            return self._control_center.run(on_started)
+            return self._qt.exec()
         finally:
             self.shutdown()
 
@@ -273,27 +282,49 @@ class DesktopApplication:
         except Exception as error:
             self._diagnostics.report("Control Center", error)
 
+    @property
+    def tray_usable(self) -> bool:
+        """Whether the tray is a real route back to the Control Center."""
+
+        with self._lock:
+            return self._tray_usable
+
     def _start_tray(self) -> None:
-        """Start the tray, and hide on close only if it can undo that.
+        """Start the tray, and record whether it can reopen the window.
 
         Starting is not the same as being usable: a backend with neither a
-        menu nor a default action is no way back to a hidden window, so the
-        main window stays closable-to-quit rather than leaving a running
-        process the user cannot reach.
+        menu nor a default action is no route back, and a Hanly the user
+        cannot reach is worse than one that ends with its window.
         """
 
         try:
             self._tray.start()
         except Exception as error:
             self._diagnostics.report("System tray", error)
-            return
-        if not self._tray.can_restore_window:
-            self._diagnostics.add(
-                "The system tray cannot restore a hidden window; "
-                "closing the Control Center will quit Hanly."
-            )
-            return
-        self._control_center.set_restorable(True)
+        else:
+            if self._tray.can_restore_window:
+                with self._lock:
+                    self._tray_usable = True
+                return
+        self._diagnostics.add(
+            "The system tray cannot reopen the Control Center; "
+            "closing that window will quit Hanly."
+        )
+
+    def control_center_closed(self) -> None:
+        """Decide what a closed Control Center means for the session.
+
+        With a tray it means nothing: capture, hotkeys, and the popup carry
+        on, and the window comes back from the tray. Without one there is no
+        way back, so the session ends rather than leaving a process running
+        where nobody can see or stop it.
+        """
+
+        with self._lock:
+            if self._shutdown or self._tray_usable:
+                return
+        self._diagnostics.add("Hanly quit with its window: there is no tray to reopen it.")
+        self.quit()
 
     def quit(self) -> None:
         self._qt.quit()
@@ -313,22 +344,27 @@ class DesktopApplication:
         self._closing.set()
         if startup is not None:
             startup.begin_shutdown()
-        self._tray.shutdown()
         try:
-            self._control_center.close()
+            # Input, dwell, and request currency stop first, then the lookup
+            # child is retired and joined: an update handoff may only take over
+            # once no Hanly process still holds a resource or an installation.
+            self._controller.begin_shutdown()
+            if updates is not None:
+                updates.shutdown(wait=True)
+            if startup is not None:
+                startup.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
+            # Bounded so process exit cannot hang on a stuck provider, but
+            # long enough for SQLite handles to close normally.
+            self._controller.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
         finally:
             try:
-                self._controller.begin_shutdown()
-                if updates is not None:
-                    updates.shutdown(wait=True)
-                if startup is not None:
-                    startup.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
-                # Bounded so process exit cannot hang on a stuck provider,
-                # but long enough for SQLite handles to close normally.
-                self._controller.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
+                self._control_center.shutdown()
             finally:
-                if signals is not None:
-                    signals.close()
+                try:
+                    self._tray.shutdown()
+                finally:
+                    if signals is not None:
+                        signals.close()
 
 
 class _DesktopSession:
@@ -392,8 +428,11 @@ class _DesktopSession:
             permission_service=self._permissions,
             ocr_provider=OCR_DISPLAY_NAME,
         )
-        self.host = ControlCenterHost(
-            self.bridge, diagnostics=diagnostics, timeline=self._timeline
+        self.host = ControlCenterProcess(
+            bridge_operations(self.bridge),
+            on_diagnostic=diagnostics.add,
+            on_error=diagnostics.report,
+            on_closed=self._control_center_closed,
         )
         self.tray = TrayService(
             lambda: self.state,
@@ -419,7 +458,15 @@ class _DesktopSession:
         self._status.subscribe(lambda _snapshot: self.refresh_tray())
 
     def refresh_tray(self) -> None:
+        """Republish lifecycle state to both surfaces that show it."""
+
         self.tray.refresh()
+        self.host.notify_state_changed()
+
+    def _control_center_closed(self) -> None:
+        """Hand a closed window to the application, on the thread that owns Qt."""
+
+        self._on_qt(lambda: self.desktop.control_center_closed())
 
     def activate(self, runtime: HanlyRuntime) -> None:
         """Compose everything that needs a validated runtime, on the Qt thread."""
@@ -780,8 +827,8 @@ def run_desktop(
         None if runtime_config is None else Path(runtime_config).expanduser().resolve()
     )
 
-    # One bootstrap owns the OCR-before-Qt ordering, the WebEngine attribute,
-    # and the shared application's program name.
+    # The shell's own application: Qt Widgets, and nothing that would pull in
+    # Qt WebEngine or the OCR runtime. Both belong to child processes.
     try:
         with timeline.phase("qt bootstrap"):
             application = cast(QtApplication, ensure_qt_application(diagnostics=diagnostics))
@@ -791,10 +838,6 @@ def run_desktop(
         raise DesktopApplicationError(
             "Hanly Desktop requires the hanly-app runtime extra with Qt6"
         ) from error
-
-    # A source launch preloads OCR inside the bootstrap above; a packaged one
-    # did it in the runtime hook, where the CLI has already claimed it.
-    record_preload_timing(timeline)
 
     dispatcher = QtResultDispatcher()
     status = RuntimeStatusPublisher(dispatcher)
@@ -846,7 +889,12 @@ def run_desktop(
     desktop.attach_signal_bridge(signal_bridge)
 
     startup.start(explicit_runtime)
-    return desktop.run(_update_acknowledgement(update_ready, diagnostics))
+    acknowledge = _update_acknowledgement(update_ready, diagnostics)
+    if acknowledge is not None:
+        # Queued before the loop starts, so it runs as the first thing the
+        # shell does once it is genuinely up.
+        dispatcher(acknowledge)
+    return desktop.run()
 
 
 def _update_acknowledgement(
@@ -854,10 +902,11 @@ def _update_acknowledgement(
 ) -> Callable[[], None] | None:
     """Return what tells a waiting update handoff that this build came up.
 
-    The window existing is the milestone, not a ready runtime: Qt, WebEngine,
-    and the interpreter inside this build have all started by then, which is
-    what the swap replaced. Whether a resource downloads afterwards says
-    nothing about whether the new build works.
+    The running event loop is the milestone, not a ready runtime: Qt, the
+    interpreter, and this build's own collected dependencies have all started
+    by the time the shell reaches it, which is what the swap replaced. Whether
+    a resource downloads afterwards says nothing about whether the new build
+    works, and neither does whether the user opened a window.
     """
 
     if path is None:

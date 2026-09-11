@@ -144,11 +144,29 @@ def test_the_macos_spec_does_not_force_the_hardened_runtime() -> None:
     assert not (ROOT / "packaging" / "entitlements.plist").exists()
 
 
-def test_runtime_hook_preloads_the_ocr_runtime_without_importing_qt() -> None:
+def test_the_runtime_hook_loads_no_role_specific_library() -> None:
+    """It runs in every process, the Control Center and lookup children
+    included, so importing Qt WebEngine or the OCR stack here would put back
+    exactly the memory the process split exists to release."""
+
     source = RUNTIME_HOOK.read_text(encoding="utf-8")
 
-    assert "preload_ocr_runtime" in source
+    assert "preload_ocr_runtime" not in source
     assert "PyQt6" not in source
+    assert "silence_runtime_warnings" in source
+
+
+def test_the_entry_point_diverts_spawned_children_before_anything_else() -> None:
+    """A frozen child re-enters through this same executable. Without this
+    first, it would parse arguments and start a second desktop."""
+
+    source = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "cli.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def main(", 1)[1]
+
+    assert "multiprocessing.freeze_support()" in body
+    assert body.index("multiprocessing.freeze_support()") < body.index("parse_args")
 
 
 def test_there_is_exactly_one_way_to_start_hanly() -> None:

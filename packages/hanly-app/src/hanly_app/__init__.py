@@ -36,6 +36,7 @@ from .control_center import (
     prepare_control_center_qt,
 )
 from .control_center_host import ControlCenterHost
+from .control_center_process import ControlCenterOptions, ControlCenterProcess
 from .desktop_controller import DesktopController, DesktopState, LookupRuntime
 from .diagnostics import RotatingLogFile, open_diagnostics
 from .hotkeys import (
@@ -71,7 +72,7 @@ from .popup import (
     ScreenGeometry,
     format_lookup_result,
 )
-from .qt_bootstrap import ensure_qt_application, prepare_qt_runtime
+from .qt_bootstrap import ensure_qt_application
 from .runtime import (
     HanlyRuntime,
     RuntimeConfigError,
@@ -115,6 +116,8 @@ __all__ = [
     "ControlCenterAssets",
     "ControlCenterBridge",
     "ControlCenterHost",
+    "ControlCenterOptions",
+    "ControlCenterProcess",
     "ControlCenterUnavailable",
     "DEFAULT_HOTKEYS",
     "DesktopApplication",
@@ -192,7 +195,6 @@ __all__ = [
     "load_control_center_assets",
     "open_diagnostics",
     "prepare_control_center_qt",
-    "prepare_qt_runtime",
     "preload_ocr_runtime",
     "run_desktop",
     "watch_worker_readiness",

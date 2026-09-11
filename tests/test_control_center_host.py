@@ -1,4 +1,4 @@
-"""One window, one loop, and a close that only hides when it can come back."""
+"""One window, one loop, and a close that actually lets Qt WebEngine go."""
 
 from __future__ import annotations
 
@@ -139,39 +139,22 @@ def test_visibility_follows_window_events_not_the_return_of_start() -> None:
     assert window.actions[-1] == "show"
 
 
-def test_closing_hides_the_window_when_a_restoration_route_exists() -> None:
-    webview = _Webview()
-    host = _host(webview)
-    host.run()
-    host.set_restorable(True)
-    window = webview.windows[0]
-
-    cancelled = window.events.closing.fire()
-
-    assert cancelled
-    assert window.actions == ["hide"]
-    assert host.created
-
-
-def test_closing_without_a_tray_lets_the_window_go() -> None:
-    """Never leave a background process the user has no way back to."""
+def test_closing_is_never_cancelled_into_a_hidden_window() -> None:
+    """The window lives in a process of its own now, so closing it releases
+    Qt WebEngine instead of hiding several hundred megabytes behind a tray."""
 
     webview = _Webview()
     host = _host(webview)
     host.run()
     window = webview.windows[0]
 
-    cancelled = window.events.closing.fire()
-
-    assert not cancelled
-    assert window.actions == []
+    assert window.events.closing.handlers == []
 
 
 def test_quit_destroys_the_window_and_is_idempotent() -> None:
     webview = _Webview()
     host = _host(webview)
     host.run()
-    host.set_restorable(True)
     window = webview.windows[0]
 
     host.close()

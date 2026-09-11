@@ -50,9 +50,13 @@ class _Qt:
     def __init__(self) -> None:
         self.aboutToQuit = _Signal()
         self.events: list[object] = []
+        #: Stands in for something happening while the loop is running.
+        self.during_loop: Callable[[], None] | None = None
 
     def exec(self) -> int:
         self.events.append("exec")
+        if self.during_loop is not None:
+            self.during_loop()
         return 7
 
     def quit(self) -> None:
@@ -60,6 +64,9 @@ class _Qt:
 
     def exit(self, return_code: int = 0) -> None:
         self.events.append(("exit", return_code))
+
+    def setQuitOnLastWindowClosed(self, closed: bool) -> None:
+        self.events.append(("quit_on_last_window_closed", closed))
 
 
 class _Service:
@@ -92,14 +99,8 @@ class _Service:
     def close(self) -> None:
         self.events.append(f"{self.name}.close")
 
-    def run(self, on_started: Callable[[], None] | None = None) -> int:
-        self.events.append(f"{self.name}.run")
-        if on_started is not None:
-            on_started()
-        return 7
-
-    def set_restorable(self, restorable: bool) -> None:
-        self.events.append(f"{self.name}.restorable={restorable}")
+    def notify_state_changed(self) -> None:
+        self.events.append(f"{self.name}.notify")
 
     def shutdown(self) -> None:
         self.events.append(f"{self.name}.shutdown")
@@ -113,6 +114,8 @@ class _Service:
 
 
 def test_desktop_application_runs_and_shuts_down_services_once() -> None:
+    """The shell owns the loop, and releases its children in dependency order."""
+
     events: list[str] = []
     qt = _Qt()
     controller = _Service("controller", events)
@@ -123,42 +126,38 @@ def test_desktop_application_runs_and_shuts_down_services_once() -> None:
     assert desktop.run() == 7
     desktop.shutdown()
 
-    # The loop belongs to the Control Center host; nothing here calls exec, and
-    # nothing starts watching the screen before the user asks.
+    # Input and the lookup child go first, so an update handoff can only take
+    # over once nothing still holds a resource; nothing starts watching the
+    # screen before the user asks.
     assert events == [
         "tray.start",
-        "control.restorable=True",
-        "control.run",
-        "tray.shutdown",
-        "control.close",
+        "control.show",
         "controller.begin_shutdown",
         "controller.await_shutdown",
+        "control.shutdown",
+        "tray.shutdown",
     ]
-    assert qt.events == []
+    assert ("quit_on_last_window_closed", False) in qt.events
+    assert "exec" in qt.events
 
 
-def test_the_window_opening_is_what_answers_a_waiting_update_handoff(
+def test_the_running_shell_is_what_answers_a_waiting_update_handoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The handoff keeps the previous installation until this build answers, so
-    the milestone is the window existing - Qt, WebEngine, and the interpreter
-    inside the new build have all started by then. A resource that downloads
-    afterwards says nothing about whether the swap produced a working Hanly."""
+    the milestone is the shell running - Qt, the interpreter, and this build's
+    own collected dependencies have all started by then. A window the user
+    never opened, and a resource that downloads afterwards, say nothing about
+    whether the swap produced a working Hanly."""
 
     from importlib import metadata
 
     monkeypatch.setattr(metadata, "version", lambda name: "0.2.0")
     ready = tmp_path / "transaction" / "ready"
-    events: list[str] = []
-    desktop = DesktopApplication(
-        _Qt(),
-        _Service("controller", events),
-        _Service("tray", events),
-        _Service("control", events),
-    )
     acknowledge = application_module._update_acknowledgement(ready, DiagnosticLog())
+    assert acknowledge is not None
 
-    assert desktop.run(acknowledge) == 7
+    acknowledge()
 
     assert ready.read_text(encoding="utf-8") == "0.2.0"
 
@@ -889,19 +888,40 @@ def test_releasing_a_failed_attempt_waits_off_the_qt_thread(tmp_path: Path) -> N
     assert session.state is DesktopState.NEW
 
 
-def test_a_tray_without_a_way_back_leaves_the_window_closable() -> None:
-    """Started is not usable: an Xorg tray has no menu to reopen anything."""
+def test_a_tray_without_a_way_back_ends_the_session_with_its_window() -> None:
+    """Started is not usable: an Xorg tray has no menu to reopen anything, and
+    a Hanly the user cannot reach is worse than one that ends when it closes."""
 
     events: list[str] = []
+    qt = _Qt()
     tray = _Service("tray", events, can_restore_window=False)
     desktop = DesktopApplication(
-        _Qt(), _Service("controller", events), tray, _Service("control", events)
+        qt, _Service("controller", events), tray, _Service("control", events)
     )
 
+    qt.during_loop = desktop.control_center_closed
     desktop.run()
 
-    assert "control.restorable=True" not in events
-    assert any("cannot restore" in message for message in desktop.diagnostics)
+    assert desktop.tray_usable is False
+    assert any("cannot reopen" in message for message in desktop.diagnostics)
+    assert "quit" in qt.events
+
+
+def test_a_closed_window_leaves_a_usable_tray_running() -> None:
+    events: list[str] = []
+    qt = _Qt()
+    desktop = DesktopApplication(
+        qt,
+        _Service("controller", events),
+        _Service("tray", events),
+        _Service("control", events),
+    )
+
+    qt.during_loop = desktop.control_center_closed
+    desktop.run()
+
+    assert desktop.tray_usable is True
+    assert "quit" not in qt.events
 
 
 def test_a_capture_action_before_activation_is_refused_not_a_lifecycle_failure(
