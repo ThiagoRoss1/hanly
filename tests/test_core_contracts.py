@@ -315,10 +315,17 @@ def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None
 
     assert is_dataclass(context)
     assert getattr(context, "__dataclass_params__").frozen
-    assert [field.name for field in fields(LookupContext)] == ["text", "lemma", "ocr_results"]
+    assert [field.name for field in fields(LookupContext)] == [
+        "text",
+        "lemma",
+        "ocr_results",
+        "word_region",
+    ]
     assert result.context == context
     assert result.context.ocr_results == (ocr_result,)
     assert isinstance(result.context.ocr_results, tuple)
+    # Geometry is optional evidence, not something every outcome carries.
+    assert result.context.word_region is None
 
 
 def test_resource_metadata_carries_state_and_compatibility() -> None:

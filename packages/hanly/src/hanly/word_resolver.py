@@ -1,9 +1,10 @@
 """Resolve the OCR word under an engine-level target point."""
 
 from collections.abc import Sequence
+from math import ceil, floor
 from typing import Protocol, runtime_checkable
 
-from .contracts import OCRResult, Point, Quad
+from .contracts import BoundingBox, OCRResult, Point, Quad
 
 _GEOMETRY_EPSILON = 1e-9
 
@@ -116,6 +117,35 @@ class WordResolver:
             return None
         return result, word
 
+    @staticmethod
+    def word_bounds(region: OCRResult, target: Point) -> BoundingBox | None:
+        """Return the box around the word at ``target``, not the whole line.
+
+        OCR reports line quads, so the recognized region usually spans several
+        words. A client that wants to know where the answer came from -- to
+        keep a popup alive while the cursor is still on the word it describes,
+        say -- has to be told the word, or it would protect a whole sentence.
+
+        The span is derived from the same per-script advance weights that place
+        word boundaries, so it is an estimate of a rendered position rather than
+        a font measurement, and it is deliberately axis-aligned.
+        """
+
+        if not isinstance(region, OCRResult) or not isinstance(target, Point):
+            return None
+        text = region.text
+        if not isinstance(text, str) or not text.strip() or not _usable_quad(region.quad):
+            return None
+
+        fraction = _horizontal_fraction(region.quad, target)
+        if fraction is None:
+            return None
+        index = _character_index(text, fraction)
+        if text[index].isspace():
+            return None
+        start, end = _word_span(text, index)
+        return _span_bounds(region.quad, text, start, end)
+
 
 def _usable_quad(quad: Quad) -> bool:
     """Return whether a quad encloses a usable polygonal area.
@@ -212,6 +242,14 @@ def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
     if text[index].isspace():
         return None
 
+    start, end = _word_span(text, index)
+    word = text[start:end].strip()
+    return word or None
+
+
+def _word_span(text: str, index: int) -> tuple[int, int]:
+    """Return the whitespace-delimited character span containing ``index``."""
+
     start = index
     while start > 0 and not text[start - 1].isspace():
         start -= 1
@@ -219,9 +257,22 @@ def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
     end = index + 1
     while end < len(text) and not text[end].isspace():
         end += 1
+    return start, end
 
-    word = text[start:end].strip()
-    return word or None
+
+def _span_bounds(quad: Quad, text: str, start: int, end: int) -> BoundingBox:
+    """Map a character span onto the line's box along the reading direction."""
+
+    box = quad.bounding_box()
+    advances = [_advance_weight(character) for character in text]
+    total = sum(advances)
+    if total <= 0.0:
+        return box
+
+    width = box.right - box.left
+    left = box.left + floor(sum(advances[:start]) / total * width)
+    right = box.left + ceil(sum(advances[:end]) / total * width)
+    return BoundingBox(left, box.top, max(right, left + 1), box.bottom)
 
 
 def _most_interior(hits: list[OCRResult], target: Point) -> OCRResult:

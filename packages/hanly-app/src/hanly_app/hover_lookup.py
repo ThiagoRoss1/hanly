@@ -17,7 +17,13 @@ from typing import Protocol
 from hanly import Point
 
 from .capture import CaptureResult
-from .hover_controller import HoverController, HoverRequest, HoverScheduler
+from .hover_controller import Cancellable, HoverController, HoverRequest, HoverScheduler
+from .hover_target import (
+    EXIT_GRACE_MS,
+    WORD_MARGIN_PIXELS,
+    CaptureOrigins,
+    RetainedTarget,
+)
 from .lookup_controller import LookupController
 from .mouse_observer import MouseListenerFactory, MouseObserver
 from .runtime_trace import RuntimeTraceSink, emit_trace
@@ -60,6 +66,9 @@ class HoverLookupRuntime:
         on_error: HoverErrorHandler | None = None,
         on_invalidate: Callable[[], None] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
+        origins: CaptureOrigins | None = None,
+        grace_ms: float = EXIT_GRACE_MS,
+        word_margin: int = WORD_MARGIN_PIXELS,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -88,6 +97,13 @@ class HoverLookupRuntime:
         self._startup_point: Point | None = None
         self._readiness_generation = 0
         self._readiness_waiting = False
+        self._origins = origins if origins is not None else CaptureOrigins()
+        self._scheduler = scheduler
+        self._grace_ms = float(grace_ms)
+        self._word_margin = int(word_margin)
+        self._retained: RetainedTarget | None = None
+        self._target_generation = 0
+        self._grace_timer: Cancellable | None = None
         self._hover = HoverController(
             self._on_stable,
             delay_ms=delay_ms,
@@ -188,6 +204,7 @@ class HoverLookupRuntime:
             "hover_invalidation",
             hover_request_id=hover_request_id,
         )
+        self.clear_target()
         self._invalidate_active_hover()
 
     def resume(self) -> None:
@@ -224,6 +241,7 @@ class HoverLookupRuntime:
             "hover_invalidation",
             hover_request_id=hover_request_id,
         )
+        self.clear_target()
         self._hover.invalidate()
         self._invalidate_active_hover()
 
@@ -247,14 +265,62 @@ class HoverLookupRuntime:
             "hover_cancellation",
             hover_request_id=hover_request_id,
         )
+        self._cancel_grace()
         self._invalidate_active_hover()
         self._controller.stop(wait=False)
+
+    @property
+    def origins(self) -> CaptureOrigins:
+        """Where recent requests captured from, shared with the manual path."""
+
+        return self._origins
+
+    @property
+    def retained_target(self) -> RetainedTarget | None:
+        """The successful result the cursor is currently allowed to sit on."""
+
+        with self._lock:
+            return self._retained
+
+    def retain(self, target: RetainedTarget | None) -> None:
+        """Adopt the result now on screen, and stop any exit already running.
+
+        The generation moves with every retention, so a grace timer armed for
+        the previous answer can never dismiss this one.
+        """
+
+        with self._lock:
+            if self._closed:
+                return
+            self._retained = target
+            self._target_generation += 1
+            timer = self._grace_timer
+            self._grace_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def clear_target(self) -> None:
+        """Forget the retained result; the next movement behaves as a first one."""
+
+        self.retain(None)
 
     def _on_position(self, point: Point) -> None:
         with self._lock:
             if self._closed or not self._running:
                 return
-        self._notify_invalidation()
+            retained = self._retained
+        if retained is not None and retained.protects(point, margin=self._word_margin):
+            # Still on the word, or on the popup itself. Nothing is captured,
+            # nothing is recognized, and what is on screen stays there.
+            self._cancel_grace()
+            self._hover.invalidate()
+            emit_trace(
+                self._trace_sink,
+                "hover_inside_retained_target",
+                lookup_request_id=retained.lookup_request_id,
+            )
+            return
+        self._leave_retained_target()
         with self._lock:
             if not self._controller.worker_ready:
                 self._startup_point = point
@@ -282,6 +348,66 @@ class HoverLookupRuntime:
             "hover_mouse_opportunity",
             hover_request_id=self._hover.current_request_id,
         )
+
+    def _leave_retained_target(self) -> None:
+        """Leave the word, keeping its answer visible for the grace interval.
+
+        The gap between a word and the popup beside it is real screen distance,
+        and dismissing on the first pixel outside the word makes the popup
+        impossible to reach. Request currency is retired immediately either
+        way; only the visible result waits.
+        """
+
+        with self._lock:
+            retained = self._retained
+            already_leaving = self._grace_timer is not None
+        if retained is None:
+            self._notify_invalidation()
+            return
+        if already_leaving:
+            return
+        self._arm_grace()
+
+    def _arm_grace(self) -> None:
+        with self._lock:
+            generation = self._target_generation
+            scheduler = self._scheduler
+        try:
+            timer = (
+                scheduler(self._grace_ms, lambda: self._grace_expired(generation))
+                if scheduler is not None
+                else None
+            )
+        except Exception as error:
+            self._report_error("popup grace", error)
+            self._notify_invalidation()
+            return
+        if timer is None:
+            # No scheduler was supplied, so there is nothing to wait on and
+            # leaving the word is the dismissal.
+            self._notify_invalidation()
+            return
+        with self._lock:
+            current = generation == self._target_generation and not self._closed
+            if current:
+                self._grace_timer = timer
+        if not current:
+            timer.cancel()
+
+    def _grace_expired(self, generation: int) -> None:
+        with self._lock:
+            if self._closed or generation != self._target_generation:
+                return
+            self._retained = None
+            self._grace_timer = None
+        self._notify_invalidation()
+
+    def _cancel_grace(self) -> None:
+        with self._lock:
+            timer = self._grace_timer
+            self._grace_timer = None
+        if timer is not None:
+            timer.cancel()
 
     def _notify_invalidation(self) -> None:
         callback = self._on_invalidate
@@ -424,6 +550,9 @@ class HoverLookupRuntime:
                 capture.target,
                 hover_request_id=request.request_id,
             )
+            # The origin travels with this request: by the time its result
+            # arrives the cursor has usually moved somewhere else entirely.
+            self._origins.remember(lookup_request.request_id, capture.region)
         except Exception as error:
             emit_trace(
                 self._trace_sink,
@@ -512,4 +641,5 @@ __all__ = [
     "HoverDispatcher",
     "HoverErrorHandler",
     "HoverLookupRuntime",
+    "RetainedTarget",
 ]

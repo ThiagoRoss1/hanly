@@ -21,7 +21,7 @@
 - [x] heavy lookup worker
 - [x] preload policies
 - [x] hover activation / hotkeys
-- [ ] hover stability / popup persistence
+- [x] hover stability / popup persistence
 - [ ] logs / diagnostics
 - [ ] cleanup / disk hygiene
 - [ ] integration review
@@ -87,6 +87,67 @@ Files: This checkpoint; execution plan to follow investigation.
 Validation: `git fetch origin main`; HEAD and origin/main match.
 
 ## Progress Log
+
+### 2026-09-11 — Task 4: a popup the cursor can reach
+
+What changed: The engine now reports where the answer came from.
+`WordResolver.word_bounds` maps the resolved word's character span back onto the
+line quad, `LookupContext` carries it as `word_region`, and the pipeline fills it
+through an optional resolver member so a substituted resolver stays valid. New
+`hover_target.py` holds `RetainedTarget`, the expanded-word plus popup-frame
+union, the ROI-to-screen placement, and `CaptureOrigins`, which keeps each
+request's capture origin with that request rather than with a mutable latest
+capture. `HoverLookupRuntime` stops clearing the popup on every movement:
+movement inside the protected union captures nothing, recognizes nothing and
+dismisses nothing, while a real exit retires request currency, arms a new dwell,
+and keeps the visible answer for a 120 ms grace. Re-entry cancels the grace, a
+newer retained result cancels the older one's timer, and an expired timer from a
+previous answer can never dismiss the current one. Pause, invalidate, shutdown,
+and a capture target change all forget the retained target.
+Why: The popup disappeared as soon as the cursor moved towards it, which made a
+result impossible to read and made every micro-movement a full OCR call.
+Evidence/result: Native macOS sweep with the real screen, the real cursor (posted
+`kCGEventMouseMoved` events, not a warp, which produces no events at all), the
+real capture backend and the real lookup child, over the checked-in Korean
+fixture shown in a window. At dwell 80, 40 and 20 ms alike: the first word was
+recognized, the second word was recognized after moving to it, four micro-moves
+inside the word produced **0 captures and 0 OCR calls** with four
+`hover_inside_retained_target` events, the answer stayed on screen throughout,
+and leaving cleared it. Stage timings, dwell 80, cold: capture 52.6 ms p50,
+OCR 226.5 ms p50 (first inferences), token selection 0.06 ms, morphology 2.3 ms,
+dictionary 3.1 ms, child total 116.4 ms, executor total 117.0 ms, so the whole
+new process boundary costs **0.59 ms**. The 40 and 20 ms sweeps re-read the same
+pixels and were answered from the worker's OCR cache (child total 0.06-0.07 ms,
+executor total 0.54-0.83 ms), which confirms IPC overhead of **0.5-0.8 ms** and
+also means the three dwells are not comparable on latency.
+These are callback and stage timings, not pixels-on-screen latency.
+Dwell decision: **80 ms is kept.** All three values worked on a static fixture
+driven by a scripted cursor, which is not evidence about a human hand on live
+text, and the plan's bar is a stable lower default. Saved user values are
+untouched.
+Probe defects found and corrected, both mine rather than the product's:
+`CGWarpMouseCursorPosition` moves the cursor without emitting any event, so the
+observer saw nothing; and a Qt window that is never activated opens behind the
+front Space, so the capture read the desktop picture and every lookup came back
+EMPTY. Screen Recording and Accessibility were confirmed granted and working by
+capturing the full screen and reading back the fixture.
+Files:
+- `packages/hanly/src/hanly/word_resolver.py:L60-L140,L230-L300`
+- `packages/hanly/src/hanly/contracts.py:L189-L200`
+- `packages/hanly/src/hanly/lookup_pipeline.py:L100-L180,L250-L275`
+- `packages/hanly-app/src/hanly_app/hover_target.py` (new)
+- `packages/hanly-app/src/hanly_app/hover_lookup.py:L60-L120,L260-L420`
+- `packages/hanly-app/src/hanly_app/manual_lookup.py:L400-L470,L560-L700`
+- `packages/hanly-app/src/hanly_app/composition.py:L726-L740`
+Tests/measurements: full suite 1125 passed, 3 skipped in 75 s; Ruff and mypy
+clean over 188 files. New `tests/test_hover_target.py` (20) covers word geometry
+against the whole line, the pipeline carrying it, placement on a monitor with a
+negative origin, the union never becoming a hull, the margin, bounded origins,
+same-word movement doing no work, entering the popup, the gap grace, re-entry
+cancelling it, a real exit arming a new dwell, a stale timer failing to dismiss a
+newer result, pause and invalidate forgetting the target, and a capture target
+change forgetting it.
+Next: task 5, logs, diagnostics and owned cleanup.
 
 ### 2026-09-11 — Task 3: preload policies, one toggle, transactional rebinding
 

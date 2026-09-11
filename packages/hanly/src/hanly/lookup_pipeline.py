@@ -5,6 +5,7 @@ from math import isfinite
 from unicodedata import category
 
 from .contracts import (
+    BoundingBox,
     LookupContext,
     LookupResult,
     LookupStatus,
@@ -105,7 +106,10 @@ class LookupPipeline:
             )
 
         text = text.strip()
-        context = LookupContext(text=text, ocr_results=ocr_results)
+        word_region = _word_region(self._word_resolver, region, target)
+        context = LookupContext(
+            text=text, ocr_results=ocr_results, word_region=word_region
+        )
 
         # Hanly's downstream language services are Korean-only. OCR must run
         # before we can know what the pixels contain, but Latin text, numbers,
@@ -167,7 +171,9 @@ class LookupPipeline:
             )
 
         _abort_if_cancelled(cancelled)
-        context = LookupContext(text=text, lemma=lemma, ocr_results=ocr_results)
+        context = LookupContext(
+            text=text, lemma=lemma, ocr_results=ocr_results, word_region=word_region
+        )
         try:
             entries = tuple(self._dictionary_provider.lookup(lemma))
         except Exception as exc:
@@ -229,6 +235,28 @@ def _usable_lemmas(analyses: Sequence[TokenAnalysis]) -> tuple[str, ...]:
         if lemma:
             lemmas.append(lemma)
     return tuple(lemmas)
+
+
+def _word_region(
+    resolver: TargetResolver, region: OCRResult, target: Point
+) -> BoundingBox | None:
+    """Ask the resolver where the word is, if this one can say.
+
+    Geometry is an addition to the resolver seam rather than a requirement of
+    it: a substituted resolver that only answers "which word" stays valid, and
+    its results simply carry no geometry for a client to use.
+    """
+
+    bounds = getattr(resolver, "word_bounds", None)
+    if not callable(bounds):
+        return None
+    try:
+        found = bounds(region, target)
+    except Exception:
+        # Geometry is an optimisation for the client's popup. Losing it must
+        # never turn a successful lookup into an error.
+        return None
+    return found if isinstance(found, BoundingBox) else None
 
 
 def _abort_if_cancelled(cancelled: Callable[[], bool] | None) -> None:

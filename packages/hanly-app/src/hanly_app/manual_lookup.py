@@ -27,6 +27,7 @@ from .hotkeys import (
 )
 from .hover_controller import Cancellable, HoverScheduler
 from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
+from .hover_target import CaptureOrigins, RetainedTarget, screen_rect
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
 from .popup import PopupController
@@ -155,6 +156,7 @@ class ManualLookupRuntime:
         on_toggle_hover: Callable[[], None] | None = None,
         on_error: ErrorReporter | None = None,
         capture_refusal: CaptureRefusal | None = None,
+        origins: CaptureOrigins | None = None,
         idle_scheduler: IdleScheduler | None = None,
         idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS,
     ) -> None:
@@ -196,6 +198,7 @@ class ManualLookupRuntime:
         self._on_toggle_hover = on_toggle_hover
         self._on_error = on_error
         self._capture_refusal = capture_refusal
+        self._origins = origins if origins is not None else CaptureOrigins()
         self._idle_scheduler = idle_scheduler or _schedule_idle
         self._idle_timeout = float(idle_timeout_seconds)
         self._hotkeys = (hotkey_factory or _create_hotkey)(
@@ -321,6 +324,11 @@ class ManualLookupRuntime:
 
         if not isinstance(capture_mode, CaptureMode):
             raise TypeError("capture_mode must be a CaptureMode")
+        # Whatever was retained describes a region of a screen Hanly is no
+        # longer reading.
+        hover = self._hover_runtime
+        if hover is not None:
+            hover.clear_target()
         self._capture_mode = capture_mode
         self._capture_service.set_preferences(
             capture_mode=capture_mode,
@@ -680,6 +688,9 @@ class ManualLookupRuntime:
             )
             stage = "lookup submission"
             request = self._controller.submit(capture.image, capture.target)
+            # The origin belongs to this request, not to whatever was captured
+            # most recently by the time the answer comes back.
+            self._origins.remember(request.request_id, capture.region)
         except Exception as error:
             emit_trace(
                 self._trace_sink,
@@ -715,6 +726,41 @@ class ManualLookupRuntime:
         except Exception as error:
             self._report_error("Screen permission", error)
             return None
+
+    def note_presented(
+        self,
+        result: LookupResult,
+        lookup_request_id: int | None,
+        popup: ScreenRect | None = None,
+    ) -> None:
+        """Retain where a successful answer came from, so it can be read.
+
+        Only a successful result is worth protecting: the others are already
+        suppressed rather than shown, and keeping a region for them would
+        freeze hover over a word Hanly could not read.
+        """
+
+        hover = self._hover_runtime
+        if hover is None:
+            return
+        word = self._word_rect(result, lookup_request_id)
+        if word is None or lookup_request_id is None:
+            hover.clear_target()
+            return
+        hover.retain(RetainedTarget(lookup_request_id, word, popup))
+
+    def _word_rect(
+        self, result: LookupResult, lookup_request_id: int | None
+    ) -> ScreenRect | None:
+        """Place the resolved word on screen, using its own request's capture."""
+
+        if result.status is not LookupStatus.SUCCESS or result.context is None:
+            return None
+        bounds = result.context.word_region
+        region = self._origins.origin(lookup_request_id)
+        if bounds is None or region is None:
+            return None
+        return screen_rect(region, bounds)
 
     def _toggle_hover(self) -> None:
         """Hand the toggle to whoever owns the capture lifecycle.
@@ -778,9 +824,17 @@ def create_manual_lookup(
         on_diagnostic=on_diagnostic,
         on_state=on_engine_state,
     )
+    origins = CaptureOrigins()
+    manual_holder: list[ManualLookupRuntime] = []
+
+    def present(result: LookupResult) -> None:
+        popup(result)
+        if manual_holder:
+            manual_holder[0].note_presented(result, controller.current_request_id)
+
     controller = _create_runtime_controller(
         runtime,
-        _as_result_handler(popup),
+        present,
         dispatcher,
         trace_sink=trace_sink,
         on_initialization_error=on_initialization_error,
@@ -810,8 +864,10 @@ def create_manual_lookup(
         on_toggle_hover=on_toggle_hover,
         on_error=on_error,
         capture_refusal=capture_refusal,
+        origins=origins,
         idle_scheduler=idle_scheduler,
     )
+    manual_holder.append(manual)
     if hover_enabled:
         manual.attach_hover(
             HoverLookupRuntime(
@@ -824,6 +880,7 @@ def create_manual_lookup(
                 on_error=hover_on_error,
                 on_invalidate=clear_popup or close_popup,
                 trace_sink=trace_sink,
+                origins=origins,
             )
         )
     if app_config is not None:
@@ -872,11 +929,17 @@ def create_qt_manual_lookup(
 
     controller: LookupController
 
+    origins = CaptureOrigins()
+    manual_holder: list[ManualLookupRuntime] = []
+
     def present_result(result: LookupResult) -> object:
-        return popup_trigger.open(
-            result,
-            lookup_request_id=controller.current_request_id,
-        )
+        lookup_request_id = controller.current_request_id
+        position = popup_trigger.open(result, lookup_request_id=lookup_request_id)
+        if manual_holder:
+            manual_holder[0].note_presented(
+                result, lookup_request_id, _popup_rect(position, view.popup_size)
+            )
+        return position
 
     engine = _create_engine(
         runtime,
@@ -922,8 +985,10 @@ def create_qt_manual_lookup(
         on_toggle_hover=on_toggle_hover,
         on_error=on_error,
         capture_refusal=capture_refusal,
+        origins=origins,
         idle_scheduler=idle_scheduler,
     )
+    manual_holder.append(manual)
     if hover_enabled:
         manual.attach_hover(
             HoverLookupRuntime(
@@ -938,11 +1003,25 @@ def create_qt_manual_lookup(
                 on_error=hover_on_error,
                 on_invalidate=popup_controller.clear,
                 trace_sink=trace_sink,
+                origins=origins,
             )
         )
     if app_config is not None:
         manual.apply_config(app_config)
     return manual
+
+
+def _popup_rect(position: object, size: object) -> ScreenRect | None:
+    """Describe the frame the popup actually took, so the cursor may enter it."""
+
+    if position is None:
+        return None
+    return ScreenRect(
+        left=int(getattr(position, "x")),
+        top=int(getattr(position, "y")),
+        width=int(getattr(size, "width")),
+        height=int(getattr(size, "height")),
+    )
 
 
 def _hover_delay(delay_ms: float | None, app_config: AppConfig | None) -> float:
@@ -1069,6 +1148,7 @@ def _schedule_shutdown(callback: Callable[[], None]) -> None:
 
 __all__ = [
     "IDLE_TIMEOUT_SECONDS",
+    "CaptureOrigins",
     "CaptureRefusal",
     "CaptureSource",
     "CursorProvider",
