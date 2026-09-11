@@ -30,7 +30,12 @@
 - [x] final performance measurements
 - [x] final review
 - [x] final handoff
-- [ ] branch push
+- [x] branch push
+
+### 2026-09-11 — Branch pushed
+
+`perf/mvp-runtime-lifecycle` pushed to origin at `d72bda9`, seven commits ahead
+of `main`. Not merged, not tagged, no release published, Linear untouched.
 
 ## Decisions
 
