@@ -180,6 +180,48 @@ download run the same code.
 
 ---
 
+## 6a. Updating Hanly itself
+
+A resource is swapped while Hanly keeps running. The application archive
+contains the executable and the interpreter running from it, so it cannot be.
+
+```
+Control Center "Update now"
+  → update_coordinator.py            one operation at a time, off the UI thread
+  → app_update.py     ApplicationInstaller.stage()
+        download → SHA256SUMS → extract → validate → one transaction directory
+  → app_update.py     ApplicationInstaller.apply()
+  → app_update_handoff.py            a detached native script, then Hanly quits
+        wait for this process to exit
+        rename installation → transaction/previous
+        rename staged build → installation
+        relaunch it with `--update-ready <path>`
+        wait for that path to hold the version it installed
+        ↳ it does      remove the transaction directory, and itself
+        ↳ it does not  put the previous build back and relaunch that instead
+```
+
+Three rules hold the whole thing together:
+
+- **The previous build outlives the swap.** It is discarded only once the new
+  one has reported the expected version through `--update-ready`, which
+  `cli.main` answers from `application.run_desktop` when the window opens. A
+  build that installs and then cannot start is rolled back, not shrugged at.
+- **One directory owns everything.** Download, extraction, staged build,
+  backup, and readiness file all live in a uniquely named transaction
+  directory beside the installation, so cleanup is one removal and two
+  attempts cannot collide. The script itself lives outside it.
+- **Each platform relaunches the way that platform launches an application.**
+  macOS goes through `/usr/bin/open` on the `.app`; Windows and Linux run the
+  program at the path the layout names, with no suffix reconstructed.
+
+`extract_application_tar` is the application's own extractor: a PyInstaller
+directory build is full of relative links between its bundled libraries, and
+the resource extractor rejects every link outright - correctly, for a resource.
+macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
+
+---
+
 ## 7. File index
 
 ### `packages/hanly` — the engine
@@ -257,8 +299,10 @@ download run the same code.
 
 | File | What it does |
 |---|---|
-| `update_service.py` | Obtains remote resources: download, verify, decompress, validate, activate, roll back |
-| `update_coordinator.py` | Runs updates off the UI thread and reports progress |
+| `update_service.py` | Obtains remote *resources*: download, verify, decompress, validate, activate, roll back |
+| `update_coordinator.py` | Runs updates off the UI thread and reports progress; one operation owns it at a time |
+| `app_update.py` | The *application* half: which release is newer, and download → verify → extract → stage into one owned transaction directory |
+| `app_update_handoff.py` | The swap itself: the native script that waits for this process to exit, replaces the installation, relaunches it, and waits to be told the new build started |
 
 ### Outside the packages
 

@@ -127,7 +127,7 @@ def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
 
     source = SPEC.read_text(encoding="utf-8")
 
-    assert 'EXCLUDED_MODULES = ("tests", "test", "spikes", "pkg_resources")' in source
+    assert 'EXCLUDED_MODULES = ("tests", "test", "pkg_resources")' in source
     assert "excludes=list(EXCLUDED_MODULES)" in source
 
 
@@ -443,14 +443,48 @@ def test_the_spec_collects_the_inputs_a_frozen_build_cannot_fetch() -> None:
     assert "prepare_easyocr_models.py" in source
 
 
-def test_the_spec_leaves_torch_and_qt_libraries_to_their_own_hooks() -> None:
+def test_the_spec_uses_targeted_easyocr_hook_and_keeps_other_collections() -> None:
     source = SPEC.read_text(encoding="utf-8")
 
-    assert 'for package_name in ("easyocr", "torchvision"):' in source
+    assert 'for package_name in ("torchvision",):' in source
+    assert 'collect_all("easyocr")' not in source
+    # Korean recognition decodes against both character sets, and ``easyocr``
+    # configuration may legally name either, so neither may be dropped.
+    assert 'hooksconfig={"easyocr": {"lang_codes": ["ko", "en"]}}' in source
+    assert 'for distribution in ("hanly-app", "hanly", "easyocr"):' in source
     assert "collect_dynamic_libs" not in source
     # The uncertain surfaces stay collected; only duplication was removed.
     assert 'collect_all(package_name)' in source
     assert "kiwipiepy" in source
+
+
+def test_the_spec_keeps_only_the_webengine_locales_hanly_can_present() -> None:
+    """The filter has to run on the analysis result and before the bundle is
+    built: the locales arrive from QtWebEngine's hook during analysis, and a
+    macOS bundle is signed as it is assembled, so nothing may be removed after.
+    """
+
+    source = SPEC.read_text(encoding="utf-8")
+
+    assert 'KEPT_WEBENGINE_LOCALES = ("en-US.pak", "ko.pak")' in source
+    assert "a.datas = _without_unused_webengine_locales(a.datas)" in source
+    assert source.index("a.datas = _without_unused_webengine_locales") < source.index(
+        "pyz = PYZ("
+    )
+
+
+def test_the_spec_drops_qt_catalogues_without_touching_webengine_locales() -> None:
+    """Windows and Linux keep ``qtwebengine_locales`` inside the same
+    ``translations`` directory, so the rule matches the file suffix rather than
+    the directory the catalogues happen to share with them."""
+
+    source = SPEC.read_text(encoding="utf-8")
+
+    assert 'entry for entry in collected if not entry[0].endswith(".qm")' in source
+    assert "a.datas = _without_qt_translation_catalogues(a.datas)" in source
+    assert source.index("a.datas = _without_qt_translation_catalogues") < source.index(
+        "pyz = PYZ("
+    )
 
 
 def test_release_inputs_are_pinned_without_touching_package_ranges() -> None:

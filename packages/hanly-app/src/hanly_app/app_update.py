@@ -9,8 +9,9 @@ release fetcher downloads the platform archive, :func:`verify_checksum` proves
 it against the release's ``SHA256SUMS``, and :func:`extract_archive` unpacks it.
 Only the last step differs. A resource is swapped in place while Hanly keeps
 running; an application bundle contains the executable and the interpreter
-currently running from it, so it is staged beside the installation and moved
-into place by a small handoff script once this process has exited.
+currently running from it, so it is staged in a directory this module owns and
+moved into place by :mod:`~hanly_app.app_update_handoff` once this process has
+exited.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import zipfile
 from collections.abc import Callable, Mapping
@@ -29,6 +31,12 @@ from importlib import metadata
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from .app_update_handoff import (
+    HandoffError,
+    Spawn,
+    UpdateTransaction,
+    start_handoff,
+)
 from .paths import macos_bundle_root
 from .update_service import (
     DownloadProgress,
@@ -104,7 +112,11 @@ _PLATFORM_LAYOUTS: Mapping[str, _InstallLayout] = {
 }
 
 ReleaseSource = Callable[[], Mapping[str, Any]]
-Spawn = Callable[[list[str], Path], None]
+
+#: The one archive member ``ditto --sequesterRsrc`` adds beside the bundle. It
+#: carries the extended attributes ``ditto -x`` folds back into the files it
+#: writes, and nothing by that name is ever created on disk.
+_APPLE_DOUBLE_ROOT = "__MACOSX"
 
 
 class ApplicationUpdateError(RuntimeError):
@@ -147,15 +159,6 @@ class ApplicationUpdate:
             "installable": self.installable,
             "message": self.message,
         }
-
-
-@dataclass(frozen=True)
-class StagedApplicationUpdate:
-    """A verified new bundle waiting beside the installation it replaces."""
-
-    version: str
-    staged_path: Path
-    install_root: Path
 
 
 def installed_version() -> str:
@@ -238,6 +241,15 @@ def check_application_update(
         raise ApplicationUpdateError("release metadata must be a JSON object")
 
     release_url = _release_url(payload)
+    if payload.get("draft") or payload.get("prerelease"):
+        return ApplicationUpdate(
+            current_version=current,
+            latest_version=None,
+            release_url=release_url,
+            available=False,
+            message=f"Hanly {current} is installed. The release channel has no stable build.",
+        )
+
     tag = payload.get("tag_name")
     released = _version_tuple(_TAG_PATTERN, tag) if isinstance(tag, str) else None
     if released is None:
@@ -286,9 +298,9 @@ def check_application_update(
 class ApplicationInstaller:
     """Download, verify, and stage one application build, then hand it off.
 
-    Staging is complete and reversible on its own: nothing about the running
-    installation changes until :meth:`apply` runs, and :meth:`apply` performs no
-    validation of its own.
+    Staging is complete and reversible on its own: everything it writes lives
+    in one transaction directory, nothing about the running installation
+    changes until :meth:`apply` runs, and :meth:`apply` validates nothing.
     """
 
     def __init__(
@@ -308,8 +320,8 @@ class ApplicationInstaller:
         self._install_root = install_root.resolve()
         self._layout = layout
         self._asset_name = layout.asset_name
-        self._windows = platform.startswith("win32")
-        self._spawn = spawn if spawn is not None else _spawn_detached
+        self._platform = platform
+        self._spawn = spawn
         self._extract_bundle = extract_application_bundle
 
     def stage(
@@ -317,58 +329,84 @@ class ApplicationInstaller:
         update: ApplicationUpdate,
         *,
         on_progress: ProgressCallback | None = None,
-    ) -> StagedApplicationUpdate:
-        """Return a verified new bundle placed beside the current installation."""
+    ) -> UpdateTransaction:
+        """Return a verified new build waiting in a directory this owns.
+
+        The directory sits beside the installation so the swap that follows is
+        a rename on one filesystem rather than a copy that can half-finish.
+        """
 
         version = update.latest_version
         if version is None or not update.installable:
             raise ApplicationUpdateError("there is no installable application build")
-        self._confirm_release(version)
+        payload = self._confirm_release(version)
 
-        parent = self._install_root.parent
-        download = _reserve(parent, ".download")
-        extracted: Path | None = None
+        directory = self._open_transaction()
         try:
             _emit(on_progress, "downloading")
-            self._fetch(self._asset_name, version, download, on_progress)
+            download = directory / "download"
+            self._fetch(
+                self._asset_name,
+                version,
+                download,
+                on_progress,
+                size=_asset_size(payload, self._asset_name),
+            )
 
             _emit(on_progress, "verifying")
-            verify_checksum(download, self._expected_digest(version, parent))
+            verify_checksum(download, self._expected_digest(version, directory))
 
             _emit(on_progress, "installing")
-            extracted = self._unpack(download, parent)
-            staged = self._place(extracted, parent)
-        except UpdateServiceError as error:
-            raise ApplicationUpdateError(f"could not stage Hanly {version}: {error}") from error
-        except OSError as error:
-            raise ApplicationUpdateError(f"could not stage Hanly {version}: {error}") from error
-        finally:
+            staged = self._place(self._unpack(download, directory), directory)
             _remove(download)
-            if extracted is not None:
-                _remove(extracted)
+        except UpdateServiceError as error:
+            _remove(directory)
+            raise ApplicationUpdateError(f"could not stage Hanly {version}: {error}") from error
+        except BaseException:
+            _remove(directory)
+            raise
 
         _emit(on_progress, "complete", 1, 1)
-        return StagedApplicationUpdate(version, staged, self._install_root)
+        return UpdateTransaction(
+            directory=directory,
+            install_root=self._install_root,
+            staged_path=staged,
+            backup_path=directory / "previous",
+            ready_path=directory / "ready",
+            version=version,
+        )
 
-    def apply(self, staged: StagedApplicationUpdate) -> None:
+    def apply(self, transaction: UpdateTransaction) -> None:
         """Hand the swap to a detached script and leave; the caller then quits.
 
-        The bundle holds the executable and the interpreter running this code,
-        so the replacement cannot happen in-process. The script waits for this
-        process to exit, moves the staged bundle into place, restores the old
-        one if that fails, and relaunches Hanly.
+        The installation holds the executable and the interpreter running this
+        code, so the replacement cannot happen in-process.
         """
 
-        script = _write_handoff_script(
-            staged, windows=self._windows, executable=self._layout.executable_path
-        )
-        launcher = ["cmd.exe", "/c"] if self._windows else ["/bin/sh"]
         try:
-            self._spawn([*launcher, str(script), *handoff_arguments(staged)], script.parent)
-        except OSError as error:
-            raise ApplicationUpdateError(f"could not start the update handoff: {error}") from error
+            start_handoff(
+                transaction,
+                executable=self._layout.executable_path,
+                platform=self._platform,
+                spawn=self._spawn,
+            )
+        except HandoffError as error:
+            _remove(transaction.directory)
+            raise ApplicationUpdateError(str(error)) from error
 
-    def _confirm_release(self, version: str) -> None:
+    def _open_transaction(self) -> Path:
+        """Claim a private directory beside the installation to work in."""
+
+        try:
+            return Path(
+                tempfile.mkdtemp(prefix=".hanly-update-", dir=self._install_root.parent)
+            )
+        except OSError as error:
+            raise ApplicationUpdateError(
+                f"could not prepare an update beside {self._install_root}: {error}"
+            ) from error
+
+    def _confirm_release(self, version: str) -> Mapping[str, Any]:
         """Refuse to stage assets from a release other than the checked one.
 
         The fetcher serves every asset out of one cached release payload. If
@@ -382,6 +420,7 @@ class ApplicationInstaller:
             raise ApplicationUpdateError(
                 f"the release channel no longer offers Hanly {version}; check for updates again"
             )
+        return payload
 
     def _fetch(
         self,
@@ -389,38 +428,41 @@ class ApplicationInstaller:
         version: str,
         destination: Path,
         on_progress: ProgressCallback | None,
+        *,
+        size: int | None = None,
     ) -> None:
         resource = RemoteResource(
-            resource_id=APPLICATION_STEM, version=version, asset_name=asset_name
+            resource_id=APPLICATION_STEM,
+            version=version,
+            asset_name=asset_name,
+            size=size,
         )
         self._downloader.download(resource, destination, on_progress)
 
-    def _expected_digest(self, version: str, parent: Path) -> str:
+    def _expected_digest(self, version: str, directory: Path) -> str:
         """Read this platform's digest out of the release's ``SHA256SUMS``."""
 
-        sums = _reserve(parent, ".sums")
-        try:
-            self._fetch(CHECKSUM_ASSET, version, sums, None)
-            digests = _parse_checksums(sums.read_text(encoding="utf-8"))
-        finally:
-            _remove(sums)
+        sums = directory / CHECKSUM_ASSET
+        self._fetch(CHECKSUM_ASSET, version, sums, None)
+        digests = _parse_checksums(sums.read_text(encoding="utf-8"))
+        _remove(sums)
 
         digest = digests.get(self._asset_name)
         if digest is None:
             raise ApplicationUpdateError(f"{CHECKSUM_ASSET} has no digest for {self._asset_name}")
         return digest
 
-    def _unpack(self, download: Path, parent: Path) -> Path:
+    def _unpack(self, download: Path, directory: Path) -> Path:
         """Unpack the verified download the way its own format requires."""
 
         if self._layout.archive_format == "bundle":
-            return self._extract_bundle(download, parent, self._layout.payload_name)
-        return extract_archive(
-            download, parent, "hanly-update", archive_format=self._layout.archive_format
-        )
+            return self._extract_bundle(download, directory, self._layout.payload_name)
+        if self._layout.archive_format == "gztar":
+            return extract_application_tar(download, directory, self._layout.payload_name)
+        return extract_archive(download, directory, "hanly-update", archive_format="zip")
 
-    def _place(self, extracted: Path, parent: Path) -> Path:
-        """Move the unpacked build to the fixed name the handoff script reads."""
+    def _place(self, extracted: Path, directory: Path) -> Path:
+        """Move the unpacked build to where the handoff will rename it from."""
 
         payload = extracted / self._layout.payload_name
         if not payload.joinpath(*self._layout.executable_parts).is_file():
@@ -428,10 +470,22 @@ class ApplicationInstaller:
         if self._layout.archive_format == "bundle":
             _require_signed_hanly_bundle(payload)
 
-        staged = parent / f"{self._install_root.name}.staged"
-        _remove(staged)
+        staged = directory / self._layout.payload_name
         os.replace(payload, staged)
+        _remove(extracted)
         return staged
+
+
+def confirm_started(path: Path) -> None:
+    """Report this build's version to the handoff that installed it.
+
+    This file is the whole acknowledgement an update waits for: until the
+    version written here is the one it installed, the handoff keeps the
+    previous installation and can still put it back.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(installed_version(), encoding="utf-8")
 
 
 def _emit(
@@ -439,6 +493,19 @@ def _emit(
 ) -> None:
     if callback is not None:
         callback(DownloadProgress(APPLICATION_STEM, phase, completed, total))
+
+
+def _asset_size(payload: Mapping[str, Any], name: str) -> int | None:
+    """Return the byte count the release declares for one asset, if it does."""
+
+    assets = payload.get("assets")
+    if not isinstance(assets, (list, tuple)):
+        return None
+    for asset in assets:
+        if isinstance(asset, Mapping) and asset.get("name") == name:
+            size = asset.get("size")
+            return size if isinstance(size, int) and size > 0 else None
+    return None
 
 
 def _parse_checksums(text: str) -> dict[str, str]:
@@ -452,12 +519,6 @@ def _parse_checksums(text: str) -> dict[str, str]:
     return digests
 
 
-def _reserve(parent: Path, suffix: str) -> Path:
-    path = parent / f".hanly-update{suffix}"
-    _remove(path)
-    return path
-
-
 def _remove(path: Path) -> None:
     try:
         if path.is_dir() and not path.is_symlink():
@@ -466,158 +527,6 @@ def _remove(path: Path) -> None:
             path.unlink(missing_ok=True)
     except OSError:
         pass
-
-
-#: How long the handoff waits for this process to exit, and how long it then
-#: retries a Windows directory move that a lingering lock is still refusing.
-#: Both are bounded so a stuck handoff exits instead of spinning forever.
-_HANDOFF_WAIT_SECONDS = 120
-_HANDOFF_SWAP_ATTEMPTS = 30
-
-#: Characters ``cmd.exe`` acts on even inside a quoted argument. An install
-#: path containing one cannot be handed to a batch script safely, so the update
-#: is refused rather than run against a path the script would misread.
-_CMD_UNSAFE = set('&|<>^"%!')
-
-
-def backup_path(install_root: Path) -> Path:
-    """Where the replaced bundle is kept until the new one is in place."""
-
-    return install_root.with_name(install_root.name + ".previous")
-
-
-def handoff_arguments(staged: StagedApplicationUpdate) -> list[str]:
-    """Return the values the handoff script reads, in the order it reads them.
-
-    The paths are arguments rather than text baked into the script: a batch file
-    is parsed in the console code page, which would corrupt a non-ASCII install
-    path, and generated text is where a script picks up injection. Arguments
-    cross the process boundary as they are.
-    """
-
-    return [
-        str(os.getpid()),
-        str(staged.install_root),
-        str(staged.staged_path),
-        str(backup_path(staged.install_root)),
-    ]
-
-
-def _write_handoff_script(
-    staged: StagedApplicationUpdate,
-    *,
-    windows: bool,
-    executable: str = APPLICATION_STEM,
-) -> Path:
-    if windows:
-        offending = _CMD_UNSAFE.intersection(str(staged.install_root))
-        if offending:
-            raise ApplicationUpdateError(
-                "the installation path contains characters the update handoff "
-                f"cannot quote safely: {''.join(sorted(offending))}"
-            )
-    directory = staged.install_root.parent
-    script = directory / ("hanly-update.cmd" if windows else "hanly-update.sh")
-    # Line endings are pinned rather than left to the platform: ``cmd.exe``
-    # mis-parses a batch file with bare newlines.
-    script.write_text(
-        render_handoff_script(windows=windows, executable=executable),
-        encoding="ascii",
-        newline="\r\n" if windows else "\n",
-    )
-    if not windows:
-        script.chmod(0o700)
-    return script
-
-
-def render_handoff_script(*, windows: bool, executable: str = APPLICATION_STEM) -> str:
-    """Render the swap script, kept separate from spawning so it can be read.
-
-    The body is fixed ASCII and takes its paths from :func:`handoff_arguments`.
-    It waits for the old process, moves the live bundle aside, moves the staged
-    bundle in, and relaunches. If the second move fails the previous bundle goes
-    straight back and *that* bundle is relaunched, so a failed update costs the
-    user nothing but the update. The new build is never launched unless it is
-    actually in place, and a rollback that itself fails launches nothing at all
-    rather than starting whatever happens to be at the install path.
-    """
-
-    if windows:
-        return _WINDOWS_HANDOFF.format(
-            wait=_HANDOFF_WAIT_SECONDS,
-            attempts=_HANDOFF_SWAP_ATTEMPTS,
-            executable=executable,
-        )
-    return _POSIX_HANDOFF.format(wait=_HANDOFF_WAIT_SECONDS, executable=executable)
-
-
-_POSIX_HANDOFF = """#!/bin/sh
-set -u
-pid="$1"
-install="$2"
-staged="$3"
-backup="$4"
-
-waited=0
-while kill -0 "$pid" 2>/dev/null; do
-  if [ "$waited" -ge {wait} ]; then
-    exit 1
-  fi
-  waited=$((waited + 1))
-  sleep 1
-done
-
-rm -rf "$backup"
-mv "$install" "$backup" || exit 1
-if ! mv "$staged" "$install"; then
-  mv "$backup" "$install" || exit 1
-  rm -rf "$staged"
-  exec "$install/{executable}"
-fi
-rm -rf "$backup"
-exec "$install/{executable}"
-"""
-
-# ``ping`` is the sleep: ``timeout`` fails outright when a detached process has
-# no console input. The move is retried because Windows keeps a directory
-# locked for a moment after the process holding its executable exits.
-_WINDOWS_HANDOFF = """@echo off
-setlocal
-set "PID=%~1"
-set "INSTALL=%~2"
-set "STAGED=%~3"
-set "BACKUP=%~4"
-
-set /a WAITED=0
-:wait
-tasklist /nh /fi "PID eq %PID%" 2>nul | find "%PID%" >nul || goto gone
-if %WAITED% geq {wait} exit /b 1
-set /a WAITED+=1
-ping -n 2 127.0.0.1 >nul
-goto wait
-
-:gone
-if exist "%BACKUP%" rmdir /s /q "%BACKUP%"
-set /a TRIES=0
-:swap
-move "%INSTALL%" "%BACKUP%" >nul 2>&1 && goto replace
-if %TRIES% geq {attempts} exit /b 1
-set /a TRIES+=1
-ping -n 2 127.0.0.1 >nul
-goto swap
-
-:replace
-move "%STAGED%" "%INSTALL%" >nul 2>&1 || goto rollback
-rmdir /s /q "%BACKUP%" 2>nul
-start "" "%INSTALL%\\{executable}.exe"
-exit /b 0
-
-:rollback
-move "%BACKUP%" "%INSTALL%" >nul 2>&1 || exit /b 1
-rmdir /s /q "%STAGED%" 2>nul
-start "" "%INSTALL%\\{executable}.exe"
-exit /b 1
-"""
 
 
 #: ``ditto`` reproduces an application's symlinks and permissions from a ZIP.
@@ -652,11 +561,59 @@ def extract_application_bundle(
         )
         if getattr(completed, "returncode", 1) != 0:
             raise ApplicationUpdateError("could not unpack the downloaded application")
+        _require_extracted_roots(target, payload_name)
         _require_contained_tree(target)
     except Exception:
         _remove(target)
         raise
     return target
+
+
+def extract_application_tar(archive: Path, parent: Path, payload_name: str) -> Path:
+    """Unpack one Linux application tarball into a fresh directory.
+
+    This is the application's own extractor rather than the resource one:
+    a PyInstaller directory build reaches a release with hundreds of relative
+    symlinks between its bundled libraries, and the resource extractor rejects
+    every link outright because a resource never legitimately contains one.
+    Links are admitted here only when they resolve inside the payload.
+    """
+
+    target = Path(tempfile.mkdtemp(prefix=".hanly-update.", dir=parent))
+    try:
+        with tarfile.open(archive, "r:gz") as bundle:
+            members = bundle.getmembers()
+            for member in members:
+                _require_tar_member(member, payload_name)
+            if not members:
+                raise ApplicationUpdateError("the downloaded application archive is empty")
+            # ``data_filter`` marks the interpreters that accept ``filter``; the
+            # members are already proved above, so its absence is not a gap.
+            if hasattr(tarfile, "data_filter"):
+                bundle.extractall(target, filter="data")
+            else:
+                bundle.extractall(target)
+        _require_extracted_roots(target, payload_name)
+        _require_contained_tree(target)
+    except tarfile.TarError as error:
+        _remove(target)
+        raise ApplicationUpdateError(
+            f"the downloaded application is unreadable: {error}"
+        ) from error
+    except Exception:
+        _remove(target)
+        raise
+    return target
+
+
+def _require_tar_member(member: tarfile.TarInfo, payload_name: str) -> None:
+    """Admit the directories, files, and internal links a build is made of."""
+
+    _require_bundle_member(member.name, payload_name)
+    if member.issym():
+        _require_link_inside(member.name, member.linkname, payload_name)
+    elif not (member.isfile() or member.isdir()):
+        raise ApplicationUpdateError("the downloaded application has an unsupported entry")
 
 
 def _preflight_bundle_members(archive: Path, payload_name: str) -> None:
@@ -666,7 +623,7 @@ def _preflight_bundle_members(archive: Path, payload_name: str) -> None:
         with zipfile.ZipFile(archive) as bundle:
             members = bundle.infolist()
             for member in members:
-                _require_bundle_member(member.filename, payload_name)
+                _require_bundle_member(member.filename, payload_name, sidecar=True)
                 if _is_symlink(member):
                     _require_link_inside(
                         member.filename,
@@ -681,13 +638,20 @@ def _preflight_bundle_members(archive: Path, payload_name: str) -> None:
         raise ApplicationUpdateError("the downloaded application archive is empty")
 
 
-def _require_bundle_member(name: str, payload_name: str) -> None:
-    """Every path in the archive is relative, and inside the expected bundle."""
+def _require_bundle_member(name: str, payload_name: str, *, sidecar: bool = False) -> None:
+    """Every path in the archive is relative, and inside a root it may use.
+
+    ``sidecar`` admits the ``__MACOSX`` tree ``ditto --sequesterRsrc`` writes
+    beside the bundle. Its entries carry extended attributes rather than files:
+    ``ditto -x`` folds them back into what it writes and creates nothing under
+    that name, which is why it is allowed to be read and never to be extracted.
+    """
 
     if not name or name.startswith("/") or "\\" in name or ":" in name:
         raise ApplicationUpdateError("the downloaded application has an unsafe path")
+    roots = (payload_name, _APPLE_DOUBLE_ROOT) if sidecar else (payload_name,)
     parts = PurePosixPath(name).parts
-    if ".." in parts or parts[0] != payload_name:
+    if ".." in parts or parts[0] not in roots:
         raise ApplicationUpdateError("the downloaded application has an unsafe path")
 
 
@@ -717,12 +681,26 @@ def _is_symlink(member: zipfile.ZipInfo) -> bool:
     return (member.external_attr >> 16) & 0o170000 == 0o120000
 
 
+def _require_extracted_roots(target: Path, payload_name: str) -> None:
+    """Prove the payload is what was written, and that it is all that was."""
+
+    written = sorted(item.name for item in target.iterdir())
+    if written != [payload_name]:
+        raise ApplicationUpdateError("the downloaded application unpacked to an unexpected shape")
+
+
 def _require_contained_tree(target: Path) -> None:
-    """Prove that nothing written under ``target`` leads out of it."""
+    """Prove that nothing written under ``target`` leads out of it.
+
+    Subdirectories are resolved as well as files: ``os.walk`` reports a link to
+    a directory as a subdirectory and does not descend it, so checking only
+    what it calls files would never look at one.
+    """
 
     root = target.resolve()
-    for directory, _subdirectories, files in os.walk(target, followlinks=False):
-        for name in (directory, *(os.path.join(directory, item) for item in files)):
+    for directory, subdirectories, files in os.walk(target, followlinks=False):
+        entries = (*subdirectories, *files)
+        for name in (directory, *(os.path.join(directory, item) for item in entries)):
             resolved = Path(name).resolve()
             if resolved != root and root not in resolved.parents:
                 raise ApplicationUpdateError("the unpacked application escapes its directory")
@@ -747,33 +725,18 @@ def _require_signed_hanly_bundle(bundle: Path) -> None:
         raise ApplicationUpdateError("the downloaded application is not Hanly")
 
 
-def _spawn_detached(command: list[str], directory: Path) -> None:
-    """Start the handoff so it outlives the process it is waiting for."""
-
-    if sys.platform.startswith("win32"):
-        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-        )
-        subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
-        return
-    subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
-
-
 __all__ = [
     "APPLICATION_STEM",
     "BUNDLE_IDENTIFIER",
     "BUNDLE_NAME",
-    "CHECKSUM_ASSET",
     "PRODUCT_PACKAGE",
     "ApplicationInstaller",
     "ApplicationUpdate",
     "ApplicationUpdateError",
-    "StagedApplicationUpdate",
-    "backup_path",
     "check_application_update",
+    "confirm_started",
     "extract_application_bundle",
-    "handoff_arguments",
+    "extract_application_tar",
     "installation_root",
     "installed_version",
-    "render_handoff_script",
 ]

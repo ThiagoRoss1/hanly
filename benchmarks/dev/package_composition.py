@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import zipfile
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
@@ -12,13 +13,24 @@ from typing import Any, TextIO, cast
 
 _FAMILY_NAMES = (
     "EasyOCR",
+    "EasyOCR bundled weights",
+    "Kiwi/model assets",
     "Qt/PyQt6/QtWebEngine",
     "NumPy",
-    "Pandas",
     "OpenCV",
     "Torch",
     "SciPy",
     "models/KRDICT",
+)
+_ARCHIVE_LARGEST_MEMBER_LIMIT = 10
+
+#: Payload prefixes stripped before grouping, outermost first so a macOS
+#: bundle directory is removed before the ``_internal`` it may contain.
+_PAYLOAD_PREFIXES = (
+    ("contents", "frameworks"),
+    ("contents", "resources"),
+    ("contents", "macos"),
+    ("_internal",),
 )
 
 
@@ -26,17 +38,27 @@ def _family_for(path: Path) -> str | None:
     parts = tuple(part.casefold() for part in path.parts)
     joined = "/".join(parts)
 
+    if any(part == "easyocr_models" for part in parts) or path.name.casefold() in {
+        "craft_mlt_25k.pth",
+        "korean_g2.pth",
+    }:
+        return "EasyOCR bundled weights"
     if any(part in {"easyocr"} for part in parts):
         return "EasyOCR"
+    if any(
+        part == "kiwipiepy"
+        or part == "kiwipiepy_model"
+        or part.startswith(("kiwipiepy-", "kiwipiepy_model-", "_kiwipiepy."))
+        for part in parts
+    ):
+        return "Kiwi/model assets"
     if any(part in {"pyqt6", "qt6", "qt", "qtwebengine", "pyqt6_qt6"} for part in parts):
         return "Qt/PyQt6/QtWebEngine"
     if any(part in {"numpy", "numpy.libs", "numpy_core"} for part in parts):
         return "NumPy"
-    if any(part in {"pandas", "pandas.libs"} for part in parts):
-        return "Pandas"
     if any(part in {"cv2", "opencv", "opencv_python"} for part in parts):
         return "OpenCV"
-    if any(part in {"torch", "torch.libs"} for part in parts):
+    if any(part in {"torch", "torch.libs", "torchvision"} for part in parts):
         return "Torch"
     if any(part in {"scipy", "scipy.libs"} for part in parts):
         return "SciPy"
@@ -46,12 +68,12 @@ def _family_for(path: Path) -> str | None:
     # Distribution snapshots often contain names such as ``easyocr-1.7.2``.
     if "easyocr" in joined:
         return "EasyOCR"
+    if "kiwipiepy_model" in joined or "kiwipiepy" in joined or "_kiwipiepy" in joined:
+        return "Kiwi/model assets"
     if "qtwebengine" in joined or "pyqt6" in joined:
         return "Qt/PyQt6/QtWebEngine"
     if "numpy" in joined:
         return "NumPy"
-    if "pandas" in joined:
-        return "Pandas"
     if "opencv" in joined or "cv2" in joined:
         return "OpenCV"
     if "torch" in joined:
@@ -84,15 +106,30 @@ def _component_name(relative: str) -> str:
 
 
 def _logical_relative(relative: str) -> str:
-    """Drop one PyInstaller payload prefix for component grouping only."""
+    """Drop the frozen payload prefixes for component grouping only.
+
+    A macOS bundle splits one collection across ``Frameworks`` and
+    ``Resources``, either of which may hold an ``_internal`` of its own, so
+    more than one prefix can apply to the same path.
+    """
     parts = relative.split("/")
-    if len(parts) > 1 and parts[0].casefold() == "_internal":
-        return "/".join(parts[1:])
-    return relative
+    for prefix in _PAYLOAD_PREFIXES:
+        head = tuple(part.casefold() for part in parts[: len(prefix)])
+        if head == prefix and len(parts) > len(prefix):
+            parts = parts[len(prefix) :]
+    return "/".join(parts)
 
 
 def _empty_group() -> dict[str, Any]:
     return {"bytes": 0, "files": 0, "paths": []}
+
+
+def _empty_archive_group() -> dict[str, Any]:
+    return {
+        "file_count": 0,
+        "uncompressed_member_bytes": 0,
+        "compressed_member_bytes": 0,
+    }
 
 
 def _hash_duplicates(
@@ -127,6 +164,54 @@ def _hash_duplicates(
     return duplicates, hashed_files, hashed_bytes, skipped_files
 
 
+def _archive_report(archive: str | os.PathLike[str]) -> dict[str, Any]:
+    """Read ZIP metadata without extracting or reading member contents."""
+    archive_path = Path(archive).resolve()
+    if not archive_path.is_file():
+        raise FileNotFoundError(str(archive_path))
+
+    file_count = 0
+    uncompressed_member_bytes = 0
+    compressed_member_bytes = 0
+    families = {name: _empty_archive_group() for name in _FAMILY_NAMES}
+    largest_members: list[dict[str, Any]] = []
+    with zipfile.ZipFile(archive_path) as bundle:
+        for member in bundle.infolist():
+            if member.is_dir():
+                continue
+            file_count += 1
+            uncompressed_member_bytes += member.file_size
+            compressed_member_bytes += member.compress_size
+
+            largest_members.append(
+                {
+                    "path": member.filename,
+                    "uncompressed_bytes": member.file_size,
+                    "compressed_bytes": member.compress_size,
+                }
+            )
+            largest_members.sort(
+                key=lambda item: (-item["uncompressed_bytes"], item["path"])
+            )
+            del largest_members[_ARCHIVE_LARGEST_MEMBER_LIMIT:]
+            family = _family_for(Path(member.filename))
+            if family is not None:
+                family_group = families[family]
+                family_group["file_count"] += 1
+                family_group["uncompressed_member_bytes"] += member.file_size
+                family_group["compressed_member_bytes"] += member.compress_size
+
+    return {
+        "path": str(archive_path),
+        "file_count": file_count,
+        "uncompressed_member_bytes": uncompressed_member_bytes,
+        "compressed_member_bytes": compressed_member_bytes,
+        "archive_bytes": archive_path.stat().st_size,
+        "families": families,
+        "largest_members": largest_members,
+    }
+
+
 def analyze_package(
     root: str | os.PathLike[str],
     *,
@@ -134,6 +219,7 @@ def analyze_package(
     hash_duplicates: bool = False,
     hash_max_files: int = 10_000,
     hash_max_bytes: int = 2 * 1024 * 1024 * 1024,
+    archive: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Return exact file/byte totals and dependency-family groupings.
 
@@ -213,6 +299,7 @@ def analyze_package(
             "skipped_files": skipped_files,
         },
         "duplicates": duplicates,
+        "archive": None if archive is None else _archive_report(archive),
     }
 
 
@@ -239,28 +326,7 @@ def write_package_report(
     return report
 
 
-analyze_package_composition = analyze_package
-
-
-class PackageCompositionAnalyzer:
-    """Reusable configuration object for package composition reports."""
-
-    def __init__(self, root: str | os.PathLike[str], **options: Any) -> None:
-        self.root = root
-        self.options = dict(options)
-
-    def analyze(self) -> dict[str, Any]:
-        """Analyze the configured package tree."""
-        return analyze_package(self.root, **self.options)
-
-    def write(self, destination: str | os.PathLike[str] | TextIO) -> dict[str, Any]:
-        """Analyze and write the configured report as JSON."""
-        return write_package_report(self.root, destination, **self.options)
-
-
 __all__ = [
-    "PackageCompositionAnalyzer",
     "analyze_package",
-    "analyze_package_composition",
     "write_package_report",
 ]

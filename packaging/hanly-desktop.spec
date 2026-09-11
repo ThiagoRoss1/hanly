@@ -48,7 +48,14 @@ MANDATORY_PACKAGES = ("kiwipiepy", "kiwipiepy_model")
 
 MANDATORY_EXTENSION_MODULES = ("_kiwipiepy",)
 
-EXCLUDED_MODULES = ("tests", "test", "spikes", "pkg_resources")
+EXCLUDED_MODULES = ("tests", "test", "pkg_resources")
+
+#: QtWebEngine ships one Chromium string catalogue per locale, and its hook
+#: collects the whole directory. The Control Center is app-authored HTML, so
+#: the only Qt-supplied text a user can reach is Chromium's own - context menus
+#: and error pages - and Hanly presents that in English or Korean.
+WEBENGINE_LOCALE_DIRECTORY = "qtwebengine_locales"
+KEPT_WEBENGINE_LOCALES = ("en-US.pak", "ko.pak")
 
 
 def _unique(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -61,6 +68,38 @@ def _unique(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
             seen.add(item)
             result.append(item)
     return result
+
+
+def _without_unused_webengine_locales(
+    collected: list[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """Keep only the Chromium string catalogues Hanly can actually present.
+
+    Applied to the analysis result rather than the inputs above, because the
+    locales are collected by QtWebEngine's own hook while it runs.
+    """
+
+    return [
+        entry
+        for entry in collected
+        if WEBENGINE_LOCALE_DIRECTORY not in Path(entry[0]).parts
+        or Path(entry[0]).name in KEPT_WEBENGINE_LOCALES
+    ]
+
+
+def _without_qt_translation_catalogues(
+    collected: list[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """Drop the ``.qm`` catalogues, which nothing in this application loads.
+
+    Qt translates only through a ``QTranslator`` the application installs, and
+    neither Hanly nor pywebview nor pystray installs one, so every Qt-supplied
+    string already renders untranslated. This removes the files, not a
+    behaviour. Matching the suffix leaves ``qtwebengine_locales`` alone, which
+    on Windows and Linux sits inside the same ``translations`` directory.
+    """
+
+    return [entry for entry in collected if not entry[0].endswith(".qm")]
 
 
 missing_models = [name for name in MODEL_FILES if not (MODEL_DIRECTORY / name).is_file()]
@@ -83,7 +122,7 @@ datas = collect_data_files(
 
 datas.extend(collect_data_files("certifi"))
 
-for distribution in ("hanly-app", "hanly"):
+for distribution in ("hanly-app", "hanly", "easyocr"):
     datas.extend(copy_metadata(distribution))
 
 for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
@@ -95,7 +134,11 @@ for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
 binaries: list[tuple[str, str]] = []
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
-for package_name in ("easyocr", "torchvision"):
+# EasyOCR is left to its own hook, constrained below to the languages Hanly's
+# recognition model accepts; the app supplies the two model weights explicitly
+# above. torchvision is still collected whole: a measured removal dropped its
+# native modules for about a megabyte of download.
+for package_name in ("torchvision",):
     try:
         package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
     except Exception:
@@ -112,8 +155,9 @@ for package_name in MANDATORY_PACKAGES:
 hiddenimports.extend(MANDATORY_EXTENSION_MODULES)
 
 # The GUI and optional desktop adapters are also lazy. Keep this list explicit
-# rather than collecting every Qt module (which adds unrelated Designer,
-# Multimedia, and QML stacks and makes local analysis needlessly unbounded).
+# rather than collecting every Qt module: naming them is what keeps unrelated
+# Qt bindings out and local analysis bounded. It does not keep the QML and
+# multimedia trees out - QtWebEngine's own hook brings those in regardless.
 hiddenimports.extend(
     [
         "PyQt6.QtCore",
@@ -152,10 +196,17 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
+    # EasyOCR's hook otherwise collects character data for every language it
+    # supports. ``korean_g2`` accepts Korean and English, and ``easyocr``
+    # configuration may name either, so both stay and the other 99 do not.
+    hooksconfig={"easyocr": {"lang_codes": ["ko", "en"]}},
     runtime_hooks=[str(RUNTIME_HOOK)],
     excludes=list(EXCLUDED_MODULES),
     noarchive=False,
 )
+a.datas = _without_unused_webengine_locales(a.datas)
+a.datas = _without_qt_translation_catalogues(a.datas)
+
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz,

@@ -27,14 +27,13 @@ include = [
     "packaging/**/*.py",
     "tests/**/*.py",
     "tools/**/*.py",
-    "spikes/**/*.py",
 ]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-files = ["benchmarks", "packages", "packaging", "tests", "tools", "spikes"]
+files = ["benchmarks", "packages", "packaging", "tests", "tools"]
 
 [[tool.mypy.overrides]]
 module = [

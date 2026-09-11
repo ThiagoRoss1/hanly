@@ -1,0 +1,677 @@
+"""The native swap, run for real on the platform it is written for.
+
+A rendered script proves nothing about what a shell does with it. Every test
+below that can execute drives the actual handoff against two tiny programs
+standing in for the old and new builds, and reads back which one was started.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from time import monotonic, sleep
+
+import pytest
+from hanly_app.app_update import APPLICATION_STEM, BUNDLE_NAME
+from hanly_app.app_update_handoff import (
+    EXIT_WAIT_SECONDS,
+    READY_ARGUMENT,
+    READY_WAIT_SECONDS,
+    UpdateTransaction,
+    _write_handoff_script,
+    handoff_arguments,
+    render_handoff_script,
+    start_handoff,
+)
+
+NEW_VERSION = "0.2.0"
+
+#: Bounded so an unlaunched build fails the test instead of hanging it.
+_LAUNCH_WAIT_SECONDS = 60.0
+
+#: What each platform's installation is called, and the program inside it.
+_WINDOWS_PROGRAM = f"{APPLICATION_STEM}.exe"
+_MACOS_PROGRAM = f"Contents/MacOS/{APPLICATION_STEM}"
+
+#: What the host's own compiler driver calls the program it produces.
+_PROGRAM_SUFFIX = ".exe" if sys.platform == "win32" else ""
+
+
+# --- what the rendered body has to say ---------------------------------------
+
+
+def test_the_windows_relaunch_uses_the_program_path_exactly_as_it_was_given() -> None:
+    """The layout's executable already carries ``.exe``. A template that appends
+    one resolves ``hanly-desktop.exe.exe``, which exists nowhere: the swap then
+    succeeds and the user is left with no running Hanly and no error."""
+
+    script = render_handoff_script(executable=_WINDOWS_PROGRAM, platform="win32")
+
+    assert f"'{_WINDOWS_PROGRAM}'" in script
+    assert f"{_WINDOWS_PROGRAM}.exe" not in script
+    assert script.count(_WINDOWS_PROGRAM) == 1
+
+
+def test_the_windows_relaunch_quotes_the_path_it_hands_the_new_build() -> None:
+    """``Start-Process -ArgumentList`` joins an array with spaces and quotes
+    nothing. Most Windows installation paths contain a space, so an unquoted
+    readiness path would reach the new build in pieces, never be written, and
+    roll back an update that had in fact installed correctly."""
+
+    script = render_handoff_script(executable=_WINDOWS_PROGRAM, platform="win32")
+
+    assert f'Start-Hanly (\'{READY_ARGUMENT} \"\' + $Ready + \'\"\')' in script
+
+
+def test_a_rejected_build_is_renamed_aside_rather_than_deleted() -> None:
+    """A recursive delete can fail part way through, which would leave the
+    installation path in pieces with the previous build not yet restored. A
+    rename either happens or does not."""
+
+    for platform, rename, delete in (
+        (
+            "win32",
+            "[System.IO.Directory]::Move($Install, (Join-Path $Transaction 'rejected'))",
+            "Remove-Item -LiteralPath $Install",
+        ),
+        ("linux", 'mv "$install" "$transaction/rejected"', 'rm -rf "$install"'),
+    ):
+        script = render_handoff_script(executable=APPLICATION_STEM, platform=platform)
+        assert rename in script
+        assert delete not in script
+
+
+def test_macos_relaunches_the_application_and_never_the_program_inside_it() -> None:
+    """``open`` is what registers the relaunched build with the window server;
+    executing the program directly produces a process with no Dock entry."""
+
+    script = render_handoff_script(executable=_MACOS_PROGRAM, platform="darwin")
+
+    assert '/usr/bin/open "$install" --args' in script
+    assert _MACOS_PROGRAM not in script
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_the_previous_build_outlives_the_swap_that_replaced_it(platform: str) -> None:
+    """Every step is ordered around one rule: the build known to work is still
+    on disk until the build replacing it has said that it started."""
+
+    script = render_handoff_script(executable=APPLICATION_STEM, platform=platform)
+    aside, swap_in, answered, discard = (
+        (
+            "[System.IO.Directory]::Move($Install, $Backup)",
+            "[System.IO.Directory]::Move($Staged, $Install)",
+            "-ceq $Version",
+            "Complete-Handoff",
+        )
+        if platform == "win32"
+        else (
+            'mv "$install" "$backup"',
+            'mv "$staged" "$install"',
+            '= "x$version"',
+            'finish',
+        )
+    )
+
+    assert script.index(aside) < script.index(swap_in) < script.index(READY_ARGUMENT)
+    # The backup lives in the transaction directory, so discarding that
+    # directory is what ends the update's ability to undo itself. On the path
+    # where the swap worked, nothing discards it before the new build answered.
+    verified = script[script.index(READY_ARGUMENT) :]
+    assert verified.index(answered) < verified.index(discard)
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_every_wait_is_bounded_so_a_stuck_handoff_cannot_spin_forever(
+    platform: str,
+) -> None:
+    script = render_handoff_script(executable=APPLICATION_STEM, platform=platform)
+
+    assert str(EXIT_WAIT_SECONDS) in script
+    assert str(READY_WAIT_SECONDS) in script
+    if platform == "win32":
+        # ``timeout`` needs console input a detached process does not have, and
+        # Start-Sleep is what a PowerShell handoff has instead.
+        assert "timeout /t" not in script
+        assert "Start-Sleep" in script
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_the_paths_travel_as_arguments_and_never_as_generated_script_text(
+    platform: str,
+) -> None:
+    """Generated text is where a shell picks up injection, and where a Windows
+    console code page corrupts a non-ASCII installation path."""
+
+    script = render_handoff_script(executable=APPLICATION_STEM, platform=platform)
+
+    assert "hanly-update-" not in script
+    assert script.isascii()
+
+
+def test_a_windows_path_survives_being_compiled_into_the_probe() -> None:
+    """``-DLOG="C:\\Users\\..."`` is a string of escape sequences, not a path,
+    and ``\\U`` is not a valid one. This is what failed on the Windows runner
+    before the probe's paths were escaped."""
+
+    literal = _c_string(r"C:\Users\runneradmin\AppData\Local\Temp\launched.txt")
+
+    assert literal == r'"C:\\Users\\runneradmin\\AppData\\Local\\Temp\\launched.txt"'
+    assert _c_string('a "quoted" name') == r'"a \"quoted\" name"'
+
+
+def test_a_powershell_handoff_is_written_with_the_bom_and_line_endings_it_needs(
+    tmp_path: Path,
+) -> None:
+    """PowerShell reads a ``-File`` script as UTF-8 only when it starts with a
+    BOM; without one a non-ASCII path inside it is decoded as the console code
+    page. Asserted on the bytes, and on every host, because the platform that
+    would notice is the one this suite usually cannot run on."""
+
+    script = _write_handoff_script("Write-Output 'hi'\n", platform="win32", directory=tmp_path)
+    raw = script.read_bytes()
+
+    assert script.name == "hanly-update.ps1"
+    assert raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" in raw
+
+
+def test_a_posix_handoff_is_written_executable_without_a_bom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows has no execute bit -- ``os.chmod`` there carries only the
+    read-only flag -- so the mode the writer asks for is what every host can
+    assert, and the mode the file lands with is asserted where one exists."""
+
+    requested: list[int] = []
+    chmod = Path.chmod
+
+    def record(self: Path, mode: int) -> None:
+        requested.append(mode)
+        chmod(self, mode)
+
+    monkeypatch.setattr(Path, "chmod", record)
+
+    script = _write_handoff_script("#!/bin/sh\ntrue\n", platform="linux", directory=tmp_path)
+    raw = script.read_bytes()
+
+    assert script.name == "hanly-update.sh"
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" not in raw
+    assert requested == [0o700]
+    if os.name == "posix":
+        assert script.stat().st_mode & 0o700 == 0o700
+
+
+def test_the_script_is_written_outside_the_directory_it_removes(tmp_path: Path) -> None:
+    transaction = _transaction(tmp_path / "install")
+    spawned: list[tuple[list[str], Path]] = []
+
+    start_handoff(
+        transaction,
+        executable=APPLICATION_STEM,
+        platform=sys.platform,
+        spawn=lambda command, directory: spawned.append((command, directory)),
+    )
+
+    command, directory = spawned[0]
+    script = Path(command[-8])
+    assert script.is_file()
+    assert transaction.directory not in script.parents
+    assert directory == script.parent
+    assert command[-7:] == handoff_arguments(transaction)
+
+
+# --- and what a shell actually does with it ----------------------------------
+
+
+#: ``LINGER_SECONDS`` is how long the build stays alive after reporting, which
+#: is what makes it a build the handoff has to stop rather than one that has
+#: already let go of the directory it was started from.
+_PROBE_SOURCE = """
+#include <stdio.h>
+#include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+int main(int argc, char **argv) {
+    FILE *log = fopen(LOG, "a");
+    if (log) { fprintf(log, "%s\\n", IDENTITY); fclose(log); }
+    for (int index = 1; index + 1 < argc; index++) {
+        if (strcmp(argv[index], "--update-ready") == 0) {
+            FILE *ready = fopen(argv[index + 1], "w");
+            if (ready) { fputs(VERSION, ready); fclose(ready); }
+        }
+    }
+#ifdef _WIN32
+    if (LINGER_SECONDS > 0) { Sleep(LINGER_SECONDS * 1000); }
+#else
+    if (LINGER_SECONDS > 0) { sleep(LINGER_SECONDS); }
+#endif
+    return 0;
+}
+"""
+
+
+#: Which handoff variants this host can actually execute. macOS runs its own
+#: and Linux's: the Linux body is plain POSIX shell that execs the program at
+#: the final path, which a macOS host runs identically. Only the ``open``
+#: relaunch is Darwin-specific, and only Windows needs a Windows host.
+_HANDOFF_VARIANTS = ["linux"] if sys.platform != "win32" else ["win32"]
+if sys.platform == "darwin":
+    _HANDOFF_VARIANTS.insert(0, "darwin")
+
+
+@dataclass
+class _Handoff:
+    """One prepared swap, and where its two programs record what happened."""
+
+    transaction: UpdateTransaction
+    log: Path
+    script: Path
+    program: Path
+
+    @property
+    def launched(self) -> list[str]:
+        text = self.log.read_text(encoding="utf-8") if self.log.exists() else ""
+        return text.split()
+
+    def await_launched(self, expected: list[str]) -> list[str]:
+        """Wait out an asynchronous relaunch before reading the record.
+
+        ``open`` returns as soon as it has asked for the application; the
+        handoff does not wait for it either, so neither the script's exit nor
+        its own cleanup means the relaunched build has run yet.
+        """
+
+        deadline = monotonic() + _LAUNCH_WAIT_SECONDS
+        while self.launched != expected and monotonic() < deadline:
+            sleep(0.1)
+        return self.launched
+
+
+def _transaction(
+    install_root: Path,
+    *,
+    version: str = NEW_VERSION,
+    ready_root: Path | None = None,
+) -> UpdateTransaction:
+    directory = install_root.parent / ".hanly-update-probe"
+    directory.mkdir(parents=True, exist_ok=True)
+    return UpdateTransaction(
+        directory=directory,
+        install_root=install_root,
+        staged_path=directory / install_root.name,
+        backup_path=directory / "previous",
+        ready_path=(ready_root or directory) / "ready",
+        version=version,
+    )
+
+
+def _c_string(value: object) -> str:
+    """Quote a value as a C string literal.
+
+    A Windows path is full of backslashes, so a macro expanding to
+    ``"C:\\Users\\runneradmin\\..."`` is a string of escape sequences rather
+    than a path -- and ``\\U`` is not even a valid one, which is how this
+    first failed to compile on the Windows runner.
+    """
+
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def _compile(
+    source: Path,
+    program: Path,
+    *,
+    identity: str,
+    version: str,
+    log: Path,
+    linger: int = 0,
+) -> None:
+    """Build one probe beside its source, then put it where it belongs.
+
+    The compiler only ever sees the probe directory, which is ASCII: binutils
+    takes ``argv`` through the Windows ANSI code page, so an output path
+    containing Hangul reaches ``ld`` as ``?? ????`` and cannot be opened.
+    Moving the finished program to an installation path the handoff is
+    supposed to cope with is Python's job, and Python has no such limit.
+    """
+
+    built = source.parent / f"probe-{identity}{_PROGRAM_SUFFIX}"
+    command = [
+        str(_COMPILER),
+        f"-DIDENTITY={_c_string(identity)}",
+        f"-DVERSION={_c_string(version)}",
+        f"-DLINGER_SECONDS={linger}",
+        # Forward slashes: every Windows CRT accepts them, and they leave the
+        # macro with nothing left to escape.
+        f"-DLOG={_c_string(log.as_posix())}",
+        "-o",
+        str(built),
+        str(source),
+    ]
+    finished = subprocess.run(command, capture_output=True, timeout=120)
+    if finished.returncode != 0:
+        # Without this the failure is a bare CalledProcessError and the
+        # compiler's own explanation is thrown away.
+        raise AssertionError(
+            "could not compile the update probe\n"
+            f"command: {' '.join(command)}\n"
+            f"stderr:\n{finished.stderr.decode('utf-8', 'replace')}"
+        )
+
+    program.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(built, program)
+
+
+def _dead_pid() -> str:
+    """Return a pid that has already exited, so the handoff stops waiting."""
+
+    finished = subprocess.Popen([sys.executable, "-c", ""])
+    finished.wait()
+    return str(finished.pid)
+
+
+def _macos_bundle(root: Path) -> None:
+    """Give a bundle the Info.plist LaunchServices refuses to open without."""
+
+    import plistlib
+
+    (root / "Contents").mkdir(parents=True, exist_ok=True)
+    (root / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps(
+            {
+                "CFBundleExecutable": APPLICATION_STEM,
+                "CFBundleIdentifier": f"io.github.thiagoross1.hanly.probe.{root.parent.name}",
+                "CFBundleName": "Hanly",
+                "CFBundlePackageType": "APPL",
+            }
+        )
+    )
+
+
+def _prepare(
+    tmp_path: Path,
+    platform: str,
+    *,
+    new_version: str = NEW_VERSION,
+    probe_root: Path | None = None,
+    linger: int = 0,
+) -> _Handoff:
+    """Build an old installation, a staged replacement, and the real script.
+
+    ``probe_root`` is where the probe's own two files live: the program's log
+    and the readiness file it writes. It is separate from ``tmp_path`` so the
+    installation under test can carry spaces and Hangul while the C probe --
+    which receives paths through a compile-time macro and an ANSI ``argv`` on
+    Windows -- only ever handles ASCII. What the handoff renames, relaunches
+    and cleans up is still the awkward path.
+    """
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    probes = probe_root or tmp_path
+    probes.mkdir(parents=True, exist_ok=True)
+    source = probes / "probe.c"
+    source.write_text(_PROBE_SOURCE, encoding="ascii")
+    log = probes / "launched.txt"
+
+    darwin = platform == "darwin"
+    name = BUNDLE_NAME if darwin else APPLICATION_STEM
+    # The name the layout really carries on this platform, so the swap under
+    # test relaunches exactly what a shipped update would.
+    inside = _MACOS_PROGRAM if darwin else f"{APPLICATION_STEM}{_PROGRAM_SUFFIX}"
+
+    install_root = tmp_path / "install" / name
+    transaction = _transaction(install_root, ready_root=probes)
+    for root, identity, version, stays in (
+        (install_root, "old", "0.1.0", 0),
+        (transaction.staged_path, "new", new_version, linger),
+    ):
+        _compile(
+            source, root / inside, identity=identity, version=version, log=log, linger=stays
+        )
+        if darwin:
+            _macos_bundle(root)
+
+    return _Handoff(
+        transaction,
+        log,
+        _script(tmp_path, executable=inside, platform=platform),
+        install_root / inside,
+    )
+
+
+#: Ten minutes is the right bound for a frozen build on a cold start and the
+#: wrong one for a test, so the two waits are shortened in the copy that runs
+#: here. Their presence in the shipped body is asserted separately above.
+def _script(tmp_path: Path, *, executable: str, platform: str) -> Path:
+    body = render_handoff_script(executable=executable, platform=platform)
+    for bound in (EXIT_WAIT_SECONDS, READY_WAIT_SECONDS):
+        assert body.count(str(bound)) == 1, body
+        body = body.replace(str(bound), "8")
+
+    # The production writer owns encoding, line endings and mode. Restating
+    # them here would let this suite stay green while the real one regressed.
+    return _write_handoff_script(body, platform=platform, directory=tmp_path)
+
+
+def _run(handoff: _Handoff, *, expect_status: int) -> _Handoff:
+    launcher = (
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ]
+        if handoff.script.suffix == ".ps1"
+        else ["/bin/sh"]
+    )
+    arguments = handoff_arguments(handoff.transaction)
+    arguments[0] = _dead_pid()
+    finished = subprocess.run(
+        [*launcher, str(handoff.script), *arguments],
+        check=False,
+        capture_output=True,
+        timeout=180,
+        cwd=handoff.script.parent,
+    )
+
+    assert finished.returncode == expect_status, finished.stderr.decode("utf-8", "replace")
+    return handoff
+
+
+def _builds_programs(compiler: str) -> bool:
+    """Answer whether a compiler on PATH can in fact produce a program.
+
+    Being on PATH is not the same as working: an MSYS2 ``cc`` whose ``cc1``
+    cannot load its own libraries exits non-zero with an empty stderr, which
+    would otherwise fail every test below with nothing to go on.
+    """
+
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "usable.c"
+        source.write_text("int main(void) { return 0; }\n", encoding="ascii")
+        try:
+            finished = subprocess.run(
+                [compiler, "-o", str(source.with_suffix(_PROGRAM_SUFFIX or ".out")), str(source)],
+                capture_output=True,
+                timeout=120,
+            )
+        except OSError:
+            return False
+    return finished.returncode == 0
+
+
+#: The two builds being swapped are compiled rather than scripted: macOS
+#: refuses to ``open`` a bundle whose executable is a shell script, and Windows
+#: needs a real executable to ``Start-Process``. Named explicitly so a host
+#: without a working one skips with a reason instead of failing on a missing
+#: or broken ``cc``.
+_COMPILER = next(
+    (
+        found
+        for name in ("cc", "clang", "gcc")
+        if (found := shutil.which(name)) and _builds_programs(found)
+    ),
+    None,
+)
+
+_native = pytest.mark.skipif(
+    _COMPILER is None,
+    reason="the handoff test compiles the builds it swaps; no cc, clang, or gcc on PATH",
+)
+
+
+@_native
+@pytest.mark.parametrize("platform", _HANDOFF_VARIANTS)
+def test_a_verified_update_replaces_the_installation_and_cleans_up_after_itself(
+    tmp_path: Path, platform: str
+) -> None:
+    handoff = _run(_prepare(tmp_path, platform), expect_status=0)
+    install_root = handoff.transaction.install_root
+
+    assert handoff.await_launched(["new"]) == ["new"]
+    assert install_root.is_dir()
+    # Nothing of the update survives it: no staged build, no backup, no script.
+    assert not handoff.transaction.directory.exists()
+    assert not handoff.script.exists()
+    assert [item.name for item in install_root.parent.iterdir()] == [install_root.name]
+
+
+@_native
+@pytest.mark.parametrize("platform", _HANDOFF_VARIANTS)
+def test_a_new_build_that_never_reports_starting_gives_the_old_one_back(
+    tmp_path: Path, platform: str
+) -> None:
+    """The swap succeeding is not the update succeeding. A build that installs
+    and then cannot run would otherwise leave the user with nothing, because the
+    only working copy was deleted the moment the rename returned."""
+
+    handoff = _run(_prepare(tmp_path, platform, new_version="9.9.9"), expect_status=1)
+    install_root = handoff.transaction.install_root
+
+    assert handoff.await_launched(["new", "old"]) == ["new", "old"]
+    assert not handoff.transaction.directory.exists()
+    assert [item.name for item in install_root.parent.iterdir()] == [install_root.name]
+    _assert_identity(handoff, "old")
+
+
+@_native
+@pytest.mark.parametrize("platform", _HANDOFF_VARIANTS)
+def test_a_replacement_that_cannot_be_moved_into_place_relaunches_the_old_build(
+    tmp_path: Path, platform: str
+) -> None:
+    handoff = _prepare(tmp_path, platform)
+    shutil.rmtree(handoff.transaction.staged_path)
+
+    _run(handoff, expect_status=1)
+
+    assert handoff.await_launched(["old"]) == ["old"]
+    assert not handoff.transaction.directory.exists()
+    _assert_identity(handoff, "old")
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="only Windows refuses to rename a directory a running program was started from",
+)
+@_native
+def test_a_rejected_build_that_is_still_running_is_stopped_before_the_restore(
+    tmp_path: Path,
+) -> None:
+    """A build that comes up and then reports the wrong version is the case the
+    swap has to undo while the new build is still holding the installation
+    directory. Windows refuses to rename that directory until the program
+    started from it is gone, so a rollback that does not stop it first restores
+    nothing and leaves the rejected build installed."""
+
+    handoff = _run(
+        _prepare(tmp_path, "win32", new_version="9.9.9", linger=60), expect_status=1
+    )
+
+    assert handoff.await_launched(["new", "old"]) == ["new", "old"]
+    assert not handoff.transaction.directory.exists()
+    assert [item.name for item in handoff.transaction.install_root.parent.iterdir()] == [
+        handoff.transaction.install_root.name
+    ]
+    _assert_identity(handoff, "old")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the shim replaces a POSIX mv")
+@_native
+def test_a_rollback_that_itself_fails_launches_nothing_and_keeps_the_backup(
+    tmp_path: Path,
+) -> None:
+    """Neither build is at the installation path, so nothing there is safe to
+    start; the previous one stays under the transaction for a person to restore."""
+
+    handoff = _prepare(tmp_path, sys.platform)
+    shutil.rmtree(handoff.transaction.staged_path)
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    # Fail only the restoring move, so the branch under test is the one that
+    # cannot put the previous build back.
+    (shim / "mv").write_text(
+        f'#!/bin/sh\ncase "$1" in "{handoff.transaction.backup_path}") exit 1 ;; esac\n'
+        'exec /bin/mv "$@"\n',
+        encoding="ascii",
+        newline="\n",
+    )
+    (shim / "mv").chmod(0o755)
+
+    environment = dict(os.environ)
+    environment["PATH"] = f"{shim}{os.pathsep}{environment['PATH']}"
+    finished = subprocess.run(
+        ["/bin/sh", str(handoff.script), *_with_dead_pid(handoff)],
+        check=False,
+        capture_output=True,
+        timeout=180,
+        env=environment,
+    )
+
+    assert finished.returncode == 1, finished.stderr.decode("utf-8", "replace")
+    assert handoff.launched == []  # nothing was asked to start, so nothing can arrive
+    assert not handoff.transaction.install_root.exists()
+    assert handoff.transaction.backup_path.is_dir()
+
+
+@_native
+@pytest.mark.parametrize("platform", _HANDOFF_VARIANTS)
+def test_an_installation_path_with_spaces_and_non_ascii_survives_the_handoff(
+    tmp_path: Path, platform: str
+) -> None:
+    handoff = _run(
+        _prepare(tmp_path / "한글 프로그램", platform, probe_root=tmp_path / "probe"),
+        expect_status=0,
+    )
+
+    assert "한글 프로그램" in str(handoff.transaction.install_root)
+    assert handoff.await_launched(["new"]) == ["new"]
+    _assert_identity(handoff, "new")
+
+
+def _with_dead_pid(handoff: _Handoff) -> list[str]:
+    arguments = handoff_arguments(handoff.transaction)
+    arguments[0] = _dead_pid()
+    return arguments
+
+
+def _assert_identity(handoff: _Handoff, expected: str) -> None:
+    """Run whatever is at the installation path and see which build answers."""
+
+    before = len(handoff.launched)
+    subprocess.run([str(handoff.program)], check=True, timeout=60)
+
+    assert handoff.launched[before:] == [expected]

@@ -2,6 +2,13 @@
 
 Status: **REVISED AFTER POST-BUNDLE REVIEW**
 
+> **The harness was removed on 2026-09-10.** `spikes/desktop_threading_lifecycle.py`
+> was a foundation-phase observation script; the threading and lifecycle
+> behaviour it probed is now real production code in `hanly_app`, covered by the
+> test suite and the frozen smoke. The findings below stand as history — only
+> the obsolete executable experiment is gone, so the commands quoted in this
+> report can no longer be re-run as written.
+
 This report records a directly executable, Windows-only evidence experiment. It
 does not add desktop production behavior, choose a UI architecture, or act as a
 pytest test. Optional desktop libraries are observed only when already present

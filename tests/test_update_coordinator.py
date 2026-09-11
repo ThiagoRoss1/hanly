@@ -418,3 +418,225 @@ def test_no_restart_is_claimed_until_the_build_is_actually_staged() -> None:
     finally:
         release.set()
         coordinator.shutdown()
+
+
+def test_a_resource_check_failure_never_hides_a_new_hanly_version() -> None:
+    """The two halves reach the same release channel and answer different
+    questions. A manifest the user cannot fix is no reason to stop telling
+    them a new Hanly exists - which is also the update that would fix it."""
+
+    class _BrokenResources(_FakeService):
+        def check_for_updates(self) -> tuple[UpdateAvailability, ...]:
+            raise RuntimeError("resource manifest unreadable")
+
+    coordinator = UpdateCoordinator(
+        _BrokenResources(),
+        application_check=lambda: ApplicationUpdate(
+            current_version="0.1.0",
+            latest_version="0.2.0",
+            release_url=None,
+            available=True,
+            message="Hanly 0.2.0 is available.",
+            installable=True,
+        ),
+    )
+    try:
+        coordinator.check_for_updates()
+        state = _settle(coordinator)
+
+        assert state["application"]["available"] is True
+        assert state["resources"] == []
+        assert state["available"] is True
+        # And the half that could not answer says so, rather than passing for
+        # "no resource updates" - which would read as everything being current.
+        assert "resource manifest unreadable" in state["message"]
+    finally:
+        coordinator.shutdown()
+
+
+def test_a_resource_check_that_could_not_run_is_never_reported_as_up_to_date() -> None:
+    class _BrokenResources(_FakeService):
+        def check_for_updates(self) -> tuple[UpdateAvailability, ...]:
+            raise OSError("manifest is not valid JSON")
+
+    coordinator = UpdateCoordinator(
+        _BrokenResources(),
+        application_check=lambda: ApplicationUpdate(
+            current_version="0.1.0",
+            latest_version="0.1.0",
+            release_url=None,
+            available=False,
+            message="Hanly 0.1.0 is up to date.",
+        ),
+    )
+    try:
+        coordinator.check_for_updates()
+        state = _settle(coordinator)
+
+        assert state["status"] == "failed"
+        assert state["available"] is False
+        assert "manifest is not valid JSON" in state["message"]
+        assert "current" not in state["message"]
+    finally:
+        coordinator.shutdown()
+
+
+class _QuietService(_FakeService):
+    """A service whose install reports no progress.
+
+    ``_DeferredExecutor`` runs the operation on the caller's thread, and the
+    caller is inside the coordinator's lock. Progress reporting reaches for
+    that same lock, which only a real worker thread makes safe.
+    """
+
+    def install(
+        self, resource_id: str, *, on_progress: ProgressCallback | None = None
+    ) -> UpdateResult:
+        return super().install(resource_id)
+
+
+class _DeferredExecutor:
+    """Run work immediately, but hold its completion callback until released.
+
+    ``Future.done()`` turns true before the callback that finalizes the
+    coordinator's state runs. This makes that window wide enough to click in.
+    """
+
+    def __init__(self) -> None:
+        self.callbacks: list[Any] = []
+
+    def submit(self, operation: Any) -> Any:
+        from concurrent.futures import Future
+
+        future: Future[Any] = Future()
+        future.set_running_or_notify_cancel()
+        try:
+            future.set_result(operation())
+        except BaseException as error:  # noqa: BLE001 - delivered to the callback
+            future.set_exception(error)
+        return _HeldFuture(future, self.callbacks)
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None: ...
+
+    def release(self) -> None:
+        """Deliver the held callbacks and wait out the threads they run on."""
+
+        for callback in self.callbacks:
+            callback()
+        self.callbacks.clear()
+        deadline = time.monotonic() + _STATUS_TIMEOUT
+        while time.monotonic() < deadline:
+            if not any(
+                thread.name == "hanly-update-result" for thread in threading.enumerate()
+            ):
+                return
+            time.sleep(0.005)
+        raise AssertionError("an update result thread never finished")
+
+
+@dataclass
+class _HeldFuture:
+    """A completed future whose done-callback is queued instead of run."""
+
+    future: Any
+    callbacks: list[Any]
+
+    def add_done_callback(self, callback: Any) -> None:
+        # The real executor hands the callback the future it registered on,
+        # which is what the coordinator compares against to spot a stale one.
+        self.callbacks.append(lambda: callback(self))
+
+    def done(self) -> bool:
+        return True
+
+    def result(self) -> Any:
+        return self.future.result()
+
+
+def test_an_operation_owns_the_coordinator_until_its_callback_finalizes() -> None:
+    """A second click landing between completion and the callback would start
+    an operation whose result the older callback then overwrites."""
+
+    executor = _DeferredExecutor()
+    coordinator = UpdateCoordinator(
+        _QuietService(),
+        executor=cast(Any, executor),
+        application_check=lambda: ApplicationUpdate(
+            current_version="0.1.0",
+            latest_version="0.2.0",
+            release_url=None,
+            available=True,
+            message="Hanly 0.2.0 is available.",
+        ),
+    )
+
+    coordinator.check_for_updates()
+    # The check has finished; only its callback has not.
+    assert coordinator.snapshot()["status"] == "checking"
+    assert coordinator.install_update("krdict")["status"] == "checking"
+
+    executor.release()
+
+    state = coordinator.snapshot()
+    assert state["status"] == "available"
+    # The second click never ran, so nothing overwrote the check's result.
+    assert state["active_resource_id"] is None
+
+
+def test_a_stale_callback_cannot_speak_for_the_operation_that_replaced_it() -> None:
+    """Callbacks run on their own threads, so an old one can arrive at any
+    moment. Only the operation the coordinator still holds may report."""
+
+    executor = _DeferredExecutor()
+    coordinator = UpdateCoordinator(_QuietService(), executor=cast(Any, executor))
+
+    coordinator.check_for_updates()
+    stale = list(executor.callbacks)
+    executor.callbacks.clear()
+    # Release ownership the way the first callback would have, then start the
+    # operation that now holds it. Only the older callback is delivered.
+    coordinator._future = None  # type: ignore[attr-defined]
+    coordinator.install_update("krdict")
+    pending = list(executor.callbacks)
+    executor.callbacks[:] = stale
+
+    executor.release()
+
+    state = coordinator.snapshot()
+    assert state["status"] == "downloading"
+    assert state["active_resource_id"] == "krdict"
+    assert len(pending) == 1
+
+
+def test_no_further_update_is_started_once_the_swap_is_waiting_for_this_process() -> None:
+    """The handoff is already waiting for this process to exit. A second click
+    would download over the transaction that swap is about to use."""
+
+    staged: list[str] = []
+    coordinator = UpdateCoordinator(
+        _FakeService(),
+        application_check=lambda: _INSTALLABLE,
+        application_install=lambda update, progress: staged.append("staged"),
+        on_restart_required=lambda: None,
+    )
+    try:
+        coordinator.check_for_updates()
+        _settle(coordinator)
+        coordinator.install_application_update()
+        _wait_for(coordinator, "restart")
+
+        assert coordinator.check_for_updates()["status"] == "restart"
+        assert coordinator.install_application_update()["status"] == "restart"
+        assert staged == ["staged"]
+    finally:
+        coordinator.shutdown()
+
+
+_INSTALLABLE = ApplicationUpdate(
+    current_version="0.1.0",
+    latest_version="0.2.0",
+    release_url=None,
+    available=True,
+    message="Hanly 0.2.0 is available.",
+    installable=True,
+)

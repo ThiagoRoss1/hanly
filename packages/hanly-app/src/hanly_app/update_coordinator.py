@@ -34,8 +34,13 @@ from .update_service import (
 #: Stage one application build, reporting progress the way a resource does.
 ApplicationInstall = Callable[[ApplicationUpdate, ProgressCallback | None], None]
 
+#: Resource availability, the application update, its UI snapshot, and why the
+#: resource half could not answer - each half reports its own failure.
 _CheckOutcome = tuple[
-    tuple[UpdateAvailability, ...], ApplicationUpdate | None, dict[str, Any] | None
+    tuple[UpdateAvailability, ...],
+    ApplicationUpdate | None,
+    dict[str, Any] | None,
+    str | None,
 ]
 
 
@@ -95,6 +100,9 @@ class UpdateCoordinator:
         self._application: ApplicationUpdate | None = None
         self._lock = Lock()
         self._future: Future[Any] | None = None
+        #: Set once a build has been handed to the swap script. From then on
+        #: this process is on its way out and owns no further update work.
+        self._handed_off = False
         self._state: dict[str, Any] = {
             "available": False,
             "status": "idle",
@@ -199,12 +207,25 @@ class UpdateCoordinator:
         # to a tiny daemon thread to avoid re-entering that lock synchronously.
         future.add_done_callback(
             lambda completed: Thread(
-                target=callback,
-                args=(completed,),
+                target=self._deliver,
+                args=(callback, completed),
                 name="hanly-update-result",
                 daemon=True,
             ).start()
         )
+
+    def _deliver(self, callback: Callable[[Future[Any]], None], future: Future[Any]) -> None:
+        """Run one result callback, unless it no longer speaks for this state.
+
+        A callback runs on its own thread after its future completed, so an
+        older one can arrive at any moment. Only the operation this coordinator
+        still holds may report an outcome or release ownership.
+        """
+
+        with self._lock:
+            stale = future is not self._future
+        if not stale:
+            callback(future)
 
     def _install(self, resource_id: str) -> UpdateResult:
         prepared = False
@@ -221,7 +242,14 @@ class UpdateCoordinator:
                 self._after_install(resource_id)
 
     def _active_locked(self) -> bool:
-        return self._future is not None and not self._future.done()
+        """Whether an operation still owns this coordinator.
+
+        Ownership ends when the matching callback finalizes the state, not when
+        the future completes: between those two moments a second request would
+        otherwise start and have its result overwritten by the older callback.
+        """
+
+        return self._handed_off or self._future is not None
 
     def _select_resource_locked(self, resource_id: object | None) -> str:
         if resource_id is not None and (
@@ -244,22 +272,31 @@ class UpdateCoordinator:
     def _collect_updates(self) -> _CheckOutcome:
         """Check resources and the application itself in one worker pass.
 
-        An application-check failure never hides an available resource update,
-        so it is reported in place of the version rather than raised.
+        Neither half hides the other: they reach the same release channel but
+        answer different questions, and a manifest a user cannot fix is no
+        reason to stop telling them a new Hanly exists - which may be what
+        fixes it. Neither failure is swallowed either: a half that could not
+        answer says so, rather than being reported as nothing to install.
         """
 
-        availability = self._service.check_for_updates()
+        availability, resource_error = self._check_resources()
         if self._application_check is None:
-            return availability, None, None
+            return availability, None, None, resource_error
         try:
             update = self._application_check()
         except Exception as error:
-            return availability, None, _application_check_failure(error)
-        return availability, update, update.to_dict()
+            return availability, None, _application_check_failure(error), resource_error
+        return availability, update, update.to_dict(), resource_error
+
+    def _check_resources(self) -> tuple[tuple[UpdateAvailability, ...], str | None]:
+        try:
+            return self._service.check_for_updates(), None
+        except Exception as error:
+            return (), str(error) or type(error).__name__
 
     def _finish_check(self, future: Future[_CheckOutcome]) -> None:
         try:
-            availability, update, application = future.result()
+            availability, update, application, resource_error = future.result()
         except Exception as error:
             self._finish_error(error)
             return
@@ -270,9 +307,11 @@ class UpdateCoordinator:
             application_available = bool(application and application.get("available"))
             available = resource_available or application_available
             self._state.update(
-                status="available" if available else "current",
+                status=_check_status(available, resource_error),
                 available=available,
-                message=_check_message(resource_available, application_available),
+                message=_check_message(
+                    resource_available, application_available, resource_error
+                ),
                 resources=resources,
                 active_resource_id=None,
                 progress=None,
@@ -324,6 +363,8 @@ class UpdateCoordinator:
                 restart_required=True,
             )
             self._future = None
+            # The swap script is already waiting for this process to exit.
+            self._handed_off = True
         if self._on_restart_required is not None:
             self._on_restart_required()
 
@@ -356,7 +397,22 @@ def _state(
     }
 
 
-def _check_message(resource_available: bool, application_available: bool) -> str:
+def _check_status(available: bool, resource_error: str | None) -> str:
+    """An update to offer outranks a half that could not answer."""
+
+    if available:
+        return "available"
+    return "failed" if resource_error is not None else "current"
+
+
+def _check_message(
+    resource_available: bool, application_available: bool, resource_error: str | None
+) -> str:
+    if resource_error is not None:
+        could_not_check = f"Could not check for resource updates: {resource_error}"
+        if application_available:
+            return f"{could_not_check} A new Hanly version is available."
+        return could_not_check
     if resource_available and application_available:
         return "A new Hanly version and resource updates are available."
     if application_available:
