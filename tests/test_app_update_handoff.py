@@ -609,6 +609,36 @@ def test_a_rejected_build_that_is_still_running_is_stopped_before_the_restore(
     _assert_identity(handoff, "old")
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32" or shutil.which("pgrep") is None,
+    reason="this is the POSIX rollback, and pgrep is how it is observed",
+)
+@_native
+def test_a_rejected_build_that_is_still_running_is_stopped_before_the_posix_restore(
+    tmp_path: Path,
+) -> None:
+    """POSIX renames a directory out from under a running program without
+    complaint, so a rollback that does not stop the rejected build leaves it
+    running out of a directory the handoff then deletes -- beside the restored
+    build it just relaunched."""
+
+    handoff = _run(
+        _prepare(tmp_path, "linux", new_version="9.9.9", linger=60), expect_status=1
+    )
+
+    assert handoff.await_launched(["new", "old"]) == ["new", "old"]
+    # Only the candidate is started with the readiness argument, so this sees
+    # that one process and never the restored build launched beside it.
+    assert not _running(f"update-ready {handoff.transaction.ready_path}")
+    _assert_identity(handoff, "old")
+
+
+def _running(pattern: str) -> bool:
+    """Whether any process's command line still matches ``pattern``."""
+
+    return subprocess.run(["pgrep", "-f", pattern], capture_output=True).returncode == 0
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="the shim replaces a POSIX mv")
 @_native
 def test_a_rollback_that_itself_fails_launches_nothing_and_keeps_the_backup(

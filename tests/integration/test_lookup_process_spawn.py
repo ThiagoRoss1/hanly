@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -132,9 +133,12 @@ def _existing_dictionary() -> Path | None:
 
 
 def _requirements() -> tuple[Path, Path, Path]:
-    pytest.importorskip("easyocr")
-    pytest.importorskip("kiwipiepy")
-    pytest.importorskip("PIL")
+    # Presence, not an import: loading the runtime to decide whether to run
+    # would put the very libraries this test says the shell never imports into
+    # the process running it.
+    missing = [name for name in ("easyocr", "kiwipiepy", "PIL") if find_spec(name) is None]
+    if missing:
+        pytest.skip(f"the lookup runtime is not installed: {', '.join(missing)}")
     dictionary = _existing_dictionary()
     if dictionary is None:
         pytest.skip("no built KRDICT database; see data/README.md")
@@ -155,7 +159,13 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     child = subprocess.run(
         [sys.executable, str(program), str(dictionary), str(models), str(fixture)],
         capture_output=True,
-        text=True,
+        # The report carries Korean headwords. Without this the child writes
+        # them in the console codepage, which on a Windows shell cannot encode
+        # them at all, and the test fails for the encoding rather than the
+        # lookup.
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         timeout=_CHILD_TIMEOUT_SECONDS,
         cwd=tmp_path,
     )

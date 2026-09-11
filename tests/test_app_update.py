@@ -31,6 +31,8 @@ from hanly_app.app_update import (
     installed_version,
 )
 
+from tests.hanly_fixtures.capabilities import requires_symlinks
+
 RELEASE_URL = "https://github.com/ThiagoRoss1/hanly/releases/tag/v0.2.0"
 
 
@@ -321,6 +323,7 @@ def test_a_failed_download_leaves_no_trace_beside_the_installation(
     assert (channel.install_root / channel.executable).read_bytes() == b"old build"
 
 
+@requires_symlinks
 def test_a_linux_build_keeps_the_internal_links_its_layout_is_made_of(
     tmp_path: Path,
 ) -> None:
@@ -673,6 +676,7 @@ def test_a_relaunched_build_reports_the_version_that_actually_came_up(
     assert ready.read_text(encoding="utf-8") == "0.2.0"
 
 
+@requires_symlinks
 def test_a_link_to_a_directory_that_escapes_is_caught_after_extraction(
     tmp_path: Path,
 ) -> None:

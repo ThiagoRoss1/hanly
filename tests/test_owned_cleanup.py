@@ -23,6 +23,8 @@ from hanly_app.owned_cleanup import (
     update_staging_locations,
 )
 
+from tests.hanly_fixtures.capabilities import requires_symlinks
+
 
 class _Clock:
     def __init__(self, now: float = 1_000_000.0) -> None:
@@ -49,6 +51,30 @@ def test_an_opened_directory_carries_a_marker_naming_its_owner(tmp_path: Path) -
     assert marker["operation"] == "resource-staging"
     assert marker["owner_pid"] == os.getpid()
     assert marker["version"] == 1
+
+
+def test_two_operations_opened_together_never_share_a_directory(tmp_path: Path) -> None:
+    """One process, one kind of work, one clock tick: a name built from those
+    three collides, and the first to finish would delete the other's work."""
+
+    workspace = _workspace(tmp_path, _Clock())
+
+    first = workspace.open("update")
+    second = workspace.open("update")
+
+    assert first.path != second.path
+    workspace.complete(first)
+    assert second.path.is_dir()
+
+
+def test_this_process_is_alive_and_an_unused_id_is_not() -> None:
+    """The liveness check itself, on the platform actually running the tests."""
+
+    from hanly_app.owned_cleanup import _process_alive
+
+    assert _process_alive(os.getpid())
+    assert not _process_alive(999_999)
+    assert not _process_alive(0)
 
 
 def test_a_completed_operation_removes_its_directory_at_once(tmp_path: Path) -> None:
@@ -137,6 +163,7 @@ def test_an_unmarked_directory_is_never_touched(tmp_path: Path) -> None:
     assert (stranger / "keep.txt").is_file()
 
 
+@requires_symlinks
 def test_a_symlink_into_the_root_is_refused(tmp_path: Path) -> None:
     clock = _Clock()
     workspace = _workspace(tmp_path, clock)

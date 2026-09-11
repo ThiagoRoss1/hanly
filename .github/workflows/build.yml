@@ -141,9 +141,6 @@ jobs:
             --krdict "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3" \
             | tee "dist/reports/hanly-smoke-${{ matrix.platform }}.json"
 
-      # Required evidence on every platform. This was Windows-only while the
-      # other two frozen windows were still unproven; a smoke that cannot fail
-      # the build is not a gate, and a release must not be cut from a red one.
       - name: Smoke the frozen Control Center
         shell: bash
         run: |

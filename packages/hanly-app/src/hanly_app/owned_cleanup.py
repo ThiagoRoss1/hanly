@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
+import tempfile
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -41,9 +43,9 @@ MARKER_VERSION = 1
 #: one.
 MIN_AGE_SECONDS = 3600.0
 
-#: Statuses a marked directory can carry.
+#: Statuses a marked directory can carry. A finished operation has its
+#: directory removed outright, so there is no status for one.
 ACTIVE = "active"
-COMPLETE = "complete"
 RECOVERY_REQUIRED = "recovery-required"
 
 #: Inside an update transaction, either of these is a copy of an installation
@@ -143,8 +145,7 @@ class OwnedWorkspace:
         if not operation or "/" in operation or "\\" in operation:
             raise CleanupError("an operation name must be one plain path segment")
         created = _now(self._clock)
-        directory = self._root / f"{operation}-{os.getpid()}-{int(created)}"
-        directory.mkdir(parents=True, exist_ok=True)
+        directory = self._claim(f"{operation}-{os.getpid()}-")
         owned = OwnedDirectory(
             path=directory,
             operation=operation,
@@ -153,6 +154,24 @@ class OwnedWorkspace:
         )
         _write_marker(owned)
         return owned
+
+    def _claim(self, prefix: str) -> Path:
+        """Create one directory nothing else can already be using.
+
+        A name built from the operation, the process id and a timestamp
+        collides with itself: two operations of the same kind a second apart
+        in one process would share a directory, and the first to finish would
+        delete the other's work. ``mkdtemp`` asks the filesystem for a name
+        that did not exist, which is the only answer without a race in it.
+        """
+
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=self._root))
+        except OSError as error:
+            raise CleanupError(
+                f"could not claim a directory under {self._root}: {error}"
+            ) from error
 
     def complete(self, owned: OwnedDirectory) -> None:
         """Remove a finished operation's directory at once."""
@@ -219,8 +238,6 @@ class OwnedWorkspace:
             return False
         if now - float(created) < self._min_age:
             return False
-        if marker.get("status") == COMPLETE:
-            return True
         return not _process_alive(int(owner))
 
     def _safe_children(self, root: Path) -> Iterable[Path]:
@@ -357,6 +374,47 @@ def _read_marker(directory: Path) -> dict[str, object] | None:
     return payload
 
 
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    #: Enough access to ask whether a process id is in use, and nothing more.
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _STILL_ACTIVE = 259
+    _ERROR_ACCESS_DENIED = 5
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.GetExitCodeProcess.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+
+    def _windows_process_alive(pid: int) -> bool:
+        """Whether Windows still knows this process id.
+
+        Declaring the signatures is what keeps a handle a handle: ctypes
+        assumes a C ``int`` return, which truncates a 64-bit handle and then
+        closes whatever the truncated value names. Access denied means the id
+        belongs to a process this one may not open, which is still a process.
+        """
+
+        handle = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not _kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == _STILL_ACTIVE
+        finally:
+            _kernel32.CloseHandle(handle)
+
+
 def _process_alive(pid: int) -> bool:
     """Whether a process id is in use right now.
 
@@ -366,7 +424,7 @@ def _process_alive(pid: int) -> bool:
 
     if pid <= 0:
         return False
-    if os.name == "nt":
+    if sys.platform == "win32":
         return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
@@ -378,24 +436,6 @@ def _process_alive(pid: int) -> bool:
     except OSError:
         return True
     return True
-
-
-def _windows_process_alive(pid: int) -> bool:
-    import ctypes
-
-    process_query_limited_information = 0x1000
-    still_active = 259
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-    if not handle:
-        return False
-    try:
-        code = ctypes.c_ulong()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-            return True
-        return code.value == still_active
-    finally:
-        kernel32.CloseHandle(handle)
 
 
 def _remove_tree(path: Path) -> str | None:
@@ -418,7 +458,6 @@ def _now(clock: object) -> float:
 
 __all__ = [
     "ACTIVE",
-    "COMPLETE",
     "MARKER_NAME",
     "MARKER_VERSION",
     "MIN_AGE_SECONDS",

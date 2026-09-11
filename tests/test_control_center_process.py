@@ -244,6 +244,19 @@ def test_an_oversized_message_is_refused_before_it_reaches_the_pipe() -> None:
         transport.send({"kind": "call", "arguments": ["x" * 1024]})
 
 
+def test_a_transport_that_is_open_never_disguises_a_type_error_as_a_close() -> None:
+    """Only a close landing mid-call may be read as the pipe going away; a
+    caller's own type error has to surface as itself."""
+
+    parent_end, _child_end = multiprocessing.Pipe(duplex=True)
+    transport = Transport(parent_end)
+
+    with pytest.raises(TypeError):
+        transport.poll("soon")  # type: ignore[arg-type]
+
+    transport.close()
+
+
 def test_closing_a_transport_releases_a_reader_waiting_on_it() -> None:
     parent_end, _child_end = multiprocessing.Pipe(duplex=True)
     transport = Transport(parent_end)
@@ -265,3 +278,36 @@ def test_closing_a_transport_releases_a_reader_waiting_on_it() -> None:
 
     assert not reader.is_alive()
     assert len(failures) == 1
+
+
+def test_closing_a_transport_reaches_the_other_end_despite_a_blocked_reader() -> None:
+    """A reader still waiting must not hold the pipe open behind the close.
+
+    On POSIX that reader owns the open file description, so a close that only
+    drops this end's descriptor would leave the peer waiting for an EOF that
+    never comes -- which is how a retired child becomes an orphan.
+    """
+
+    parent_end, child_end = multiprocessing.Pipe(duplex=True)
+    parent = Transport(parent_end)
+    child = Transport(child_end)
+
+    waiting = threading.Event()
+
+    def read() -> None:
+        waiting.set()
+        try:
+            parent.receive()
+        except TransportClosed:
+            pass
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    assert waiting.wait(_WAIT_SECONDS)
+    parent.close()
+
+    with pytest.raises(TransportClosed):
+        child.receive()
+    reader.join(_WAIT_SECONDS)
+    assert not reader.is_alive()
+    child.close()

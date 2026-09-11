@@ -23,20 +23,21 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from queue import Empty, Queue
 from time import monotonic
-from typing import Any, Literal
+from typing import Literal
 
 from hanly import LookupResult, PixelFormat, Point, ROIImage
 from hanly.easyocr_provider import EasyOCRConfig
 from hanly.errors import HanlyError, LookupCancelled, ProviderError
 
+from .job_executor import Worker
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher, ResultHandler
 from .process_transport import (
     Message,
+    PipeEnd,
     Transport,
     TransportClosed,
     spawn_child,
@@ -45,9 +46,13 @@ from .process_transport import (
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink
 
 #: How long provider construction may take before the child is given up on.
-#: Cold EasyOCR and Kiwi construction is measured in seconds, not minutes; this
-#: only catches a child that will never report at all.
-READY_TIMEOUT_SECONDS = 300.0
+#: This wave measured a cold child ready in 5.1-7.2 s, against 12.55 s for the
+#: in-process build it replaced, so two minutes is an order of magnitude over
+#: the worst startup anyone has observed and still leaves a first launch room
+#: for a cold page cache and an antivirus scan of the runtime. It catches a
+#: child that will never report at all, and bounds how long "preparing" can
+#: last before it becomes a failure the user can act on.
+READY_TIMEOUT_SECONDS = 120.0
 
 #: Bounded wait for the child to close its providers and SQLite handle.
 STOP_TIMEOUT_SECONDS = 10.0
@@ -830,7 +835,7 @@ class _LookupChild:
                     if self._stopping:
                         return None
 
-    def _build_worker(self) -> Any:
+    def _build_worker(self) -> Worker[LookupRequest, LookupResult] | None:
         from .composition import create_lookup_worker_factory
 
         settings = self._settings
@@ -856,7 +861,9 @@ class _LookupChild:
         self._send({"kind": "ready"})
         return worker
 
-    def _run_one(self, worker: Any, request: LookupRequest) -> None:
+    def _run_one(
+        self, worker: Worker[LookupRequest, LookupResult], request: LookupRequest
+    ) -> None:
         try:
             result = worker(request)
         except BaseException as error:
@@ -931,7 +938,7 @@ def _request_from(message: Message) -> LookupRequest:
     )
 
 
-def lookup_child(connection: Connection, settings: LookupSettings) -> None:
+def lookup_child(connection: PipeEnd, settings: LookupSettings) -> None:
     """Child entry point: the only thing in Hanly that imports the OCR stack.
 
     Importable under ``spawn`` and deliberately narrow. It provisions nothing,

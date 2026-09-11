@@ -16,7 +16,6 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 
 from .control_center import ControlCenterUnavailable
@@ -24,6 +23,7 @@ from .control_center_host import ControlCenterHost
 from .process_transport import (
     MAX_CONTROL_MESSAGE_BYTES,
     Message,
+    PipeEnd,
     Transport,
     TransportClosed,
     spawn_child,
@@ -600,7 +600,7 @@ def _value_of(reply: Message) -> object:
     return reply.get("value")
 
 
-def control_center_child(connection: Connection, options: ControlCenterOptions) -> None:
+def control_center_child(connection: PipeEnd, options: ControlCenterOptions) -> None:
     """Child entry point: the only thing in Hanly that imports Qt WebEngine.
 
     Importable under ``spawn`` and deliberately narrow: it prepares WebEngine,

@@ -115,6 +115,7 @@ def render_handoff_script(*, executable: str, platform: str = sys.platform) -> s
         )
     return _POSIX_HANDOFF.format(
         launch=_posix_launch(platform, executable),
+        stop=_posix_stop(platform),
         exit_wait=EXIT_WAIT_SECONDS,
         ready_wait=READY_WAIT_SECONDS,
         ready_argument=READY_ARGUMENT,
@@ -187,12 +188,40 @@ def _posix_launch(platform: str, executable: str) -> str:
 
     macOS goes through ``open`` so the relaunched build is a registered
     application with a Dock entry and menu bar, which running the program
-    inside the bundle directly does not produce.
+    inside the bundle directly does not produce. The cost is that no pid comes
+    back from it, which is why stopping a rejected build differs by platform
+    as well.
     """
 
     if platform.startswith("darwin"):
         return '/usr/bin/open "$install" --args "$@"'
-    return f'"$install/{executable}" "$@" >/dev/null 2>&1 &'
+    return _indented([f'"$install/{executable}" "$@" >/dev/null 2>&1 &', "candidate=$!"])
+
+
+def _posix_stop(platform: str) -> str:
+    """Return how one POSIX platform stops a candidate it is about to reject.
+
+    A backgrounded program is this script's own job, so its pid is exact.
+    ``open`` hands back no pid at all, which leaves matching whatever is
+    running out of the bundle as the only handle macOS offers on it.
+    """
+
+    if platform.startswith("darwin"):
+        return _indented(['/usr/bin/pkill -f "^$install/" 2>/dev/null || true', "sleep 1"])
+    return _indented(
+        [
+            '[ -n "$candidate" ] || return 0',
+            'kill "$candidate" 2>/dev/null || return 0',
+            "sleep 1",
+            'kill -9 "$candidate" 2>/dev/null || true',
+        ]
+    )
+
+
+def _indented(lines: list[str]) -> str:
+    """Join shell lines for a slot that sits one level inside a function."""
+
+    return "\n  ".join(lines)
 
 
 _POSIX_HANDOFF = """#!/bin/sh
@@ -207,8 +236,19 @@ ready="$5"
 version="$6"
 transaction="$7"
 
+candidate=""
+
 launch() {{
   {launch}
+}}
+
+# A candidate that came up and is now being rejected has to be stopped before
+# the previous build goes back. POSIX renames a directory a program is running
+# from without complaint, so without this the rollback would leave two Hanlys:
+# the rejected one, out of a directory this script then deletes underneath it,
+# and the restored one at the installation path.
+stop_candidate() {{
+  {stop}
 }}
 
 # The transaction directory holds the staged build, the previous build, and
@@ -254,6 +294,7 @@ done
 # part way through would leave the installation path in pieces with nothing
 # yet restored. A restore that itself fails launches nothing and keeps the
 # transaction, because its backup is then the only copy of a working Hanly.
+stop_candidate
 mv "$install" "$transaction/rejected" || exit 1
 mv "$backup" "$install" || exit 1
 launch

@@ -12,7 +12,10 @@ wire, and no shell command line: both ends are Hanly, started by Hanly.
 
 from __future__ import annotations
 
+import os
 import pickle
+import socket
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from multiprocessing import get_context
@@ -27,6 +30,18 @@ MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 #: The Control Center carries settings snapshots and log records, never images.
 MAX_CONTROL_MESSAGE_BYTES = 4 * 1024 * 1024
+
+#: How a pipe reports that this end, or the other one, is gone.
+_CLOSED_ERRORS = (EOFError, OSError, ValueError)
+
+if sys.platform == "win32":
+    from multiprocessing.connection import PipeConnection
+
+    #: What ``Pipe`` hands back. Windows names its end differently, and a
+    #: signature written for one platform's name rejects the other's.
+    PipeEnd = Connection | PipeConnection
+else:
+    PipeEnd = Connection
 
 Message = Mapping[str, Any]
 
@@ -57,7 +72,7 @@ class Transport:
 
     def __init__(
         self,
-        connection: Connection,
+        connection: PipeEnd,
         *,
         max_bytes: int = MAX_MESSAGE_BYTES,
     ) -> None:
@@ -86,16 +101,20 @@ class Transport:
                 raise TransportClosed("transport is closed")
             try:
                 self._connection.send_bytes(payload)
-            except (BrokenPipeError, EOFError, OSError, ValueError) as error:
+            except _CLOSED_ERRORS as error:
                 raise TransportClosed(f"transport send failed: {error}") from error
+            except TypeError as error:
+                raise self._closed_mid_call("send", error) from error
 
     def receive(self) -> Message:
         """Block until one message arrives, or the other end is gone."""
 
         try:
             payload = self._connection.recv_bytes(maxlength=self._max_bytes)
-        except (EOFError, BrokenPipeError, OSError, ValueError) as error:
+        except _CLOSED_ERRORS as error:
             raise TransportClosed(f"transport receive failed: {error}") from error
+        except TypeError as error:
+            raise self._closed_mid_call("receive", error) from error
         return _decoded(payload)
 
     def poll(self, timeout: float | None = None) -> bool:
@@ -103,8 +122,23 @@ class Transport:
 
         try:
             return bool(self._connection.poll(timeout))
-        except (OSError, ValueError) as error:
+        except _CLOSED_ERRORS as error:
             raise TransportClosed(f"transport poll failed: {error}") from error
+        except TypeError as error:
+            raise self._closed_mid_call("poll", error) from error
+
+    def _closed_mid_call(self, action: str, error: TypeError) -> TransportClosed:
+        """Translate the one ``TypeError`` a close landing mid-call produces.
+
+        CPython reads the connection's handle without holding a lock, so a
+        close between the closed check and the read leaves the read with a
+        handle that has just become ``None``. That is this end going away.
+        Every other ``TypeError`` is a defect and is re-raised untouched.
+        """
+
+        if not self._closed:
+            raise error
+        return TransportClosed(f"transport {action} failed: {error}")
 
     def close(self) -> None:
         """Close this end, releasing a reader blocked in :meth:`receive`."""
@@ -113,10 +147,42 @@ class Transport:
             if self._closed:
                 return
             self._closed = True
+
+        _release_reader(self._connection)
         try:
             self._connection.close()
         except OSError:
             # The pipe is already unusable, which is the state close() wanted.
+            pass
+
+
+def _release_reader(connection: PipeEnd) -> None:
+    """Wake whatever thread is blocked reading ``connection``, before it closes.
+
+    Closing the handle is enough on Windows, where it cancels the pending read.
+    POSIX leaves that reader waiting on the open file description, and a waiting
+    reader keeps the description open, so the other end never reaches EOF
+    either — the shutdown below is what ends both waits. A duplex ``Pipe`` is a
+    socketpair there, which is what makes a shutdown possible at all.
+    """
+
+    if sys.platform == "win32":
+        return
+
+    try:
+        duplicate = os.dup(connection.fileno())
+    except (OSError, ValueError):
+        return
+    try:
+        end = socket.socket(fileno=duplicate)
+    except OSError:
+        # Not a socket, so there is nothing to shut down; close alone must do.
+        os.close(duplicate)
+        return
+    with end:
+        try:
+            end.shutdown(socket.SHUT_RDWR)
+        except OSError:
             pass
 
 
@@ -166,7 +232,9 @@ def spawn_child(
         raise
     finally:
         # The parent holding a copy of the child's end would keep EOF from ever
-        # arriving when the child exits.
+        # arriving when the child exits. Closed directly rather than through a
+        # Transport: the child shares this file description, and a transport
+        # close shuts the connection down for both of them.
         child_end.close()
     return process, Transport(parent_end, max_bytes=max_bytes)
 
@@ -206,6 +274,7 @@ __all__ = [
     "ChildTarget",
     "Message",
     "MessageTooLarge",
+    "PipeEnd",
     "Transport",
     "TransportClosed",
     "spawn_child",
