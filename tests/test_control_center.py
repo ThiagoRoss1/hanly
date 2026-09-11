@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +24,7 @@ from hanly_app.control_center import (
     load_control_center_assets,
 )
 from hanly_app.desktop_controller import DesktopState
+from hanly_app.diagnostics import DiagnosticLog
 from hanly_app.permissions import (
     Permission,
     PermissionService,
@@ -910,3 +912,105 @@ def test_every_new_preference_has_a_control_on_the_page() -> None:
     for choice in ("when_capture_starts", "always", "on_demand", "always_active"):
         assert f'value="{choice}"' in assets.html
     assert "update_settings" in assets.javascript
+
+
+def _log_bridge(tmp_path: Path) -> tuple[ControlCenterBridge, DiagnosticLog, Path]:
+    from hanly_app.diagnostics import RotatingLogFile
+
+    log_path = tmp_path / "logs" / "hanly.log"
+    log = DiagnosticLog(RotatingLogFile(log_path))
+    bridge = ControlCenterBridge(
+        config_manager=ConfigManager(tmp_path / "settings.json"),
+        diagnostics=log.snapshot,
+        diagnostic_log=log,
+        log_path=log_path,
+    )
+    return bridge, log, log_path
+
+
+def test_the_logs_panel_is_given_records_and_what_to_filter_them_by(
+    tmp_path: Path,
+) -> None:
+    bridge, log, _path = _log_bridge(tmp_path)
+    log.record("Capture", "Hanly is watching the screen.")
+    log.report("Startup", RuntimeError("no runtime"))
+
+    logs = bridge.get_logs()
+    records = cast(list[dict[str, str]], logs["records"])
+
+    assert [record["subsystem"] for record in records] == ["Capture", "Startup"]
+    assert [record["level"] for record in records] == ["info", "error"]
+    assert logs["subsystems"] == ["Capture", "Startup"]
+    assert logs["levels"] == ["info", "warning", "error"]
+
+
+def test_clearing_empties_both_the_panel_and_the_file(tmp_path: Path) -> None:
+    """A Clear that left the file behind is a promise the next export breaks."""
+
+    bridge, log, log_path = _log_bridge(tmp_path)
+    log.record("Capture", "Hanly is watching the screen.")
+    assert log_path.is_file()
+
+    logs = bridge.clear_logs()
+
+    assert logs["records"] == []
+    assert not log_path.exists()
+
+
+def test_a_file_that_cannot_be_emptied_is_reported_rather_than_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge, log, log_path = _log_bridge(tmp_path)
+    log.record("Capture", "watching")
+    real_unlink = Path.unlink
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        if self == log_path:
+            raise PermissionError("the log file is in use")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+
+    with pytest.raises(ControlCenterUnavailable, match="log file was not"):
+        bridge.clear_logs()
+    assert log.records() == ()
+
+
+def test_the_export_writes_a_shareable_report_beside_the_log(tmp_path: Path) -> None:
+    bridge, log, log_path = _log_bridge(tmp_path)
+    log.record("Capture", "Hanly is watching the screen.")
+
+    saved = bridge.export_diagnostics()
+
+    written = Path(str(saved["path"]))
+    assert written.parent == log_path.parent
+    assert saved["records"] == 1
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert payload["state"]["preferences"]["hotkey"] == AppConfig().hotkey
+    assert payload["records"][0]["subsystem"] == "Capture"
+    assert "platform" in payload and "versions" in payload
+
+
+def test_a_build_without_a_log_says_so_rather_than_exporting_nothing(
+    tmp_path: Path,
+) -> None:
+    bridge = ControlCenterBridge(config_manager=ConfigManager(tmp_path / "settings.json"))
+
+    with pytest.raises(ControlCenterUnavailable, match="no diagnostics log"):
+        bridge.export_diagnostics()
+    with pytest.raises(ControlCenterUnavailable, match="no diagnostics log"):
+        bridge.clear_logs()
+
+
+def test_the_logs_panel_renders_records_with_text_content_only() -> None:
+    """A log line can hold anything an operating system put in an error."""
+
+    assets = load_control_center_assets()
+
+    for element in ("log-list", "log-level", "log-subsystem", "log-search"):
+        assert f'id="{element}"' in assets.html
+    for action in ("refresh-logs", "copy-logs", "clear-logs", "export-diagnostics"):
+        assert f'id="{action}"' in assets.html
+    body = assets.javascript.split("function renderLogs(", 1)[1].split("function loadLogs", 1)[0]
+    assert "textContent" in body
+    assert "innerHTML = \"\"" in body

@@ -400,15 +400,131 @@
     invoke("install_update", resourceId || undefined);
   });
 
-  window.addEventListener("pywebviewready", function () {
-    invoke("get_state");
+  // ---- Logs ------------------------------------------------------------
+  // Records render through textContent only: a log line can hold anything a
+  // provider or the operating system put in an error message, and none of it
+  // is markup.
+
+  let logState = { records: [], subsystems: [] };
+
+  function matchesFilters(record) {
+    const level = byId("log-level").value;
+    const subsystem = byId("log-subsystem").value;
+    const search = byId("log-search").value.trim().toLowerCase();
+    if (level !== "all" && level !== "" && record.level !== level) return false;
+    if (subsystem !== "all" && subsystem !== "" && record.subsystem !== subsystem) return false;
+    if (search && (record.message || "").toLowerCase().indexOf(search) === -1) return false;
+    return true;
+  }
+
+  function localTime(timestamp) {
+    const parsed = new Date(timestamp);
+    return isNaN(parsed.getTime()) ? String(timestamp || "") : parsed.toLocaleTimeString();
+  }
+
+  function visibleRecords() {
+    return (logState.records || []).filter(matchesFilters);
+  }
+
+  function renderSubsystems(subsystems) {
+    const select = byId("log-subsystem");
+    const selected = select.value || "all";
+    select.innerHTML = "<option value=\"all\">All</option>";
+    (subsystems || []).forEach(function (name) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    });
+    select.value = (subsystems || []).indexOf(selected) === -1 ? "all" : selected;
+  }
+
+  function renderLogs() {
+    const list = byId("log-list");
+    const records = visibleRecords();
+    list.innerHTML = "";
+    records.forEach(function (record) {
+      const row = document.createElement("div");
+      row.className = "log-row";
+      row.dataset.level = record.level || "info";
+      ["log-time", "log-subsystem", "log-message"].forEach(function (className, index) {
+        const cell = document.createElement("span");
+        cell.className = className;
+        cell.textContent = [
+          localTime(record.timestamp),
+          record.subsystem,
+          record.message
+        ][index];
+        row.appendChild(cell);
+      });
+      list.appendChild(row);
+    });
+    const total = (logState.records || []).length;
+    byId("log-summary").textContent = total === 0
+      ? "No records yet."
+      : records.length + " of " + total + " records";
+  }
+
+  function loadLogs() {
+    const api = bridge();
+    if (!api || typeof api.get_logs !== "function") return Promise.resolve();
+    return api.get_logs().then(function (state) {
+      logState = state || { records: [], subsystems: [] };
+      renderSubsystems(logState.subsystems);
+      renderLogs();
+    }).catch(showActionError);
+  }
+
+  function logsAsText() {
+    return visibleRecords().map(function (record) {
+      return [record.timestamp, record.level, record.subsystem, record.message].join("\t");
+    }).join("\n");
+  }
+
+  byId("log-level").addEventListener("change", renderLogs);
+  byId("log-subsystem").addEventListener("change", renderLogs);
+  byId("log-search").addEventListener("input", renderLogs);
+  byId("refresh-logs").addEventListener("click", function () { showActionError(""); loadLogs(); });
+  byId("copy-logs").addEventListener("click", function () {
+    if (!navigator.clipboard) { showActionError("This window cannot reach the clipboard."); return; }
+    navigator.clipboard.writeText(logsAsText()).then(function () {
+      byId("log-summary").textContent = "Copied " + visibleRecords().length + " records.";
+    }).catch(function () { showActionError("The records could not be copied."); });
   });
+  byId("clear-logs").addEventListener("click", function () {
+    const api = bridge();
+    if (!api || typeof api.clear_logs !== "function") return;
+    showActionError("");
+    api.clear_logs().then(function (state) {
+      logState = state || { records: [], subsystems: [] };
+      renderSubsystems(logState.subsystems);
+      renderLogs();
+    }).catch(function (error) { showActionError(error); loadLogs(); });
+  });
+  byId("export-diagnostics").addEventListener("click", function () {
+    const api = bridge();
+    if (!api || typeof api.export_diagnostics !== "function") return;
+    showActionError("");
+    api.export_diagnostics().then(function (saved) {
+      byId("log-summary").textContent = "Saved " + saved.records + " records to " + saved.path;
+    }).catch(showActionError);
+  });
+
+  function load() {
+    invoke("get_state");
+    loadLogs();
+  }
+
+  window.addEventListener("pywebviewready", load);
   // Hanly itself pushes a nudge when state it owns moved under the page --
   // readiness settling, capture starting from the tray, an update finishing --
   // so a visible window stays current without polling for it.
-  window.hanlyRefresh = refresh;
+  window.hanlyRefresh = function () {
+    refresh();
+    loadLogs();
+  };
   renderState(fallbackState);
 
   // The ready event may already have fired before this script ran.
-  if (bridge()) invoke("get_state");
+  if (bridge()) load();
 }());

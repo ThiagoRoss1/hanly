@@ -59,6 +59,10 @@ CANCEL_POLL_SECONDS = 0.02
 #: Automatic restarts allowed for one active session after an unexpected exit.
 DEFAULT_RECOVERY_BUDGET = 1
 
+#: A lookup slower than this is worth a line in the log. Recording every one
+#: would turn hover into a motion stream, which diagnostics must never be.
+SLOW_LOOKUP_MS = 1500.0
+
 #: The whole of the lookup engine's lifecycle, kept apart from shell and
 #: resource readiness: a stopped engine can still accept a new request.
 EngineState = Literal["sleeping", "preparing", "ready", "error"]
@@ -483,14 +487,19 @@ class LookupEngine:
         if item.is_cancelled():
             raise LookupCancelled("lookup was superseded before worker execution")
         process = self._ensure()
+        started = monotonic()
         try:
             return process.lookup(item)
         finally:
             # Measured from completion rather than from submission: a cold
             # first lookup takes seconds, and an expiry that started counting
             # before it finished would be counting the wrong thing.
+            finished = monotonic()
             with self._lock:
-                self._last_used = monotonic()
+                self._last_used = finished
+            elapsed_ms = (finished - started) * 1000
+            if elapsed_ms >= SLOW_LOOKUP_MS:
+                self._report(f"A lookup took {elapsed_ms:.0f} ms.")
 
     def close(self) -> None:
         """Retire the current child for good; nothing starts another."""
@@ -951,6 +960,7 @@ __all__ = [
     "CANCEL_POLL_SECONDS",
     "DEFAULT_RECOVERY_BUDGET",
     "READY_TIMEOUT_SECONDS",
+    "SLOW_LOOKUP_MS",
     "STOP_TIMEOUT_SECONDS",
     "EngineState",
     "LookupEngine",

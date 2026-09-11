@@ -52,6 +52,12 @@ from .first_run import (
 )
 from .lookup_controller import ResultDispatcher
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
+from .owned_cleanup import (
+    CleanupReport,
+    OwnedWorkspace,
+    sweep_staging,
+    update_staging_locations,
+)
 from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
@@ -242,6 +248,7 @@ class DesktopApplication:
                 self._started = True
         else:
             self._controller.resume()
+        self._diagnostics.record("Capture", "Hanly is watching the screen.")
         self._tray.refresh()
 
     def attach_updates(self, coordinator: UpdateCoordinator | None) -> None:
@@ -258,6 +265,7 @@ class DesktopApplication:
 
     def pause_capture(self) -> None:
         self._controller.pause()
+        self._diagnostics.record("Capture", "Hanly stopped watching the screen.")
         self._tray.refresh()
 
     def resume_capture(self) -> None:
@@ -308,9 +316,11 @@ class DesktopApplication:
                 with self._lock:
                     self._tray_usable = True
                 return
-        self._diagnostics.add(
-            "The system tray cannot reopen the Control Center; "
-            "closing that window will quit Hanly."
+        self._diagnostics.record(
+            "System tray",
+            "The tray cannot reopen the Control Center; closing that window "
+            "will quit Hanly.",
+            level="warning",
         )
 
     def control_center_closed(self) -> None:
@@ -325,7 +335,9 @@ class DesktopApplication:
         with self._lock:
             if self._shutdown or self._tray_usable:
                 return
-        self._diagnostics.add("Hanly quit with its window: there is no tray to reopen it.")
+        self._diagnostics.record(
+            "Control Center", "Hanly quit with its window: there is no tray to reopen it."
+        )
         self.quit()
 
     def quit(self) -> None:
@@ -433,10 +445,11 @@ class _DesktopSession:
             ocr_provider=OCR_DISPLAY_NAME,
             engine_status=self.engine_status,
             registered_hotkeys=self.registered_hotkeys,
+            diagnostic_log=diagnostics,
         )
         self.host = ControlCenterProcess(
             bridge_operations(self.bridge),
-            on_diagnostic=diagnostics.add,
+            on_diagnostic=lambda message: diagnostics.record("Control Center", message),
             on_error=diagnostics.report,
             on_closed=self._control_center_closed,
         )
@@ -556,6 +569,7 @@ class _DesktopSession:
         """Take engine news from whichever thread reported it, onto Qt."""
 
         self._engine_state = (state, message)
+        self._diagnostics.record("Lookup engine", f"{state}: {message}" if message else state)
         self._dispatcher(self.refresh_tray)
 
     def _watch_readiness(self, manual: ManualLookupRuntime) -> None:
@@ -828,7 +842,9 @@ class _DesktopSession:
                 on_toggle_hover=self.toggle_capture,
                 on_error=self._diagnostics.report,
                 capture_refusal=self._capture_refusal,
-                on_diagnostic=self._diagnostics.add,
+                on_diagnostic=lambda message: self._diagnostics.record(
+                    "Lookup engine", message
+                ),
                 on_engine_state=self._on_engine_state,
             )
         except Exception:
@@ -863,6 +879,17 @@ class _DesktopSession:
                 "lookup providers did not release their resources before activation"
             )
 
+    def clean_up_leftovers(self) -> None:
+        """Remove what an interrupted Hanly left behind, and nothing else.
+
+        Runs at startup and after an operation completes, never on a timer: a
+        periodic sweep would be scanning a disk nobody asked it to scan.
+        """
+
+        report = cleanup_leftovers()
+        for message in report.messages():
+            self._diagnostics.record("Cleanup", message)
+
     def _after_install(self, _resource_id: str, previous: HanlyRuntime) -> None:
         def restore() -> None:
             refreshed = load_runtime(previous.config_path)
@@ -882,6 +909,7 @@ class _DesktopSession:
                 controller.pause()
             self.refresh_tray()
 
+        self.clean_up_leftovers()
         try:
             _dispatch_sync(self._dispatcher, restore, cancel=self._closing)
         except DesktopShuttingDown:
@@ -964,10 +992,15 @@ def run_desktop(
     )
     session.attach(desktop)
 
+    def prepare_runtime(explicit: Path | None) -> HanlyRuntime:
+        # Off the UI thread, before the resources are validated: whatever an
+        # interrupted session left behind is exactly what a fresh one is about
+        # to work beside.
+        session.clean_up_leftovers()
+        return replace(load_runtime(resolve(explicit)), timeline=timeline)
+
     startup = StartupCoordinator(
-        # The prepared runtime carries the timeline, so provider construction
-        # reports what it cost from the worker thread that pays for it.
-        lambda explicit: replace(load_runtime(resolve(explicit)), timeline=timeline),
+        prepare_runtime,
         session.activate,
         status=status,
         dispatcher=dispatcher,
@@ -992,6 +1025,32 @@ def run_desktop(
         # shell does once it is genuinely up.
         dispatcher(acknowledge)
     return desktop.run()
+
+
+def cleanup_leftovers(
+    *, install_root: Path | None = None, temporary_root: Path | None = None
+) -> CleanupReport:
+    """Sweep Hanly's own work root and the places updates stage into.
+
+    Anything still holding the only copy of a working installation is reported
+    rather than removed: disk is never a reason to delete somebody's last
+    working Hanly.
+    """
+
+    import tempfile
+
+    workspace = OwnedWorkspace(default_app_config_path().parent / "work")
+    report = workspace.sweep()
+    return report.merged(
+        sweep_staging(
+            update_staging_locations(
+                install_root if install_root is not None else installation_root(),
+                temporary_root
+                if temporary_root is not None
+                else Path(tempfile.gettempdir()),
+            )
+        )
+    )
 
 
 def _update_acknowledgement(
@@ -1342,6 +1401,7 @@ __all__ = [
     "RUNTIME_CONFIG_NAME",
     "default_app_config_path",
     "default_log_directory",
+    "cleanup_leftovers",
     "default_runtime_config_path",
     "discover_runtime_config",
     "load_update_service",

@@ -209,7 +209,7 @@ def test_desktop_actions_refresh_tray_and_capture_control_center_errors() -> Non
 
     assert "controller.pause" in events
     assert "controller.resume" in events
-    assert diagnostics.snapshot() == ("Control Center: host failed",)
+    assert "Control Center: host failed" in diagnostics.snapshot()
     assert qt.events == ["quit"]
 
 

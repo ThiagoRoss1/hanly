@@ -463,9 +463,9 @@ def test_worker_construction_reports_what_each_provider_cost() -> None:
     )
 
     assert log.snapshot() == (
-        "startup ocr provider: 2000 ms (ok)",
-        "startup morphology provider: 0 ms (ok)",
-        "startup dictionary provider: 0 ms (ok)",
-        "startup ocr prewarm: 3000 ms (ok)",
-        "startup morphology prewarm: 0 ms (ok)",
+        "Startup: ocr provider: 2000 ms (ok)",
+        "Startup: morphology provider: 0 ms (ok)",
+        "Startup: dictionary provider: 0 ms (ok)",
+        "Startup: ocr prewarm: 3000 ms (ok)",
+        "Startup: morphology prewarm: 0 ms (ok)",
     )

@@ -22,8 +22,8 @@
 - [x] preload policies
 - [x] hover activation / hotkeys
 - [x] hover stability / popup persistence
-- [ ] logs / diagnostics
-- [ ] cleanup / disk hygiene
+- [x] logs / diagnostics
+- [x] cleanup / disk hygiene
 - [ ] integration review
 - [ ] full source gates
 - [ ] clean macOS frozen build
@@ -87,6 +87,75 @@ Files: This checkpoint; execution plan to follow investigation.
 Validation: `git fetch origin main`; HEAD and origin/main match.
 
 ## Progress Log
+
+### 2026-09-11 — Task 5: logs a user can read, and cleanup that refuses
+
+What changed: `diagnostics.py` gained `DiagnosticRecord` (timestamp, level,
+subsystem, message) while `snapshot()` still returns exactly the one-line tail
+every existing surface showed. Records are bounded at 2000 characters each,
+rotation now truncates when no backups are kept (it previously grew for ever at
+`backup_count=0`) and an oversized write is cut before it reaches the file.
+Startup, capture, the Control Center, the lookup engine and cleanup all record
+against their own subsystem; the lookup child's records travel over the existing
+transport and the parent alone writes the file. Lookup timings are recorded only
+when one exceeds 1.5 s, so hover never becomes a motion stream. The Control
+Center gained a Logs section with level, subsystem and search filters,
+timestamped rows rendered with `textContent` only, refresh, copy, clear and a
+Save report action. Clear empties the displayed records and the file, and says
+so when the file cannot be emptied. The export writes a sanitized JSON bundle
+beside the log with versions, platform, frozen flag, preferences, resource,
+engine, hotkey and permission state, and bounded recent records; the user's home
+directory is rewritten to `~` and anything reading as a credential is redacted.
+New `owned_cleanup.py` owns new temporary data under one marked root, with a
+marker version, the owner's process id, what it was doing, and a status. A
+directory is reaped only when its owner is gone and it has aged out, so a
+recycled process id can only cause Hanly to keep one. Symlinks and anything that
+does not resolve inside its root are refused. The audited update locations -- the
+staging directory beside the installation and the handoff script directory in
+the system temporary directory -- are swept by age, and anything still holding a
+`previous` or `rejected` installation is reported as needing recovery and left
+alone. Cleanup runs at startup, on the preparation thread, and after an update
+completes. There is no periodic collection.
+Why: A windowed build has no console, so what Hanly reports about itself is all
+a user has; and an interrupted session leaves staging behind in a profile nobody
+looks at.
+Evidence/result: Native macOS session, real subsystems recorded in order --
+`Startup: qt bootstrap 333 ms`, `Startup: resources 5309 ms`,
+`Startup: runtime ready at 5691 ms`, `Lookup engine: preparing`,
+`Capture: Hanly is watching the screen.`, `Lookup engine: sleeping`,
+`Capture: Hanly stopped watching the screen.` Pausing during preparation
+correctly produced no `ready` record: the generation moved first and the child
+that finished starting afterwards closed instead of becoming current. The
+exported bundle carried platform, versions, preferences, engine, registered
+hotkeys, resources and permissions, 21 records, and no occurrence of the user's
+home directory.
+Updater script ownership reviewed: the handoff script already removes its own
+transaction on success and on a clean rejection, and deliberately keeps it when
+the restore itself fails because its backup is then the only copy of a working
+Hanly. The sweep preserves exactly those, so cleanup cannot undo that decision.
+Decision recorded: the rotating log on the user's own machine is kept raw,
+absolute paths and all, because a debuggable path is what makes it worth having.
+Sanitization applies to the export, which is the artifact designed to be shared.
+Files:
+- `packages/hanly-app/src/hanly_app/diagnostics.py:L30-L90,L100-L200,L230-L300`
+- `packages/hanly-app/src/hanly_app/owned_cleanup.py` (new)
+- `packages/hanly-app/src/hanly_app/control_center.py:L440-L560`
+- `packages/hanly-app/src/hanly_app/control_center_process.py:L37-L60,L390-L410`
+- `packages/hanly-app/src/hanly_app/application.py:L245-L260,L470-L520,L900-L930`
+- `packages/hanly-app/src/hanly_app/lookup_process.py:L58-L70,L390-L420`
+- `packages/hanly-app/src/hanly_app/assets/control_center/*`
+Tests/measurements: full suite 1153 passed, 3 skipped in 90 s; Ruff and mypy
+clean over 190 files. New `tests/test_owned_cleanup.py` (15) covers the marker, a
+completed operation, a live owner keeping its directory however old, an
+abandoned one being reaped, a young one being left, recovery-required,
+an unmarked directory, a symlink into the root, a path outside the root, an
+invalid operation name, update staging by age, and both unresolved-backup cases.
+`tests/test_diagnostics.py` gained record structure, the unchanged one-line tail,
+the per-record bound, the zero-backup rotation bound, clearing, and both export
+sanitizations. `tests/test_control_center.py` gained the logs snapshot, clearing
+both halves, a file that cannot be emptied, the export contents, a build without
+a log, and a check that the panel renders through `textContent`.
+Next: task 6, integration, clean frozen build and final performance.
 
 ### 2026-09-11 — Task 4: a popup the cursor can reach
 

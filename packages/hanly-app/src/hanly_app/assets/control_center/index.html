@@ -125,9 +125,51 @@
             <div class="resource-list" id="resource-list" aria-live="polite"></div>
           </section>
 
+          <section class="workspace-section logs-section" aria-labelledby="logs-heading">
+            <div class="section-intro">
+              <p class="eyebrow">04 / logs</p>
+              <h2 id="logs-heading">What Hanly has been doing</h2>
+              <p>Startup, capture, the lookup engine, and anything that went wrong.</p>
+            </div>
+            <div class="logs-controls">
+              <div class="field-grid">
+                <label class="field">
+                  <span>Level</span>
+                  <select id="log-level">
+                    <option value="all">All</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Subsystem</span>
+                  <select id="log-subsystem">
+                    <option value="all">All</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>Search</span>
+                <input id="log-search" type="search" spellcheck="false" autocomplete="off"
+                       placeholder="Filter by text">
+              </label>
+              <div class="action-row">
+                <button class="button button-quiet" id="refresh-logs" type="button">Refresh</button>
+                <button class="button button-quiet" id="copy-logs" type="button">Copy</button>
+                <button class="button button-quiet" id="export-diagnostics" type="button">
+                  Save report
+                </button>
+                <button class="button button-quiet" id="clear-logs" type="button">Clear</button>
+              </div>
+              <p class="hint" id="log-summary">No records yet.</p>
+              <div class="log-list" id="log-list" role="log" aria-live="polite"></div>
+            </div>
+          </section>
+
           <section class="workspace-section settings-section" aria-labelledby="settings-heading">
             <div class="section-intro">
-              <p class="eyebrow">03 / settings</p>
+              <p class="eyebrow">05 / settings</p>
               <h2 id="settings-heading">Make it feel like yours</h2>
               <p>These preferences stay local to the desktop client.</p>
             </div>

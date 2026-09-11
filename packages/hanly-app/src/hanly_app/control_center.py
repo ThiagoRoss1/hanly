@@ -8,6 +8,7 @@ so it can reuse the ``QApplication`` that already hosts the popup.
 
 from __future__ import annotations
 
+import json
 import sys
 import urllib.parse
 import webbrowser
@@ -33,6 +34,7 @@ from .config import (
     LookupPreload,
 )
 from .desktop_controller import DesktopState
+from .diagnostics import LEVELS, DiagnosticLog, diagnostics_bundle
 from .hotkeys import HotkeyError, validate_binding
 from .permissions import (
     START_CAPTURE_PERMISSIONS,
@@ -211,6 +213,7 @@ class ControlCenterBridge:
         ocr_provider: str = "EasyOCR",
         engine_status: Callable[[], Mapping[str, str]] | None = None,
         registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
+        diagnostic_log: DiagnosticLog | None = None,
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")
@@ -247,6 +250,7 @@ class ControlCenterBridge:
         self._runtime_status = runtime_status
         self._engine_status = engine_status
         self._registered_hotkeys = registered_hotkeys
+        self._diagnostic_log = diagnostic_log
         self._capture_ready = capture_ready
         # Bound by set_retry() once startup exists to retry.
         self._on_retry_runtime: Callable[[], None] | None = None
@@ -525,6 +529,86 @@ class ControlCenterBridge:
         webbrowser.open(url)
         return self.get_state()
 
+    def get_logs(self) -> dict[str, object]:
+        """Return the recent records, with what a filter needs to narrow them."""
+
+        log = self._diagnostic_log
+        records = [] if log is None else [record.to_dict() for record in log.records()]
+        return {
+            "records": records,
+            "levels": list(LEVELS),
+            "subsystems": sorted({str(record["subsystem"]) for record in records}),
+            "log_path": None if self._log_path is None else str(self._log_path),
+        }
+
+    def clear_logs(self) -> dict[str, object]:
+        """Forget the displayed records and empty the file they were written to.
+
+        Both, because a Clear that left the file behind would be a promise the
+        next diagnostics export immediately broke. A file that cannot be
+        emptied is reported rather than quietly skipped.
+        """
+
+        log = self._diagnostic_log
+        if log is None:
+            raise ControlCenterUnavailable("this Hanly build keeps no diagnostics log")
+        log.clear()
+        failure = _empty_log_file(log)
+        state = self.get_logs()
+        if failure is not None:
+            raise ControlCenterUnavailable(
+                f"The displayed records were cleared, but the log file was not: {failure}"
+            )
+        return state
+
+    def export_diagnostics(self) -> dict[str, object]:
+        """Write a shareable report beside the log and say where it went.
+
+        Explicit, and to a place the user can find: this is the file somebody
+        attaches to a message about a problem, so it carries versions,
+        platform, preferences, and recent records, and never a path from this
+        machine or anything that was on the screen.
+        """
+
+        log = self._diagnostic_log
+        if log is None or self._log_path is None:
+            raise ControlCenterUnavailable("this Hanly build keeps no diagnostics log")
+
+        records = log.records()
+        bundle = diagnostics_bundle(records, state=self._export_state())
+        destination = self._log_path.with_name(
+            f"hanly-diagnostics-{_export_stamp()}.json"
+        )
+        try:
+            destination.write_text(
+                json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as error:
+            raise ControlCenterUnavailable(
+                f"the diagnostics report could not be written: {error}"
+            ) from error
+        return {"path": str(destination), "records": len(records)}
+
+    def _export_state(self) -> dict[str, object]:
+        """What makes a failure reproducible, and nothing about the screen."""
+
+        config = self._current_config()
+        return {
+            "preferences": config.to_dict(),
+            "capture": {
+                "mode": config.capture_mode.value,
+                "has_region": config.capture_region is not None,
+            },
+            "desktop_state": self._desktop_state(),
+            "runtime_status": self._status_snapshot(),
+            "engine": self._engine_snapshot(),
+            "hotkeys": self._registered_bindings(),
+            "resources": self._resources(),
+            "permissions": self._permissions_snapshot(),
+            "ocr_provider": self._ocr_provider,
+        }
+
     def set_retry(self, on_retry_runtime: Callable[[], None]) -> None:
         """Bind the retry action once startup preparation exists to retry."""
 
@@ -775,6 +859,32 @@ def _is_release_page(url: str) -> bool:
         and parts.netloc == _RELEASE_HOST
         and _RELEASE_PATH in parts.path
     )
+
+
+def _empty_log_file(log: DiagnosticLog) -> str | None:
+    """Truncate the rotating log and its backups, saying what stopped it."""
+
+    file = log.file
+    if file is None:
+        return None
+    paths = [file.path] + [
+        file.path.with_name(f"{file.path.name}.{index}") for index in range(1, 10)
+    ]
+    for path in paths:
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError as error:
+            return str(error)
+    return None
+
+
+def _export_stamp() -> str:
+    """A file name that sorts, and that a second export cannot collide with."""
+
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _rebinds(previous: AppConfig, candidate: AppConfig) -> bool:

@@ -35,6 +35,9 @@ from .process_transport import (
 #: message can never name something the UI is not allowed to invoke.
 CONTROL_CENTER_OPERATIONS: tuple[str, ...] = (
     "check_for_updates",
+    "clear_logs",
+    "export_diagnostics",
+    "get_logs",
     "get_state",
     "grant_permission",
     "install_application_update",
@@ -391,6 +394,15 @@ class ControlCenterProxy:
 
     def get_state(self) -> object:
         return self._call("get_state")
+
+    def get_logs(self) -> object:
+        return self._call("get_logs")
+
+    def clear_logs(self) -> object:
+        return self._call("clear_logs")
+
+    def export_diagnostics(self) -> object:
+        return self._call("export_diagnostics")
 
     def start_capture(self) -> object:
         return self._call("start_capture")
