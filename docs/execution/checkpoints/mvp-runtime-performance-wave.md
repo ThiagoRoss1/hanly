@@ -28,8 +28,8 @@
 - [x] full source gates
 - [x] clean macOS frozen build
 - [x] final performance measurements
-- [ ] final review
-- [ ] final handoff
+- [x] final review
+- [x] final handoff
 - [ ] branch push
 
 ## Decisions
@@ -614,12 +614,23 @@ Next: Inspect concrete ownership, verify Claude dispatch, gather native before d
 
 ### macOS
 
-- This wave: real source CC create/hide/destroy, full startup/idle/pause/shutdown,
-  provider memory retention and Korean fixture lookup measured above.
+- Before baseline: real source CC create/hide/destroy, full startup, idle,
+  pause and shutdown, provider memory retention and Korean fixture lookup.
+- After, source build: every lifecycle state A-H measured; hover verified over
+  real screen pixels at 80, 40 and 20 ms dwell with micro-movement doing no
+  work; preload policies measured; logs and diagnostics export exercised.
+- After, frozen build: clean constrained release build, reconstructed ZIP,
+  mounted DMG, complete inventory, `codesign --verify --deep --strict` valid,
+  frozen worker and window self-checks outside the checkout and developer
+  profile, the three-process split with the lookup child at 810.8 MiB, a clean
+  `SIGINT` exit, and a 3 s `--update-ready` acknowledgement.
 - Native source permission probe reports Screen Recording and Accessibility
-  granted. Frozen .app grants must be checked separately. The first permission
-  harness call used `snapshot`; corrected to the actual `statuses` API.
-- Input/capture/hotkey/popup interaction, final lifecycle and frozen validation pending.
+  granted, and both were confirmed working by capturing the full screen and
+  reading the fixture back. The first permission harness call used `snapshot`;
+  corrected to the actual `statuses` API.
+- **Pending human interaction:** an actual global hot key press (macOS does not
+  match synthetic `CGEvent` against a Carbon hot key, verified directly), and
+  closing and reopening the frozen Control Center window by hand.
 - Previous HAN-41 measurements are historical, not this wave's baseline.
 
 ### Windows
@@ -642,6 +653,11 @@ Next: Inspect concrete ownership, verify Claude dispatch, gather native before d
 
 ## Current Risks
 
+- `docs/architecture/01`-`04` and their visual companions still describe a
+  single-process runtime. The split, the engine-state model and the retained
+  hover target need a human-approved ADR before they become authoritative
+  architecture; they were deliberately not rewritten here.
+
 - Frozen spawn dispatch is proven with a minimal PyInstaller program, not yet
   with the real Hanly bundle; that is part of task 6.
 - Qt prints `Release of profile requested but WebEnginePage still not deleted`
@@ -654,8 +670,10 @@ Next: Inspect concrete ownership, verify Claude dispatch, gather native before d
 
 ## Completed / Deferred
 
-- Completed: clean-main reconciliation, branch creation, implementation-ready
-  plan, partial native before baseline and 57 focused existing tests.
+- Completed: every task in the plan. Seven commits on the feature branch, the
+  final handoff in `review-handoffs/mvp-runtime-performance-wave.md`, source
+  gates green on the working tree and in a clean constrained environment, and a
+  validated frozen macOS artifact.
 - Intentionally deferred future work: ONNX/other OCR adapters, persistent word
   cache, custom morphology, browser runtime, visual redesign, generic frameworks.
 - Native-platform tests awaiting another host: Windows/Linux scenarios above.
