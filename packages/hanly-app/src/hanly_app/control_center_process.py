@@ -16,6 +16,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from multiprocessing.process import BaseProcess
 
 from .control_center import ControlCenterUnavailable
@@ -70,7 +71,27 @@ CALL_TIMEOUT_SECONDS = 900.0
 #: Bounded wait for the window to close before the child is terminated.
 CLOSE_TIMEOUT_SECONDS = 10.0
 
+#: Bounded wait for an in-progress open or close before another one is allowed
+#: to start. Longer than a close so a reopen waits out the window it replaces
+#: rather than racing it.
+OWNERSHIP_TIMEOUT_SECONDS = CLOSE_TIMEOUT_SECONDS + 5.0
+
 ChildSpawner = Callable[..., tuple[BaseProcess, Transport]]
+
+
+class _ChildPhase(Enum):
+    """Which ownership transition the one Control Center child is in.
+
+    Spawning and reaping both take real time, and both are reachable from the
+    tray, the page, and shutdown at once. Naming the transition is what stops
+    two ``show`` calls from each deciding to spawn, and a reopen from starting
+    a window while the previous one is still being joined.
+    """
+
+    IDLE = "idle"
+    STARTING = "starting"
+    RUNNING = "running"
+    CLOSING = "closing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,13 +159,15 @@ class ControlCenterProcess:
         self._spawn = spawn
 
         self._lock = threading.RLock()
+        self._settled = threading.Condition(self._lock)
+        self._phase = _ChildPhase.IDLE
         self._generation = 0
         self._process: BaseProcess | None = None
         self._transport: Transport | None = None
         self._reader: threading.Thread | None = None
+        self._ready = False
         self._outstanding = 0
         self._shutdown = False
-        self._closing = False
 
     @property
     def running(self) -> bool:
@@ -153,6 +176,13 @@ class ControlCenterProcess:
         with self._lock:
             process = self._process
         return process is not None and process.is_alive()
+
+    @property
+    def ready(self) -> bool:
+        """Whether the live child has reported a window it can actually show."""
+
+        with self._lock:
+            return self._ready
 
     @property
     def generation(self) -> int:
@@ -164,22 +194,31 @@ class ControlCenterProcess:
     def show(self) -> None:
         """Open the Control Center, or bring the existing one forward."""
 
+        focus: Transport | None = None
         with self._lock:
-            if self._shutdown:
-                raise ControlCenterUnavailable("Hanly is shutting down")
-            transport = self._transport
-            alive = self._process is not None and self._process.is_alive()
-        if alive and transport is not None:
-            self._send(transport, {"kind": "focus"})
+            self._require_open()
+            self._wait_for_settled()
+            self._require_open()
+            if self._phase is _ChildPhase.RUNNING and self._alive():
+                focus = self._transport
+            if focus is None:
+                self._phase = _ChildPhase.STARTING
+
+        if focus is not None:
+            self._send(focus, {"kind": "focus"})
             return
-        self._start()
+        try:
+            self._start()
+        except BaseException:
+            self._settle(_ChildPhase.IDLE)
+            raise
 
     def notify_state_changed(self) -> None:
         """Tell a live window that parent-owned state moved under it."""
 
         with self._lock:
             transport = self._transport
-            alive = self._process is not None and self._process.is_alive()
+            alive = self._alive()
         if alive and transport is not None:
             self._send(transport, {"kind": "state"})
 
@@ -187,20 +226,22 @@ class ControlCenterProcess:
         """Ask the window to close and wait a bounded time for the child."""
 
         with self._lock:
-            if self._closing:
+            if self._phase is _ChildPhase.CLOSING:
                 return
-            self._closing = True
+            self._wait_for_settled()
             transport = self._transport
             process = self._process
+            generation = self._generation
+            if transport is None and process is None:
+                return
+            self._phase = _ChildPhase.CLOSING
         try:
             if transport is not None:
                 self._send(transport, {"kind": "close"})
             if process is not None and not stop_process(process, timeout=CLOSE_TIMEOUT_SECONDS):
                 self._report_diagnostic("The Control Center process had to be terminated.")
         finally:
-            self._retire()
-            with self._lock:
-                self._closing = False
+            self._retire(generation)
 
     def shutdown(self) -> None:
         """Close the window for good; later opens are refused."""
@@ -208,6 +249,31 @@ class ControlCenterProcess:
         with self._lock:
             self._shutdown = True
         self.close()
+
+    def _require_open(self) -> None:
+        if self._shutdown:
+            raise ControlCenterUnavailable("Hanly is shutting down")
+
+    def _alive(self) -> bool:
+        return self._process is not None and self._process.is_alive()
+
+    def _wait_for_settled(self) -> None:
+        """Wait out an open or close already under way. Call holding the lock."""
+
+        deadline = OWNERSHIP_TIMEOUT_SECONDS
+        while self._phase in (_ChildPhase.STARTING, _ChildPhase.CLOSING):
+            if not self._settled.wait(deadline):
+                raise ControlCenterUnavailable(
+                    "the Control Center is still finishing its previous window"
+                )
+
+    def _settle(self, phase: _ChildPhase) -> None:
+        """End a transition this manager started, unless it already ended."""
+
+        with self._lock:
+            if self._phase is _ChildPhase.STARTING:
+                self._phase = phase
+            self._settled.notify_all()
 
     def _start(self) -> None:
         try:
@@ -227,6 +293,8 @@ class ControlCenterProcess:
             generation = self._generation
             self._process = process
             self._transport = transport
+            self._ready = False
+            self._outstanding = 0
             reader = threading.Thread(
                 target=self._read_until_gone,
                 args=(transport, generation),
@@ -235,22 +303,26 @@ class ControlCenterProcess:
             )
             self._reader = reader
         reader.start()
+        self._settle(_ChildPhase.RUNNING)
 
     def _read_until_gone(self, transport: Transport, generation: int) -> None:
         """Own the child-to-parent direction for one child's whole lifetime."""
 
-        normal_exit = False
+        reason: str | None = "The Control Center window closed unexpectedly."
         try:
             while True:
                 message = transport.receive()
                 if not self._is_current(generation):
                     return
                 kind = message.get("kind")
+                if kind == "ready":
+                    self._mark_ready(generation)
+                    continue
                 if kind == "closing":
-                    normal_exit = True
+                    reason = None
                     continue
                 if kind == "failed":
-                    normal_exit = True
+                    reason = None
                     self._report_diagnostic(
                         f"The Control Center window could not start: {message.get('message')}"
                     )
@@ -258,9 +330,18 @@ class ControlCenterProcess:
                 self._handle(transport, generation, message)
         except TransportClosed:
             pass
+        except Exception as error:
+            # Without this the child keeps a window whose bridge is dead, and
+            # every page call waits out the whole call timeout.
+            reason = f"The Control Center connection failed: {type(error).__name__}: {error}"
+            self._report_error("Control Center reader", error)
         finally:
-            if self._is_current(generation):
-                self._child_gone(generation, normal_exit)
+            self._child_gone(generation, reason)
+
+    def _mark_ready(self, generation: int) -> None:
+        with self._lock:
+            if generation == self._generation:
+                self._ready = True
 
     def _handle(self, transport: Transport, generation: int, message: Message) -> None:
         if message.get("kind") != "call":
@@ -276,7 +357,7 @@ class ControlCenterProcess:
                 _failure(identifier, "ValueError", f"unsupported operation: {method}"),
             )
             return
-        if not self._reserve():
+        if not self._reserve(generation):
             self._send(
                 transport,
                 _failure(identifier, "RuntimeError", "Hanly is busy; try that again."),
@@ -298,9 +379,16 @@ class ControlCenterProcess:
         method: str,
         arguments: tuple[object, ...],
     ) -> None:
-        """Run one page operation off the parent's UI loop and reply once."""
+        """Run one page operation off the parent's UI loop and reply once.
+
+        A queued operation is rejected before it runs, not only before it
+        replies: a mutation whose window has already been replaced must not
+        reach settings, capture, or the lifecycle at all.
+        """
 
         try:
+            if not self._is_current(generation):
+                return
             try:
                 value = self._operations[method](*arguments)
                 reply: Message = {"kind": "reply", "id": identifier, "value": value}
@@ -309,31 +397,44 @@ class ControlCenterProcess:
             if self._is_current(generation):
                 self._send(transport, reply)
         finally:
-            self._release()
+            self._release(generation)
 
-    def _child_gone(self, generation: int, normal_exit: bool) -> None:
+    def _child_gone(self, generation: int, reason: str | None) -> None:
+        """Retire the child this reader owned, unless ``close`` owns it.
+
+        A close in progress is already joining the process and will retire it,
+        so the reader must leave that transition alone rather than opening the
+        door for a replacement while the old window is still being reaped.
+        """
+
         with self._lock:
             if generation != self._generation:
                 return
-            closing = self._closing
-        if not normal_exit and not closing:
-            self._report_diagnostic("The Control Center window closed unexpectedly.")
-        self._retire()
-        # Only a close the user (or the child) initiated is news: an explicit
-        # shutdown already knows the window is gone.
-        if not closing and self._on_closed is not None:
+            if self._phase is _ChildPhase.CLOSING:
+                return
+        if reason is not None:
+            self._report_diagnostic(reason)
+        self._retire(generation)
+        if self._on_closed is not None:
             try:
                 self._on_closed()
             except Exception as error:
                 self._report_error("Control Center close", error)
 
-    def _retire(self) -> None:
+    def _retire(self, generation: int) -> None:
+        """Detach exactly the generation that ended, and open ownership again."""
+
         with self._lock:
+            if generation != self._generation:
+                return
             transport = self._transport
             self._transport = None
             self._process = None
             self._reader = None
+            self._ready = False
             self._outstanding = 0
+            self._phase = _ChildPhase.IDLE
+            self._settled.notify_all()
         if transport is not None:
             transport.close()
 
@@ -341,15 +442,19 @@ class ControlCenterProcess:
         with self._lock:
             return generation == self._generation
 
-    def _reserve(self) -> bool:
+    def _reserve(self, generation: int) -> bool:
         with self._lock:
+            if generation != self._generation:
+                return False
             if self._outstanding >= MAX_OUTSTANDING_OPERATIONS:
                 return False
             self._outstanding += 1
             return True
 
-    def _release(self) -> None:
+    def _release(self, generation: int) -> None:
         with self._lock:
+            if generation != self._generation:
+                return
             self._outstanding = max(0, self._outstanding - 1)
 
     def _send(self, transport: Transport, message: Message) -> None:
@@ -457,7 +562,13 @@ class ControlCenterProxy:
 
 
 class _ControlCenterChild:
-    """The child half: one window, one reader, and replies waiting by id."""
+    """The child half: one window, one reader, and replies waiting by id.
+
+    The reader starts before the window exists, so every parent request is
+    written against three phases rather than one: before the host is ready a
+    focus is remembered and a close is obeyed as soon as there is something to
+    close, and after the window is gone both are ignored.
+    """
 
     def __init__(self, transport: Transport, options: ControlCenterOptions) -> None:
         self._transport = transport
@@ -473,6 +584,9 @@ class _ControlCenterChild:
         self._replies: dict[int, list[Message]] = {}
         self._events: dict[int, threading.Event] = {}
         self._refreshing = False
+        self._ready = False
+        self._closing = False
+        self._pending_focus = False
 
     def run(self) -> None:
         """Run the window's loop, and report the close on the way out."""
@@ -482,7 +596,7 @@ class _ControlCenterChild:
         )
         reader.start()
         try:
-            self._host.run()
+            self._host.run(on_started=self._host_ready)
         finally:
             self._release_waiters()
             try:
@@ -490,6 +604,58 @@ class _ControlCenterChild:
             except TransportClosed:
                 pass
             self._transport.close()
+
+    def _host_ready(self) -> None:
+        """Apply what the parent asked for before there was a window.
+
+        pywebview runs this once the loop is up, which is the first moment
+        ``show`` and ``destroy`` mean anything. A close that arrived during
+        startup is honoured here rather than leaving an orphan window.
+        """
+
+        with self._lock:
+            self._ready = True
+            closing = self._closing
+            focus = self._pending_focus
+            self._pending_focus = False
+
+        self._notify_parent({"kind": "ready"})
+        if closing:
+            self._host.close()
+            return
+        if focus:
+            self._show_window()
+
+    def _request_focus(self) -> None:
+        with self._lock:
+            if self._closing:
+                return
+            if not self._ready:
+                self._pending_focus = True
+                return
+        self._show_window()
+
+    def _request_close(self) -> None:
+        with self._lock:
+            self._closing = True
+            self._pending_focus = False
+            ready = self._ready
+        if ready:
+            self._host.close()
+
+    def _show_window(self) -> None:
+        """Bring the window forward, tolerating one destroyed underneath us."""
+
+        try:
+            self._host.show()
+        except ControlCenterUnavailable:
+            pass
+
+    def _notify_parent(self, message: Message) -> None:
+        try:
+            self._transport.send(message)
+        except TransportClosed:
+            pass
 
     def call(self, method: str, *arguments: object) -> object:
         """Ask the parent to run one bridge operation and return its answer."""
@@ -532,22 +698,28 @@ class _ControlCenterChild:
                 self._receive_one(self._transport.receive())
         except TransportClosed:
             pass
+        except BaseException as error:  # noqa: BLE001 - told to the parent, then out
+            # Losing this thread strands every page call for the whole call
+            # timeout, so a fault becomes a terminal child failure instead.
+            self._notify_parent(
+                {"kind": "failed", "message": f"{type(error).__name__}: {error}"}
+            )
         finally:
             self._release_waiters()
             # The parent is gone, or asked for this window to close. Either way
             # this process has nothing left to show.
-            self._host.close()
+            self._request_close()
 
     def _receive_one(self, message: Message) -> None:
         kind = message.get("kind")
         if kind == "reply":
             self._deliver(message)
         elif kind == "focus":
-            self._host.show()
+            self._request_focus()
         elif kind == "state":
             self._refresh_page()
         elif kind == "close":
-            self._host.close()
+            self._request_close()
 
     def _deliver(self, message: Message) -> None:
         identifier = message.get("id")
@@ -624,6 +796,7 @@ __all__ = [
     "CALL_TIMEOUT_SECONDS",
     "CONTROL_CENTER_OPERATIONS",
     "MAX_OUTSTANDING_OPERATIONS",
+    "OWNERSHIP_TIMEOUT_SECONDS",
     "ControlCenterOptions",
     "ControlCenterProcess",
     "ControlCenterProxy",

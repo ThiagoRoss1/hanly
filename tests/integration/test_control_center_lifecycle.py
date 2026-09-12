@@ -104,6 +104,69 @@ if __name__ == "__main__":
 '''
 
 
+#: The exact reproducer for the reader failure the released build produced: a
+#: second ``show`` lands while the child has a reader but not yet a window.
+_RACING_FOCUS_PROGRAM = '''
+import json
+import sys
+import threading
+
+from hanly_app.control_center import ControlCenterBridge
+from hanly_app.control_center_process import ControlCenterProcess, bridge_operations
+
+REPORT_PREFIX = "FOCUS_RACE_REPORT "
+
+
+class CountingBridge(ControlCenterBridge):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def get_state(self):
+        self.calls.append("get_state")
+        return super().get_state()
+
+
+def await_call(bridge, count):
+    waiter = threading.Event()
+    for _ in range(240):
+        if len(bridge.calls) >= count:
+            return True
+        waiter.wait(0.25)
+    return False
+
+
+def main():
+    bridge = CountingBridge()
+    notes = []
+    control = ControlCenterProcess(bridge_operations(bridge), on_diagnostic=notes.append)
+    report = {"errors": []}
+
+    try:
+        for cycle in range(3):
+            control.show()
+            # No wait: the child is still starting its window, and this used to
+            # raise inside its reader and leave the page without a bridge.
+            control.show()
+            report[f"page_reached_the_bridge_{cycle}"] = await_call(bridge, cycle + 1)
+            report[f"running_{cycle}"] = control.running
+            control.close()
+        report["generation"] = control.generation
+    except BaseException as error:
+        report["errors"].append(f"{type(error).__name__}: {error}")
+    finally:
+        control.shutdown()
+
+    report["diagnostics"] = list(notes)
+    print(REPORT_PREFIX + json.dumps(report), flush=True)
+    return 0 if not report["errors"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
 def _skip_without_a_desktop() -> None:
     pytest.importorskip("PyQt6.QtWebEngineWidgets")
     pytest.importorskip("webview")
@@ -152,3 +215,42 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     assert report["heavy_modules_in_the_shell"] == []
     recorded = "\n".join(report["diagnostics"]) + child.stderr
     assert NESTED_LOOP_WARNING not in recorded
+
+
+def test_focusing_a_window_that_is_still_starting_keeps_the_page_connected(
+    tmp_path: Path,
+) -> None:
+    """Three rapid double-opens, which is what reproduced the reader failure.
+
+    The assertion is the page, not the absence of a traceback: a child whose
+    reader died still shows a window, and the page falls back to its own
+    placeholder state rather than reporting that nothing answered.
+    """
+
+    _skip_without_a_desktop()
+
+    program = tmp_path / "focus_race_child.py"
+    program.write_text(_RACING_FOCUS_PROGRAM, encoding="utf-8")
+    child = subprocess.run(
+        [sys.executable, str(program)],
+        capture_output=True,
+        text=True,
+        timeout=_CHILD_TIMEOUT_SECONDS,
+        cwd=tmp_path,
+    )
+
+    assert child.returncode == 0, f"stdout={child.stdout!r} stderr={child.stderr!r}"
+    marker = "FOCUS_RACE_REPORT "
+    line = next(
+        (item for item in child.stdout.splitlines() if item.startswith(marker)), None
+    )
+    assert line is not None, f"stdout={child.stdout!r} stderr={child.stderr!r}"
+    report = json.loads(line[len(marker) :])
+
+    assert report["errors"] == []
+    for cycle in range(3):
+        assert report[f"page_reached_the_bridge_{cycle}"] is True
+        assert report[f"running_{cycle}"] is True
+    # One window per cycle: focusing must never spawn a second child.
+    assert report["generation"] == 3
+    assert "ControlCenterUnavailable" not in child.stderr
