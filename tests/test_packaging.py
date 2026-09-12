@@ -6,10 +6,13 @@ import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from hanly_app import self_check
+from hanly_app.self_check import SELF_CHECK_MODES
 
-from tools import prepare_easyocr_models
+from tools import prepare_easyocr_models, smoke_packaged_runtime
 from tools.build_package import (
     APPLICATION_STEM,
     BUNDLE_NAME,
@@ -36,6 +39,7 @@ from tools.smoke_packaged_runtime import (
     EASYOCR_MODEL_SUBDIRECTORY,
     EASYOCR_PATH_VARIABLES,
     HEADLESS_QT_PLATFORM,
+    HEADLESS_SELF_CHECK_MODES,
     HOME_VARIABLES,
     LOCAL_KRDICT_VARIABLE,
     QT_PLATFORM_VARIABLE,
@@ -47,6 +51,7 @@ from tools.smoke_packaged_runtime import (
     inspect_bundle,
     isolated_environment,
     reconstruct_application,
+    run_packaged_self_check,
     verify_disk_image,
 )
 
@@ -288,7 +293,7 @@ def test_the_frozen_smoke_names_a_signal_when_no_stage_survived() -> None:
     )
 
     assert "SIGABRT" in failures[0]
-    assert failures[1].endswith("Could not load the Qt platform plugin")
+    assert "Could not load the Qt platform plugin" in failures[1]
 
 
 def test_the_frozen_smoke_reports_a_failed_stage_rather_than_the_exit() -> None:
@@ -309,43 +314,92 @@ def test_the_frozen_smoke_reports_a_failed_stage_rather_than_the_exit() -> None:
     assert failures == ["dictionary: no entry"]
 
 
-def test_the_frozen_smoke_names_a_qt_platform_a_headless_linux_can_load(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_the_self_check_traces_a_native_crash_before_it_runs(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Qt aborts on an unloadable platform plugin, killing the measured run."""
+    """Qt, torch, and Kiwi end the process rather than raise. Without the fault
+    handler a crashed frozen bundle reports an exit status and nothing else."""
+
+    enabled: list[str] = []
+    monkeypatch.setattr(
+        self_check.faulthandler, "enable", lambda *_, **__: enabled.append("on")
+    )
+
+    with pytest.raises(ValueError):
+        self_check.report_self_check(None, mode="worker")
+
+    assert enabled == ["on"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"), [("worker", HEADLESS_QT_PLATFORM), ("ui", None)]
+)
+def test_the_worker_check_is_the_one_that_runs_without_a_display(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, expected: str | None
+) -> None:
+    """The decision is worthless unless the mode actually carries it into the
+    environment the bundle is launched with."""
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    # The suite runs headless on Linux CI and sets this for itself; an
+    # inherited value would hide the mode's own decision.
+    monkeypatch.delenv(QT_PLATFORM_VARIABLE, raising=False)
+    launched: dict[str, str] = {}
+
+    def run(*args: object, **kwargs: object) -> SimpleNamespace:
+        launched.update(cast("dict[str, str]", kwargs["env"]))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(smoke_packaged_runtime.subprocess, "run", run)
+
+    run_packaged_self_check(tmp_path / "hanly-desktop", mode=mode)
+
+    assert launched.get(QT_PLATFORM_VARIABLE) == expected
+
+
+@pytest.mark.parametrize("inherited", [{}, {"DISPLAY": ":99"}, {"QT_QPA_PLATFORM": "xcb"}])
+def test_a_headless_check_names_the_qt_platform_linux_can_always_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inherited: dict[str, str]
+) -> None:
+    """A hosted runner advertises a display it cannot serve, and Qt aborts on
+    an unloadable plugin rather than raising. The inherited session is
+    therefore overruled, not consulted."""
 
     monkeypatch.setattr(sys, "platform", "linux")
     profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
 
-    environment = isolated_environment({}, profile, home, models)
+    environment = isolated_environment(
+        inherited, profile, home, models, headless=True
+    )
 
     assert environment[QT_PLATFORM_VARIABLE] == HEADLESS_QT_PLATFORM
 
 
 @pytest.mark.parametrize(
-    ("platform", "inherited"),
-    [
-        ("linux", {"DISPLAY": ":99"}),
-        ("linux", {"WAYLAND_DISPLAY": "wayland-0"}),
-        ("linux", {"QT_QPA_PLATFORM": "xcb"}),
-        ("win32", {}),
-        ("darwin", {}),
-    ],
+    ("platform", "headless"),
+    [("linux", False), ("win32", True), ("darwin", True)],
 )
-def test_the_frozen_smoke_leaves_a_usable_qt_platform_alone(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    platform: str,
-    inherited: dict[str, str],
+def test_no_other_check_has_its_qt_platform_chosen_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, headless: bool
 ) -> None:
-    """A display server, an explicit choice, and Windows or macOS all decide."""
+    """The window check needs the real display Xvfb gives it, and Windows and
+    macOS load their platform plugin without being told to."""
 
     monkeypatch.setattr(sys, "platform", platform)
     profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
 
-    environment = isolated_environment(inherited, profile, home, models)
+    environment = isolated_environment(
+        {}, profile, home, models, headless=headless
+    )
 
-    assert environment.get(QT_PLATFORM_VARIABLE) == inherited.get(QT_PLATFORM_VARIABLE)
+    assert QT_PLATFORM_VARIABLE not in environment
+
+
+def test_only_the_worker_check_runs_headless() -> None:
+    """The window check opens a real window; nothing else opens one at all."""
+
+    assert HEADLESS_SELF_CHECK_MODES == ("worker",)
+    assert set(HEADLESS_SELF_CHECK_MODES) < set(SELF_CHECK_MODES)
 
 
 def test_the_frozen_smoke_cannot_fall_back_to_a_developer_model_cache(

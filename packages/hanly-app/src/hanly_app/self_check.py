@@ -10,6 +10,7 @@ lifecycle.
 
 from __future__ import annotations
 
+import faulthandler
 import json
 import sys
 from collections.abc import Callable
@@ -129,12 +130,27 @@ def report_self_check(
 ) -> int:
     """Print the report as one JSON document and return the process status."""
 
+    _trace_native_crashes()
     report = run_self_check(runtime_config, mode=mode, image=image)
     # ASCII-escaped on purpose: a frozen Windows process writes to a console
     # codepage that cannot encode the Korean this report contains, and the
     # harness decodes the escapes back losslessly.
     print(json.dumps(report.to_dict(), indent=2), flush=True)
     return 0 if report.ok else 1
+
+
+def _trace_native_crashes() -> None:
+    """Make a fatal native error name the Python frame it happened in.
+
+    Qt, torch, and Kiwi end the process outright rather than raising, so
+    without this a crash reports as a bare exit status and an empty report.
+    A build with no usable stderr keeps the status as its only account.
+    """
+
+    try:
+        faulthandler.enable()
+    except (OSError, RuntimeError, ValueError):
+        return
 
 
 def _run_ui_check() -> SelfCheckReport:

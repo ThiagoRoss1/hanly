@@ -100,16 +100,20 @@ EASYOCR_MODEL_SUBDIRECTORY = "model"
 #: Redirected so nothing resolves ``~`` back to the developer's account.
 HOME_VARIABLES = ("HOME", "USERPROFILE", "XDG_CACHE_HOME")
 
-#: Qt aborts rather than raises when it cannot load a platform plugin, so a
-#: Linux session with no display server kills the process being measured and
-#: reports as a signal instead of as a failed stage. Naming a platform Qt can
-#: always load keeps a headless check measuring the runtime it came for.
+#: Qt aborts rather than raises when it cannot load a platform plugin, and a
+#: hosted Linux runner advertises a display it cannot actually serve. A check
+#: that opens no window therefore names the one platform that always loads
+#: instead of trusting the session, which is why this is set rather than
+#: defaulted. The window check is not headless and keeps its real display.
 QT_PLATFORM_VARIABLE = "QT_QPA_PLATFORM"
 HEADLESS_QT_PLATFORM = "offscreen"
 
-#: What a running display server sets. Either one means the inherited platform
-#: is the right one, so the window check under Xvfb keeps its real display.
-DISPLAY_VARIABLES = ("DISPLAY", "WAYLAND_DISPLAY")
+#: Self-check modes that construct no window and must never need a display.
+HEADLESS_SELF_CHECK_MODES = ("worker",)
+
+#: How much of a crashed run's output is repeated above the report. A fault
+#: handler traceback is why this is measured in lines rather than in one.
+OUTPUT_TAIL_LINES = 20
 
 #: How first-run provisioning is pointed at an already-built dictionary.
 #: Named here rather than imported: this harness runs against a frozen bundle
@@ -192,7 +196,12 @@ def run_packaged_self_check(
     if image is not None:
         command.extend(["--self-check-image", str(Path(image).resolve())])
 
-    with _ProfileContext(profile, model_cache=model_cache, krdict=krdict) as (
+    with _ProfileContext(
+        profile,
+        model_cache=model_cache,
+        krdict=krdict,
+        headless=mode in HEADLESS_SELF_CHECK_MODES,
+    ) as (
         environment,
         working_directory,
     ):
@@ -278,6 +287,10 @@ class _ProfileContext:
     seeds the isolated model directory for a build that still resolves models
     through the environment; a current frozen bundle ignores it.
 
+    ``headless`` belongs to a check that opens no window: it names a Qt
+    platform that always loads rather than letting Qt abort on a display the
+    session advertises but cannot serve.
+
     ``krdict`` names an already-built dictionary for the bundle to install.
     The database is licensed and ships in neither the bundle nor the
     repository, so without one a first run reaches the public release channel
@@ -290,10 +303,12 @@ class _ProfileContext:
         *,
         model_cache: str | Path | None = None,
         krdict: str | Path | None = None,
+        headless: bool = False,
     ) -> None:
         self._profile = None if profile is None else Path(profile).resolve()
         self._model_cache = None if model_cache is None else Path(model_cache).resolve()
         self._krdict = None if krdict is None else Path(krdict).resolve()
+        self._headless = headless
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> tuple[dict[str, str], Path]:
@@ -312,7 +327,14 @@ class _ProfileContext:
         self._require_krdict()
 
         return (
-            isolated_environment(os.environ, settings, home, models, krdict=self._krdict),
+            isolated_environment(
+                os.environ,
+                settings,
+                home,
+                models,
+                krdict=self._krdict,
+                headless=self._headless,
+            ),
             work,
         )
 
@@ -435,6 +457,7 @@ def isolated_environment(
     models: Path,
     *,
     krdict: Path | None = None,
+    headless: bool = False,
 ) -> dict[str, str]:
     """Build the child environment, with every developer path redirected."""
 
@@ -454,22 +477,16 @@ def isolated_environment(
     # The report names Korean text; a Windows console codepage cannot.
     environment["PYTHONIOENCODING"] = "utf-8"
 
-    _apply_headless_qt_platform(environment)
+    if headless:
+        _apply_headless_qt_platform(environment)
     return environment
 
 
 def _apply_headless_qt_platform(environment: dict[str, str]) -> None:
-    """Name a loadable Qt platform when Linux has no display server.
+    """Name the Qt platform a Linux check that opens no window must use."""
 
-    An inherited choice, and a session that has a display, are both left
-    alone: only the case Qt would abort on is answered here.
-    """
-
-    if not sys.platform.startswith("linux"):
-        return
-    if any(environment.get(name) for name in DISPLAY_VARIABLES):
-        return
-    environment.setdefault(QT_PLATFORM_VARIABLE, HEADLESS_QT_PLATFORM)
+    if sys.platform.startswith("linux"):
+        environment[QT_PLATFORM_VARIABLE] = HEADLESS_QT_PLATFORM
 
 
 def _parse_report(stdout: str) -> dict[str, object]:
@@ -506,9 +523,9 @@ def _iter_failures(report: Mapping[str, object]) -> Iterator[str]:
     # Native startup failures kill the process before it prints its report, so
     # the exit status and whatever reached stderr are the whole account.
     yield _describe_exit(report)
-    last = _last_output_line(report)
-    if last is not None:
-        yield f"last output: {last}"
+    tail = _output_tail(report)
+    if tail is not None:
+        yield f"last output:\n{tail}"
 
 
 def _describe_exit(report: Mapping[str, object]) -> str:
@@ -530,16 +547,20 @@ def _signal_name(number: int) -> str:
         return f"signal {number}"
 
 
-def _last_output_line(report: Mapping[str, object]) -> str | None:
-    """Return the last thing the process said, on either stream."""
+def _output_tail(report: Mapping[str, object]) -> str | None:
+    """Return the end of what the process said, on whichever stream it used.
+
+    Lines rather than one line: the useful account of a native crash is the
+    traceback the fault handler prints, and one line of it says nothing.
+    """
 
     for key in ("stderr", "stdout"):
         text = report.get(key)
         if not isinstance(text, str):
             continue
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        lines = [line.rstrip() for line in text.splitlines() if line.strip()]
         if lines:
-            return lines[-1]
+            return "\n".join(lines[-OUTPUT_TAIL_LINES:])
     return None
 
 
@@ -731,10 +752,10 @@ __all__ = [
     "BUNDLE_NAME",
     "BUNDLE_SIGNATURE",
     "DEFAULT_TIMEOUT_SECONDS",
-    "DISPLAY_VARIABLES",
     "EASYOCR_MODEL_SUBDIRECTORY",
     "EASYOCR_PATH_VARIABLES",
     "HEADLESS_QT_PLATFORM",
+    "HEADLESS_SELF_CHECK_MODES",
     "HOME_VARIABLES",
     "LOCAL_KRDICT_VARIABLE",
     "QT_PLATFORM_VARIABLE",
