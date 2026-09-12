@@ -1144,6 +1144,40 @@ documentation must distinguish mute's warm RAM retention from explicit Stop.
 - [ ] Leave one Review Handoff and stop. No commit, push, merge, tag, release or
   Linear changes without the appropriate separate human authorization.
 
+## 19. Execution record (2026-09-11)
+
+Implemented on `fix/post-runtime-product-fixes`. One commit per fix or per
+tightly related bundle; the review handoff is
+`review-handoffs/post-runtime-product-fixes.md`.
+
+| Task | Outcome |
+|---|---|
+| T1 | Done. Startup-phase-aware child, named ownership transitions, generation-scoped retirement/capacity/queued mutations, reader faults end the child. Native double-open reproducer added. |
+| T2 | Done. Window generation/pid/readiness/exit reason in the one log; a timed-out call names its operation, id, age and connection; only genuinely registered shortcuts are reported; the page shows a lost bridge with one explicit retry. |
+| T3 | Done. `ApplicationSnapshot` and one derivation in `runtime_status.py`; tray and page read the same label; the page's refresh timer follows the derived activity. |
+| T4 | Done. Stop releases providers under every policy (P1); hover mute added; one application action per surface; retirement off the Qt thread; queued residency cannot resurrect after a stop; area selection mutes instead of stopping. |
+| T5 | Done. Both hot key edges on both backends; Push to Hover is a real hold; Start/Stop binding with conflict-aware migration; legacy `hover_activation=hotkey` migrates to `push_to_hover`; one-shot preserved and bindable without a default (P2). |
+| T6 | Done. Independent exit scheduler, immediate dismissal on a true exit, bounded corridor crossing to the popup, no capture against the gap. |
+| T7 | Done. Staged breakpoints and a wrapping action row; measured 835 -> 760 at the 780px width that overflowed. |
+| T8 | Done for identity: the Control Center child claims the macOS accessory policy and activates explicitly. The WebEngine profile warning is deferred (below). |
+| T9 | Done. Repository removal list stays **empty**; a clean Python 3.10 environment installs the whole runtime from repository metadata alone. |
+| T10 | Done. Lifecycle assertions are about processes rather than manager fields, plus ten wake/retire cycles. |
+| T11 | Done. `README`, `docs/CODE-MAP.md` and this section; architecture proposals are recorded in the handoff, not applied. |
+
+**Deferred with a revisit trigger.** The pywebview WebEngine profile warning
+(section 4.2, M5) is upstream and intermittent, and three child-local remedies
+failed to make it deterministic. Revisit on a pywebview release that reorders
+`BrowserView.closeEvent`, or a Qt WebEngine version change.
+
+**Deferred as a product decision.** A separately bindable one-shot lookup
+shortcut. The path and a `lookup_at_cursor()` seam are preserved; no default
+shortcut was added, per P2.
+
+**Still native-only validation.** Physical key presses for Push to Hover on
+every platform, Windows and Linux behaviour of both new backends, mixed and
+fractional DPI exit geometry, and the frozen Finder-launch Dock identity.
+
+
 **Windows phase result:** exact focus reader failure reproduced natively; timeout
 mechanism reproduced with injected deadline; misleading Running state and Qt timer
 conflict confirmed; layout overflow measured; ordinary capture/reopen and clean

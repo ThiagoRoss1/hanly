@@ -91,10 +91,22 @@ installed and validated. Later starts skip the install.
 
 ### Using it
 
-- **Hover** over Korean text and hold still for ~80 ms.
-- **`Ctrl+Shift+Space`** looks up whatever is under the cursor right now.
-- **`Ctrl+Shift+F9` / `Ctrl+Shift+F10`** start and pause watching.
-- The **tray icon** starts, pauses, opens the Control Center, and quits.
+Three global shortcuts, and each one does exactly one thing:
+
+- **`Ctrl+Shift+F10`** starts and stops watching the screen. Stopping gives the
+  lookup engine's memory back; nothing is watched until you start again.
+- **`Ctrl+Shift+Space`** is **Push to Hover**: hold it, and hovering over
+  Korean text for ~80 ms looks the word up. Let go and Hanly stops looking.
+  An answer already on screen stays until you move away from its word, so you
+  can read it, click it, and copy from it with the keys released.
+- **`Ctrl+Shift+F9`** pauses and continues hover without stopping capture. It
+  matters in **Whenever capture is running** mode, where hover has no key to
+  let go of; in Push to Hover the chord is already the switch.
+
+Every shortcut can be changed under **Settings → Shortcuts**, and the Control
+Center says so when the operating system refused one.
+
+- The **tray icon** starts, stops, opens the Control Center, and quits.
   Opening it is also the icon's default action, for desktops whose tray has no
   menu at all.
 - The **Control Center** is the main window: capture controls, the capture
