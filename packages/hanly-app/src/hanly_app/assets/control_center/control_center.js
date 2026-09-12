@@ -2,7 +2,7 @@
   "use strict";
 
   const fallbackState = {
-    app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
+    app: { state: "new", activity: "preparing", detail: "", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
     config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", hover_activation: "hotkey", lookup_preload: "when_capture_starts" },
     runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" }, engine: { state: "sleeping", message: "" }, hotkeys: {} },
     updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
@@ -17,6 +17,20 @@
   // anything. Naming the unsettled phases rather than the settled ones keeps a
   // phase this page does not know about from polling forever.
   const RUNTIME_PENDING_PHASES = ["preparing", "stopping"];
+
+  // Hanly's own derived activity, which the shell computes from readiness,
+  // provider residency and whether capture was actually asked for.
+  const ACTIVITY_LABELS = {
+    preparing: "Preparing",
+    stopped: "Stopped",
+    armed: "Armed",
+    running: "Running",
+    stopping: "Stopping",
+    error: "Error"
+  };
+
+  // The two activities that still change on their own.
+  const ACTIVITY_PENDING = ["preparing", "stopping"];
 
   // Update statuses that mean an update worker is still running.
   const UPDATE_BUSY_STATUSES = ["checking", "downloading", "verifying", "installing", "validating"];
@@ -311,9 +325,10 @@
     const config = currentState.config || fallbackState.config;
     const runtime = currentState.runtime || fallbackState.runtime;
     const updates = currentState.updates || fallbackState.updates;
-    const stateName = formatStatus(app.state);
-    byId("status-line").dataset.state = app.state || "unknown";
-    byId("app-state").textContent = stateName;
+    const activity = app.activity || "preparing";
+    byId("status-line").dataset.state = activity;
+    byId("app-state").textContent = ACTIVITY_LABELS[activity] || formatStatus(activity);
+    byId("app-detail").textContent = app.detail || "";
     byId("capture-state").textContent = app.capture_running ? "Running" : "Stopped";
     byId("ocr-provider").textContent = runtime.ocr_provider || "—";
     byId("resource-count").textContent = (runtime.resources || []).length + " resources";
@@ -345,9 +360,14 @@
   // renderer own the timer meant the idle one cancelled the refresh the other
   // still needed.
   function refreshRequired(state) {
+    // A page that has not been answered is showing its own placeholder, and
+    // polling for a parent that may never reply is not a recovery strategy.
+    if (connection !== "connected") return false;
     const runtime = state.runtime || fallbackState.runtime;
     const status = runtime.status || fallbackState.runtime.status;
+    const activity = (state.app || fallbackState.app).activity || "preparing";
     return (
+      ACTIVITY_PENDING.indexOf(activity) !== -1 ||
       RUNTIME_PENDING_PHASES.indexOf(status.phase) !== -1 ||
       updatesBusy(state.updates || fallbackState.updates) ||
       permissionWatchTicks > 0

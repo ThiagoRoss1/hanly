@@ -154,6 +154,7 @@ function report(step) {
     retry_hidden: document.getElementById("retry-runtime").hidden,
     check_disabled: document.getElementById("check-updates").disabled,
     app_state: document.getElementById("app-state").textContent,
+    app_detail: document.getElementById("app-detail").textContent,
     connection_hidden: document.getElementById("connection-item").hidden,
     connection_state: document.getElementById("connection-state").textContent,
     reconnect_hidden: document.getElementById("reconnect").hidden,

@@ -43,7 +43,7 @@ from .permissions import (
     permission_from_id,
 )
 from .runtime import HanlyRuntime
-from .runtime_status import RuntimeStatus
+from .runtime_status import ApplicationSnapshot, RuntimeStatus
 from .update_coordinator import UpdateCoordinator
 
 
@@ -213,6 +213,7 @@ class ControlCenterBridge:
         ocr_provider: str = "EasyOCR",
         engine_status: Callable[[], Mapping[str, str]] | None = None,
         registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
+        application_snapshot: Callable[[], ApplicationSnapshot] | None = None,
         diagnostic_log: DiagnosticLog | None = None,
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
@@ -236,6 +237,8 @@ class ControlCenterBridge:
             raise TypeError("engine_status must be callable")
         if registered_hotkeys is not None and not callable(registered_hotkeys):
             raise TypeError("registered_hotkeys must be callable")
+        if application_snapshot is not None and not callable(application_snapshot):
+            raise TypeError("application_snapshot must be callable")
         if permission_service is not None and not isinstance(permission_service, PermissionService):
             raise TypeError("permission_service must be a PermissionService")
 
@@ -250,6 +253,7 @@ class ControlCenterBridge:
         self._runtime_status = runtime_status
         self._engine_status = engine_status
         self._registered_hotkeys = registered_hotkeys
+        self._application_snapshot = application_snapshot
         self._diagnostic_log = diagnostic_log
         self._capture_ready = capture_ready
         # Bound by set_retry() once startup exists to retry.
@@ -269,9 +273,12 @@ class ControlCenterBridge:
 
         config = self._current_config()
         state_name = self._desktop_state()
+        activity = self._activity_snapshot()
         return {
             "app": {
                 "state": state_name,
+                "activity": activity["activity"],
+                "detail": activity["detail"],
                 "capture_running": self._is_capture_running(state_name),
                 "capture_mode": config.capture_mode.value,
                 "target": _target_name(config.capture_monitor),
@@ -769,6 +776,14 @@ class ControlCenterBridge:
         if self._engine_status is None:
             return {"state": "unknown", "message": ""}
         return {str(key): str(value) for key, value in self._engine_status().items()}
+
+    def _activity_snapshot(self) -> dict[str, str]:
+        """The one derived label, or the honest unknown before one exists."""
+
+        if self._application_snapshot is None:
+            return {"activity": "preparing", "detail": ""}
+        snapshot = self._application_snapshot()
+        return {"activity": snapshot.activity, "detail": snapshot.detail}
 
     def _registered_bindings(self) -> dict[str, str]:
         """Report the shortcuts actually registered, not the stored intent.

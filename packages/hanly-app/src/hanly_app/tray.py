@@ -37,7 +37,10 @@ class TrayStatus:
 
 
 TrayStatusProvider: TypeAlias = Callable[[], DesktopState]
-TrayDetailProvider: TypeAlias = Callable[[], str | None]
+#: What the application as a whole is doing, as ``(label, detail)``. The tray
+#: menu still follows the capture lifecycle, but the words a user reads come
+#: from the same derivation the Control Center shows, so the two agree.
+TrayActivityProvider: TypeAlias = Callable[[], tuple[str, str | None]]
 #: Whether the runtime can accept a capture action at all. A build that does
 #: not report readiness leaves Start/Resume governed by lifecycle state alone.
 TrayReadyProvider: TypeAlias = Callable[[], bool]
@@ -81,15 +84,21 @@ _STATE_LABELS = {
 }
 
 
-def normalize_status(state: DesktopState, detail: str | None = None) -> TrayStatus:
+def normalize_status(
+    state: DesktopState,
+    detail: str | None = None,
+    label: str | None = None,
+) -> TrayStatus:
     """Convert a desktop lifecycle state into what the tray displays.
 
     Every caller is Hanly's own composition root, so the conversion is a plain
-    lookup rather than a normalizer for arbitrary shapes.
+    lookup rather than a normalizer for arbitrary shapes. ``label`` overrides
+    the lifecycle word for a composition that derives one from more than the
+    capture state alone.
     """
 
-    tray_state, label = _STATE_LABELS.get(state, (TrayState.ERROR, "Error"))
-    return TrayStatus(state=tray_state, label=label, detail=detail)
+    tray_state, lifecycle_label = _STATE_LABELS.get(state, (TrayState.ERROR, "Error"))
+    return TrayStatus(state=tray_state, label=label or lifecycle_label, detail=detail)
 
 
 class TrayService:
@@ -110,7 +119,7 @@ class TrayService:
         on_pause: TrayCallback | None = None,
         on_open_control_center: TrayCallback | None = None,
         on_quit: TrayCallback | None = None,
-        detail_provider: TrayDetailProvider | None = None,
+        activity_provider: TrayActivityProvider | None = None,
         ready_provider: TrayReadyProvider | None = None,
         name: str = "hanly",
         title: str = "Hanly",
@@ -120,8 +129,8 @@ class TrayService:
     ) -> None:
         if not callable(status_provider):
             raise TypeError("status_provider must be callable")
-        if detail_provider is not None and not callable(detail_provider):
-            raise TypeError("detail_provider must be callable")
+        if activity_provider is not None and not callable(activity_provider):
+            raise TypeError("activity_provider must be callable")
         if ready_provider is not None and not callable(ready_provider):
             raise TypeError("ready_provider must be callable")
         if not callable(dispatcher):
@@ -130,7 +139,7 @@ class TrayService:
             raise ValueError("tray name and title must not be empty")
 
         self._status_provider = status_provider
-        self._detail_provider = detail_provider
+        self._activity_provider = activity_provider
         self._ready_provider = ready_provider
         self._dispatcher = dispatcher
         self._on_start = on_start
@@ -177,13 +186,16 @@ class TrayService:
     def status(self) -> TrayStatus:
         """Return the current normalized application status.
 
-        ``detail`` carries runtime readiness, which is separate from the
-        capture lifecycle: a started desktop whose providers are still
-        preparing must not read as fully working.
+        The words come from the composition's own derivation, which knows
+        readiness and provider residency as well as the capture lifecycle: a
+        started desktop whose providers are still loading must not read as
+        fully working.
         """
 
-        detail = None if self._detail_provider is None else self._detail_provider()
-        return normalize_status(self._status_provider(), detail)
+        if self._activity_provider is None:
+            return normalize_status(self._status_provider())
+        label, detail = self._activity_provider()
+        return normalize_status(self._status_provider(), detail, label)
 
     @property
     def can_start(self) -> bool:
@@ -330,7 +342,7 @@ def _default_image() -> object:
 
 __all__ = [
     "TrayCallback",
-    "TrayDetailProvider",
+    "TrayActivityProvider",
     "TrayDispatcher",
     "TrayReadyProvider",
     "TrayBackend",

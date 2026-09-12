@@ -34,7 +34,14 @@ from .app_update import (
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .capture_selector import CaptureSelection, select_capture_area
-from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, HoverActivation
+from .config import (
+    AppConfig,
+    CaptureMode,
+    ConfigError,
+    ConfigManager,
+    HoverActivation,
+    LookupPreload,
+)
 from .control_center import (
     RUNTIME_NOT_READY,
     ControlCenterBridge,
@@ -79,7 +86,14 @@ from .runtime import (
     HanlyRuntime,
     load_runtime,
 )
-from .runtime_status import RuntimeStatus, RuntimeStatusPublisher, watch_worker_readiness
+from .runtime_status import (
+    ACTIVITY_LABELS,
+    ApplicationSnapshot,
+    RuntimeStatus,
+    RuntimeStatusPublisher,
+    derive_application_snapshot,
+    watch_worker_readiness,
+)
 from .runtime_trace import RuntimeTraceSink
 from .signal_bridge import QtSignalBridge
 from .startup import StartupCoordinator
@@ -430,6 +444,8 @@ class _DesktopSession:
         self._pending_release: list[DesktopController] = []
         self._engine_state: tuple[str, str] = ("sleeping", "")
         self._activation = settings.config.hover_activation
+        self._hover_muted = False
+        self._stopping = False
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
@@ -445,6 +461,7 @@ class _DesktopSession:
             ocr_provider=OCR_DISPLAY_NAME,
             engine_status=self.engine_status,
             registered_hotkeys=self.registered_hotkeys,
+            application_snapshot=self.application_snapshot,
             diagnostic_log=diagnostics,
         )
         self.host = ControlCenterProcess(
@@ -456,7 +473,7 @@ class _DesktopSession:
         self.tray = TrayService(
             lambda: self.state,
             dispatcher=dispatcher,
-            detail_provider=lambda: status.status.message or None,
+            activity_provider=self._tray_activity,
             ready_provider=lambda: status.status.ready,
             on_start=lambda: self.desktop.request_capture(),
             on_resume=lambda: self.desktop.request_capture(),
@@ -543,6 +560,42 @@ class _DesktopSession:
 
         state, message = self._engine_state
         return {"state": state, "message": message}
+
+    def application_snapshot(self) -> ApplicationSnapshot:
+        """Derive the one label every surface shows, from every input at once.
+
+        Readiness, provider residency, and whether the user asked for capture
+        are three separate facts, and each surface used to pick whichever one
+        it had. Deriving them together is what stops a session whose providers
+        are still loading from calling itself running.
+        """
+
+        engine_state, engine_message = self._engine_state
+        return derive_application_snapshot(
+            self._status.status,
+            engine_state=engine_state,
+            engine_message=engine_message,
+            capture_requested=self.state is DesktopState.RUNNING,
+            stopping=self._stopping,
+            hover_muted=self._hover_muted,
+            hover_detail=self._hover_detail(),
+            wakes_on_demand=(
+                self._settings.config.lookup_preload is LookupPreload.ON_DEMAND
+            ),
+        )
+
+    def _tray_activity(self) -> tuple[str, str | None]:
+        """The same words the Control Center shows, for the tray title."""
+
+        snapshot = self.application_snapshot()
+        return ACTIVITY_LABELS[snapshot.activity], snapshot.detail or None
+
+    def _hover_detail(self) -> str:
+        """Say how a started session expects to be asked for a lookup."""
+
+        if self._settings.config.hover_activation is HoverActivation.ALWAYS_ACTIVE:
+            return "Hanly is watching the screen."
+        return f"Hold {self._settings.config.hotkey} to look up."
 
     def registered_hotkeys(self) -> dict[str, str]:
         """Report the shortcuts the operating system actually accepted.

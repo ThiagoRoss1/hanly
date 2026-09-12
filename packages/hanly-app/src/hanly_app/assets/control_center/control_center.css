@@ -207,6 +207,10 @@ h2 { margin-bottom: 8px; font-size: 20px; letter-spacing: -0.025em; }
   color: #1b7f4d;
 }
 
+.status-line .hint {
+  margin: 4px 0 0;
+}
+
 .connection-item .hint {
   margin: 4px 0 0;
 }

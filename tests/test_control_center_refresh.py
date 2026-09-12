@@ -30,6 +30,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+#: The shell derives its activity from more than readiness, but a fixture that
+#: only varies the runtime phase gets the settled activity that phase implies.
+_ACTIVITY_FOR_PHASE = {"ready": "stopped", "failed": "error"}
+
 #: What a platform with no privacy gates reports, and the shape macOS fills in.
 NO_PERMISSIONS: dict[str, Any] = {"supported": False, "items": []}
 
@@ -61,10 +65,14 @@ def _snapshot(
     message: str = "",
     update_status: str = "idle",
     permissions: dict[str, Any] | None = None,
+    activity: str | None = None,
+    detail: str = "",
 ) -> dict[str, Any]:
     return {
         "app": {
             "state": "new",
+            "activity": activity or _ACTIVITY_FOR_PHASE.get(phase, "preparing"),
+            "detail": detail,
             "capture_running": False,
             "capture_mode": "full_monitor",
             "target": "cursor",

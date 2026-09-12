@@ -47,6 +47,158 @@ class RuntimeStatus:
         return {"phase": self.phase, "stage": self.stage, "message": self.message}
 
 
+#: What the interface calls the application as a whole. Readiness, residency
+#: and capture intent are all still available separately; this is the one label
+#: a user reads, derived from them rather than guessed beside them.
+ActivityState = Literal["preparing", "stopped", "armed", "running", "stopping", "error"]
+
+#: The engine's own residency vocabulary, which is not the same question.
+ENGINE_SLEEPING = "sleeping"
+ENGINE_PREPARING = "preparing"
+ENGINE_READY = "ready"
+ENGINE_ERROR = "error"
+
+#: The word each derived activity is shown as. One mapping so the tray title
+#: and the Control Center cannot drift into different vocabularies.
+ACTIVITY_LABELS: dict[str, str] = {
+    "preparing": "Preparing",
+    "stopped": "Stopped",
+    "armed": "Armed",
+    "running": "Running",
+    "stopping": "Stopping",
+    "error": "Error",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationSnapshot:
+    """One coherent answer to "what is Hanly doing?", derived in one place.
+
+    Every field is a fact some surface already had; what was missing was one
+    owner deriving the label from all of them at once. The tray reading
+    capture state while the page read readiness is how a Hanly whose providers
+    were still loading described itself as running.
+    """
+
+    activity: ActivityState
+    detail: str
+    runtime: RuntimeStatus
+    engine_state: str
+    engine_message: str
+    capture_requested: bool
+    hover_muted: bool
+
+    @property
+    def busy(self) -> bool:
+        """Whether something is still expected to change on its own."""
+
+        return self.activity in ("preparing", "stopping")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the JSON-compatible form the Control Center bridge exposes."""
+
+        return {
+            "activity": self.activity,
+            "detail": self.detail,
+            "capture_requested": self.capture_requested,
+            "hover_muted": self.hover_muted,
+            "engine": {"state": self.engine_state, "message": self.engine_message},
+            "runtime": self.runtime.to_dict(),
+        }
+
+
+def derive_application_snapshot(
+    runtime: RuntimeStatus,
+    *,
+    engine_state: str = ENGINE_SLEEPING,
+    engine_message: str = "",
+    capture_requested: bool = False,
+    stopping: bool = False,
+    hover_muted: bool = False,
+    hover_detail: str = "",
+    wakes_on_demand: bool = False,
+) -> ApplicationSnapshot:
+    """Turn the separate runtime facts into the one label the interface shows.
+
+    Readiness comes first because a session that cannot look anything up yet is
+    preparing whatever capture was asked for, and a session that failed to
+    prepare is in error whatever the engine reports afterwards.
+    """
+
+    activity, detail = _activity(
+        runtime,
+        engine_state=engine_state,
+        engine_message=engine_message,
+        capture_requested=capture_requested,
+        stopping=stopping,
+        hover_muted=hover_muted,
+        hover_detail=hover_detail,
+        wakes_on_demand=wakes_on_demand,
+    )
+    return ApplicationSnapshot(
+        activity=activity,
+        detail=detail,
+        runtime=runtime,
+        engine_state=engine_state,
+        engine_message=engine_message,
+        capture_requested=capture_requested,
+        hover_muted=hover_muted,
+    )
+
+
+def _activity(
+    runtime: RuntimeStatus,
+    *,
+    engine_state: str,
+    engine_message: str,
+    capture_requested: bool,
+    stopping: bool,
+    hover_muted: bool,
+    hover_detail: str,
+    wakes_on_demand: bool,
+) -> tuple[ActivityState, str]:
+    if runtime.phase == "failed":
+        return "error", runtime.message or "Hanly could not prepare its lookup runtime."
+    if stopping:
+        return "stopping", "Releasing the lookup engine."
+    if runtime.phase in ("idle", "preparing"):
+        return "preparing", runtime.message or _stage_detail(runtime.stage)
+    if not capture_requested:
+        return "stopped", "Start capture to let Hanly read the screen."
+    return _started_activity(
+        engine_state=engine_state,
+        engine_message=engine_message,
+        hover_muted=hover_muted,
+        hover_detail=hover_detail,
+        wakes_on_demand=wakes_on_demand,
+    )
+
+
+def _started_activity(
+    *,
+    engine_state: str,
+    engine_message: str,
+    hover_muted: bool,
+    hover_detail: str,
+    wakes_on_demand: bool,
+) -> tuple[ActivityState, str]:
+    """Describe a started session by what its providers are actually doing."""
+
+    if engine_state == ENGINE_ERROR:
+        return "error", engine_message or "The lookup engine stopped."
+    if engine_state == ENGINE_PREPARING:
+        return "preparing", engine_message or "Loading the lookup engine."
+    if engine_state == ENGINE_SLEEPING and wakes_on_demand:
+        return "armed", "Hanly loads the lookup engine on the first lookup."
+    if hover_muted:
+        return "running", "Hover paused."
+    return "running", hover_detail or "Hanly is watching the screen."
+
+
+def _stage_detail(stage: str) -> str:
+    return f"Working on {stage}." if stage else "Hanly is getting ready."
+
+
 class ReadinessSource(Protocol):
     """The readiness surface :func:`watch_worker_readiness` consumes."""
 
@@ -170,11 +322,19 @@ def _inline_dispatch(callback: Callable[[], None]) -> None:
 
 
 __all__ = [
+    "ENGINE_ERROR",
+    "ENGINE_PREPARING",
+    "ENGINE_READY",
+    "ENGINE_SLEEPING",
+    "ACTIVITY_LABELS",
+    "ActivityState",
+    "ApplicationSnapshot",
     "ReadinessSource",
     "RuntimePhase",
     "RuntimeStatus",
     "RuntimeStatusPublisher",
     "StatusDispatcher",
     "StatusObserver",
+    "derive_application_snapshot",
     "watch_worker_readiness",
 ]
