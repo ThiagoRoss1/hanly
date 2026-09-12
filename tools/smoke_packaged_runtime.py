@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -98,6 +99,17 @@ EASYOCR_MODEL_SUBDIRECTORY = "model"
 
 #: Redirected so nothing resolves ``~`` back to the developer's account.
 HOME_VARIABLES = ("HOME", "USERPROFILE", "XDG_CACHE_HOME")
+
+#: Qt aborts rather than raises when it cannot load a platform plugin, so a
+#: Linux session with no display server kills the process being measured and
+#: reports as a signal instead of as a failed stage. Naming a platform Qt can
+#: always load keeps a headless check measuring the runtime it came for.
+QT_PLATFORM_VARIABLE = "QT_QPA_PLATFORM"
+HEADLESS_QT_PLATFORM = "offscreen"
+
+#: What a running display server sets. Either one means the inherited platform
+#: is the right one, so the window check under Xvfb keeps its real display.
+DISPLAY_VARIABLES = ("DISPLAY", "WAYLAND_DISPLAY")
 
 #: How first-run provisioning is pointed at an already-built dictionary.
 #: Named here rather than imported: this harness runs against a frozen bundle
@@ -441,7 +453,23 @@ def isolated_environment(
         environment[LOCAL_KRDICT_VARIABLE] = str(krdict)
     # The report names Korean text; a Windows console codepage cannot.
     environment["PYTHONIOENCODING"] = "utf-8"
+
+    _apply_headless_qt_platform(environment)
     return environment
+
+
+def _apply_headless_qt_platform(environment: dict[str, str]) -> None:
+    """Name a loadable Qt platform when Linux has no display server.
+
+    An inherited choice, and a session that has a display, are both left
+    alone: only the case Qt would abort on is answered here.
+    """
+
+    if not sys.platform.startswith("linux"):
+        return
+    if any(environment.get(name) for name in DISPLAY_VARIABLES):
+        return
+    environment.setdefault(QT_PLATFORM_VARIABLE, HEADLESS_QT_PLATFORM)
 
 
 def _parse_report(stdout: str) -> dict[str, object]:
@@ -463,12 +491,56 @@ def _parse_report(stdout: str) -> dict[str, object]:
 
 
 def _iter_failures(report: Mapping[str, object]) -> Iterator[str]:
+    """Say why the run failed, including when no stage lived to report it."""
+
+    named = False
     stages = report.get("stages")
-    if not isinstance(stages, list):
+    if isinstance(stages, list):
+        for stage in stages:
+            if isinstance(stage, Mapping) and not stage.get("ok"):
+                named = True
+                yield f"{stage.get('name')}: {stage.get('detail')}"
+    if named:
         return
-    for stage in stages:
-        if isinstance(stage, Mapping) and not stage.get("ok"):
-            yield f"{stage.get('name')}: {stage.get('detail')}"
+
+    # Native startup failures kill the process before it prints its report, so
+    # the exit status and whatever reached stderr are the whole account.
+    yield _describe_exit(report)
+    last = _last_output_line(report)
+    if last is not None:
+        yield f"last output: {last}"
+
+
+def _describe_exit(report: Mapping[str, object]) -> str:
+    """Describe how the process ended, naming a signal rather than a number."""
+
+    if report.get("exit_timeout"):
+        return "the self-check did not exit before the deadline"
+
+    status = report.get("exit_code")
+    if isinstance(status, int) and status < 0:
+        return f"the self-check was killed by {_signal_name(-status)} before reporting a stage"
+    return f"the self-check reported no stage and exited with status {status}"
+
+
+def _signal_name(number: int) -> str:
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return f"signal {number}"
+
+
+def _last_output_line(report: Mapping[str, object]) -> str | None:
+    """Return the last thing the process said, on either stream."""
+
+    for key in ("stderr", "stdout"):
+        text = report.get(key)
+        if not isinstance(text, str):
+            continue
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+    return None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -659,10 +731,13 @@ __all__ = [
     "BUNDLE_NAME",
     "BUNDLE_SIGNATURE",
     "DEFAULT_TIMEOUT_SECONDS",
+    "DISPLAY_VARIABLES",
     "EASYOCR_MODEL_SUBDIRECTORY",
     "EASYOCR_PATH_VARIABLES",
+    "HEADLESS_QT_PLATFORM",
     "HOME_VARIABLES",
     "LOCAL_KRDICT_VARIABLE",
+    "QT_PLATFORM_VARIABLE",
     "REQUIRED_DATA_FILES",
     "REQUIRED_EXTENSION_STEM",
     "REQUIRED_MODEL_FILES",

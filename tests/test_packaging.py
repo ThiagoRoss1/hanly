@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,11 +35,14 @@ from tools.smoke_packaged_runtime import (
     BUNDLE_SIGNATURE,
     EASYOCR_MODEL_SUBDIRECTORY,
     EASYOCR_PATH_VARIABLES,
+    HEADLESS_QT_PLATFORM,
     HOME_VARIABLES,
     LOCAL_KRDICT_VARIABLE,
+    QT_PLATFORM_VARIABLE,
     REQUIRED_DATA_FILES,
     REQUIRED_MODEL_FILES,
     _executable_in,
+    _iter_failures,
     _ProfileContext,
     inspect_bundle,
     isolated_environment,
@@ -265,6 +269,83 @@ def test_bundle_inventory_accepts_a_complete_morphology_collection(tmp_path: Pat
     assert inventory.ok
     assert inventory.missing == ()
     assert "_kiwipiepy.pyd" in inventory.present
+
+
+def test_the_frozen_smoke_names_a_signal_when_no_stage_survived() -> None:
+    """A process killed during startup reports nothing of its own."""
+
+    failures = list(
+        _iter_failures(
+            {
+                "ok": False,
+                "stages": [],
+                "stdout": "",
+                "exit_code": -int(signal.SIGABRT),
+                "exit_timeout": False,
+                "stderr": "qt.qpa.plugin: Could not load the Qt platform plugin\n",
+            }
+        )
+    )
+
+    assert "SIGABRT" in failures[0]
+    assert failures[1].endswith("Could not load the Qt platform plugin")
+
+
+def test_the_frozen_smoke_reports_a_failed_stage_rather_than_the_exit() -> None:
+    """A stage that failed is the diagnosis; the status adds nothing to it."""
+
+    failures = list(
+        _iter_failures(
+            {
+                "stages": [
+                    {"name": "runtime", "ok": True, "detail": ""},
+                    {"name": "dictionary", "ok": False, "detail": "no entry"},
+                ],
+                "exit_code": 1,
+            }
+        )
+    )
+
+    assert failures == ["dictionary: no entry"]
+
+
+def test_the_frozen_smoke_names_a_qt_platform_a_headless_linux_can_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Qt aborts on an unloadable platform plugin, killing the measured run."""
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
+
+    environment = isolated_environment({}, profile, home, models)
+
+    assert environment[QT_PLATFORM_VARIABLE] == HEADLESS_QT_PLATFORM
+
+
+@pytest.mark.parametrize(
+    ("platform", "inherited"),
+    [
+        ("linux", {"DISPLAY": ":99"}),
+        ("linux", {"WAYLAND_DISPLAY": "wayland-0"}),
+        ("linux", {"QT_QPA_PLATFORM": "xcb"}),
+        ("win32", {}),
+        ("darwin", {}),
+    ],
+)
+def test_the_frozen_smoke_leaves_a_usable_qt_platform_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    inherited: dict[str, str],
+) -> None:
+    """A display server, an explicit choice, and Windows or macOS all decide."""
+
+    monkeypatch.setattr(sys, "platform", platform)
+    profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
+
+    environment = isolated_environment(inherited, profile, home, models)
+
+    assert environment.get(QT_PLATFORM_VARIABLE) == inherited.get(QT_PLATFORM_VARIABLE)
 
 
 def test_the_frozen_smoke_cannot_fall_back_to_a_developer_model_cache(
