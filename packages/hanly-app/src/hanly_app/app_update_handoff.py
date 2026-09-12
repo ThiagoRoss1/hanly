@@ -202,20 +202,53 @@ def _posix_stop(platform: str) -> str:
     """Return how one POSIX platform stops a candidate it is about to reject.
 
     A backgrounded program is this script's own job, so its pid is exact.
-    ``open`` hands back no pid at all, which leaves matching whatever is
-    running out of the bundle as the only handle macOS offers on it.
+    ``open`` hands back no pid at all - it returns once LaunchServices has been
+    asked, and the application it starts is reparented to launchd - so macOS
+    has to find the candidate among the running processes instead.
     """
 
     if platform.startswith("darwin"):
-        return _indented(['/usr/bin/pkill -f "^$install/" 2>/dev/null || true', "sleep 1"])
-    return _indented(
-        [
-            '[ -n "$candidate" ] || return 0',
-            'kill "$candidate" 2>/dev/null || return 0',
-            "sleep 1",
-            'kill -9 "$candidate" 2>/dev/null || true',
-        ]
-    )
+        return _indented([*_macos_candidate_pids(), *_posix_terminate("$candidate")])
+    return _indented(_posix_terminate('"$candidate"'))
+
+
+def _macos_candidate_pids() -> list[str]:
+    """Return the lines that collect every pid running out of the bundle.
+
+    ``ps`` reports each process's program path, and a ``case`` pattern built
+    from a quoted expansion compares that path as literal text. Asking
+    ``pkill -f`` the same question instead makes the installation path a
+    regular expression, and an installation named ``Hanly [beta]`` or
+    ``C++ apps`` is then a pattern that matches a different directory, matches
+    nothing, or does not compile at all - each of which silently leaves the
+    rejected build running.
+
+    The pattern carries a leading ``(`` because macOS ships bash 3.2 as
+    ``/bin/sh``, whose command-substitution parser reads the ``)`` closing a
+    bare ``case`` pattern as the one closing ``$(``.
+    """
+
+    return [
+        "candidate=$(/bin/ps -axo pid=,comm= | while read -r pid program; do",
+        '  case "$program" in ("$install"/*) printf \'%s \' "$pid" ;; esac',
+        "done)",
+    ]
+
+
+def _posix_terminate(pids: str) -> list[str]:
+    """Return the ask-then-insist stop both POSIX platforms end with.
+
+    macOS passes an unquoted expansion because a bundle answers with every
+    process started out of it, which on Hanly is the shell and its two
+    children; Linux backgrounds one program and knows its single pid.
+    """
+
+    return [
+        '[ -n "$candidate" ] || return 0',
+        f"kill {pids} 2>/dev/null || return 0",
+        "sleep 1",
+        f"kill -9 {pids} 2>/dev/null || true",
+    ]
 
 
 def _indented(lines: list[str]) -> str:
