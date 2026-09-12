@@ -22,12 +22,14 @@ from hanly import (
 )
 from hanly.easyocr_provider import EasyOCRConfig
 from hanly_app.lookup_controller import LookupRequest
+from hanly_app.lookup_process import create_lookup_engine
 from hanly_app.runtime import (
     RuntimeConfigError,
     load_runtime,
 )
 
 from tests.hanly_fixtures.krdict import build_fixture_krdict
+from tests.hanly_fixtures.lookup_child import RecordingProviders, ThreadChildSpawner
 
 _IMAGE = ROIImage(width=1, height=1, pixel_format=PixelFormat.RGB_888, data=b"\x00\x00\x00")
 _TARGET = Point(0.5, 0.5)
@@ -236,27 +238,39 @@ def test_a_non_boolean_flat_roi_gate_is_rejected(tmp_path: Path) -> None:
         load_runtime(path)
 
 
-def test_concrete_provider_factories_are_deferred_and_krdict_lifecycle_stays_on_worker(
-    tmp_path: Path, easyocr_providers: type[_FakeEasyOCR]
+def test_the_shell_builds_no_provider_and_the_child_gets_the_validated_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Constructing a provider on the calling thread would load EasyOCR and open
-    SQLite there, and a connection opened off the worker cannot be used on it."""
+    """Constructing a provider in the shell would load EasyOCR into the process
+    that never exits, and open SQLite on a thread that cannot use it."""
 
+    recorder = RecordingProviders()
+    recorder.install(monkeypatch)
     runtime = load_runtime(_easyocr_config(tmp_path))
+    engine = create_lookup_engine(runtime.lookup_settings(), spawn=ThreadChildSpawner())
     delivered = Event()
 
-    controller = runtime.create_lookup_controller(lambda _result: delivered.set())
-    assert easyocr_providers.constructions == []
-
+    controller = runtime.create_lookup_controller(
+        lambda _result: delivered.set(), engine=engine
+    )
     controller.start()
     assert controller.wait_until_ready(timeout=5)
     controller.submit(_IMAGE, _TARGET)
     assert delivered.wait(timeout=5)
     controller.stop()
 
-    worker_thread = controller._executor.thread_ident
+    executor_thread = controller._executor.thread_ident
 
-    assert worker_thread is not None
-    assert set(_PROVIDER_THREADS) == {"ocr", "kiwi", "krdict", "krdict_lookup", "krdict_close"}
-    assert set(_PROVIDER_THREADS.values()) == {worker_thread}
-    assert _FakeKRDICT.databases == [(tmp_path / "data" / "krdict.sqlite3").resolve()]
+    assert executor_thread is not None
+    assert set(recorder.threads) == {
+        "ocr",
+        "ocr_prewarm",
+        "ocr_recognize",
+        "morphology",
+        "dictionary",
+        "dictionary_lookup",
+        "dictionary_close",
+    }
+    assert len(set(recorder.threads.values())) == 1
+    assert executor_thread not in set(recorder.threads.values())
+    assert recorder.databases == [(tmp_path / "data" / "krdict.sqlite3").resolve()]

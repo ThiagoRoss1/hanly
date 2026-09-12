@@ -1,9 +1,12 @@
 """Production Hanly Desktop V1 composition and lifecycle root.
 
-The module keeps native UI imports inside :func:`run_desktop` so
-``preload_ocr_runtime`` can run before Qt.  It composes existing engine,
-capture, lookup, popup, Control Center, update, tray, and shutdown seams; it
-does not construct providers outside the worker-owned runtime factories.
+This is the persistent shell: Qt Widgets, the tray, global hotkeys, capture,
+hover state, the popup, settings, update orchestration, and the session log.
+It owns the one event loop, and it deliberately carries neither Qt WebEngine
+nor the OCR runtime -- those live in child processes it can retire.
+
+It composes existing engine, capture, lookup, popup, Control Center, update,
+tray, and shutdown seams; it does not construct providers itself.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, RLock
@@ -31,13 +34,16 @@ from .app_update import (
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .capture_selector import CaptureSelection, select_capture_area
-from .config import AppConfig, CaptureMode, ConfigError, ConfigManager
+from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, HoverActivation
 from .control_center import (
     RUNTIME_NOT_READY,
     ControlCenterBridge,
     ControlCenterUnavailable,
 )
-from .control_center_host import ControlCenterHost
+from .control_center_process import (
+    ControlCenterProcess,
+    bridge_operations,
+)
 from .desktop_controller import DesktopController, DesktopState
 from .diagnostics import DiagnosticLog, StartupTimeline
 from .first_run import (
@@ -46,7 +52,12 @@ from .first_run import (
 )
 from .lookup_controller import ResultDispatcher
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
-from .ocr_preload import record_preload_timing
+from .owned_cleanup import (
+    CleanupReport,
+    OwnedWorkspace,
+    sweep_staging,
+    update_staging_locations,
+)
 from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
@@ -55,8 +66,10 @@ from .paths import (
     discover_runtime_config,
 )
 from .permissions import (
+    CAPTURE_PERMISSIONS,
     START_CAPTURE_PERMISSIONS,
     PermissionService,
+    PermissionStatus,
     create_permission_service,
     missing_permission_refusal,
 )
@@ -105,6 +118,8 @@ class QtApplication(Protocol):
 
     def exit(self, return_code: int = 0) -> None: ...
 
+    def setQuitOnLastWindowClosed(self, closed: bool) -> None: ...
+
 
 class _Lifecycle(Protocol):
     def start(self) -> None: ...
@@ -138,15 +153,15 @@ class _Startup(Protocol):
 
 
 class _ControlCenter(Protocol):
-    """The main window and, in production, the process's only event loop."""
-
-    def run(self, on_started: Callable[[], None] | None = None) -> int: ...
+    """The optional window process the shell opens, closes, and outlives."""
 
     def show(self) -> None: ...
 
     def close(self) -> None: ...
 
-    def set_restorable(self, restorable: bool) -> None: ...
+    def shutdown(self) -> None: ...
+
+    def notify_state_changed(self) -> None: ...
 
 
 class DesktopApplication:
@@ -173,6 +188,7 @@ class DesktopApplication:
         self._started = False
         self._shutdown = False
         self._connected = False
+        self._tray_usable = False
         self._closing = Event()
         self._lock = RLock()
 
@@ -192,17 +208,14 @@ class DesktopApplication:
                 raise RuntimeError("signal bridge must be attached before startup")
             self._signals = bridge
 
-    def run(self, on_started: Callable[[], None] | None = None) -> int:
-        """Show the interface and run the one GUI event loop.
+    def run(self) -> int:
+        """Run the shell's own event loop, which outlives every window.
 
-        The loop belongs to the Control Center host: pywebview's Qt backend
-        calls ``QApplication.exec`` itself, so a second ``exec`` here would be
-        the nested loop the release warned about. Capture is deliberately not
-        started: the window opens, the runtime prepares behind it, and the user
-        decides when Hanly starts watching the screen.
-
-        ``on_started`` is pywebview's own post-start hook, which runs once the
-        window exists and off the UI thread.
+        The loop belongs here, not to a window: the Control Center lives in a
+        child process and closing it must leave the tray, hotkeys, capture,
+        and popup running. Capture is deliberately not started either -- the
+        window opens, the runtime prepares behind it, and the user decides
+        when Hanly starts watching the screen.
         """
 
         with self._lock:
@@ -212,9 +225,13 @@ class DesktopApplication:
             signals = self._signals
         if signals is not None:
             signals.install()
+        # Every Hanly window is transient -- the popup, the capture overlay,
+        # and a Control Center that is not even in this process.
+        self._qt.setQuitOnLastWindowClosed(False)
         self._start_tray()
+        self.open_control_center()
         try:
-            return self._control_center.run(on_started)
+            return self._qt.exec()
         finally:
             self.shutdown()
 
@@ -231,6 +248,7 @@ class DesktopApplication:
                 self._started = True
         else:
             self._controller.resume()
+        self._diagnostics.record("Capture", "Hanly is watching the screen.")
         self._tray.refresh()
 
     def attach_updates(self, coordinator: UpdateCoordinator | None) -> None:
@@ -247,6 +265,7 @@ class DesktopApplication:
 
     def pause_capture(self) -> None:
         self._controller.pause()
+        self._diagnostics.record("Capture", "Hanly stopped watching the screen.")
         self._tray.refresh()
 
     def resume_capture(self) -> None:
@@ -273,27 +292,53 @@ class DesktopApplication:
         except Exception as error:
             self._diagnostics.report("Control Center", error)
 
+    @property
+    def tray_usable(self) -> bool:
+        """Whether the tray is a real route back to the Control Center."""
+
+        with self._lock:
+            return self._tray_usable
+
     def _start_tray(self) -> None:
-        """Start the tray, and hide on close only if it can undo that.
+        """Start the tray, and record whether it can reopen the window.
 
         Starting is not the same as being usable: a backend with neither a
-        menu nor a default action is no way back to a hidden window, so the
-        main window stays closable-to-quit rather than leaving a running
-        process the user cannot reach.
+        menu nor a default action is no route back, and a Hanly the user
+        cannot reach is worse than one that ends with its window.
         """
 
         try:
             self._tray.start()
         except Exception as error:
             self._diagnostics.report("System tray", error)
-            return
-        if not self._tray.can_restore_window:
-            self._diagnostics.add(
-                "The system tray cannot restore a hidden window; "
-                "closing the Control Center will quit Hanly."
-            )
-            return
-        self._control_center.set_restorable(True)
+        else:
+            if self._tray.can_restore_window:
+                with self._lock:
+                    self._tray_usable = True
+                return
+        self._diagnostics.record(
+            "System tray",
+            "The tray cannot reopen the Control Center; closing that window "
+            "will quit Hanly.",
+            level="warning",
+        )
+
+    def control_center_closed(self) -> None:
+        """Decide what a closed Control Center means for the session.
+
+        With a tray it means nothing: capture, hotkeys, and the popup carry
+        on, and the window comes back from the tray. Without one there is no
+        way back, so the session ends rather than leaving a process running
+        where nobody can see or stop it.
+        """
+
+        with self._lock:
+            if self._shutdown or self._tray_usable:
+                return
+        self._diagnostics.record(
+            "Control Center", "Hanly quit with its window: there is no tray to reopen it."
+        )
+        self.quit()
 
     def quit(self) -> None:
         self._qt.quit()
@@ -313,22 +358,27 @@ class DesktopApplication:
         self._closing.set()
         if startup is not None:
             startup.begin_shutdown()
-        self._tray.shutdown()
         try:
-            self._control_center.close()
+            # Input, dwell, and request currency stop first, then the lookup
+            # child is retired and joined: an update handoff may only take over
+            # once no Hanly process still holds a resource or an installation.
+            self._controller.begin_shutdown()
+            if updates is not None:
+                updates.shutdown(wait=True)
+            if startup is not None:
+                startup.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
+            # Bounded so process exit cannot hang on a stuck provider, but
+            # long enough for SQLite handles to close normally.
+            self._controller.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
         finally:
             try:
-                self._controller.begin_shutdown()
-                if updates is not None:
-                    updates.shutdown(wait=True)
-                if startup is not None:
-                    startup.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
-                # Bounded so process exit cannot hang on a stuck provider,
-                # but long enough for SQLite handles to close normally.
-                self._controller.await_shutdown(_SHUTDOWN_WAIT_SECONDS)
+                self._control_center.shutdown()
             finally:
-                if signals is not None:
-                    signals.close()
+                try:
+                    self._tray.shutdown()
+                finally:
+                    if signals is not None:
+                        signals.close()
 
 
 class _DesktopSession:
@@ -378,6 +428,8 @@ class _DesktopSession:
         # Identifies the runtime composed here; only the Qt thread changes it.
         self._generation = 0
         self._pending_release: list[DesktopController] = []
+        self._engine_state: tuple[str, str] = ("sleeping", "")
+        self._activation = settings.config.hover_activation
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
@@ -391,9 +443,15 @@ class _DesktopSession:
             on_lifecycle_changed=self.refresh_tray,
             permission_service=self._permissions,
             ocr_provider=OCR_DISPLAY_NAME,
+            engine_status=self.engine_status,
+            registered_hotkeys=self.registered_hotkeys,
+            diagnostic_log=diagnostics,
         )
-        self.host = ControlCenterHost(
-            self.bridge, diagnostics=diagnostics, timeline=self._timeline
+        self.host = ControlCenterProcess(
+            bridge_operations(self.bridge),
+            on_diagnostic=lambda message: diagnostics.record("Control Center", message),
+            on_error=diagnostics.report,
+            on_closed=self._control_center_closed,
         )
         self.tray = TrayService(
             lambda: self.state,
@@ -419,7 +477,15 @@ class _DesktopSession:
         self._status.subscribe(lambda _snapshot: self.refresh_tray())
 
     def refresh_tray(self) -> None:
+        """Republish lifecycle state to both surfaces that show it."""
+
         self.tray.refresh()
+        self.host.notify_state_changed()
+
+    def _control_center_closed(self) -> None:
+        """Hand a closed window to the application, on the thread that owns Qt."""
+
+        self._on_qt(lambda: self.desktop.control_center_closed())
 
     def activate(self, runtime: HanlyRuntime) -> None:
         """Compose everything that needs a validated runtime, on the Qt thread."""
@@ -432,11 +498,79 @@ class _DesktopSession:
         self.bridge.attach_runtime(runtime, manual.capture_service, self._updates)
         self.desktop.attach_updates(self._updates)
 
-        # Providers warm now so the interface can report READY, but nothing
-        # observes the screen until the user asks Hanly to start.
+        # The session comes up with its shortcuts registered and its lookup
+        # path built. Whether the providers load now is the preload policy's
+        # decision, and nothing observes the screen unless the user asked for
+        # hover to be on from launch.
         manual.prepare()
         self._watch_readiness(manual)
+        self._start_if_always_active()
         self.refresh_tray()
+
+    def _start_if_always_active(self) -> None:
+        """Honour always-active hover at launch, or say why it cannot start."""
+
+        if self._settings.config.hover_activation is not HoverActivation.ALWAYS_ACTIVE:
+            return
+        missing = self._permissions.missing(START_CAPTURE_PERMISSIONS)
+        if missing:
+            self._report_permission_refusal(missing)
+            return
+        try:
+            self._start_or_resume()
+        except Exception as error:
+            self._diagnostics.report("Automatic hover", error)
+
+    def _report_permission_refusal(self, missing: Sequence[PermissionStatus]) -> None:
+        """Say what is missing rather than starting into a picture of wallpaper."""
+
+        self._diagnostics.add(
+            f"Automatic hover did not start. {missing_permission_refusal(missing)}"
+        )
+
+    def _capture_refusal(self) -> str | None:
+        """Why a manual lookup cannot read the screen, if it cannot.
+
+        Only the screen grant matters here: the manual shortcut does not follow
+        the cursor across applications, so Accessibility is hover's concern.
+        """
+
+        missing = self._permissions.missing(CAPTURE_PERMISSIONS)
+        return missing_permission_refusal(missing) if missing else None
+
+    def engine_status(self) -> dict[str, str]:
+        """Report where the lookup engine is, separately from shell readiness."""
+
+        state, message = self._engine_state
+        return {"state": state, "message": message}
+
+    def registered_hotkeys(self) -> dict[str, str]:
+        """Report the shortcuts the operating system actually accepted."""
+
+        manual = self._manual
+        if manual is None:
+            return {}
+        return {
+            action.value: binding for action, binding in manual.hotkeys.bindings.items()
+        }
+
+    def toggle_capture(self) -> None:
+        """Turn watching the screen on or off, from the one hover shortcut."""
+
+        controller = self._controller
+        if controller is None:
+            raise ControlCenterUnavailable(RUNTIME_NOT_READY)
+        if controller.state is DesktopState.RUNNING:
+            self.desktop.pause_capture()
+            return
+        self.desktop.request_capture()
+
+    def _on_engine_state(self, state: str, message: str) -> None:
+        """Take engine news from whichever thread reported it, onto Qt."""
+
+        self._engine_state = (state, message)
+        self._diagnostics.record("Lookup engine", f"{state}: {message}" if message else state)
+        self._dispatcher(self.refresh_tray)
 
     def _watch_readiness(self, manual: ManualLookupRuntime) -> None:
         """Report this runtime's readiness, and only while it is still ours."""
@@ -536,10 +670,29 @@ class _DesktopSession:
         self._start_or_resume()
 
     def apply_config(self, config: AppConfig) -> None:
+        """Apply live settings, and let a changed hover activation act.
+
+        Changing a binding, a dwell, or a preload choice alone must leave a
+        running capture session exactly as it was. Only the activation choice
+        is about whether Hanly watches the screen, so only that one starts or
+        pauses it.
+        """
+
         def apply(controller: DesktopController) -> None:
             controller.apply_config(config)
 
         self._on_qt(lambda: self._with_controller(apply))
+        self._on_qt(lambda: self._apply_activation(config.hover_activation))
+
+    def _apply_activation(self, activation: HoverActivation) -> None:
+        previous, self._activation = self._activation, activation
+        if activation is previous:
+            return
+        if activation is HoverActivation.ALWAYS_ACTIVE:
+            self._start_if_always_active()
+            return
+        self._with_controller(DesktopController.pause)
+        self.refresh_tray()
 
     def set_capture_preferences(
         self,
@@ -686,6 +839,13 @@ class _DesktopSession:
                     self._status, self._diagnostics, error
                 ),
                 trace_sink=self._trace_sink,
+                on_toggle_hover=self.toggle_capture,
+                on_error=self._diagnostics.report,
+                capture_refusal=self._capture_refusal,
+                on_diagnostic=lambda message: self._diagnostics.record(
+                    "Lookup engine", message
+                ),
+                on_engine_state=self._on_engine_state,
             )
         except Exception:
             capture.close()
@@ -719,6 +879,17 @@ class _DesktopSession:
                 "lookup providers did not release their resources before activation"
             )
 
+    def clean_up_leftovers(self) -> None:
+        """Remove what an interrupted Hanly left behind, and nothing else.
+
+        Runs at startup and after an operation completes, never on a timer: a
+        periodic sweep would be scanning a disk nobody asked it to scan.
+        """
+
+        report = cleanup_leftovers()
+        for message in report.messages():
+            self._diagnostics.record("Cleanup", message)
+
     def _after_install(self, _resource_id: str, previous: HanlyRuntime) -> None:
         def restore() -> None:
             refreshed = load_runtime(previous.config_path)
@@ -738,6 +909,7 @@ class _DesktopSession:
                 controller.pause()
             self.refresh_tray()
 
+        self.clean_up_leftovers()
         try:
             _dispatch_sync(self._dispatcher, restore, cancel=self._closing)
         except DesktopShuttingDown:
@@ -780,8 +952,8 @@ def run_desktop(
         None if runtime_config is None else Path(runtime_config).expanduser().resolve()
     )
 
-    # One bootstrap owns the OCR-before-Qt ordering, the WebEngine attribute,
-    # and the shared application's program name.
+    # The shell's own application: Qt Widgets, and nothing that would pull in
+    # Qt WebEngine or the OCR runtime. Both belong to child processes.
     try:
         with timeline.phase("qt bootstrap"):
             application = cast(QtApplication, ensure_qt_application(diagnostics=diagnostics))
@@ -791,10 +963,6 @@ def run_desktop(
         raise DesktopApplicationError(
             "Hanly Desktop requires the hanly-app runtime extra with Qt6"
         ) from error
-
-    # A source launch preloads OCR inside the bootstrap above; a packaged one
-    # did it in the runtime hook, where the CLI has already claimed it.
-    record_preload_timing(timeline)
 
     dispatcher = QtResultDispatcher()
     status = RuntimeStatusPublisher(dispatcher)
@@ -824,10 +992,15 @@ def run_desktop(
     )
     session.attach(desktop)
 
+    def prepare_runtime(explicit: Path | None) -> HanlyRuntime:
+        # Off the UI thread, before the resources are validated: whatever an
+        # interrupted session left behind is exactly what a fresh one is about
+        # to work beside.
+        session.clean_up_leftovers()
+        return replace(load_runtime(resolve(explicit)), timeline=timeline)
+
     startup = StartupCoordinator(
-        # The prepared runtime carries the timeline, so provider construction
-        # reports what it cost from the worker thread that pays for it.
-        lambda explicit: replace(load_runtime(resolve(explicit)), timeline=timeline),
+        prepare_runtime,
         session.activate,
         status=status,
         dispatcher=dispatcher,
@@ -846,7 +1019,38 @@ def run_desktop(
     desktop.attach_signal_bridge(signal_bridge)
 
     startup.start(explicit_runtime)
-    return desktop.run(_update_acknowledgement(update_ready, diagnostics))
+    acknowledge = _update_acknowledgement(update_ready, diagnostics)
+    if acknowledge is not None:
+        # Queued before the loop starts, so it runs as the first thing the
+        # shell does once it is genuinely up.
+        dispatcher(acknowledge)
+    return desktop.run()
+
+
+def cleanup_leftovers(
+    *, install_root: Path | None = None, temporary_root: Path | None = None
+) -> CleanupReport:
+    """Sweep Hanly's own work root and the places updates stage into.
+
+    Anything still holding the only copy of a working installation is reported
+    rather than removed: disk is never a reason to delete somebody's last
+    working Hanly.
+    """
+
+    import tempfile
+
+    workspace = OwnedWorkspace(default_app_config_path().parent / "work")
+    report = workspace.sweep()
+    return report.merged(
+        sweep_staging(
+            update_staging_locations(
+                install_root if install_root is not None else installation_root(),
+                temporary_root
+                if temporary_root is not None
+                else Path(tempfile.gettempdir()),
+            )
+        )
+    )
 
 
 def _update_acknowledgement(
@@ -854,10 +1058,11 @@ def _update_acknowledgement(
 ) -> Callable[[], None] | None:
     """Return what tells a waiting update handoff that this build came up.
 
-    The window existing is the milestone, not a ready runtime: Qt, WebEngine,
-    and the interpreter inside this build have all started by then, which is
-    what the swap replaced. Whether a resource downloads afterwards says
-    nothing about whether the new build works.
+    The running event loop is the milestone, not a ready runtime: Qt, the
+    interpreter, and this build's own collected dependencies have all started
+    by the time the shell reaches it, which is what the swap replaced. Whether
+    a resource downloads afterwards says nothing about whether the new build
+    works, and neither does whether the user opened a window.
     """
 
     if path is None:
@@ -900,6 +1105,10 @@ def _load_settings(path: Path, diagnostics: DiagnosticLog) -> ConfigManager:
         settings.load()
     except ConfigError as error:
         diagnostics.report("Preferences", error)
+    for note in settings.migrations:
+        # A shortcut that had to move is the user's business, not a silent
+        # rewrite of the keys under their fingers.
+        diagnostics.add(note)
     return settings
 
 
@@ -1192,6 +1401,7 @@ __all__ = [
     "RUNTIME_CONFIG_NAME",
     "default_app_config_path",
     "default_log_directory",
+    "cleanup_leftovers",
     "default_runtime_config_path",
     "discover_runtime_config",
     "load_update_service",

@@ -193,6 +193,10 @@ class LookupContext:
     text: str | None = None
     lemma: str | None = None
     ocr_results: tuple[OCRResult, ...] = ()
+    #: Where the resolved word sits in the image the lookup was given, which is
+    #: not the whole recognized line. A client that protects the word the user
+    #: is reading needs the word, not the sentence around it.
+    word_region: BoundingBox | None = None
 
 
 @dataclass(frozen=True)

@@ -206,3 +206,52 @@ h2 { margin-bottom: 8px; font-size: 20px; letter-spacing: -0.025em; }
 .runtime-item[data-phase="ready"] strong {
   color: #1b7f4d;
 }
+
+.engine-item .hint {
+  margin: 4px 0 0;
+}
+
+.engine-item[data-state="ready"] strong {
+  color: #1b7f4d;
+}
+
+.engine-item[data-state="error"] strong {
+  color: #b3261e;
+}
+
+/* Sleeping is a normal, chosen state, so it reads as ordinary rather than as
+   something to fix. */
+.engine-item[data-state="sleeping"] strong {
+  color: var(--muted);
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.logs-controls { min-width: 0; }
+
+.log-list {
+  max-height: 320px;
+  margin-top: 14px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: minmax(0, 88px) minmax(0, 108px) minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--soft-line);
+  font-size: 12px;
+}
+
+.log-row:last-child { border-bottom: 0; }
+.log-time, .log-subsystem { color: var(--muted); font-variant-numeric: tabular-nums; }
+.log-message { overflow-wrap: anywhere; }
+.log-row[data-level="warning"] .log-message { color: #8a5a00; }
+.log-row[data-level="error"] .log-message { color: #b3261e; }

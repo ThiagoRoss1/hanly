@@ -26,7 +26,15 @@ from .composition import (
     create_lookup_controller,
     create_lookup_worker_factory,
 )
-from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, Theme
+from .config import (
+    AppConfig,
+    CaptureMode,
+    ConfigError,
+    ConfigManager,
+    HoverActivation,
+    LookupPreload,
+    Theme,
+)
 from .control_center import (
     ControlCenterAssets,
     ControlCenterBridge,
@@ -36,6 +44,7 @@ from .control_center import (
     prepare_control_center_qt,
 )
 from .control_center_host import ControlCenterHost
+from .control_center_process import ControlCenterOptions, ControlCenterProcess
 from .desktop_controller import DesktopController, DesktopState, LookupRuntime
 from .diagnostics import RotatingLogFile, open_diagnostics
 from .hotkeys import (
@@ -47,8 +56,10 @@ from .hotkeys import (
 )
 from .hover_controller import HoverController, HoverRequest
 from .hover_lookup import HoverLookupRuntime
+from .hover_target import CaptureOrigins, RetainedTarget
 from .job_executor import JobExecutor, Worker
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher, ResultHandler
+from .lookup_process import LookupEngine, LookupProcessError, LookupSettings
 from .manual_lookup import (
     ManualLookupRuntime,
     ManualLookupStartupError,
@@ -57,6 +68,7 @@ from .manual_lookup import (
 )
 from .mouse_observer import MouseObserver
 from .ocr_preload import preload_ocr_runtime
+from .owned_cleanup import CleanupReport, OwnedWorkspace
 from .paths import (
     default_log_directory,
     default_runtime_config_path,
@@ -71,7 +83,8 @@ from .popup import (
     ScreenGeometry,
     format_lookup_result,
 )
-from .qt_bootstrap import ensure_qt_application, prepare_qt_runtime
+from .process_transport import Transport, TransportClosed
+from .qt_bootstrap import ensure_qt_application
 from .runtime import (
     HanlyRuntime,
     RuntimeConfigError,
@@ -115,6 +128,8 @@ __all__ = [
     "ControlCenterAssets",
     "ControlCenterBridge",
     "ControlCenterHost",
+    "ControlCenterOptions",
+    "ControlCenterProcess",
     "ControlCenterUnavailable",
     "DEFAULT_HOTKEYS",
     "DesktopApplication",
@@ -170,6 +185,17 @@ __all__ = [
     "UpdateCoordinator",
     "UpdateResult",
     "UpdateService",
+    "CaptureOrigins",
+    "CleanupReport",
+    "HoverActivation",
+    "LookupEngine",
+    "LookupPreload",
+    "LookupProcessError",
+    "LookupSettings",
+    "OwnedWorkspace",
+    "RetainedTarget",
+    "Transport",
+    "TransportClosed",
     "Worker",
     "build_lookup_controller",
     "build_lookup_worker_factory",
@@ -192,7 +218,6 @@ __all__ = [
     "load_control_center_assets",
     "open_diagnostics",
     "prepare_control_center_qt",
-    "prepare_qt_runtime",
     "preload_ocr_runtime",
     "run_desktop",
     "watch_worker_readiness",

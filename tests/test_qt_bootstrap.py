@@ -1,8 +1,10 @@
-"""Qt comes up once, in one order, with a program name."""
+"""Qt comes up once, with a program name, and carries nothing heavy with it."""
 
 from __future__ import annotations
 
 import gc
+import sys
+from pathlib import Path
 
 import hanly_app.qt_bootstrap as qt_bootstrap
 import pytest
@@ -40,6 +42,19 @@ def _isolated_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(qt_bootstrap, "install_qt_message_handler", lambda _log: True)
 
 
+#: What the shell must never pull in. Qt WebEngine belongs to the Control
+#: Center child and the OCR runtime to the lookup child; either one imported
+#: here would put hundreds of megabytes back into the process that never exits.
+HEAVY_MODULES = ("PyQt6.QtWebEngineWidgets", "easyocr", "torch", "kiwipiepy")
+
+
+def test_the_shell_bootstrap_imports_neither_web_engine_nor_the_ocr_runtime() -> None:
+    source = Path(qt_bootstrap.__file__).read_text(encoding="utf-8")
+
+    assert "preload_ocr_runtime" not in source
+    assert "prepare_control_center_qt" not in source
+
+
 def _install_widgets(
     monkeypatch: pytest.MonkeyPatch, order: list[str] | None = None
 ) -> type[_FakeApplication]:
@@ -61,32 +76,12 @@ def _install_widgets(
     return _Recorded
 
 
-def test_the_ocr_runtime_and_web_engine_load_before_the_application(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Windows resolves native libraries differently once Qt has initialized."""
-
-    order: list[str] = []
-    monkeypatch.setattr(
-        qt_bootstrap, "preload_ocr_runtime", lambda **_kwargs: order.append("ocr")
-    )
-    monkeypatch.setattr(
-        qt_bootstrap, "prepare_control_center_qt", lambda: order.append("web_engine")
-    )
-    _install_widgets(monkeypatch, order)
-
-    qt_bootstrap.ensure_qt_application()
-
-    assert order == ["ocr", "web_engine", "qapplication"]
-
-
 def test_the_application_always_gets_a_program_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Qt WebEngine aborts when Chromium has no argument zero."""
+    """Qt WebEngine aborts when Chromium has no argument zero, and the Control
+    Center child creates its application through this same function."""
 
-    monkeypatch.setattr(qt_bootstrap, "preload_ocr_runtime", lambda **_kwargs: None)
-    monkeypatch.setattr(qt_bootstrap, "prepare_control_center_qt", lambda: None)
     _install_widgets(monkeypatch)
 
     application = qt_bootstrap.ensure_qt_application([])
@@ -101,8 +96,6 @@ def test_one_application_survives_its_first_caller(
     """Qt registers window classes on construction and never unregisters them,
     so a second application object would re-register classes Qt already owns."""
 
-    monkeypatch.setattr(qt_bootstrap, "preload_ocr_runtime", lambda **_kwargs: None)
-    monkeypatch.setattr(qt_bootstrap, "prepare_control_center_qt", lambda: None)
     application_type = _install_widgets(monkeypatch)
 
     first = qt_bootstrap.ensure_qt_application()
@@ -115,16 +108,22 @@ def test_one_application_survives_its_first_caller(
     assert second is qt_bootstrap.qt_application()
 
 
-def test_a_missing_web_engine_is_reported_rather_than_worked_around(
+def test_a_missing_qt_runtime_is_reported_rather_than_worked_around(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def unavailable() -> None:
-        raise ControlCenterUnavailable("no Qt WebEngine")
+    import builtins
 
-    monkeypatch.setattr(qt_bootstrap, "preload_ocr_runtime", lambda **_kwargs: None)
-    monkeypatch.setattr(qt_bootstrap, "prepare_control_center_qt", unavailable)
+    real_import = builtins.__import__
 
-    with pytest.raises(ControlCenterUnavailable, match="WebEngine"):
+    def refuse(name: str, *arguments: object, **keywords: object) -> object:
+        if name == "PyQt6.QtWidgets":
+            raise ImportError("no Qt")
+        return real_import(name, *arguments, **keywords)  # type: ignore[arg-type]
+
+    monkeypatch.delitem(sys.modules, "PyQt6.QtWidgets", raising=False)
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    with pytest.raises(ControlCenterUnavailable, match="Qt6"):
         qt_bootstrap.ensure_qt_application()
 
 
@@ -132,8 +131,7 @@ def test_qt_messages_are_recorded_when_diagnostics_are_supplied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     installed: list[DiagnosticLog] = []
-    monkeypatch.setattr(qt_bootstrap, "preload_ocr_runtime", lambda **_kwargs: None)
-    monkeypatch.setattr(qt_bootstrap, "prepare_control_center_qt", lambda: None)
+
     def install(log: DiagnosticLog) -> bool:
         installed.append(log)
         return True

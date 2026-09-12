@@ -11,6 +11,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from .hotkeys import HotkeyError, canonical_hotkey
+
 
 class CaptureMode(str, Enum):
     """The desktop area available to a future capture service."""
@@ -28,6 +30,45 @@ class Theme(str, Enum):
     DARK = "dark"
 
 
+class LookupPreload(str, Enum):
+    """When the lookup engine's providers should be resident.
+
+    The engine lives in a child process that can be retired, so residency is a
+    real choice rather than a fixed cost: it buys a fast first lookup and costs
+    around a gigabyte of memory while it is loaded.
+    """
+
+    #: Load when the user starts watching the screen, and retire on pause.
+    WHEN_CAPTURE_STARTS = "when_capture_starts"
+    #: Load at launch and stay loaded, deliberately including through pause.
+    ALWAYS = "always"
+    #: Load nothing until a lookup actually needs it.
+    ON_DEMAND = "on_demand"
+
+
+class HoverActivation(str, Enum):
+    """Whether automatic hover waits to be switched on."""
+
+    #: Off until the toggle hotkey, the tray, or the Control Center starts it.
+    HOTKEY = "hotkey"
+    #: On from launch, subject to the permissions hover needs.
+    ALWAYS_ACTIVE = "always_active"
+
+
+#: What the hover toggle is bound to when nothing else is stored. The desktop
+#: binds no separate start and pause keys, so this position is free.
+DEFAULT_HOVER_HOTKEY = "ctrl+shift+f9"
+
+#: Tried in order when a stored manual binding already occupies the toggle's
+#: default. Deterministic so the same profile always migrates the same way.
+HOVER_HOTKEY_FALLBACKS: tuple[str, ...] = (
+    DEFAULT_HOVER_HOTKEY,
+    "ctrl+shift+f11",
+    "ctrl+shift+f12",
+    "ctrl+alt+h",
+)
+
+
 #: Supported bounds for the hover debounce, in milliseconds. Architecture V1
 #: tunes hover empirically inside roughly 80-250 ms; these wider bounds keep
 #: that experimentation open while rejecting values that cannot be a debounce.
@@ -40,6 +81,9 @@ HOVER_DELAY_MAX_MS = 2000
 SETTABLE_FIELDS = frozenset(
     {
         "hotkey",
+        "hover_hotkey",
+        "hover_activation",
+        "lookup_preload",
         "hover_delay_ms",
         "capture_mode",
         "capture_monitor",
@@ -64,6 +108,37 @@ def _coerce_capture_mode(value: object) -> CaptureMode:
         except ValueError as error:
             raise ValueError("capture_mode must be a supported capture mode") from error
     raise ValueError("capture_mode must be a supported capture mode")
+
+
+def _coerce_preload(value: object) -> LookupPreload:
+    if isinstance(value, LookupPreload):
+        return value
+    if isinstance(value, str):
+        try:
+            return LookupPreload(value)
+        except ValueError as error:
+            raise ValueError("lookup_preload must be a supported choice") from error
+    raise ValueError("lookup_preload must be a supported choice")
+
+
+def _coerce_activation(value: object) -> HoverActivation:
+    if isinstance(value, HoverActivation):
+        return value
+    if isinstance(value, str):
+        try:
+            return HoverActivation(value)
+        except ValueError as error:
+            raise ValueError("hover_activation must be a supported choice") from error
+    raise ValueError("hover_activation must be a supported choice")
+
+
+def _canonical(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty string")
+    try:
+        return canonical_hotkey(value)
+    except HotkeyError as error:
+        raise ValueError(f"{field} is not a usable key combination: {error}") from error
 
 
 def _coerce_theme(value: object) -> Theme:
@@ -151,6 +226,12 @@ class AppConfig:
     """
 
     hotkey: str = "ctrl+shift+space"
+    #: One binding turns automatic hover on and off. It is never the old manual
+    #: lookup key: reinterpreting a key the user already has would change what
+    #: their muscle memory does.
+    hover_hotkey: str = DEFAULT_HOVER_HOTKEY
+    hover_activation: HoverActivation = HoverActivation.HOTKEY
+    lookup_preload: LookupPreload = LookupPreload.WHEN_CAPTURE_STARTS
     # 80 ms sits at the low end of the architecture's empirical hover range.
     # It became affordable once a flat ROI stopped costing a full OCR call and
     # nearby cursor positions started reusing one cached recognition.
@@ -169,6 +250,14 @@ class AppConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.hotkey, str) or not self.hotkey.strip():
             raise ValueError("hotkey must be a non-empty string")
+        if not isinstance(self.hover_activation, HoverActivation):
+            object.__setattr__(
+                self, "hover_activation", _coerce_activation(self.hover_activation)
+            )
+        if not isinstance(self.lookup_preload, LookupPreload):
+            object.__setattr__(self, "lookup_preload", _coerce_preload(self.lookup_preload))
+        if _canonical(self.hotkey, "hotkey") == _canonical(self.hover_hotkey, "hover_hotkey"):
+            raise ValueError("the lookup and hover shortcuts must be different keys")
         if not isinstance(self.hover_delay_ms, int) or isinstance(self.hover_delay_ms, bool):
             raise ValueError("hover_delay_ms must be an integer")
         if not HOVER_DELAY_MIN_MS <= self.hover_delay_ms <= HOVER_DELAY_MAX_MS:
@@ -197,7 +286,10 @@ class AppConfig:
                 None if self.capture_region is None else self.capture_region.to_dict()
             ),
             "hotkey": self.hotkey,
+            "hover_activation": self.hover_activation.value,
             "hover_delay_ms": self.hover_delay_ms,
+            "hover_hotkey": self.hover_hotkey,
+            "lookup_preload": self.lookup_preload.value,
             "popup_enabled": self.popup_enabled,
             "theme": self.theme.value,
             "update_checks_enabled": self.update_checks_enabled,
@@ -211,13 +303,36 @@ class AppConfig:
         making an older client unable to start. Missing keys use current defaults.
         """
 
+        return cls.migrate(values)[0]
+
+    @classmethod
+    def migrate(cls, values: Mapping[str, Any]) -> tuple[AppConfig, tuple[str, ...]]:
+        """Build preferences from stored values, reporting what had to move.
+
+        A profile written before the hover toggle existed has a manual key and
+        nothing else. That key keeps doing exactly what it did; only the new
+        toggle has to find somewhere to live, and if the manual key is already
+        sitting in the toggle's default position the toggle moves rather than
+        the key the user has been pressing for months.
+        """
+
         if not isinstance(values, Mapping):
             raise ValueError("configuration must be a JSON object")
 
         defaults = cls()
+        notes: list[str] = []
         try:
-            return cls(
-                hotkey=cast(str, values.get("hotkey", defaults.hotkey)),
+            hotkey = cast(str, values.get("hotkey", defaults.hotkey))
+            hover_hotkey = _migrated_hover_hotkey(hotkey, values.get("hover_hotkey"), notes)
+            config = cls(
+                hotkey=hotkey,
+                hover_hotkey=hover_hotkey,
+                hover_activation=_coerce_activation(
+                    values.get("hover_activation", defaults.hover_activation)
+                ),
+                lookup_preload=_coerce_preload(
+                    values.get("lookup_preload", defaults.lookup_preload)
+                ),
                 hover_delay_ms=cast(int, values.get("hover_delay_ms", defaults.hover_delay_ms)),
                 capture_mode=_coerce_capture_mode(
                     values.get("capture_mode", defaults.capture_mode)
@@ -237,6 +352,32 @@ class AppConfig:
             )
         except (TypeError, ValueError) as error:
             raise ValueError(f"invalid application configuration: {error}") from error
+        return config, tuple(notes)
+
+
+def _migrated_hover_hotkey(
+    hotkey: object, stored: object, notes: list[str]
+) -> str:
+    """Choose the toggle's binding, moving it rather than the manual key.
+
+    A stored value is the user's own choice and is kept. Without one, the
+    default is used unless the manual lookup key already occupies it, in which
+    case the next free position in a fixed list is taken and said out loud.
+    """
+
+    if stored is not None:
+        return cast(str, stored)
+
+    manual = _canonical(hotkey, "hotkey")
+    for candidate in HOVER_HOTKEY_FALLBACKS:
+        if _canonical(candidate, "hover_hotkey") != manual:
+            if candidate != DEFAULT_HOVER_HOTKEY:
+                notes.append(
+                    f"Your lookup shortcut already uses {DEFAULT_HOVER_HOTKEY}, so the "
+                    f"hover toggle was set to {candidate}."
+                )
+            return candidate
+    raise ValueError("no hover toggle shortcut is free beside the lookup shortcut")
 
 
 class ConfigManager:
@@ -246,6 +387,7 @@ class ConfigManager:
         self._path = Path(path)
         self._defaults = defaults or AppConfig()
         self._config = self._defaults
+        self._migrations: tuple[str, ...] = ()
 
     @property
     def path(self) -> Path:
@@ -255,18 +397,25 @@ class ConfigManager:
     def config(self) -> AppConfig:
         return self._config
 
+    @property
+    def migrations(self) -> tuple[str, ...]:
+        """What the last load had to change, in words a user can act on."""
+
+        return self._migrations
+
     def load(self) -> AppConfig:
         """Load settings, using defaults only when the file does not exist."""
 
         if not self._path.exists():
             self._config = self._defaults
+            self._migrations = ()
             return self._config
 
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("configuration must be a JSON object")
-            self._config = AppConfig.from_dict(raw)
+            self._config, self._migrations = AppConfig.migrate(raw)
         except (OSError, json.JSONDecodeError, UnicodeError, ValueError) as error:
             raise ConfigError(f"could not load configuration from {self._path}") from error
         return self._config
@@ -311,13 +460,29 @@ class ConfigManager:
     def update(self, **changes: object) -> AppConfig:
         """Validate, persist, and return a copy with selected preferences changed."""
 
+        return self.save(self.candidate(**changes))
+
+    def candidate(self, **changes: object) -> AppConfig:
+        """Validate a change without persisting or applying it.
+
+        Settings that register a native shortcut have to be tried before they
+        are stored, so the candidate is built separately from the save.
+        """
+
         unknown = set(changes) - SETTABLE_FIELDS
         if unknown:
             names = ", ".join(sorted(unknown))
             raise TypeError(f"unknown application configuration field(s): {names}")
 
-        candidate = AppConfig(
+        return AppConfig(
             hotkey=cast(str, changes.get("hotkey", self._config.hotkey)),
+            hover_hotkey=cast(str, changes.get("hover_hotkey", self._config.hover_hotkey)),
+            hover_activation=_coerce_activation(
+                changes.get("hover_activation", self._config.hover_activation)
+            ),
+            lookup_preload=_coerce_preload(
+                changes.get("lookup_preload", self._config.lookup_preload)
+            ),
             hover_delay_ms=cast(int, changes.get("hover_delay_ms", self._config.hover_delay_ms)),
             capture_mode=_coerce_capture_mode(
                 changes.get("capture_mode", self._config.capture_mode)
@@ -335,4 +500,20 @@ class ConfigManager:
                 changes.get("update_checks_enabled", self._config.update_checks_enabled),
             ),
         )
-        return self.save(candidate)
+
+
+__all__ = [
+    "DEFAULT_HOVER_HOTKEY",
+    "HOVER_DELAY_MAX_MS",
+    "HOVER_DELAY_MIN_MS",
+    "HOVER_HOTKEY_FALLBACKS",
+    "SETTABLE_FIELDS",
+    "AppConfig",
+    "CaptureMode",
+    "CaptureRegion",
+    "ConfigError",
+    "ConfigManager",
+    "HoverActivation",
+    "LookupPreload",
+    "Theme",
+]

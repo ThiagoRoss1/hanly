@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +24,7 @@ from hanly_app.control_center import (
     load_control_center_assets,
 )
 from hanly_app.desktop_controller import DesktopState
+from hanly_app.diagnostics import DiagnosticLog
 from hanly_app.permissions import (
     Permission,
     PermissionService,
@@ -751,3 +753,264 @@ def test_platforms_without_privacy_gates_neither_report_nor_refuse() -> None:
     assert bridge.get_state()["permissions"] == {"supported": False, "items": []}
     assert bridge.start_capture()["app"]["capture_running"] is True
     assert runtime.events == ["start"]
+
+
+class _Bindings:
+    """A lifecycle whose ``apply_config`` registers shortcuts, or refuses to."""
+
+    def __init__(self, *, refuse: str | None = None, refuse_restore: bool = False) -> None:
+        self.state = DesktopState.NEW
+        self.applied: list[AppConfig] = []
+        self.registered = AppConfig()
+        self.rebinds = 0
+        self._refuse = refuse
+        self._refuse_restore = refuse_restore
+
+    def start(self) -> None:
+        self.state = DesktopState.RUNNING
+
+    def pause(self) -> None:
+        self.state = DesktopState.PAUSED
+
+    def resume(self) -> None:
+        self.state = DesktopState.RUNNING
+
+    def apply_config(self, config: AppConfig) -> None:
+        rebinding = config.hotkey != self.registered.hotkey or (
+            config.hover_hotkey != self.registered.hover_hotkey
+        )
+        if rebinding and self._refuse is not None:
+            raise RuntimeError(self._refuse)
+        if rebinding:
+            self.rebinds += 1
+            if self._refuse_restore and self.rebinds > 1:
+                raise RuntimeError("macOS refused to put the previous shortcut back")
+        self.applied.append(config)
+        self.registered = config
+
+    def set_capture_preferences(self, **_options: object) -> None:
+        pass
+
+
+def _rebinding_bridge(
+    tmp_path: Path, controller: _Bindings
+) -> tuple[ControlCenterBridge, ConfigManager]:
+    manager = ConfigManager(tmp_path / "settings.json")
+    bridge = ControlCenterBridge(
+        config_manager=manager,
+        desktop_controller=cast(Any, controller),
+        registered_hotkeys=lambda: {
+            "lookup": controller.registered.hotkey,
+            "toggle_hover": controller.registered.hover_hotkey,
+        },
+        engine_status=lambda: {"state": "sleeping", "message": "not loaded"},
+    )
+    return bridge, manager
+
+
+def test_a_shortcut_is_registered_before_it_is_stored(tmp_path: Path) -> None:
+    """A refused registration must never leave saved settings describing keys
+    the user's keyboard does not have."""
+
+    controller = _Bindings()
+    bridge, manager = _rebinding_bridge(tmp_path, controller)
+
+    bridge.update_settings({"hover_hotkey": "ctrl+alt+j"})
+
+    assert controller.registered.hover_hotkey == "ctrl+alt+j"
+    assert manager.config.hover_hotkey == "ctrl+alt+j"
+    assert ConfigManager(tmp_path / "settings.json").load().hover_hotkey == "ctrl+alt+j"
+
+
+def test_a_refused_registration_changes_nothing(tmp_path: Path) -> None:
+    controller = _Bindings(refuse="another application already uses that shortcut")
+    bridge, manager = _rebinding_bridge(tmp_path, controller)
+
+    with pytest.raises(Exception, match="another application"):
+        bridge.update_settings({"hotkey": "ctrl+alt+k"})
+
+    assert manager.config.hotkey == AppConfig().hotkey
+    assert not (tmp_path / "settings.json").exists()
+
+
+def test_a_save_that_fails_after_registration_puts_the_shortcuts_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = _Bindings()
+    bridge, manager = _rebinding_bridge(tmp_path, controller)
+
+    def refuse(_config: AppConfig | None = None) -> AppConfig:
+        raise OSError("the settings file is read only")
+
+    monkeypatch.setattr(manager, "save", refuse)
+
+    with pytest.raises(OSError, match="read only"):
+        bridge.update_settings({"hotkey": "ctrl+alt+k"})
+
+    assert controller.registered.hotkey == AppConfig().hotkey
+    assert bridge.get_state()["runtime"]["hotkeys"]["lookup"] == AppConfig().hotkey
+
+
+def test_a_lost_binding_is_never_reported_as_a_saved_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both halves failed, so the page is told to look at what is registered
+    rather than at a preference that never took effect."""
+
+    controller = _Bindings(refuse_restore=True)
+    bridge, manager = _rebinding_bridge(tmp_path, controller)
+
+    def refuse(_config: AppConfig | None = None) -> AppConfig:
+        raise OSError("the settings file is read only")
+
+    monkeypatch.setattr(manager, "save", refuse)
+
+    with pytest.raises(ControlCenterUnavailable, match="previous shortcuts back"):
+        bridge.update_settings({"hotkey": "ctrl+alt+k"})
+
+
+def test_a_setting_that_changes_no_shortcut_is_stored_then_applied(
+    tmp_path: Path,
+) -> None:
+    controller = _Bindings()
+    bridge, manager = _rebinding_bridge(tmp_path, controller)
+
+    bridge.update_settings({"lookup_preload": "always"})
+
+    assert manager.config.lookup_preload.value == "always"
+    assert controller.applied[-1].lookup_preload.value == "always"
+
+
+def test_the_snapshot_reports_the_engine_apart_from_shell_readiness(
+    tmp_path: Path,
+) -> None:
+    controller = _Bindings()
+    bridge, _manager = _rebinding_bridge(tmp_path, controller)
+
+    runtime = bridge.get_state()["runtime"]
+
+    assert runtime["engine"] == {"state": "sleeping", "message": "not loaded"}
+    assert runtime["status"]["phase"] == "idle"
+    assert runtime["hotkeys"]["toggle_hover"] == AppConfig().hover_hotkey
+
+
+def test_an_invented_activation_choice_names_what_was_offered(tmp_path: Path) -> None:
+    controller = _Bindings()
+    bridge, _manager = _rebinding_bridge(tmp_path, controller)
+
+    with pytest.raises(ValueError, match="always_active"):
+        bridge.update_settings({"hover_activation": "sometimes"})
+
+
+def test_every_new_preference_has_a_control_on_the_page() -> None:
+    """A setting the page cannot reach is a setting the user does not have."""
+
+    assets = load_control_center_assets()
+
+    for element in ("hover-hotkey", "hover-activation", "lookup-preload", "engine-state"):
+        assert f'id="{element}"' in assets.html
+    for choice in ("when_capture_starts", "always", "on_demand", "always_active"):
+        assert f'value="{choice}"' in assets.html
+    assert "update_settings" in assets.javascript
+
+
+def _log_bridge(tmp_path: Path) -> tuple[ControlCenterBridge, DiagnosticLog, Path]:
+    from hanly_app.diagnostics import RotatingLogFile
+
+    log_path = tmp_path / "logs" / "hanly.log"
+    log = DiagnosticLog(RotatingLogFile(log_path))
+    bridge = ControlCenterBridge(
+        config_manager=ConfigManager(tmp_path / "settings.json"),
+        diagnostics=log.snapshot,
+        diagnostic_log=log,
+        log_path=log_path,
+    )
+    return bridge, log, log_path
+
+
+def test_the_logs_panel_is_given_records_and_what_to_filter_them_by(
+    tmp_path: Path,
+) -> None:
+    bridge, log, _path = _log_bridge(tmp_path)
+    log.record("Capture", "Hanly is watching the screen.")
+    log.report("Startup", RuntimeError("no runtime"))
+
+    logs = bridge.get_logs()
+    records = cast(list[dict[str, str]], logs["records"])
+
+    assert [record["subsystem"] for record in records] == ["Capture", "Startup"]
+    assert [record["level"] for record in records] == ["info", "error"]
+    assert logs["subsystems"] == ["Capture", "Startup"]
+    assert logs["levels"] == ["info", "warning", "error"]
+
+
+def test_clearing_empties_both_the_panel_and_the_file(tmp_path: Path) -> None:
+    """A Clear that left the file behind is a promise the next export breaks."""
+
+    bridge, log, log_path = _log_bridge(tmp_path)
+    log.record("Capture", "Hanly is watching the screen.")
+    assert log_path.is_file()
+
+    logs = bridge.clear_logs()
+
+    assert logs["records"] == []
+    assert not log_path.exists()
+
+
+def test_a_file_that_cannot_be_emptied_is_reported_rather_than_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge, log, log_path = _log_bridge(tmp_path)
+    log.record("Capture", "watching")
+    real_unlink = Path.unlink
+
+    def refuse(self: Path, missing_ok: bool = False) -> None:
+        if self == log_path:
+            raise PermissionError("the log file is in use")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+
+    with pytest.raises(ControlCenterUnavailable, match="log file was not"):
+        bridge.clear_logs()
+    assert log.records() == ()
+
+
+def test_the_export_writes_a_shareable_report_beside_the_log(tmp_path: Path) -> None:
+    bridge, log, log_path = _log_bridge(tmp_path)
+    log.record("Capture", "Hanly is watching the screen.")
+
+    saved = bridge.export_diagnostics()
+
+    written = Path(str(saved["path"]))
+    assert written.parent == log_path.parent
+    assert saved["records"] == 1
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert payload["state"]["preferences"]["hotkey"] == AppConfig().hotkey
+    assert payload["records"][0]["subsystem"] == "Capture"
+    assert "platform" in payload and "versions" in payload
+
+
+def test_a_build_without_a_log_says_so_rather_than_exporting_nothing(
+    tmp_path: Path,
+) -> None:
+    bridge = ControlCenterBridge(config_manager=ConfigManager(tmp_path / "settings.json"))
+
+    with pytest.raises(ControlCenterUnavailable, match="no diagnostics log"):
+        bridge.export_diagnostics()
+    with pytest.raises(ControlCenterUnavailable, match="no diagnostics log"):
+        bridge.clear_logs()
+
+
+def test_the_logs_panel_renders_records_with_text_content_only() -> None:
+    """A log line can hold anything an operating system put in an error."""
+
+    assets = load_control_center_assets()
+
+    for element in ("log-list", "log-level", "log-subsystem", "log-search"):
+        assert f'id="{element}"' in assets.html
+    for action in ("refresh-logs", "copy-logs", "clear-logs", "export-diagnostics"):
+        assert f'id="{action}"' in assets.html
+    body = assets.javascript.split("function renderLogs(", 1)[1].split("function loadLogs", 1)[0]
+    assert "textContent" in body
+    assert "innerHTML = \"\"" in body

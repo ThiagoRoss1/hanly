@@ -725,6 +725,12 @@ class _TracingResolver:
     def set_request(self, request: LookupRequest) -> None:
         self._request = request
 
+    def word_bounds(self, region: OCRResult, target: Point) -> object:
+        """Forward the resolver's optional geometry; tracing must not hide it."""
+
+        bounds = getattr(self._resolver, "word_bounds", None)
+        return bounds(region, target) if callable(bounds) else None
+
     def resolve_target(
         self,
         ocr_results: Sequence[OCRResult] | None,

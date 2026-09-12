@@ -8,6 +8,7 @@ second way to start the desktop.
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -21,9 +22,8 @@ from .application import (
     run_desktop,
 )
 from .control_center import ControlCenterUnavailable
-from .diagnostics import DiagnosticLog, StartupTimeline, open_diagnostics
+from .diagnostics import DiagnosticLog, open_diagnostics
 from .first_run import FirstRunError
-from .ocr_preload import record_preload_timing
 from .runtime import RuntimeConfigError
 from .self_check import (
     RUNTIME_SELF_CHECK_MODES,
@@ -111,13 +111,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> NoReturn:
     """Run Hanly, reporting a startup failure rather than raising, then leave."""
 
+    # Before argument parsing and before anything is opened: a spawned child
+    # re-enters a frozen build through this same executable, and this is what
+    # diverts it into its own role instead of starting a second desktop.
+    multiprocessing.freeze_support()
+
     args = build_parser().parse_args(list(argv) if argv is not None else sys.argv[1:])
-    # Opened before the OCR runtime and Qt so a native initialization failure
-    # is already being written somewhere the user can find it.
+    # Opened before Qt so a native initialization failure is already being
+    # written somewhere the user can find it.
     diagnostics = open_diagnostics()
-    # The packaged runtime hook preloads OCR before this log exists, so its
-    # measurement is claimed here rather than measured a second time.
-    record_preload_timing(StartupTimeline(diagnostics))
     try:
         status = _start(
             args,

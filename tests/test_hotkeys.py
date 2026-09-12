@@ -67,6 +67,7 @@ def test_registers_all_actions_with_normalized_pynput_bindings() -> None:
         "<ctrl>+<shift>+<space>",
         "<ctrl>+<shift>+<f9>",
         "<ctrl>+<shift>+<f10>",
+        "<ctrl>+<shift>+<f11>",
     }
 
 

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from hanly_app import ocr_preload
 from hanly_app.diagnostics import (
     LOG_FILE_NAME,
+    MAX_RECORD_CHARS,
     DiagnosticLog,
     RotatingLogFile,
     StartupTimeline,
+    diagnostics_bundle,
     open_diagnostics,
     runtime_versions,
 )
@@ -124,10 +127,10 @@ def test_startup_phases_are_recorded_with_their_duration_and_outcome() -> None:
             raise RuntimeError("kiwipiepy is unavailable")
 
     assert log.snapshot() == (
-        "startup resources: 1500 ms (ok, attempt 2)",
-        "startup ocr runtime preload: 250 ms (loaded)",
-        "startup runtime ready at 2000 ms",
-        "startup lookup providers: 125 ms (failed: RuntimeError, attempt 2)",
+        "Startup: resources: 1500 ms (ok, attempt 2)",
+        "Startup: ocr runtime preload: 250 ms (loaded)",
+        "Startup: runtime ready at 2000 ms",
+        "Startup: lookup providers: 125 ms (failed: RuntimeError, attempt 2)",
     )
 
 
@@ -153,4 +156,95 @@ def test_the_preload_measurement_is_claimed_exactly_once(
     ocr_preload.record_preload_timing(timeline)
     ocr_preload.record_preload_timing(timeline)
 
-    assert log.snapshot() == ("startup ocr runtime preload: 750 ms (loaded)",)
+    assert log.snapshot() == ("Startup: ocr runtime preload: 750 ms (loaded)",)
+
+
+def test_a_record_carries_a_level_and_the_subsystem_that_produced_it() -> None:
+    log = DiagnosticLog()
+
+    log.record("Capture", "Hanly is watching the screen.")
+    log.record("Lookup engine", "sleeping", level="warning")
+
+    records = log.records()
+    assert [record.subsystem for record in records] == ["Capture", "Lookup engine"]
+    assert [record.level for record in records] == ["info", "warning"]
+    assert records[0].timestamp.endswith("+00:00")
+
+
+def test_the_one_line_tail_reads_exactly_as_it_always_did() -> None:
+    """Adding structure changed what a filter can do, not what a user reads."""
+
+    log = DiagnosticLog()
+
+    log.add("Hanly session started")
+    log.report("Startup", RuntimeError("no runtime"))
+
+    assert log.snapshot() == ("Hanly session started", "Startup: no runtime")
+
+
+def test_one_enormous_record_cannot_fill_the_panel_or_the_file(tmp_path: Path) -> None:
+    file = RotatingLogFile(tmp_path / "hanly.log")
+    log = DiagnosticLog(file)
+
+    log.record("OCR", "x" * (MAX_RECORD_CHARS * 4))
+
+    stored = log.records()[0].message
+    assert len(stored) == MAX_RECORD_CHARS
+    assert stored.endswith("…")
+    assert file.path.stat().st_size < MAX_RECORD_CHARS * 2
+
+
+def test_keeping_no_backups_still_bounds_the_file(tmp_path: Path) -> None:
+    """Without this the current log simply grows for ever."""
+
+    file = RotatingLogFile(tmp_path / "hanly.log", max_bytes=200, backup_count=0)
+
+    for index in range(40):
+        file.write(f"record {index} " + "y" * 40)
+
+    assert file.path.stat().st_size <= 200
+    assert not (tmp_path / "hanly.log.1").exists()
+
+
+def test_clearing_forgets_the_tail_without_touching_the_file(tmp_path: Path) -> None:
+    file = RotatingLogFile(tmp_path / "hanly.log")
+    log = DiagnosticLog(file)
+    log.record("Capture", "watching")
+
+    log.clear()
+
+    assert log.records() == ()
+    assert file.path.is_file()
+
+
+def test_an_exported_bundle_carries_no_path_from_this_machine(tmp_path: Path) -> None:
+    log = DiagnosticLog()
+    home = tmp_path / "home"
+    log.record("Preferences", f"could not read {home}/hanly/config.json")
+
+    bundle = diagnostics_bundle(
+        log.records(),
+        state={"log_path": f"{home}/hanly/logs/hanly.log"},
+        versions={"hanly": "0.1.3"},
+        home=home,
+    )
+
+    payload = json.loads(json.dumps(bundle))
+    assert str(home) not in json.dumps(bundle)
+    assert payload["records"][0]["message"].startswith("could not read ~/")
+    assert payload["state"]["log_path"] == "~/hanly/logs/hanly.log"
+    assert payload["versions"] == {"hanly": "0.1.3"}
+    assert payload["platform"]["frozen"] is False
+
+
+def test_an_exported_bundle_redacts_anything_that_reads_as_a_credential() -> None:
+    log = DiagnosticLog()
+    log.record("Updates", "refused: token=ghp_secretvalue")
+
+    bundle = diagnostics_bundle(
+        log.records(), state={"github_token": "ghp_secretvalue"}
+    )
+
+    payload = json.dumps(bundle)
+    assert "ghp_secretvalue" not in payload
+    assert "[redacted]" in payload

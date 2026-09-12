@@ -5,7 +5,17 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from hanly_app.config import AppConfig, CaptureMode, CaptureRegion, ConfigManager, Theme
+from hanly_app.config import (
+    DEFAULT_HOVER_HOTKEY,
+    HOVER_HOTKEY_FALLBACKS,
+    AppConfig,
+    CaptureMode,
+    CaptureRegion,
+    ConfigManager,
+    HoverActivation,
+    LookupPreload,
+    Theme,
+)
 
 
 def test_default_config_is_valid_and_contains_only_desktop_preferences() -> None:
@@ -146,3 +156,91 @@ def test_an_unusable_capture_region_is_rejected(region: dict[str, object]) -> No
 def test_a_monitor_index_must_be_one_of_the_capture_service_indices() -> None:
     with pytest.raises(ValueError, match="capture_monitor"):
         AppConfig(capture_monitor=0)
+
+
+def test_a_profile_written_before_the_hover_toggle_keeps_its_lookup_key(
+    tmp_path: Path,
+) -> None:
+    """Reinterpreting the key the user has been pressing for months would be
+    the worst possible migration."""
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"hotkey": "ctrl+alt+k", "hover_delay_ms": 140}), encoding="utf-8"
+    )
+    manager = ConfigManager(path)
+
+    config = manager.load()
+
+    assert config.hotkey == "ctrl+alt+k"
+    assert config.hover_delay_ms == 140
+    assert config.hover_hotkey == DEFAULT_HOVER_HOTKEY
+    assert config.hover_activation is HoverActivation.HOTKEY
+    assert config.lookup_preload is LookupPreload.WHEN_CAPTURE_STARTS
+    assert manager.migrations == ()
+
+
+def test_a_lookup_key_sitting_on_the_toggle_default_moves_the_toggle(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"hotkey": DEFAULT_HOVER_HOTKEY}), encoding="utf-8")
+    manager = ConfigManager(path)
+
+    config = manager.load()
+
+    assert config.hotkey == DEFAULT_HOVER_HOTKEY
+    assert config.hover_hotkey == HOVER_HOTKEY_FALLBACKS[1]
+    assert manager.migrations
+    assert DEFAULT_HOVER_HOTKEY in manager.migrations[0]
+
+
+def test_a_stored_toggle_binding_is_the_users_choice_and_is_kept(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"hover_hotkey": "ctrl+alt+j"}), encoding="utf-8")
+
+    config = ConfigManager(path).load()
+
+    assert config.hover_hotkey == "ctrl+alt+j"
+
+
+def test_the_two_shortcuts_may_not_be_the_same_key() -> None:
+    with pytest.raises(ValueError, match="different keys"):
+        AppConfig(hotkey="ctrl+shift+k", hover_hotkey="Ctrl+Shift+K")
+
+
+def test_the_new_preferences_round_trip_through_stored_json(tmp_path: Path) -> None:
+    manager = ConfigManager(tmp_path / "config.json")
+
+    manager.update(
+        lookup_preload="always",
+        hover_activation="always_active",
+        hover_hotkey="ctrl+alt+j",
+    )
+
+    reloaded = ConfigManager(tmp_path / "config.json").load()
+    assert reloaded.lookup_preload is LookupPreload.ALWAYS
+    assert reloaded.hover_activation is HoverActivation.ALWAYS_ACTIVE
+    assert reloaded.hover_hotkey == "ctrl+alt+j"
+
+
+def test_an_invented_preload_choice_is_refused(tmp_path: Path) -> None:
+    manager = ConfigManager(tmp_path / "config.json")
+
+    with pytest.raises(ValueError, match="lookup_preload"):
+        manager.update(lookup_preload="whenever")
+
+
+def test_a_candidate_is_validated_without_being_stored(tmp_path: Path) -> None:
+    """A shortcut has to be tried with the operating system before it is saved."""
+
+    path = tmp_path / "config.json"
+    manager = ConfigManager(path)
+
+    candidate = manager.candidate(hover_hotkey="ctrl+alt+j")
+
+    assert candidate.hover_hotkey == "ctrl+alt+j"
+    assert manager.config.hover_hotkey == DEFAULT_HOVER_HOTKEY
+    assert not path.exists()

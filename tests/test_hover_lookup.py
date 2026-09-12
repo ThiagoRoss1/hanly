@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.hotkeys import HotkeyAction
 from hanly_app.hover_lookup import HoverLookupRuntime
 from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
@@ -122,6 +123,10 @@ class _HotkeyRuntime:
     def __init__(self) -> None:
         self.registered = False
         self.closed = False
+
+    @property
+    def bindings(self) -> Mapping[HotkeyAction, str]:
+        return {HotkeyAction.LOOKUP: "<ctrl>+<shift>+<space>"}
 
     def register(self) -> None:
         self.registered = True
@@ -480,7 +485,9 @@ def test_manual_composition_attaches_hover_to_the_same_controller_capture_and_po
     assert popup_results == [_result()]
 
     manual.pause()
-    assert manual.started is True
+    # Pausing stops watching the screen; the session and its shortcuts stay up.
+    assert manual.started is False
+    assert manual.prepared is True
     assert listeners.listeners[0].stopped == 1
     manual.start()
     assert len(listeners.listeners) == 2

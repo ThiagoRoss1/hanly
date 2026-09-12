@@ -45,6 +45,11 @@
             <p class="hint" id="runtime-message">Hanly is getting its resources ready.</p>
             <button class="text-button" id="retry-runtime" type="button" hidden>Try again</button>
           </div>
+          <div class="status-item engine-item" data-state="sleeping" id="engine-item">
+            <span class="status-label">Lookup engine</span>
+            <strong id="engine-state">Not loaded</strong>
+            <p class="hint" id="engine-message">Hanly loads it when a lookup needs it.</p>
+          </div>
           <div class="status-item">
             <span class="status-label">OCR provider</span>
             <strong id="ocr-provider">—</strong>
@@ -120,9 +125,51 @@
             <div class="resource-list" id="resource-list" aria-live="polite"></div>
           </section>
 
+          <section class="workspace-section logs-section" aria-labelledby="logs-heading">
+            <div class="section-intro">
+              <p class="eyebrow">04 / logs</p>
+              <h2 id="logs-heading">What Hanly has been doing</h2>
+              <p>Startup, capture, the lookup engine, and anything that went wrong.</p>
+            </div>
+            <div class="logs-controls">
+              <div class="field-grid">
+                <label class="field">
+                  <span>Level</span>
+                  <select id="log-level">
+                    <option value="all">All</option>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Subsystem</span>
+                  <select id="log-subsystem">
+                    <option value="all">All</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>Search</span>
+                <input id="log-search" type="search" spellcheck="false" autocomplete="off"
+                       placeholder="Filter by text">
+              </label>
+              <div class="action-row">
+                <button class="button button-quiet" id="refresh-logs" type="button">Refresh</button>
+                <button class="button button-quiet" id="copy-logs" type="button">Copy</button>
+                <button class="button button-quiet" id="export-diagnostics" type="button">
+                  Save report
+                </button>
+                <button class="button button-quiet" id="clear-logs" type="button">Clear</button>
+              </div>
+              <p class="hint" id="log-summary">No records yet.</p>
+              <div class="log-list" id="log-list" role="log" aria-live="polite"></div>
+            </div>
+          </section>
+
           <section class="workspace-section settings-section" aria-labelledby="settings-heading">
             <div class="section-intro">
-              <p class="eyebrow">03 / settings</p>
+              <p class="eyebrow">05 / settings</p>
               <h2 id="settings-heading">Make it feel like yours</h2>
               <p>These preferences stay local to the desktop client.</p>
             </div>
@@ -134,6 +181,28 @@
               <label class="field">
                 <span>Lookup hotkey</span>
                 <input id="hotkey" type="text" spellcheck="false" autocomplete="off">
+                <small class="field-hint" id="hotkey-registered"></small>
+              </label>
+              <label class="field">
+                <span>Hover toggle hotkey</span>
+                <input id="hover-hotkey" type="text" spellcheck="false" autocomplete="off">
+                <small class="field-hint" id="hover-hotkey-registered"></small>
+              </label>
+              <label class="field">
+                <span>Automatic hover</span>
+                <select id="hover-activation">
+                  <option value="hotkey">Off until switched on</option>
+                  <option value="always_active">On from launch</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Lookup engine</span>
+                <select id="lookup-preload">
+                  <option value="when_capture_starts">Load while watching the screen</option>
+                  <option value="always">Keep loaded</option>
+                  <option value="on_demand">Load only for a lookup</option>
+                </select>
+                <small class="field-hint">Keeping it loaded is faster and uses about a gigabyte.</small>
               </label>
             </div>
             <div class="update-panel" aria-live="polite">

@@ -1,14 +1,16 @@
-"""The one order in which Hanly brings Qt up, and the one application it uses.
+"""The one ``QApplication`` a Hanly process owns, created in one place.
 
-Three things must happen before anything native is constructed, in this order:
-the OCR runtime loads its libraries while the process still has its original
-library search path, Qt WebEngine gets its shared-OpenGL attribute, and only
-then is a ``QApplication`` created -- with a program name, because Qt WebEngine
-initializes Chromium's command line from the application arguments and aborts
-without argument zero.
+Qt registers window classes on construction and never unregisters them, so a
+second application object in the same process is not a fresh start. Every
+caller goes through :func:`ensure_qt_application` so that decision exists once.
 
-Every caller goes through :func:`ensure_qt_application` so that ordering exists
-in one place instead of being repeated at each entry into the UI.
+The program name is not cosmetic: Qt WebEngine initializes Chromium's command
+line from the application arguments and aborts without argument zero. The
+shell has no WebEngine, but the Control Center child creates its application
+through this same function.
+
+Nothing heavy is imported here. Qt WebEngine belongs to the Control Center
+child and the OCR runtime to the lookup child; the shell has neither.
 """
 
 from __future__ import annotations
@@ -16,20 +18,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from .control_center import ControlCenterUnavailable, prepare_control_center_qt
+from .control_center import ControlCenterUnavailable
 from .diagnostics import DiagnosticLog, install_qt_message_handler
-from .ocr_preload import DiagnosticReporter, preload_ocr_runtime
 
 QT_PROGRAM_ARGUMENTS: tuple[str, ...] = ("hanly",)
 
 _application: Any = None
-
-
-def prepare_qt_runtime(*, on_diagnostic: DiagnosticReporter | None = None) -> None:
-    """Load the OCR runtime and Qt WebEngine before any Qt object exists."""
-
-    preload_ocr_runtime(on_diagnostic=on_diagnostic)
-    prepare_control_center_qt()
 
 
 def ensure_qt_application(
@@ -37,7 +31,7 @@ def ensure_qt_application(
     *,
     diagnostics: DiagnosticLog | None = None,
 ) -> Any:
-    """Return the process's single ``QApplication``, creating it if needed.
+    """Return this process's single ``QApplication``, creating it if needed.
 
     ``diagnostics``, when given, also receives Qt's own messages, so a fatal
     Qt error is recorded before the abort rather than lost with the missing
@@ -45,9 +39,6 @@ def ensure_qt_application(
     """
 
     global _application
-
-    reporter = None if diagnostics is None else diagnostics.add
-    prepare_qt_runtime(on_diagnostic=reporter)
 
     try:
         from PyQt6.QtWidgets import QApplication
@@ -76,6 +67,5 @@ def qt_application() -> Any:
 __all__ = [
     "QT_PROGRAM_ARGUMENTS",
     "ensure_qt_application",
-    "prepare_qt_runtime",
     "qt_application",
 ]

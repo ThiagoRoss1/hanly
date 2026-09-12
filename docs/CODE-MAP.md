@@ -40,11 +40,13 @@ a second entry point appears.
 
 ```
 cli.main
+  └─ multiprocessing.freeze_support()            diverts a spawned child first of all
   └─ diagnostics.open_diagnostics()              rotating log, before anything native
   └─ application.run_desktop()                   the app itself
-        └─ qt_bootstrap.ensure_qt_application()  OCR → WebEngine → QApplication("hanly")
-        └─ control_center_host.run()             the one window, the one event loop
+        └─ qt_bootstrap.ensure_qt_application()  QApplication("hanly"), Qt Widgets only
+        └─ DesktopApplication.run()              the shell owns the one event loop
         └─ startup.StartupCoordinator.start()    off-thread, behind the open window
+              └─ owned_cleanup                   what an interrupted session left
               └─ application.resolve_runtime_config()
                     └─ first_run.provision_runtime_config()   runtime.json, krdict
               └─ runtime.load_runtime()
@@ -53,6 +55,32 @@ cli.main
 
 Nothing is asked before the window opens. The interface is on screen while
 resources download and providers warm, and it stays usable if either fails.
+
+### Three processes
+
+The shell never exits while Hanly is running, so it must never hold memory a
+library will not give back. Qt WebEngine and the OCR/morphology/dictionary
+providers do exactly that, so each lives in a child the shell can retire.
+
+```
+hanly (the shell)                 Qt Widgets, tray, hotkeys, capture, hover,
+  │                               popup, settings, updates, the session log
+  ├── hanly-control-center        pywebview + Qt WebEngine + the page
+  │     (spawned on open, gone on close; opening again is a new process)
+  └── hanly-lookup                EasyOCR + Kiwi + KRDICT + the pipeline
+        (spawned by the preload policy; retired on pause, or after an idle
+         manual session; a lookup wakes a sleeping engine on demand)
+```
+
+`process_transport.py` is the one way they talk: an inherited duplex `Pipe`,
+explicitly pickled messages with a checked size, serialized sends, and one
+reader per direction. There is no listening port, no dispatch by name from the
+wire, and no shell command line.
+
+Measured on macOS: the shell holds about 60 MiB for a whole session. The window
+costs roughly 300 MiB while it is open and gives all of it back on close; the
+lookup engine costs roughly 800 MiB while it is loaded and gives all of it back
+when it is retired.
 
 `main` ends the process rather than returning into interpreter finalization.
 Qt WebEngine keeps Chromium alive until the process is gone, and unloading its
@@ -63,9 +91,11 @@ libraries on the way out is what a quit used to hang or fail fast on. See
 
 ## 3. Startup, in order
 
-1. **`hanly_app/ocr_preload.py`** — imports EasyOCR *before* Qt. On Windows Qt
-   changes native-library resolution once it initializes, so the OCR stack has
-   to load first. A failure here is a reported diagnostic, not a crash.
+1. **`hanly_app/ocr_preload.py`** — imports EasyOCR before anything else *in the
+   lookup child*. On Windows Qt changes native-library resolution once it
+   initializes, and the child loads the OCR stack before it does anything else.
+   The shell never imports it at all. A failure here is a reported diagnostic,
+   not a crash.
 2. **`hanly_app/first_run.py`** — a launch with no configuration of its own
    writes a default `runtime.json` under the per-user settings directory, then
    provisions any missing resource through `UpdateService`. Today that is only
@@ -75,11 +105,12 @@ libraries on the way out is what a quit used to hang or fail fast on. See
    *factories* (not instances) for the three providers.
 4. **`hanly_app/composition.py`** — wires those factories into a
    `LookupWorker`, wrapping them in caching, text-presence, and tracing layers.
-5. **`hanly_app/application.py`** — builds the shell (window, tray, settings,
-   diagnostics, runtime status) first, then everything that needs a validated
-   runtime once `startup.StartupCoordinator` has one. The event loop belongs to
-   `control_center_host.ControlCenterHost.run()`: pywebview's Qt backend calls
-   `QApplication.exec` itself, so nothing else may.
+5. **`hanly_app/application.py`** — builds the shell (tray, settings,
+   diagnostics, runtime status, and the Control Center child) first, then
+   everything that needs a validated runtime once `startup.StartupCoordinator`
+   has one. The event loop belongs to the shell, with
+   `setQuitOnLastWindowClosed(False)`: every Hanly window is transient, and the
+   Control Center is not even in this process.
 
 Steps 2 and 3 happen **after** the window is visible, on the startup
 coordinator's thread. Readiness is reported through
@@ -87,8 +118,13 @@ coordinator's thread. Readiness is reported through
 launching reaches `ready` without watching the screen, and the Start action is
 what begins capture.
 
-Providers are constructed **on the worker thread that will later close them** —
-a SQLite connection belongs to the thread that opened it.
+Providers are constructed **on the thread that will later close them**, inside
+the lookup child — a SQLite connection belongs to the thread that opened it.
+
+**Readiness is not residency.** `runtime_status.RuntimeStatus` says whether a
+lookup can happen at all; `LookupEngine.state` (sleeping, preparing, ready,
+error) says whether the providers are loaded right now. Which of those the
+launch pays for is `config.LookupPreload`.
 
 ---
 
@@ -96,17 +132,19 @@ a SQLite connection belongs to the thread that opened it.
 
 ```
 hover (or hotkey)
-  → debounce + cursor-validity check      hover_controller.py
-  → small ROI capture                     capture.py
-  → submit, bounded / latest-wins         lookup_controller.py
-  → worker thread                         job_executor.py
-      → OCR                               easyocr_provider.py
-      → pick the word under the cursor    word_resolver.py
-      → Hangul-only gate                  lookup_pipeline.py
-      → morphology (lemma)                kiwi_provider.py
-      → dictionary                        krdict_provider.py
-  → final request-currency check          lookup_controller.py
-  → popup                                 qt_popup.py / popup.py
+  → is the cursor still on the last answer?   hover_target.py     (if so, stop here)
+  → debounce + cursor-validity check          hover_controller.py
+  → small ROI capture                         capture.py
+  → submit, bounded / latest-wins             lookup_controller.py
+  → executor thread                           job_executor.py
+  → across the pipe into the lookup child     lookup_process.py
+      → OCR                                   easyocr_provider.py
+      → pick the word under the cursor        word_resolver.py
+      → Hangul-only gate                      lookup_pipeline.py
+      → morphology (lemma)                    kiwi_provider.py
+      → dictionary                            krdict_provider.py
+  → final request-currency check              lookup_controller.py
+  → popup, and the word it came from retained qt_popup.py / hover_target.py
 ```
 
 `LookupPipeline` (`packages/hanly/src/hanly/lookup_pipeline.py`) is the only
@@ -120,6 +158,10 @@ Two rules that are easy to break:
 - **`LookupResult` models success, normal non-success** (empty / not-found /
   unusable / low confidence), **and processing errors.** Non-success is not an
   exception.
+- **A successful answer is retained while the cursor is on it.** Movement inside
+  the union of the expanded word and the popup frame starts no capture and
+  dismisses nothing; a real exit keeps the answer for a short grace so the gap
+  to the popup can be crossed.
 
 ---
 
@@ -247,16 +289,18 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 |---|---|
 | `application.py` | Composition root: `run_desktop`, the desktop session, shutdown |
 | `cli.py` | The one entry point: parser, dispatch, `--self-check`, process exit |
-| `qt_bootstrap.py` | OCR → WebEngine → the one `QApplication`, with a program name |
+| `qt_bootstrap.py` | The one `QApplication` per process, with a program name. Nothing heavy |
 | `startup.py` | Prepares the runtime off the UI thread, behind the open window |
-| `ocr_preload.py` | Imports EasyOCR before Qt |
+| `ocr_preload.py` | Imports EasyOCR first, in the lookup child |
 | `first_run.py` | Writes the default config, provisions missing resources |
 | `runtime.py` | JSON config → validated `HanlyRuntime` with provider factories |
 | `composition.py` | Builds the worker: caching, text-presence gate, tracing wrappers |
 | `config.py` | Per-user preferences, including the capture target and region |
 | `paths.py` | Per-user settings, runtime-config, and log locations |
-| `diagnostics.py` | Rotating session log plus the tail the interface shows |
-| `runtime_status.py` | Readiness, separate from the capture lifecycle |
+| `diagnostics.py` | Rotating session log, the filterable record tail, and the sanitized export |
+| `owned_cleanup.py` | What an interrupted session left behind, and what must never be removed |
+| `process_transport.py` | The one way the shell and its children talk |
+| `runtime_status.py` | Readiness, separate from the capture lifecycle and from engine residency |
 | `self_check.py` | `--self-check`: the frozen bundle proving its own runtime and window |
 
 **Input and capture**
@@ -279,10 +323,12 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 | File | What it does |
 |---|---|
 | `lookup_controller.py` | Request IDs, stale handling, bounded / latest-wins submission |
-| `job_executor.py` | The worker thread that owns the providers |
-| `hover_lookup.py` | The hover-driven lookup runtime |
-| `manual_lookup.py` | The hotkey-driven lookup runtime, and the Qt composition |
-| `runtime_trace.py` | Structured per-stage trace events |
+| `job_executor.py` | The executor thread: one job running, one latest pending |
+| `lookup_process.py` | The lookup child, its transport, and the engine that owns provider residency |
+| `hover_lookup.py` | The hover-driven lookup runtime, and the answer the cursor may rest on |
+| `hover_target.py` | Where a result came from on screen, and what protects it |
+| `manual_lookup.py` | The hotkey-driven runtime, the preload policy, and the Qt composition |
+| `runtime_trace.py` | Structured per-stage trace events, forwarded from the child |
 
 **Presentation and shell**
 
@@ -290,8 +336,9 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 |---|---|
 | `popup.py` / `qt_popup.py` | The dictionary popup |
 | `tray.py` | System tray |
-| `control_center.py` | The bridge behind the window (`assets/control_center/`) |
-| `control_center_host.py` | The one window and the process's only event loop |
+| `control_center.py` | The bridge behind the window (`assets/control_center/`), which stays in the shell |
+| `control_center_process.py` | The window's own process, its operation allowlist, and the proxy the page calls |
+| `control_center_host.py` | One pywebview window and the loop it runs in |
 | `desktop_controller.py` | Start / pause / resume state |
 | `signal_bridge.py` | Ctrl+C → clean Qt shutdown |
 

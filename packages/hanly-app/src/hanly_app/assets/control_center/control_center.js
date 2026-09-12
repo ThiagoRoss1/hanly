@@ -3,8 +3,8 @@
 
   const fallbackState = {
     app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
-    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space" },
-    runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" } },
+    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", hover_activation: "hotkey", lookup_preload: "when_capture_starts" },
+    runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" }, engine: { state: "sleeping", message: "" }, hotkeys: {} },
     updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
     permissions: { supported: false, items: [] }
   };
@@ -200,6 +200,36 @@
     });
   }
 
+  // The engine is where the memory is, and it is allowed to be asleep while
+  // Hanly is perfectly ready: a lookup loads it. Saying so is the difference
+  // between "not working" and "not loaded yet".
+  const ENGINE_LABELS = {
+    sleeping: "Not loaded",
+    preparing: "Loading…",
+    ready: "Loaded",
+    error: "Error"
+  };
+
+  function renderEngine(runtime) {
+    const engine = runtime.engine || fallbackState.runtime.engine;
+    const item = byId("engine-item");
+    item.dataset.state = engine.state || "sleeping";
+    byId("engine-state").textContent = ENGINE_LABELS[engine.state] || formatStatus(engine.state);
+    byId("engine-message").textContent = engine.message || "";
+  }
+
+  // What the operating system actually accepted, which is not always what was
+  // asked for: a combination another application owns stays with that one.
+  function renderRegisteredHotkeys(runtime) {
+    const registered = runtime.hotkeys || {};
+    [["hotkey", "lookup"], ["hover-hotkey", "toggle_hover"]].forEach(function (pair) {
+      const hint = byId(pair[0] + "-registered");
+      const live = registered[pair[1]];
+      const asked = byId(pair[0]).value;
+      hint.textContent = live && live !== asked ? "Registered as " + live : "";
+    });
+  }
+
   function renderRuntimeStatus(runtime) {
     const status = runtime.status || fallbackState.runtime.status;
     const item = byId("runtime-item");
@@ -252,11 +282,16 @@
     byId("capture-mode").value = app.capture_mode || "full_monitor";
     byId("hover-delay").value = config.hover_delay_ms || 150;
     byId("hotkey").value = config.hotkey || "";
+    byId("hover-hotkey").value = config.hover_hotkey || "";
+    byId("hover-activation").value = config.hover_activation || "hotkey";
+    byId("lookup-preload").value = config.lookup_preload || "when_capture_starts";
     byId("region-hint").textContent = regionHint(app);
     ["left", "top", "width", "height"].forEach(function (field) {
       byId("region-" + field).value = app.region ? app.region[field] : "";
     });
     renderRuntimeStatus(runtime);
+    renderEngine(runtime);
+    renderRegisteredHotkeys(runtime);
     renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
@@ -311,6 +346,12 @@
       .catch(showActionError);
   }
 
+  // A rejected settings change has to put the control back to what is really
+  // stored, or the page keeps showing a choice that never took effect.
+  function settings(changes) {
+    return invoke("update_settings", changes).then(function () { renderState(currentState); });
+  }
+
   byId("start-capture").addEventListener("click", function () { invoke("start_capture"); });
   byId("stop-capture").addEventListener("click", function () { invoke("stop_capture"); });
   byId("capture-mode").addEventListener("change", function (event) { invoke("set_capture_mode", event.target.value); });
@@ -348,6 +389,9 @@
   byId("quit-hanly").addEventListener("click", function () { invoke("quit"); });
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
+  byId("hover-hotkey").addEventListener("change", function (event) { settings({ hover_hotkey: event.target.value }); });
+  byId("hover-activation").addEventListener("change", function (event) { settings({ hover_activation: event.target.value }); });
+  byId("lookup-preload").addEventListener("change", function (event) { settings({ lookup_preload: event.target.value }); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });
   byId("update-application").addEventListener("click", function () { invoke("install_application_update"); });
   byId("release-notes").addEventListener("click", function () { invoke("open_release_notes"); });
@@ -356,11 +400,131 @@
     invoke("install_update", resourceId || undefined);
   });
 
-  window.addEventListener("pywebviewready", function () {
-    invoke("get_state");
+  // ---- Logs ------------------------------------------------------------
+  // Records render through textContent only: a log line can hold anything a
+  // provider or the operating system put in an error message, and none of it
+  // is markup.
+
+  let logState = { records: [], subsystems: [] };
+
+  function matchesFilters(record) {
+    const level = byId("log-level").value;
+    const subsystem = byId("log-subsystem").value;
+    const search = byId("log-search").value.trim().toLowerCase();
+    if (level !== "all" && level !== "" && record.level !== level) return false;
+    if (subsystem !== "all" && subsystem !== "" && record.subsystem !== subsystem) return false;
+    if (search && (record.message || "").toLowerCase().indexOf(search) === -1) return false;
+    return true;
+  }
+
+  function localTime(timestamp) {
+    const parsed = new Date(timestamp);
+    return isNaN(parsed.getTime()) ? String(timestamp || "") : parsed.toLocaleTimeString();
+  }
+
+  function visibleRecords() {
+    return (logState.records || []).filter(matchesFilters);
+  }
+
+  function renderSubsystems(subsystems) {
+    const select = byId("log-subsystem");
+    const selected = select.value || "all";
+    select.innerHTML = "<option value=\"all\">All</option>";
+    (subsystems || []).forEach(function (name) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    });
+    select.value = (subsystems || []).indexOf(selected) === -1 ? "all" : selected;
+  }
+
+  function renderLogs() {
+    const list = byId("log-list");
+    const records = visibleRecords();
+    list.innerHTML = "";
+    records.forEach(function (record) {
+      const row = document.createElement("div");
+      row.className = "log-row";
+      row.dataset.level = record.level || "info";
+      ["log-time", "log-subsystem", "log-message"].forEach(function (className, index) {
+        const cell = document.createElement("span");
+        cell.className = className;
+        cell.textContent = [
+          localTime(record.timestamp),
+          record.subsystem,
+          record.message
+        ][index];
+        row.appendChild(cell);
+      });
+      list.appendChild(row);
+    });
+    const total = (logState.records || []).length;
+    byId("log-summary").textContent = total === 0
+      ? "No records yet."
+      : records.length + " of " + total + " records";
+  }
+
+  function loadLogs() {
+    const api = bridge();
+    if (!api || typeof api.get_logs !== "function") return Promise.resolve();
+    return api.get_logs().then(function (state) {
+      logState = state || { records: [], subsystems: [] };
+      renderSubsystems(logState.subsystems);
+      renderLogs();
+    }).catch(showActionError);
+  }
+
+  function logsAsText() {
+    return visibleRecords().map(function (record) {
+      return [record.timestamp, record.level, record.subsystem, record.message].join("\t");
+    }).join("\n");
+  }
+
+  byId("log-level").addEventListener("change", renderLogs);
+  byId("log-subsystem").addEventListener("change", renderLogs);
+  byId("log-search").addEventListener("input", renderLogs);
+  byId("refresh-logs").addEventListener("click", function () { showActionError(""); loadLogs(); });
+  byId("copy-logs").addEventListener("click", function () {
+    if (!navigator.clipboard) { showActionError("This window cannot reach the clipboard."); return; }
+    navigator.clipboard.writeText(logsAsText()).then(function () {
+      byId("log-summary").textContent = "Copied " + visibleRecords().length + " records.";
+    }).catch(function () { showActionError("The records could not be copied."); });
   });
+  byId("clear-logs").addEventListener("click", function () {
+    const api = bridge();
+    if (!api || typeof api.clear_logs !== "function") return;
+    showActionError("");
+    api.clear_logs().then(function (state) {
+      logState = state || { records: [], subsystems: [] };
+      renderSubsystems(logState.subsystems);
+      renderLogs();
+    }).catch(function (error) { showActionError(error); loadLogs(); });
+  });
+  byId("export-diagnostics").addEventListener("click", function () {
+    const api = bridge();
+    if (!api || typeof api.export_diagnostics !== "function") return;
+    showActionError("");
+    api.export_diagnostics().then(function (saved) {
+      byId("log-summary").textContent = "Saved " + saved.records + " records to " + saved.path;
+    }).catch(showActionError);
+  });
+
+  function load() {
+    invoke("get_state");
+    loadLogs();
+  }
+
+  window.addEventListener("pywebviewready", load);
+  // Hanly itself pushes a nudge when state it owns moved under the page --
+  // readiness settling, capture starting from the tray, an update finishing --
+  // so a visible window stays current without polling for it.
+  window.hanlyRefresh = function () {
+    refresh();
+    loadLogs();
+  };
   renderState(fallbackState);
 
   // The ready event may already have fired before this script ran.
-  if (bridge()) invoke("get_state");
+  if (bridge()) load();
 }());

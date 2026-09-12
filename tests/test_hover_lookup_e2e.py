@@ -23,6 +23,7 @@ from hanly import (
 from hanly.word_resolver import WordResolver
 from hanly_app.capture import CaptureResult, ScreenRect
 from hanly_app.composition import create_lookup_controller
+from hanly_app.hotkeys import HotkeyAction
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
 
 _UI_POINT = Point(120, 80)
@@ -112,6 +113,10 @@ class _MouseListenerFactory:
 
 
 class _HotkeyRuntime:
+    @property
+    def bindings(self) -> Mapping[HotkeyAction, str]:
+        return {HotkeyAction.LOOKUP: "<ctrl>+<shift>+<space>"}
+
     def register(self) -> None:
         pass
 

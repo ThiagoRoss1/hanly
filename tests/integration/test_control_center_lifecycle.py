@@ -1,10 +1,11 @@
-"""Real-desktop proof that Hanly runs one window inside one event loop.
+"""Real-desktop proof that the Control Center is a window the shell can drop.
 
-Every other Control Center test injects a fake webview, so none of them ever
-starts a GUI loop. This one launches a bounded subprocess that opens the real
-window through pywebview's Qt backend, calls the bridge from the page, hides
-and restores twice, and quits -- asserting on the way that Qt never reported a
-nested event loop.
+Every other Control Center test injects a fake webview or a fake spawner, so
+none of them starts a GUI loop or a real process. This one launches a bounded
+subprocess that plays the shell: it never creates a ``QApplication`` and never
+imports Qt WebEngine, opens the real window in a child, lets the page call the
+bridge across the pipe, closes the window, and opens a second one -- asserting
+that the shell survived both and that Qt never reported a nested event loop.
 """
 
 from __future__ import annotations
@@ -21,6 +22,10 @@ import pytest
 #: what the released build produced, and what one loop owner removes.
 NESTED_LOOP_WARNING = "The event loop is already running"
 
+#: What the shell must never load. The window's memory is only released if the
+#: process that keeps running never had it in the first place.
+HEAVY_MODULES = ("PyQt6.QtWebEngineWidgets", "easyocr", "torch", "kiwipiepy")
+
 _CHILD_TIMEOUT_SECONDS = 300
 
 _CHILD_PROGRAM = '''
@@ -29,11 +34,10 @@ import sys
 import threading
 
 from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_host import ControlCenterHost
-from hanly_app.diagnostics import DiagnosticLog
-from hanly_app.qt_bootstrap import ensure_qt_application
+from hanly_app.control_center_process import ControlCenterProcess, bridge_operations
 
 REPORT_PREFIX = "LIFECYCLE_REPORT "
+HEAVY_MODULES = ("PyQt6.QtWebEngineWidgets", "easyocr", "torch", "kiwipiepy")
 
 
 class CountingBridge(ControlCenterBridge):
@@ -48,45 +52,49 @@ class CountingBridge(ControlCenterBridge):
         return super().get_state()
 
 
+def await_call(bridge, count):
+    """Wait for the page to reach the parent bridge, which is the handshake."""
+
+    waiter = threading.Event()
+    for _ in range(240):
+        if len(bridge.calls) >= count:
+            return True
+        waiter.wait(0.25)
+    return False
+
+
 def main():
-    diagnostics = DiagnosticLog()
-    ensure_qt_application(diagnostics=diagnostics)
     bridge = CountingBridge()
-    host = ControlCenterHost(bridge, diagnostics=diagnostics, title="Hanly lifecycle")
+    notes = []
+    control = ControlCenterProcess(
+        bridge_operations(bridge), on_diagnostic=notes.append
+    )
     report = {"errors": []}
 
-    def drive():
-        try:
-            window = host.window
-            window.events.loaded.wait(60)
-            deadline = threading.Event()
-            for _ in range(60):
-                if bridge.calls:
-                    break
-                deadline.wait(0.25)
-            report["page_title"] = window.evaluate_js("document.title")
-            report["bridge_calls"] = list(bridge.calls)
+    try:
+        control.show()
+        report["page_reached_the_bridge"] = await_call(bridge, 1)
+        report["running_after_open"] = control.running
+        report["generation_after_open"] = control.generation
 
-            host.set_restorable(True)
-            for _ in range(2):
-                host.hide()
-                threading.Event().wait(0.3)
-                host.show()
-                threading.Event().wait(0.3)
+        control.close()
+        report["running_after_close"] = control.running
 
-            report["visible_before_quit"] = host.visible
-            report["created_before_quit"] = host.created
-            host.close()
-        except BaseException as error:
-            report["errors"].append(f"{type(error).__name__}: {error}")
-            host.close()
+        control.show()
+        report["page_reached_the_bridge_again"] = await_call(bridge, 2)
+        report["generation_after_reopen"] = control.generation
+        report["running_after_reopen"] = control.running
 
-    status = host.run(drive)
+        control.shutdown()
+        report["running_after_shutdown"] = control.running
+    except BaseException as error:
+        report["errors"].append(f"{type(error).__name__}: {error}")
+        control.shutdown()
 
-    report["status"] = status
-    report["created_after_quit"] = host.created
-    report["running_after_quit"] = host.running
-    report["diagnostics"] = list(diagnostics.snapshot())
+    report["heavy_modules_in_the_shell"] = [
+        name for name in HEAVY_MODULES if name in sys.modules
+    ]
+    report["diagnostics"] = list(notes)
     print(REPORT_PREFIX + json.dumps(report), flush=True)
     return 0 if not report["errors"] else 1
 
@@ -105,7 +113,9 @@ def _skip_without_a_desktop() -> None:
         pytest.skip("the Control Center lifecycle needs a real desktop session")
 
 
-def test_one_window_one_loop_survives_hide_restore_and_quit(tmp_path: Path) -> None:
+def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
+    tmp_path: Path,
+) -> None:
     _skip_without_a_desktop()
 
     program = tmp_path / "lifecycle_child.py"
@@ -127,14 +137,18 @@ def test_one_window_one_loop_survives_hide_restore_and_quit(tmp_path: Path) -> N
     report = json.loads(line[len(marker) :])
 
     assert report["errors"] == []
-    # The page itself calls the bridge, which is the JS handshake working.
-    assert report["bridge_calls"] == ["get_state"]
-    assert report["page_title"]
-    assert report["visible_before_quit"] is True
-    assert report["created_before_quit"] is True
-    assert report["created_after_quit"] is False
-    assert report["running_after_quit"] is False
-    assert report["status"] == 0
+    # The page itself calls the parent bridge, which is the whole proxy path:
+    # JS to pywebview to the pipe to the canonical bridge and back.
+    assert report["page_reached_the_bridge"] is True
+    assert report["running_after_open"] is True
+    assert report["generation_after_open"] == 1
 
+    assert report["running_after_close"] is False
+    assert report["page_reached_the_bridge_again"] is True
+    assert report["generation_after_reopen"] == 2
+    assert report["running_after_reopen"] is True
+    assert report["running_after_shutdown"] is False
+
+    assert report["heavy_modules_in_the_shell"] == []
     recorded = "\n".join(report["diagnostics"]) + child.stderr
     assert NESTED_LOOP_WARNING not in recorded

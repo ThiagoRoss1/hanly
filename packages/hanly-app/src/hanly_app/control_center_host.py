@@ -1,4 +1,14 @@
-"""The main window's lifecycle, and the process's only GUI event loop."""
+"""One pywebview window and the GUI loop it runs in.
+
+This is the window itself, not the desktop's lifecycle. The Control Center
+runs in its own process (see :mod:`hanly_app.control_center_process`), and the
+packaging self-check opens the same window against an in-process bridge; both
+go through this host so there is one place that creates the window, insists on
+the Qt backend, and owns the loop.
+
+Closing the window destroys it and ends the loop. Whatever started the host
+decides what that means — for the child process it means exiting.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +17,9 @@ from collections.abc import Callable
 from typing import Any
 
 from .control_center import (
-    ControlCenterBridge,
     ControlCenterUnavailable,
     control_center_document,
+    prepare_control_center_qt,
 )
 from .diagnostics import DiagnosticLog, StartupTimeline
 from .qt_bootstrap import ensure_qt_application
@@ -27,7 +37,7 @@ class ControlCenterHost:
 
     def __init__(
         self,
-        bridge: ControlCenterBridge | object,
+        bridge: object,
         *,
         title: str = "Hanly · Control Center",
         width: int = 1080,
@@ -59,7 +69,6 @@ class ControlCenterHost:
         self._running = False
         self._visible = False
         self._destroyed = False
-        self._restorable = False
 
     @property
     def created(self) -> bool:
@@ -83,24 +92,6 @@ class ControlCenterHost:
             return self._running
 
     @property
-    def restorable(self) -> bool:
-        """Whether closing the window may hide it instead of destroying it."""
-
-        with self._lock:
-            return self._restorable
-
-    def set_restorable(self, restorable: bool) -> None:
-        """Record whether a verified route back to the window exists.
-
-        Composition sets this only after the tray has actually started. Without
-        one, closing the window ends the session instead of leaving a process
-        the user cannot reach.
-        """
-
-        with self._lock:
-            self._restorable = bool(restorable)
-
-    @property
     def window(self) -> Any:
         """The pywebview window this host owns, once :meth:`run` created it."""
 
@@ -110,10 +101,9 @@ class ControlCenterHost:
     def run(self, on_started: Callable[[], None] | None = None) -> int:
         """Create the window and run the GUI loop until it is destroyed.
 
-        Blocks on the process main thread. Returns once the loop exits, which
-        is the desktop's normal shutdown path. ``on_started`` is pywebview's
-        own post-start hook, which it runs off the UI thread; the packaging
-        harness drives the window through it.
+        Blocks on the process main thread and returns once the loop exits.
+        ``on_started`` is pywebview's own post-start hook, which it runs off
+        the UI thread; the packaging harness drives the window through it.
         """
 
         if threading.current_thread() is not threading.main_thread():
@@ -136,7 +126,7 @@ class ControlCenterHost:
         return 0
 
     def show(self) -> None:
-        """Bring the existing window back, the ordinary restoration path."""
+        """Bring the existing window forward, the ordinary focus path."""
 
         window = self._require_window()
         self._call_window(window, "show")
@@ -152,7 +142,7 @@ class ControlCenterHost:
             self._visible = False
 
     def close(self) -> None:
-        """Destroy the window, which ends the loop. Used by Quit."""
+        """Destroy the window, which ends the loop."""
 
         with self._lock:
             window = self._window
@@ -161,6 +151,21 @@ class ControlCenterHost:
             self._destroyed = True
             self._visible = False
         self._call_window(window, "destroy")
+
+    def evaluate(self, script: str) -> Any:
+        """Run one script in the page, tolerating a window that has gone."""
+
+        with self._lock:
+            window = self._window
+            destroyed = self._destroyed
+        evaluate = getattr(window, "evaluate_js", None)
+        if window is None or destroyed or not callable(evaluate):
+            return None
+        try:
+            return evaluate(script)
+        except Exception as error:
+            self._report("Control Center script", error)
+            return None
 
     def _create_window(self, webview: Any) -> None:
         with self._lock:
@@ -204,9 +209,9 @@ class ControlCenterHost:
     def _require_qt_backend(self, webview: Any) -> None:
         """Fail visibly rather than silently running a non-Qt backend.
 
-        Hanly's popup, capture overlay, and this window all share one
-        ``QApplication``. A fallback to Cocoa, GTK, or WinForms would put the
-        main window in a second GUI framework inside the same process.
+        This process's popup-free window, the capture overlay, and Chromium all
+        share one ``QApplication``. A fallback to Cocoa, GTK, or WinForms would
+        put the window in a second GUI framework inside the same process.
         """
 
         initialize = getattr(webview, "initialize", None)
@@ -226,12 +231,11 @@ class ControlCenterHost:
         if events is None:
             return
         self._subscribe_one(events, "shown", self._on_shown)
-        self._subscribe_one(events, "closing", self._on_closing)
         self._subscribe_one(events, "closed", self._on_closed)
 
     def _subscribe_one(self, events: Any, name: str, handler: Callable[[], Any]) -> None:
         event = getattr(events, name, None)
-        if event is None or not hasattr(event, '__iadd__'):
+        if event is None or not hasattr(event, "__iadd__"):
             return
         event += handler
         setattr(events, name, event)
@@ -245,21 +249,6 @@ class ControlCenterHost:
         # again from the tray is not.
         if first_time:
             self._timeline.reached("window visible")
-
-    def _on_closing(self) -> bool:
-        """Hide instead of closing, but only when the window can come back.
-
-        pywebview cancels a close when a handler returns ``False``; anything
-        else lets the window be destroyed and the loop end.
-        """
-
-        with self._lock:
-            restorable = self._restorable and not self._destroyed
-        if not restorable:
-            return True
-
-        self.hide()
-        return False
 
     def _on_closed(self) -> None:
         with self._lock:
@@ -278,8 +267,8 @@ class ControlCenterHost:
     def _call_window(self, window: Any, action: str) -> None:
         """Ask pywebview to mutate the window, which marshals onto Qt itself.
 
-        ``show``, ``hide``, and ``destroy`` emit Qt signals, so a tray callback
-        never touches a widget from its own thread.
+        ``show``, ``hide``, and ``destroy`` emit Qt signals, so a call from a
+        transport thread never touches a widget from its own thread.
         """
 
         method = getattr(window, action, None)
@@ -299,6 +288,9 @@ class ControlCenterHost:
     def _load_webview(self) -> Any:
         if self._webview is not None:
             return self._webview
+        # Qt WebEngine needs its shared-OpenGL attribute, and Chromium its
+        # argument zero, before any Qt object exists in this process.
+        prepare_control_center_qt()
         ensure_qt_application(diagnostics=self._diagnostics)
         try:
             import webview

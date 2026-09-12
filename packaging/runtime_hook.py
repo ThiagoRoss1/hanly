@@ -1,9 +1,14 @@
-"""PyInstaller startup hook that loads the OCR runtime before the GUI stack."""
+"""PyInstaller startup hook, deliberately role-neutral.
 
-from __future__ import annotations
+This runs in every Hanly process, the Control Center and lookup children
+included. Importing a role's libraries here would load Qt WebEngine or the
+whole OCR stack into processes that must never carry them, which is what the
+process split exists to prevent; each role initializes only itself.
 
-from hanly_app.ocr_preload import preload_ocr_runtime
+Filtering third-party warnings is a process-wide decision and costs nothing,
+so it is the one thing that stays.
+"""
 
-# EasyOCR ships its native code inside torch, which resolves its own DLL
-# directories on import. Qt is intentionally not imported here.
-preload_ocr_runtime()
+from hanly_app.ocr_preload import silence_runtime_warnings
+
+silence_runtime_warnings()

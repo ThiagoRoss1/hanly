@@ -8,11 +8,10 @@ from typing import Any, cast
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.capture import CaptureResult, ScreenRect
-from hanly_app.hotkeys import HotkeyService
+from hanly_app.hotkeys import HotkeyAction, HotkeyService
 from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import (
     ManualLookupRuntime,
-    ManualLookupStartupError,
     create_manual_lookup,
     create_qt_manual_lookup,
 )
@@ -358,9 +357,10 @@ def test_shutdown_returns_without_waiting_for_lookup_or_hotkey_cleanup() -> None
     assert popup.results == []
 
 
-def test_failed_hotkey_registration_still_closes_popup_and_capture() -> None:
-    """A runtime that cannot register its hotkey must not strand the popup and
-    capture service it already owns behind a permanently closed flag."""
+def test_a_hotkey_another_application_owns_costs_only_that_shortcut() -> None:
+    """Registration happens with the session, not with capture. Losing a
+    combination to another application must not also cost the user the popup,
+    the tray, and everything else the session was about to provide."""
 
     class _FailingHotkeys:
         def __init__(self) -> None:
@@ -370,12 +370,17 @@ def test_failed_hotkey_registration_still_closes_popup_and_capture() -> None:
             del on_action, bindings, dispatcher
             return self
 
+        @property
+        def bindings(self) -> Mapping[HotkeyAction, str]:
+            return {}
+
         def register(self) -> None:
             raise RuntimeError("hotkey is already claimed by another process")
 
         def shutdown(self) -> None:
             self.shutdown_calls += 1
 
+    reported: list[str] = []
     queue = _QueueDispatcher()
     hotkeys = _FailingHotkeys()
     capture = _Capture()
@@ -389,17 +394,20 @@ def test_failed_hotkey_registration_still_closes_popup_and_capture() -> None:
         dispatcher=queue,
         hotkey_factory=hotkeys,
         shutdown_scheduler=lambda callback: callback(),
+        on_error=lambda stage, error: reported.append(f"{stage}: {error}"),
     )
 
-    with pytest.raises(ManualLookupStartupError):
-        composition.start()
+    composition.start()
 
+    assert reported == ["Keyboard shortcuts: hotkey is already claimed by another process"]
+    assert composition.prepared is True
+    assert composition.started is True
+    assert not popup.closed
+    assert not capture.closed
+
+    composition.shutdown()
     assert popup.closed
     assert capture.closed
-    assert hotkeys.shutdown_calls == 1
-    assert composition.started is False
-    # Shutdown stays idempotent, so a caller's own cleanup is still safe.
-    composition.shutdown()
     assert hotkeys.shutdown_calls == 1
 
 
@@ -530,10 +538,13 @@ def test_the_manual_hotkey_still_completes_a_lookup_while_hover_is_paused() -> N
     composition.shutdown()
 
 
-def test_a_hotkey_that_arrives_before_start_is_traced_as_ignored() -> None:
+def test_a_hotkey_that_arrives_before_the_session_is_prepared_is_ignored() -> None:
+    """There is no lookup path to submit to yet, so the action is dropped
+    rather than turned into an error popup about a stopped executor."""
+
     trace = _TraceSink()
     composition, queue, hotkeys, capture, _, _ = _composition(trace_sink=trace)
-    # register() without start() is what the hotkey factory double gives us,
+    # register() without prepare() is what the hotkey factory double gives us,
     # so the listener exists before the runtime accepts actions.
     composition.hotkeys.register()
     assert hotkeys.listener is not None

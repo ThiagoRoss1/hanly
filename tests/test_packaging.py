@@ -144,11 +144,29 @@ def test_the_macos_spec_does_not_force_the_hardened_runtime() -> None:
     assert not (ROOT / "packaging" / "entitlements.plist").exists()
 
 
-def test_runtime_hook_preloads_the_ocr_runtime_without_importing_qt() -> None:
+def test_the_runtime_hook_loads_no_role_specific_library() -> None:
+    """It runs in every process, the Control Center and lookup children
+    included, so importing Qt WebEngine or the OCR stack here would put back
+    exactly the memory the process split exists to release."""
+
     source = RUNTIME_HOOK.read_text(encoding="utf-8")
 
-    assert "preload_ocr_runtime" in source
+    assert "preload_ocr_runtime" not in source
     assert "PyQt6" not in source
+    assert "silence_runtime_warnings" in source
+
+
+def test_the_entry_point_diverts_spawned_children_before_anything_else() -> None:
+    """A frozen child re-enters through this same executable. Without this
+    first, it would parse arguments and start a second desktop."""
+
+    source = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "cli.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def main(", 1)[1]
+
+    assert "multiprocessing.freeze_support()" in body
+    assert body.index("multiprocessing.freeze_support()") < body.index("parse_args")
 
 
 def test_there_is_exactly_one_way_to_start_hanly() -> None:
@@ -779,3 +797,38 @@ def test_a_disk_image_that_cannot_be_read_fails_without_leaving_a_mount(
 
     with pytest.raises(RuntimeError, match="could not mount"):
         verify_disk_image(image, runner=_NativeTool(returncode=1))
+
+
+def test_neither_child_process_does_the_shell_s_work() -> None:
+    """A child opens a window or builds providers. It must not provision a
+    first run, answer an update handoff, register a shortcut, or start a second
+    desktop: those belong to the one process that keeps running."""
+
+    forbidden = (
+        "provision_runtime_config",
+        "confirm_started",
+        "run_desktop",
+        "HotkeyService",
+        "hotkeys.register",
+    )
+    children = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center_process.py",
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup_process.py",
+    )
+    for path in children:
+        source = path.read_text(encoding="utf-8")
+        for name in forbidden:
+            assert name not in source, f"{path.name} reaches {name}"
+
+
+def test_the_shell_s_bootstrap_carries_neither_heavy_runtime() -> None:
+    """Memory a library never returns can only be returned by its process
+    exiting, so the process that never exits must not load one."""
+
+    application = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "application.py"
+    ).read_text(encoding="utf-8")
+
+    assert "QtWebEngine" not in application
+    assert "preload_ocr_runtime" not in application
+    assert "prepare_control_center_qt" not in application
