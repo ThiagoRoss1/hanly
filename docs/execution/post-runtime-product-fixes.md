@@ -319,6 +319,7 @@ temporary and are not committed; each finding below states how to reproduce it.
 | M4 | CC close/reopen and child reaping | Correct; only the resource tracker survives |
 | M5 | WebEngine profile teardown warning | Reproduces intermittently; upstream pywebview ordering |
 | M6 | Early-focus reader failure (D1) | Reproduces on macOS exactly as on Windows |
+| M7 | Do the default shortcuts arrive? | `ctrl+shift+space` yes; every `ctrl+shift+F9..F12` registers and then receives nothing |
 
 **M1 — the duplicate user-facing application is the Control Center child.**
 With a shell process that creates no `QApplication`, `lsappinfo list` gained
@@ -412,6 +413,32 @@ code that does not fix it. Revisit trigger: a pywebview release that reorders
 **M6 — D1 is not Windows-specific.** Replay A on macOS raised
 `ControlCenterUnavailable: the Control Center window is not available` from the
 child's reader thread, exactly as on Windows.
+
+**M7 — the default function-key shortcuts do not reach Carbon on a
+default-configured Mac.** Running the production `HotkeyService` over the real
+window server, `ctrl+shift+space` delivered exactly one down and one up (the
+repeat correctly suppressed), and so did `ctrl+shift+k`. `ctrl+shift+f9`,
+`f10`, `f11` and `f12` each **registered successfully and then received
+nothing**. This machine has `com.apple.keyboard.fnState` unset, which is the
+default: the top row is media and system keys unless `fn` is held or "Use F1,
+F2, etc. keys as standard function keys" is turned on, and several
+`AppleSymbolicHotKeys` in the Mission Control range are enabled. A physical
+press reaches the same place a synthesized one does, so this is not an artifact
+of the synthesis.
+
+Consequence: on a Mac in its shipped configuration the hover pause
+(`ctrl+shift+f9`, which predates this wave) and Start/Stop Capture
+(`ctrl+shift+f10`) are silently inert. Registration succeeds, so nothing in the
+interface can detect it — the "Not registered" hint only covers a combination
+the operating system refused. Push to Hover, the one that matters most, is
+unaffected.
+
+This wave ships the defaults section 10 specifies, because they are correct on
+Windows, on Linux, and on a Mac with standard function keys enabled, and
+because changing the long-standing `hover_hotkey` default would migrate every
+existing profile. **The recommended follow-up is a product decision:** either
+choose non-function-key defaults on macOS, or say so in the Shortcuts section
+of the Control Center. Do not treat this as implemented.
 
 **Still open on macOS, recorded rather than claimed:** physical (human) key
 presses for Push to Hover, Alt/Cmd-Tab and lock/sleep/input-source transitions,

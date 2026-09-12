@@ -102,6 +102,18 @@ including new `tests/test_hover_exit_qt.py` and
   delivered by the window server. No human pressed a key. Windows and Linux
   ran neither: the pynput chord listener is new code that only CI and a human
   have exercised paths for.
+- **The function-key defaults are inert on a default Mac.** Driving the
+  production `HotkeyService` over the real window server, `ctrl+shift+space`
+  delivered both edges and `ctrl+shift+k` delivered both edges, while
+  `ctrl+shift+f9`, `f10`, `f11` and `f12` each registered successfully and then
+  received nothing: the top row is media and system keys unless the user turns
+  on standard function keys. So the hover pause (a default that predates this
+  wave) and Start/Stop Capture are silently inert on macOS out of the box, and
+  because registration succeeds the interface cannot tell. Push to Hover is
+  unaffected. The defaults the plan specifies were shipped unchanged, because
+  they are correct on Windows, on Linux, and on a Mac with standard function
+  keys enabled; **choosing different macOS defaults is a product decision and
+  is not made here.** See the plan's section 4.2, M7.
 - **Carbon release order.** On macOS, releasing a modifier while the primary
   key stays down is not a release edge; Carbon reports the hot key released
   when its own key goes up. Measured, documented in the backend, not worked
