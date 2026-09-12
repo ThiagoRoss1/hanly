@@ -545,10 +545,16 @@ class _DesktopSession:
         return {"state": state, "message": message}
 
     def registered_hotkeys(self) -> dict[str, str]:
-        """Report the shortcuts the operating system actually accepted."""
+        """Report the shortcuts the operating system actually accepted.
+
+        A backend that refused every combination still reports the bindings it
+        was configured with, so asking it what it owns is not the same question
+        as asking whether it owns anything. Reporting the configured list for a
+        listener that never started tells the user their shortcuts work.
+        """
 
         manual = self._manual
-        if manual is None:
+        if manual is None or not manual.hotkeys.registered:
             return {}
         return {
             action.value: binding for action, binding in manual.hotkeys.bindings.items()

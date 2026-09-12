@@ -18,6 +18,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from multiprocessing.process import BaseProcess
+from time import monotonic
 
 from .control_center import ControlCenterUnavailable
 from .control_center_host import ControlCenterHost
@@ -239,9 +240,14 @@ class ControlCenterProcess:
             if transport is not None:
                 self._send(transport, {"kind": "close"})
             if process is not None and not stop_process(process, timeout=CLOSE_TIMEOUT_SECONDS):
-                self._report_diagnostic("The Control Center process had to be terminated.")
+                self._report_diagnostic(
+                    f"Window {generation} (pid {process.pid}) did not close in "
+                    f"{CLOSE_TIMEOUT_SECONDS:.0f}s and had to be terminated."
+                )
         finally:
+            exit_code = None if process is None else process.exitcode
             self._retire(generation)
+            self._report_diagnostic(f"Window {generation} is closed (exit {exit_code}).")
 
     def shutdown(self) -> None:
         """Close the window for good; later opens are refused."""
@@ -304,11 +310,14 @@ class ControlCenterProcess:
             self._reader = reader
         reader.start()
         self._settle(_ChildPhase.RUNNING)
+        self._report_diagnostic(
+            f"Window {generation} started (pid {process.pid})."
+        )
 
     def _read_until_gone(self, transport: Transport, generation: int) -> None:
         """Own the child-to-parent direction for one child's whole lifetime."""
 
-        reason: str | None = "The Control Center window closed unexpectedly."
+        reason: str | None = f"Window {generation} closed unexpectedly."
         try:
             while True:
                 message = transport.receive()
@@ -324,7 +333,12 @@ class ControlCenterProcess:
                 if kind == "failed":
                     reason = None
                     self._report_diagnostic(
-                        f"The Control Center window could not start: {message.get('message')}"
+                        f"Window {generation} reported a failure: {message.get('message')}"
+                    )
+                    continue
+                if kind == "note":
+                    self._report_diagnostic(
+                        f"Window {generation}: {message.get('message')}"
                     )
                     continue
                 self._handle(transport, generation, message)
@@ -333,15 +347,20 @@ class ControlCenterProcess:
         except Exception as error:
             # Without this the child keeps a window whose bridge is dead, and
             # every page call waits out the whole call timeout.
-            reason = f"The Control Center connection failed: {type(error).__name__}: {error}"
+            reason = (
+                f"Window {generation} lost its connection: "
+                f"{type(error).__name__}: {error}"
+            )
             self._report_error("Control Center reader", error)
         finally:
             self._child_gone(generation, reason)
 
     def _mark_ready(self, generation: int) -> None:
         with self._lock:
-            if generation == self._generation:
-                self._ready = True
+            if generation != self._generation:
+                return
+            self._ready = True
+        self._report_diagnostic(f"Window {generation} is showing its page.")
 
     def _handle(self, transport: Transport, generation: int, message: Message) -> None:
         if message.get("kind") != "call":
@@ -587,6 +606,7 @@ class _ControlCenterChild:
         self._ready = False
         self._closing = False
         self._pending_focus = False
+        self._reader: threading.Thread | None = None
 
     def run(self) -> None:
         """Run the window's loop, and report the close on the way out."""
@@ -594,6 +614,8 @@ class _ControlCenterChild:
         reader = threading.Thread(
             target=self._read_until_gone, name="hanly-control-center-parent", daemon=True
         )
+        with self._lock:
+            self._reader = reader
         reader.start()
         try:
             self._host.run(on_started=self._host_ready)
@@ -665,7 +687,7 @@ class _ControlCenterChild:
             self._transport.send(
                 {"kind": "call", "id": identifier, "method": method, "arguments": arguments}
             )
-            return self._await_reply(identifier)
+            return self._await_reply(identifier, method)
         except TransportClosed as error:
             raise RuntimeError("Hanly is no longer available.") from error
         finally:
@@ -681,16 +703,44 @@ class _ControlCenterChild:
             self._replies[identifier] = []
             return identifier
 
-    def _await_reply(self, identifier: int) -> object:
+    def _await_reply(self, identifier: int, method: str) -> object:
+        """Wait for one reply, naming the boundary if the wait runs out.
+
+        A timeout used to arrive as one unattributed sentence for any of the
+        twenty-one allowlisted operations, which said nothing about where the
+        answer stopped. The operation, its id, and whether the reader is still
+        alive are the three facts that separate a wedged parent from a
+        connection that has already gone.
+        """
+
         with self._lock:
             event = self._events[identifier]
+        started = monotonic()
         if not event.wait(CALL_TIMEOUT_SECONDS):
-            raise RuntimeError("Hanly did not answer in time.")
+            waited = monotonic() - started
+            connected = "connected" if self._reader_alive() else "disconnected"
+            self._notify_parent(
+                {
+                    "kind": "note",
+                    "message": (
+                        f"{method} (call {identifier}) had no answer after "
+                        f"{waited:.0f}s; the window is {connected}."
+                    ),
+                }
+            )
+            raise RuntimeError(
+                f"Hanly did not answer in time. ({method} waited {waited:.0f}s)"
+            )
         with self._lock:
             replies = list(self._replies.get(identifier) or ())
         if not replies:
             raise RuntimeError("Hanly closed before answering.")
         return _value_of(replies[0])
+
+    def _reader_alive(self) -> bool:
+        with self._lock:
+            reader = self._reader
+        return reader is not None and reader.is_alive()
 
     def _read_until_gone(self) -> None:
         try:

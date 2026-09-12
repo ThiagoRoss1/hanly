@@ -64,6 +64,10 @@ class HotkeyRuntime(Protocol):
     def bindings(self) -> Mapping[HotkeyAction, str]:
         """The combinations this service currently owns, not what was asked for."""
 
+    @property
+    def registered(self) -> bool:
+        """Whether the operating system actually accepted those combinations."""
+
     def register(self) -> None:
         """Start listening for the configured shortcuts."""
 

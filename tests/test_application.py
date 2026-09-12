@@ -27,6 +27,7 @@ from hanly_app.application import (
 from hanly_app.config import AppConfig, ConfigManager
 from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailable
 from hanly_app.desktop_controller import DesktopState
+from hanly_app.hotkeys import HotkeyAction
 from hanly_app.permissions import (
     Permission,
     PermissionService,
@@ -1132,3 +1133,28 @@ def test_a_granted_machine_starts_capture_normally(tmp_path: Path) -> None:
     session.start()
 
     assert controller.calls == ["resume"]
+
+
+def test_shortcuts_a_backend_refused_are_not_reported_as_registered(
+    tmp_path: Path,
+) -> None:
+    """Registration is allowed to fail without costing the session. Saying it
+    succeeded is what leaves a user pressing a key that does nothing."""
+
+    class _Hotkeys:
+        def __init__(self, registered: bool) -> None:
+            self.registered = registered
+            self.bindings = {HotkeyAction.LOOKUP: "ctrl+shift+space"}
+
+    class _Manual:
+        def __init__(self, registered: bool) -> None:
+            self.hotkeys = _Hotkeys(registered)
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+
+    session._manual = cast(Any, _Manual(True))
+    assert session.registered_hotkeys() == {"lookup": "ctrl+shift+space"}
+
+    session._manual = cast(Any, _Manual(False))
+    assert session.registered_hotkeys() == {}

@@ -31,6 +31,10 @@
   let currentState = fallbackState;
   let refreshTimer = null;
   let permissionWatchTicks = 0;
+  // Whether the parent has ever answered this window. Until it has, the page
+  // is showing its own placeholder, and saying "new" would be a convincing
+  // description of a runtime it has never actually seen.
+  let connection = "connecting";
 
   // pywebview injects its api after the document is parsed, so the bridge has
   // to be resolved per call. Capturing it here would pin it to null forever.
@@ -220,13 +224,25 @@
 
   // What the operating system actually accepted, which is not always what was
   // asked for: a combination another application owns stays with that one.
-  function renderRegisteredHotkeys(runtime) {
+  function renderRegisteredHotkeys(runtime, app) {
     const registered = runtime.hotkeys || {};
+    // Before the session is prepared there is no listener yet, so an absent
+    // combination means "not started", not "refused".
+    const prepared = (app.state || "new") !== "new";
     [["hotkey", "lookup"], ["hover-hotkey", "toggle_hover"]].forEach(function (pair) {
       const hint = byId(pair[0] + "-registered");
       const live = registered[pair[1]];
       const asked = byId(pair[0]).value;
-      hint.textContent = live && live !== asked ? "Registered as " + live : "";
+      if (live && live !== asked) {
+        hint.textContent = "Registered as " + live;
+        hint.classList.remove("hint-error");
+        return;
+      }
+      const missing = prepared && !live;
+      hint.textContent = missing
+        ? "Not registered. Another application may already use this combination."
+        : "";
+      hint.classList.toggle("hint-error", missing);
     });
   }
 
@@ -256,6 +272,30 @@
       return "Region scope is selected but no region is saved, so Hanly reads the whole monitor. Choose a capture area.";
     }
     return "No region selected. Choose a scope to keep capture close to the word.";
+  }
+
+  // The bridge is a pipe to another process. When it stops answering, the page
+  // says so and offers one explicit retry rather than polling for a parent
+  // that may never come back.
+  function setConnection(next, detail) {
+    connection = next;
+    const item = byId("connection-item");
+    item.hidden = next === "connected";
+    item.dataset.connection = next;
+    byId("connection-state").textContent =
+      next === "lost" ? "Connection lost" : "Connecting…";
+    byId("connection-message").textContent = detail || "";
+    byId("reconnect").hidden = next !== "lost";
+    if (next !== "connected") {
+      byId("status-line").dataset.state = next;
+      byId("app-state").textContent =
+        next === "lost" ? "Connection lost" : "Connecting…";
+    }
+  }
+
+  function connectionLost(error) {
+    const message = error && error.message ? error.message : String(error || "");
+    setConnection("lost", message || "Hanly did not answer this window.");
   }
 
   function showActionError(error) {
@@ -291,7 +331,7 @@
     });
     renderRuntimeStatus(runtime);
     renderEngine(runtime);
-    renderRegisteredHotkeys(runtime);
+    renderRegisteredHotkeys(runtime, app);
     renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
@@ -332,7 +372,14 @@
     if (permissionWatchTicks > 0) permissionWatchTicks -= 1;
     const api = bridge();
     if (!api || typeof api.get_state !== "function") return;
-    api.get_state().then(renderState).catch(function () {});
+    api.get_state().then(connected).catch(connectionLost);
+  }
+
+  // One place turns an answered question into a rendered page, so the window
+  // stops claiming a connection it does not have.
+  function connected(state) {
+    setConnection("connected");
+    renderState(state);
   }
 
   function invoke(name, value) {
@@ -511,9 +558,15 @@
   });
 
   function load() {
-    invoke("get_state");
+    const api = bridge();
+    if (!api || typeof api.get_state !== "function") return;
+    setConnection("connecting");
+    showActionError("");
+    api.get_state().then(connected).catch(connectionLost);
     loadLogs();
   }
+
+  byId("reconnect").addEventListener("click", load);
 
   window.addEventListener("pywebviewready", load);
   // Hanly itself pushes a nudge when state it owns moved under the page --

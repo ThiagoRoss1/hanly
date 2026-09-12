@@ -117,6 +117,10 @@ class _HotkeyRuntime:
     def bindings(self) -> Mapping[HotkeyAction, str]:
         return {HotkeyAction.LOOKUP: "<ctrl>+<shift>+<space>"}
 
+    @property
+    def registered(self) -> bool:
+        return True
+
     def register(self) -> None:
         pass
 

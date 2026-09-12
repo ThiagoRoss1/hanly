@@ -41,6 +41,8 @@ class _FakeProcess:
         self.alive = True
         self.joined: list[float | None] = []
         self.terminated = False
+        self.pid = 4321
+        self.exitcode: int | None = None
 
     def is_alive(self) -> bool:
         return self.alive
@@ -51,9 +53,11 @@ class _FakeProcess:
     def terminate(self) -> None:
         self.terminated = True
         self.alive = False
+        self.exitcode = -15
 
     def kill(self) -> None:
         self.alive = False
+        self.exitcode = -9
 
 
 class _Child:

@@ -37,6 +37,16 @@ function element() {
     // can be read back; assigning innerHTML is how the page clears one.
     children: [],
     listeners: [],
+    // Only the four operations the page actually performs, over a plain set.
+    classList: (function () {
+      const names = new Set();
+      return {
+        add(name) { names.add(name); },
+        remove(name) { names.delete(name); },
+        contains(name) { return names.has(name); },
+        toggle(name, on) { return on ? names.add(name) && true : names.delete(name) && false; }
+      };
+    }()),
     appendChild(child) { this.children.push(child); return child; },
     removeAttribute() {},
     addEventListener(type, handler) { this.listeners.push({ type, handler }); },
@@ -76,7 +86,13 @@ function serveSnapshot() {
   const index = Math.min(served, snapshots.length - 1);
   served += 1;
   requests.push(index);
-  return Promise.resolve(snapshots[index]);
+  const snapshot = snapshots[index];
+  // A snapshot may stand in for the parent not answering at all, which is what
+  // a dead bridge looks like from the page.
+  if (snapshot && snapshot.__reject__) {
+    return Promise.reject(new Error(snapshot.__reject__));
+  }
+  return Promise.resolve(snapshot);
 }
 
 const window = {
@@ -136,22 +152,36 @@ function report(step) {
     runtime_message: document.getElementById("runtime-message").textContent,
     start_disabled: document.getElementById("start-capture").disabled,
     retry_hidden: document.getElementById("retry-runtime").hidden,
-    check_disabled: document.getElementById("check-updates").disabled
+    check_disabled: document.getElementById("check-updates").disabled,
+    app_state: document.getElementById("app-state").textContent,
+    connection_hidden: document.getElementById("connection-item").hidden,
+    connection_state: document.getElementById("connection-state").textContent,
+    reconnect_hidden: document.getElementById("reconnect").hidden,
+    hotkey_hint: document.getElementById("hotkey-registered").textContent
   };
 }
 
 function applyActions(step) {
-  actions
-    .filter(function (action) { return action.step === step; })
+  const due = actions.filter(function (action) { return action.step === step; });
+  due
     .forEach(function (action) {
+      if (action.click === "reconnect") {
+        document.getElementById("reconnect").dispatch("click", {});
+        return;
+      }
       document
         .getElementById("permission-list")
         .dispatch("click", { target: { dataset: { grant: action.grant } } });
     });
+  return due.length > 0;
 }
 
 async function main() {
   const trace = [];
+  // The first answer travels through a resolve and a rejection handler, so the
+  // page needs more than one microtask turn before it has rendered anything.
+  await Promise.resolve();
+  await Promise.resolve();
   await Promise.resolve();
   trace.push(report(0));
 
@@ -160,10 +190,15 @@ async function main() {
   for (let step = 1; step < snapshots.length + 1; step += 1) {
     // A scripted click lands between renders, exactly as a user's would, and
     // its own reply has to settle before the page's timer state is read.
-    applyActions(step - 1);
+    const acted = applyActions(step - 1);
     await Promise.resolve();
     await Promise.resolve();
-    if (timer === null) break;
+    if (timer === null) {
+      // A page with no timer has decided it is done; a click is still worth
+      // one final report, because that is the only way its effect is visible.
+      if (acted) trace.push(report(step));
+      break;
+    }
     timer();
     await Promise.resolve();
     await Promise.resolve();

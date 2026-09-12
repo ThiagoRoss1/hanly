@@ -374,6 +374,10 @@ def test_a_hotkey_another_application_owns_costs_only_that_shortcut() -> None:
         def bindings(self) -> Mapping[HotkeyAction, str]:
             return {}
 
+        @property
+        def registered(self) -> bool:
+            return False
+
         def register(self) -> None:
             raise RuntimeError("hotkey is already claimed by another process")
 

@@ -207,6 +207,14 @@ h2 { margin-bottom: 8px; font-size: 20px; letter-spacing: -0.025em; }
   color: #1b7f4d;
 }
 
+.connection-item .hint {
+  margin: 4px 0 0;
+}
+
+.connection-item[data-connection="lost"] strong {
+  color: #b3261e;
+}
+
 .engine-item .hint {
   margin: 4px 0 0;
 }
