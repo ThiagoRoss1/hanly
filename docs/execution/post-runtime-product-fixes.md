@@ -1,6 +1,9 @@
 # Post-runtime product fixes
 
-**Status: DRAFT — Windows investigation complete; macOS phase pending.**
+**Status: FINAL / READY FOR EXECUTION — Windows investigation complete; native macOS
+investigation completed 2026-09-11 (section 4.2); P1 and P2 resolved by the human
+(section 7). Frozen-bundle Dock confirmation is a final packaging-validation item,
+not a blocker for the fix it selects.**
 
 Investigated 2026-09-11 (America/Sao_Paulo), against
 `5264c1299b90a63b63ecb5ce17ea24ddef0101f8`. This is the **one implementation
@@ -201,7 +204,7 @@ This can delay dismissal until another result or event, rather than simply by
 120ms. Tests in `test_hover_target.py` use a multi-handle fake scheduler and miss
 the production scheduler's exclusivity.
 
-## 4. macOS investigation evidence — pending
+## 4. macOS investigation evidence
 
 No native macOS work was performed here. Historical measurements and limitations
 are in `review-handoffs/mvp-runtime-performance-wave.md`; they are not new evidence.
@@ -228,6 +231,196 @@ does not intentionally construct QApplication; shell and CC do. These are
 inspection leads, not a proven Dock cause. Do not set global LSUIElement or
 LSBackgroundOnly flags that hide or break the actual Hanly UI as a shortcut.
 
+### 4.1 Superficial source-based hypotheses (2026-09-11)
+
+This is a code-reading pass only. No macOS machine, physical key press, Finder
+launch, frozen `.app`, Dock observation, native window probe, or macOS-specific
+test was run. The items below are hypotheses to guide the later investigation;
+none should be promoted to a confirmed defect or implementation decision yet.
+
+- **Duplicate Dock entry — strongest current hypothesis:** the persistent shell
+  creates a `QApplication` in `application.py`, while the disposable Control
+  Center child enters `ControlCenterHost`, selects pywebview's Qt backend, and
+  creates its own `QApplication` through `qt_bootstrap`. On a frozen launch both
+  roles re-enter the same executable and are diverted by `freeze_support`; the
+  lookup child deliberately creates no GUI, but the POSIX resource tracker is
+  another spawned process. The bundle explicitly sets `LSBackgroundOnly` to
+  `False` and does not set `LSUIElement`, so there is no source-level evidence
+  that the GUI child is hidden from Dock activation. This makes the Control
+  Center PID a plausible owner of a second user-facing Dock item, but only a
+  `ps`/bundle/PID correlation during open/close can prove it. The resource
+  tracker must be recorded separately and must not be treated as a second app
+  without observing its activation policy and windows.
+
+- **Source versus frozen identity may differ:** source launches use the Python
+  interpreter/module path, while Finder/`open` launches the signed
+  `Hanly.app/Contents/MacOS/hanly-desktop` bundle. A direct internal executable
+  launch is therefore a diagnostic only; it cannot stand in for Finder launch
+  behavior or establish the bundle's Dock identity. Compare executable path,
+  bundle identifier, parent, activation policy, and window count for every PID.
+
+- **Carbon currently proves registration, not a hold:**
+  `hotkeys_darwin.py` installs only `_EVENT_HOT_KEY_PRESSED` and dispatches a
+  zero-argument callback. There is no release event, per-key state, repeat
+  filtering, or modifier-first release handling at this seam. Therefore the
+  planned Push to Hover contract cannot be called implemented on macOS from
+  this backend as it stands. The prior handoff also records that a synthetic
+  `CGEvent` did not trigger a registered Carbon hot key; physical delivery is
+  still an explicit human check. If Carbon's registered-hot-key API cannot
+  provide the needed release semantics, the smallest alternative and its
+  Accessibility/secure-input implications must be documented before changing
+  the product contract.
+
+- **Modifier/key normalization needs physical validation:** the backend maps
+  virtual key positions and combines broad Carbon modifier masks. That is a
+  reasonable input-source-independent starting point, but it does not prove
+  left/right modifier behavior, keyboard-layout behavior, key repeat behavior,
+  or delivery through lock/sleep/input-source transitions. Rebind and teardown
+  also need a physical check while a chord is held; unit fakes cannot establish
+  those WindowServer semantics.
+
+- **Popup inactive retention has a timing gap:**
+  `QtPopupView.__init__` calls `keep_visible_when_inactive(int(self.winId()))`
+  once. The Darwin adapter returns `False` when the native `NSWindow` is not
+  available yet, and the caller ignores that result. If Cocoa has not attached
+  the view to its window at that instant, `setHidesOnDeactivate(False)` is
+  never retried for that popup instance. This is a plausible explanation for
+  an intermittent hide-on-focus-loss report, not a confirmed macOS defect;
+  native focus changes and the value of `hidesOnDeactivate` must be sampled
+  after show, deactivate, reactivation, and popup recreation.
+
+- **Teardown warnings remain platform-sensitive:** the process boundary is
+  intentionally a POSIX `spawn` plus duplex pipe, and `stop_process` escalates
+  to terminate/kill after bounded joins. The source does not yet prove that
+  WebEngine page destruction, profile destruction, Qt event-loop exit, child
+  reaping, and the resource tracker occur in a safe order on macOS. The
+  historical `Release of profile requested but WebEnginePage still not deleted`
+  warning is therefore still a teardown lead, not evidence of a leak or Dock
+  cause. Record descendants after a settled close and after final shell exit.
+
+**Disposition:** section 4.2 replaces this list with native measurements. Where
+the two disagree, 4.2 wins. Two hypotheses above were **not** confirmed and must
+not be implemented: the popup `hidesOnDeactivate` timing gap (M3) and the claim
+that a synthetic `CGEvent` cannot reach a registered Carbon hot key (M2).
+
+### 4.2 Native macOS evidence (2026-09-11)
+
+Environment: macOS 26.6.2 build 25G83, Apple Silicon (ARM64), repository
+`.venv` on Python 3.13.11 with PyQt6 6.11.0 / Qt 6.11.0, PyQt6-WebEngine 6.11.0,
+pywebview 6.2.1, pyobjc 12.2.2. All observations are **source** launches through
+the repository interpreter unless a row says otherwise. Probe scripts were
+temporary and are not committed; each finding below states how to reproduce it.
+
+| ID | Question | Native answer |
+|---|---|---|
+| M1 | Which PID owns the duplicate Dock entry | The Control Center child |
+| M2 | Carbon press/release semantics | Both edges delivered; modifier-first release is not an edge |
+| M3 | Popup `hidesOnDeactivate` timing gap | Did not reproduce; no change required |
+| M4 | CC close/reopen and child reaping | Correct; only the resource tracker survives |
+| M5 | WebEngine profile teardown warning | Reproduces intermittently; upstream pywebview ordering |
+| M6 | Early-focus reader failure (D1) | Reproduces on macOS exactly as on Windows |
+
+**M1 — the duplicate user-facing application is the Control Center child.**
+With a shell process that creates no `QApplication`, `lsappinfo list` gained
+exactly one Hanly-owned registration while the window was open: the CC child
+PID, `type="Foreground"`, `bundleID=[ NULL ]`. It disappeared on close and a
+new one appeared on reopen. Separately, a process that does nothing but call
+`ensure_qt_application()` reports `NSApplication.activationPolicy == 0`
+(`NSApplicationActivationPolicyRegular`). So the rule is not Hanly-specific:
+**every Hanly process that constructs a `QApplication` becomes a Regular,
+Dock-visible application**, and the shell (`application.py`) and the CC child
+(`control_center_host` via `qt_bootstrap`) both do. That is two.
+
+The two other spawned processes are innocent and must stay that way. A real
+`LookupEngine.attach()` with EasyOCR, Kiwi and KRDICT produced `SUCCESS` on the
+Korean fixture while `lsappinfo` listed **no** Hanly registration at all, and
+the shell imported none of the heavy modules. The remaining descendant is the
+POSIX `resource_tracker`, which registers no application, owns no window, and
+correctly outlives individual children while the shell lives.
+
+The repair was validated before being chosen: applying
+`NSApplicationActivationPolicyAccessory` (1) in the child before its window
+exists yields `activationPolicy == 1` with `windows.count == 2` and
+`keyWindow != nil` — the Control Center still appears and still takes keyboard
+focus. No `LSUIElement` or `LSBackgroundOnly` bundle flag is involved, so the
+shell's own Dock identity is untouched, which is what section 4 required.
+An Accessory application is not brought forward by `show()` alone, so the
+focus path must also activate it explicitly.
+
+**M2 — Carbon does deliver a release edge, with one documented limit.**
+Installing both `kEventHotKeyPressed` (5) and `kEventHotKeyReleased` (6) on
+`GetEventDispatcherTarget()` returned `noErr`, and both kinds arrived for a
+registered `ctrl+shift+<space>`. Two corrections to the previous record:
+
+- **Synthetic `CGEventPost(kCGHIDEventTap, …)` does reach a registered Carbon
+  hot key**, but only in a process running a real `QApplication`/NSApp loop.
+  The identical probe under `QCoreApplication` received nothing. The earlier
+  "a synthetic CGEvent did not trigger a registered Carbon hot key" note was an
+  event-loop artifact, not a WindowServer rule. This makes automated macOS
+  hotkey testing possible where it was previously believed impossible.
+- **Releasing a modifier first is not a release edge.** Holding the chord,
+  releasing shift then ctrl, and only then releasing space produced the
+  `kEventHotKeyReleased` event 255 ms after the press, matching the
+  primary-key-up at 240 ms rather than either modifier release. Carbon reports
+  the hot key as released when its **non-modifier key** goes up.
+
+Repeated key-down posts produced exactly one `kEventHotKeyPressed`, so Carbon
+already suppresses auto-repeat at this seam; the backend still filters
+duplicate down edges rather than relying on that.
+
+**Consequence for T5:** Push to Hover on macOS is real press/release, from
+these two Carbon event kinds — no Accessibility grant, no `NSEvent` global
+monitor, no polling. The one platform difference from the pynput backend is
+that releasing a modifier while the primary key stays down does not end the
+activation on macOS. That is documented, not worked around: a global modifier
+monitor would require an Accessibility grant the backend deliberately does not
+ask for, and a polling loop is excluded by the plan.
+
+**M3 — the popup inactive-retention hypothesis does not reproduce.**
+`QWidget.winId()` forces native window creation on Cocoa, so
+`keep_visible_when_inactive` reaches a real `NSWindow` inside
+`QtPopupView.__init__`. `hides_when_inactive` read `False` after construction,
+after `show()`, and after a hide/show cycle, and
+`keep_visible_when_inactive` returned `True` for a fresh, never-shown view.
+The ignored return value is therefore not a live defect on this Qt version.
+No popup change is authorized by this evidence.
+
+**M4 — Control Center lifecycle and child reaping are correct on macOS.**
+Across open → close → reopen → shutdown, the page reached the parent bridge on
+both generations, `QtWebEngineProcess` appeared as a child of the CC child and
+vanished with it, and after both the close and the shutdown the only remaining
+shell descendant was the POSIX resource tracker. Manager state agreed with
+`ps` at every sampled stage.
+
+**M5 — the WebEngine profile warning is upstream, intermittent, and harmless.**
+`Release of profile requested but WebEnginePage still not deleted. Expect
+troubles !` was emitted after the child's loop exited in 5 of 8 close runs.
+The mechanism is visible in the installed pywebview: `BrowserView.closeEvent`
+calls `self.webview.page().deleteLater()` and then `_app.exit()` in the same
+handler, so the deferred delete never runs, and `self.profile` is an ordinary
+Python attribute of `BrowserView` destroyed in arbitrary GC order at
+interpreter shutdown. Three child-local remedies were tried after `run()`
+returns and **none made it deterministic**: flushing `DeferredDelete` through
+`sendPostedEvents`, the same plus `processEvents`, and explicitly
+`sip.delete()`-ing the view's page. Runs with no remedy at all also sometimes
+produced no warning. Since it is emitted after the disposable child has
+finished its work, does not stop the child exiting, and does not stop the
+parent reaping it (M4), T8 records it rather than adding pywebview-private
+code that does not fix it. Revisit trigger: a pywebview release that reorders
+`closeEvent`, or a Qt WebEngine version change.
+
+**M6 — D1 is not Windows-specific.** Replay A on macOS raised
+`ControlCenterUnavailable: the Control Center window is not available` from the
+child's reader thread, exactly as on Windows.
+
+**Still open on macOS, recorded rather than claimed:** physical (human) key
+presses for Push to Hover, Alt/Cmd-Tab and lock/sleep/input-source transitions,
+Retina and mixed-DPI exit geometry, the frozen `.app`'s Dock identity under a
+Finder launch, and secure-input/denied-permission behavior. The frozen
+confirmation is a final packaging-validation item: the mechanism in M1 is a
+Cocoa property of any process that creates a `QApplication`, and the fix is
+applied in the child code path that source and frozen builds share.
+
 ## 5. Confirmed defects and root causes
 
 | ID | Defect | Confidence / evidence | Task |
@@ -239,6 +432,8 @@ LSBackgroundOnly flags that hide or break the actual Hanly UI as a shortcut.
 | D5 | Horizontal layout overflow above 760px breakpoint | Native DOM at 780px | T7 |
 | D6 | Lifecycle diagnostics depend on which surface invoked action | Real bridge-driven log and call-site inspection | T2/T4 |
 | D7 | "registered" hotkeys can actually be unregistered | `_register_hotkeys` catches failure, reporting reads `.bindings` only | T2/T5 |
+| D8 | Every `QApplication` process is a Regular macOS app, so the CC child is a second Dock entry | Native `lsappinfo` correlation and `activationPolicy == 0` (section 4.2, M1) | T8 |
+| D9 | Carbon installs only the pressed event, so macOS has no release edge | Native: kinds 5 and 6 both deliverable; only 5 installed today (section 4.2, M2) | T5 |
 
 The timeout is confirmed reproducible as a consequence of D1 with a shortened
 test deadline. Its historical cause remains unconfirmed. Generation-retirement
@@ -304,20 +499,19 @@ different interpretation during implementation.
    the chord. Stop/Pause always dismiss. Re-press at the same retained word does
    not recapture. Test this distinction explicitly.
 
-**Policy clarification P1 — explicit Stop versus Always preload:** recommend that
-explicit Stop releases providers even with `LookupPreload.ALWAYS`; Always means
-eager preparation on launch/Start and residency through hover mute, not automatic
-resurrection after Stop. This fulfills the Portuguese distinction that the third
-shortcut releases RAM. It differs from today's Always exception in `pause()`.
-Retain the user's saved preload value; do not rewrite it to implement Stop.
+**P1 — explicit Stop versus Always preload: RESOLVED (accepted as recommended).**
+Explicit Stop releases the providers even with `LookupPreload.ALWAYS`. Always
+means eager preparation on launch and on Start, and residency through a hover
+mute — not automatic resurrection after Stop. The user's saved preload value is
+retained and never rewritten to implement Stop. This replaces today's Always
+exception in `ManualLookupRuntime.pause()`, which becomes the mute path.
 
-**Policy clarification P2 — one-shot lookup:** the user requests three shortcuts
-and repurposes the current lookup binding into Push to Hover. Preserve the
-existing one-shot capture/submit implementation for direct/internal consumers,
-but do not add a fourth default shortcut or a competing UI mode. Document the
-change to the V1 manual interaction contract before changing DAG-INV-05 wording.
-If a separately bindable one-shot action is still required, obtain that product
-decision at final-plan review; do not invent it in this wave.
+**P2 — one-shot lookup: RESOLVED (accepted as recommended).** The current
+lookup binding becomes Push to Hover. The existing one-shot capture/submit
+implementation stays reachable for direct and internal consumers, and **no
+fourth default shortcut and no competing UI mode are added**. The V1 manual
+interaction contract is documented in T11; DAG-INV-05 wording is not changed
+without separate approval.
 
 Use the existing app ownership, a small immutable **application snapshot**, and
 one derivation function in `runtime_status.py`. Inputs are real readiness,
@@ -336,7 +530,7 @@ does not permanently force Error. A broken CC connection is displayed as
 
 ## 8. Ordered implementation tasks
 
-Execute only after macOS evidence and human approval. Order:
+macOS evidence is complete (section 4.2) and P1/P2 are resolved. Order:
 **T1 -> T2 -> T3 -> T4 -> T5 -> T6 -> T7 -> T8 -> T9 -> T10 -> T11**.
 T7 can be implemented independently after T1 evidence is understood; T8 native
 ownership choices depend on the macOS investigation. This is not a request for
@@ -953,6 +1147,17 @@ documentation must distinguish mute's warm RAM retention from explicit Stop.
 **Windows phase result:** exact focus reader failure reproduced natively; timeout
 mechanism reproduced with injected deadline; misleading Running state and Qt timer
 conflict confirmed; layout overflow measured; ordinary capture/reopen and clean
-Quit succeeded; warm OCR dominates. macOS ownership/release semantics, physical
-keys, mixed DPI, complete frozen lifecycle and full clean dependency build remain
-explicitly pending. **DRAFT, not FINAL.**
+Quit succeeded; warm OCR dominates.
+
+**macOS phase result (2026-09-11):** the duplicate user-facing application is the
+Control Center child, because every `QApplication` process is a Regular macOS
+app; Accessory policy was proven to keep the window visible and focusable.
+Carbon delivers both press and release edges, and synthetic `CGEvent` testing
+works under a real `QApplication`, so Push to Hover has a real macOS backend;
+releasing a modifier first is not a release edge and is documented. The popup
+`hidesOnDeactivate` hypothesis did not reproduce. CC close/reopen reaps its
+children correctly. The WebEngine profile warning reproduces intermittently and
+is an upstream pywebview teardown ordering issue that three child-local remedies
+failed to make deterministic. Physical human key presses, mixed DPI, frozen
+Finder-launch Dock identity and the full clean dependency build are recorded as
+remaining validation, not as proven. **FINAL / READY FOR EXECUTION.**
