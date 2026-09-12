@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 from hanly_app.config import (
+    DEFAULT_CAPTURE_HOTKEY,
     DEFAULT_HOVER_HOTKEY,
     HOVER_HOTKEY_FALLBACKS,
     AppConfig,
@@ -175,7 +176,7 @@ def test_a_profile_written_before_the_hover_toggle_keeps_its_lookup_key(
     assert config.hotkey == "ctrl+alt+k"
     assert config.hover_delay_ms == 140
     assert config.hover_hotkey == DEFAULT_HOVER_HOTKEY
-    assert config.hover_activation is HoverActivation.HOTKEY
+    assert config.hover_activation is HoverActivation.PUSH_TO_HOVER
     assert config.lookup_preload is LookupPreload.WHEN_CAPTURE_STARTS
     assert manager.migrations == ()
 
@@ -206,9 +207,11 @@ def test_a_stored_toggle_binding_is_the_users_choice_and_is_kept(
     assert config.hover_hotkey == "ctrl+alt+j"
 
 
-def test_the_two_shortcuts_may_not_be_the_same_key() -> None:
-    with pytest.raises(ValueError, match="different keys"):
+def test_two_actions_may_not_ask_for_the_same_key() -> None:
+    with pytest.raises(ValueError, match="different key combinations"):
         AppConfig(hotkey="ctrl+shift+k", hover_hotkey="Ctrl+Shift+K")
+    with pytest.raises(ValueError, match="different key combinations"):
+        AppConfig(hotkey="ctrl+shift+k", capture_hotkey="Ctrl+Shift+K")
 
 
 def test_the_new_preferences_round_trip_through_stored_json(tmp_path: Path) -> None:
@@ -244,3 +247,56 @@ def test_a_candidate_is_validated_without_being_stored(tmp_path: Path) -> None:
     assert candidate.hover_hotkey == "ctrl+alt+j"
     assert manager.config.hover_hotkey == DEFAULT_HOVER_HOTKEY
     assert not path.exists()
+
+
+def test_start_stop_capture_gets_its_own_shortcut_without_moving_the_others(
+    tmp_path: Path,
+) -> None:
+    """The third action is new, so it is the one that has to find a position."""
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"hotkey": "ctrl+shift+space", "hover_hotkey": "ctrl+shift+f9"}),
+        encoding="utf-8",
+    )
+    manager = ConfigManager(path)
+
+    config = manager.load()
+
+    assert config.hotkey == "ctrl+shift+space"
+    assert config.hover_hotkey == "ctrl+shift+f9"
+    assert config.capture_hotkey == DEFAULT_CAPTURE_HOTKEY
+    assert manager.migrations == ()
+
+
+def test_a_profile_occupying_every_candidate_leaves_start_stop_unbound(
+    tmp_path: Path,
+) -> None:
+    """Losing one shortcut beats resetting preferences to make room for it."""
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"hotkey": "ctrl+shift+f10", "hover_hotkey": "ctrl+shift+f11"}),
+        encoding="utf-8",
+    )
+    manager = ConfigManager(path)
+
+    config = manager.load()
+
+    assert config.hotkey == "ctrl+shift+f10"
+    assert config.hover_hotkey == "ctrl+shift+f11"
+    assert config.capture_hotkey == "ctrl+shift+f12"
+    assert any("f12" in note for note in manager.migrations)
+
+
+def test_migration_is_idempotent_across_a_save_and_reload(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"hotkey": "ctrl+alt+k"}), encoding="utf-8")
+    manager = ConfigManager(path)
+
+    first = manager.load()
+    manager.save(first)
+    second = ConfigManager(path)
+
+    assert second.load() == first
+    assert second.migrations == ()

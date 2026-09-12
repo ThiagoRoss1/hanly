@@ -10,8 +10,10 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from hanly_app.hotkeys import HotkeyAction, HotkeyError, HotkeyService
+from hanly_app.hotkeys import HotkeyAction, HotkeyEdge, HotkeyError, HotkeyService
 from hanly_app.hotkeys_darwin import (
+    _EVENT_HOT_KEY_PRESSED,
+    _EVENT_HOT_KEY_RELEASED,
     _HANLY_SIGNATURE,
     carbon_binding,
     darwin_listener_factory,
@@ -34,6 +36,7 @@ class _FakeCarbon:
         self.parameter_status = 0
         self.reported_signature = _HANLY_SIGNATURE
         self.handler: Callable[[Any, Any, Any], int] | None = None
+        self.kind = _EVENT_HOT_KEY_PRESSED
 
     def GetEventDispatcherTarget(self) -> int:
         return 0xC0FFEE
@@ -93,10 +96,22 @@ class _FakeCarbon:
         data._obj.id = event.value
         return 0
 
-    def press(self, hotkey_id: int) -> int:
-        """Deliver one hot key the way the main run loop would."""
+    def GetEventKind(self, _event: Any) -> int:
+        return self.kind
 
+    def press(self, hotkey_id: int) -> int:
+        """Deliver one hot key press the way the main run loop would."""
+
+        return self._deliver(hotkey_id, _EVENT_HOT_KEY_PRESSED)
+
+    def release(self, hotkey_id: int) -> int:
+        """Deliver the matching release, which is what makes a hold a hold."""
+
+        return self._deliver(hotkey_id, _EVENT_HOT_KEY_RELEASED)
+
+    def _deliver(self, hotkey_id: int, kind: int) -> int:
         assert self.handler is not None
+        self.kind = kind
         # The hot key id travels as the event pointer, which is all the backend
         # hands back to ``GetEventParameter`` above.
         return self.handler(None, hotkey_id, None)
@@ -142,7 +157,7 @@ def test_bindings_macos_cannot_register_are_rejected_before_anything_starts(
 
 def test_start_registers_every_binding_behind_one_handler(carbon: _FakeCarbon) -> None:
     listener = darwin_listener_factory(
-        {"<ctrl>+<shift>+<space>": lambda: None, "<ctrl>+<shift>+<f9>": lambda: None}
+        {"<ctrl>+<shift>+<space>": lambda _edge: None, "<ctrl>+<shift>+<f9>": lambda _edge: None}
     )
 
     listener.start()
@@ -152,7 +167,7 @@ def test_start_registers_every_binding_behind_one_handler(carbon: _FakeCarbon) -
 
 
 def test_repeated_start_does_not_register_a_second_time(carbon: _FakeCarbon) -> None:
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
 
     listener.start()
     listener.start()
@@ -165,7 +180,7 @@ def test_stop_releases_the_hot_keys_and_the_handler_and_repeats_safely(
     carbon: _FakeCarbon,
 ) -> None:
     listener = darwin_listener_factory(
-        {"<ctrl>+<shift>+<space>": lambda: None, "<ctrl>+<shift>+<f9>": lambda: None}
+        {"<ctrl>+<shift>+<space>": lambda _edge: None, "<ctrl>+<shift>+<f9>": lambda _edge: None}
     )
     listener.start()
 
@@ -177,7 +192,7 @@ def test_stop_releases_the_hot_keys_and_the_handler_and_repeats_safely(
 
 
 def test_stop_then_start_registers_again(carbon: _FakeCarbon) -> None:
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
 
     listener.start()
     listener.stop()
@@ -191,7 +206,7 @@ def test_stop_then_start_registers_again(carbon: _FakeCarbon) -> None:
 def test_join_returns_immediately_because_there_is_no_listener_thread(
     carbon: _FakeCarbon,
 ) -> None:
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
     listener.start()
 
     listener.join(1.0)
@@ -203,7 +218,7 @@ def test_a_hotkey_another_application_owns_fails_as_an_ordinary_error(
     carbon: _FakeCarbon,
 ) -> None:
     carbon.register_statuses = [_HOT_KEY_EXISTS]
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
 
     with pytest.raises(RuntimeError, match="already uses the hotkey"):
         listener.start()
@@ -214,7 +229,7 @@ def test_a_failed_registration_releases_the_hot_keys_it_already_took(
 ) -> None:
     carbon.register_statuses = [0, _HOT_KEY_EXISTS]
     listener = darwin_listener_factory(
-        {"<ctrl>+<shift>+<space>": lambda: None, "<ctrl>+<shift>+<f9>": lambda: None}
+        {"<ctrl>+<shift>+<space>": lambda _edge: None, "<ctrl>+<shift>+<f9>": lambda _edge: None}
     )
 
     with pytest.raises(RuntimeError):
@@ -228,7 +243,7 @@ def test_a_refused_handler_is_reported_and_registers_nothing(
     carbon: _FakeCarbon,
 ) -> None:
     carbon.install_status = -50
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
 
     with pytest.raises(RuntimeError, match="event handler"):
         listener.start()
@@ -237,22 +252,55 @@ def test_a_refused_handler_is_reported_and_registers_nothing(
 
 
 def test_a_pressed_hotkey_runs_only_its_own_callback(carbon: _FakeCarbon) -> None:
-    pressed: list[str] = []
+    edges: list[tuple[str, HotkeyEdge]] = []
     listener = darwin_listener_factory(
         {
-            "<ctrl>+<shift>+<space>": lambda: pressed.append("lookup"),
-            "<ctrl>+<shift>+<f9>": lambda: pressed.append("start"),
+            "<ctrl>+<shift>+<space>": lambda edge: edges.append(("lookup", edge)),
+            "<ctrl>+<shift>+<f9>": lambda edge: edges.append(("start", edge)),
         }
     )
     listener.start()
     lookup_id = carbon.registered[0][2]
 
     assert carbon.press(lookup_id) == 0
-    assert pressed == ["lookup"]
+    assert edges == [("lookup", HotkeyEdge.DOWN)]
+
+
+def test_a_held_hotkey_reports_both_of_its_edges(carbon: _FakeCarbon) -> None:
+    """Push to Hover is a hold, so the release is as load-bearing as the press.
+
+    Carbon delivers ``kEventHotKeyReleased`` when the combination's own key
+    goes up. Without installing that kind, hover would stay on after the user
+    let the keys go.
+    """
+
+    edges: list[HotkeyEdge] = []
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": edges.append})
+    listener.start()
+    hotkey_id = carbon.registered[0][2]
+
+    assert carbon.press(hotkey_id) == 0
+    assert carbon.release(hotkey_id) == 0
+
+    assert edges == [HotkeyEdge.DOWN, HotkeyEdge.UP]
+
+
+def test_a_repeated_press_is_not_a_second_activation(carbon: _FakeCarbon) -> None:
+    edges: list[HotkeyEdge] = []
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": edges.append})
+    listener.start()
+    hotkey_id = carbon.registered[0][2]
+
+    carbon.press(hotkey_id)
+    assert carbon.press(hotkey_id) == _EVENT_NOT_HANDLED
+    carbon.release(hotkey_id)
+    assert carbon.release(hotkey_id) == _EVENT_NOT_HANDLED
+
+    assert edges == [HotkeyEdge.DOWN, HotkeyEdge.UP]
 
 
 def test_an_event_from_another_application_is_declined(carbon: _FakeCarbon) -> None:
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
     listener.start()
     carbon.reported_signature = 0x4F544852  # 'OTHR'
 
@@ -262,7 +310,7 @@ def test_an_event_from_another_application_is_declined(carbon: _FakeCarbon) -> N
 def test_a_hotkey_pressed_after_stop_reaches_nothing(carbon: _FakeCarbon) -> None:
     pressed: list[str] = []
     listener = darwin_listener_factory(
-        {"<ctrl>+<shift>+<space>": lambda: pressed.append("lookup")}
+        {"<ctrl>+<shift>+<space>": lambda _edge: pressed.append("lookup")}
     )
     listener.start()
     hotkey_id = carbon.registered[0][2]
@@ -275,7 +323,7 @@ def test_a_hotkey_pressed_after_stop_reaches_nothing(carbon: _FakeCarbon) -> Non
 def test_a_failing_callback_never_raises_into_the_carbon_caller(
     carbon: _FakeCarbon,
 ) -> None:
-    def explode() -> None:
+    def explode(_edge: HotkeyEdge) -> None:
         raise RuntimeError("handler failed")
 
     listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": explode})
@@ -287,7 +335,7 @@ def test_a_failing_callback_never_raises_into_the_carbon_caller(
 def test_an_unreadable_event_never_raises_into_the_carbon_caller(
     carbon: _FakeCarbon,
 ) -> None:
-    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda: None})
+    listener = darwin_listener_factory({"<ctrl>+<shift>+<space>": lambda _edge: None})
     listener.start()
     carbon.parameter_status = -50
 
@@ -302,7 +350,7 @@ def test_the_service_still_delivers_darwin_actions_through_its_dispatcher(
     posted: list[Callable[[], None]] = []
     actions: list[HotkeyAction] = []
     service = HotkeyService(
-        actions.append,
+        lambda action, _edge: actions.append(action),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         dispatcher=posted.append,
         listener_factory=darwin_listener_factory,
@@ -322,7 +370,7 @@ def test_service_rebind_reuses_the_handler_and_replaces_the_registration(
 ) -> None:
     actions: list[HotkeyAction] = []
     service = HotkeyService(
-        actions.append,
+        lambda action, _edge: actions.append(action),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         listener_factory=darwin_listener_factory,
     )
@@ -344,7 +392,7 @@ def test_failed_service_rebind_restores_the_previous_carbon_registration(
 ) -> None:
     actions: list[HotkeyAction] = []
     service = HotkeyService(
-        actions.append,
+        lambda action, _edge: actions.append(action),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         listener_factory=darwin_listener_factory,
     )
@@ -362,7 +410,7 @@ def test_failed_service_rebind_restores_the_previous_carbon_registration(
 
 def test_service_shutdown_releases_the_carbon_registration(carbon: _FakeCarbon) -> None:
     service = HotkeyService(
-        lambda _action: None,
+        lambda _action, _edge: None,
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         listener_factory=darwin_listener_factory,
     )
@@ -380,7 +428,7 @@ def test_a_binding_macos_cannot_register_fails_at_registration(
     carbon: _FakeCarbon,
 ) -> None:
     service = HotkeyService(
-        lambda _action: None,
+        lambda _action, _edge: None,
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+media_play"},
         listener_factory=darwin_listener_factory,
     )

@@ -1216,7 +1216,7 @@ def test_the_hover_mute_shortcut_is_a_no_op_in_push_to_hover_mode() -> None:
     pending: queue.Queue[Callable[[], None]] = queue.Queue()
     with tempfile.TemporaryDirectory() as directory:
         session, controller = _prepared_session(
-            Path(directory), pending, activation=HoverActivation.HOTKEY
+            Path(directory), pending, activation=HoverActivation.PUSH_TO_HOVER
         )
 
         session.toggle_hover_mute()

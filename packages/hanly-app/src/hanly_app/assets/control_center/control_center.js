@@ -3,7 +3,7 @@
 
   const fallbackState = {
     app: { state: "new", activity: "preparing", detail: "", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
-    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", hover_activation: "hotkey", lookup_preload: "when_capture_starts" },
+    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", capture_hotkey: "ctrl+shift+f10", hover_activation: "push_to_hover", lookup_preload: "when_capture_starts" },
     runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" }, engine: { state: "sleeping", message: "" }, hotkeys: {} },
     updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
     permissions: { supported: false, items: [] }
@@ -243,7 +243,12 @@
     // Before the session is prepared there is no listener yet, so an absent
     // combination means "not started", not "refused".
     const prepared = (app.state || "new") !== "new";
-    [["hotkey", "lookup"], ["hover-hotkey", "toggle_hover"]].forEach(function (pair) {
+    const fields = [
+      ["hotkey", "push_to_hover"],
+      ["hover-hotkey", "toggle_hover"],
+      ["capture-hotkey", "toggle_capture"]
+    ];
+    fields.forEach(function (pair) {
       const hint = byId(pair[0] + "-registered");
       const live = registered[pair[1]];
       const asked = byId(pair[0]).value;
@@ -252,7 +257,8 @@
         hint.classList.remove("hint-error");
         return;
       }
-      const missing = prepared && !live;
+      // An action the user deliberately left unbound is not a failure.
+      const missing = prepared && !live && asked !== "";
       hint.textContent = missing
         ? "Not registered. Another application may already use this combination."
         : "";
@@ -338,7 +344,8 @@
     byId("hover-delay").value = config.hover_delay_ms || 150;
     byId("hotkey").value = config.hotkey || "";
     byId("hover-hotkey").value = config.hover_hotkey || "";
-    byId("hover-activation").value = config.hover_activation || "hotkey";
+    byId("capture-hotkey").value = config.capture_hotkey || "";
+    byId("hover-activation").value = config.hover_activation || "push_to_hover";
     byId("lookup-preload").value = config.lookup_preload || "when_capture_starts";
     byId("region-hint").textContent = regionHint(app);
     ["left", "top", "width", "height"].forEach(function (field) {
@@ -457,6 +464,7 @@
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
   byId("hover-hotkey").addEventListener("change", function (event) { settings({ hover_hotkey: event.target.value }); });
+  byId("capture-hotkey").addEventListener("change", function (event) { settings({ capture_hotkey: event.target.value }); });
   byId("hover-activation").addEventListener("change", function (event) { settings({ hover_activation: event.target.value }); });
   byId("lookup-preload").addEventListener("change", function (event) { settings({ lookup_preload: event.target.value }); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });

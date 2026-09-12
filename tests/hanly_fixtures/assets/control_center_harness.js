@@ -158,7 +158,8 @@ function report(step) {
     connection_hidden: document.getElementById("connection-item").hidden,
     connection_state: document.getElementById("connection-state").textContent,
     reconnect_hidden: document.getElementById("reconnect").hidden,
-    hotkey_hint: document.getElementById("hotkey-registered").textContent
+    hotkey_hint: document.getElementById("hotkey-registered").textContent,
+    capture_hotkey_hint: document.getElementById("capture-hotkey-registered").textContent
   };
 }
 

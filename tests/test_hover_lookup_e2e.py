@@ -23,6 +23,7 @@ from hanly import (
 from hanly.word_resolver import WordResolver
 from hanly_app.capture import CaptureResult, ScreenRect
 from hanly_app.composition import create_lookup_controller
+from hanly_app.config import AppConfig, HoverActivation
 from hanly_app.hotkeys import HotkeyAction
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
 
@@ -300,6 +301,10 @@ def _runtime(
         hover_delay_ms=175,
         hover_scheduler=scheduler,
         hover_listener_factory=listeners,
+        # About the hover pipeline, not about how it is switched on.
+        app_config=AppConfig(
+            hover_delay_ms=175, hover_activation=HoverActivation.ALWAYS_ACTIVE
+        ),
     )
     return (
         manual,

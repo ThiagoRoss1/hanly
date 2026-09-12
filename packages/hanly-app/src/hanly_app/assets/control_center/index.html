@@ -186,20 +186,25 @@
                 <input id="hover-delay" type="number" min="1" max="2000" step="10" inputmode="numeric">
               </label>
               <label class="field">
-                <span>Lookup hotkey</span>
+                <span>Push to Hover <small>(hold)</small></span>
                 <input id="hotkey" type="text" spellcheck="false" autocomplete="off">
                 <small class="field-hint" id="hotkey-registered"></small>
               </label>
               <label class="field">
-                <span>Hover toggle hotkey</span>
+                <span>Pause / continue hover</span>
                 <input id="hover-hotkey" type="text" spellcheck="false" autocomplete="off">
                 <small class="field-hint" id="hover-hotkey-registered"></small>
               </label>
               <label class="field">
+                <span>Start / stop capture</span>
+                <input id="capture-hotkey" type="text" spellcheck="false" autocomplete="off">
+                <small class="field-hint" id="capture-hotkey-registered"></small>
+              </label>
+              <label class="field">
                 <span>Automatic hover</span>
                 <select id="hover-activation">
-                  <option value="hotkey">Off until switched on</option>
-                  <option value="always_active">On from launch</option>
+                  <option value="push_to_hover">Only while the hold is pressed</option>
+                  <option value="always_active">Whenever capture is running</option>
                 </select>
               </label>
               <label class="field">

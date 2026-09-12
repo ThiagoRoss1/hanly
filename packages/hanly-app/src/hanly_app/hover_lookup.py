@@ -92,6 +92,10 @@ class HoverLookupRuntime:
         self._running = False
         self._closed = False
         self._failed = False
+        # Whether new work may start. A released push chord sets this False
+        # while observation continues, so the answer already on screen stays
+        # readable and leaving its word still dismisses it.
+        self._accepting = True
         self._active_hover_request_id: int | None = None
         self._active_hover_id: int | None = None
         self._startup_point: Point | None = None
@@ -150,6 +154,56 @@ class HoverLookupRuntime:
             return self._failed
 
     @property
+    def accepting(self) -> bool:
+        """Whether movement may still start a new lookup."""
+
+        with self._lock:
+            return self._accepting
+
+    def set_accepting(self, accepting: bool) -> None:
+        """Allow or refuse new lookups without forgetting the visible answer.
+
+        Releasing the push chord means "no new work", not "dismiss what I am
+        reading". Movement keeps being observed so the popup still disappears
+        when the cursor leaves the word it describes, and nothing is captured
+        or recognized in the meantime. Once nothing is retained there is
+        nothing left to watch for, and observation stops until the next press.
+        """
+
+        with self._lock:
+            if self._closed or self._accepting == bool(accepting):
+                return
+            self._accepting = bool(accepting)
+            running = self._running
+
+        if accepting:
+            if running:
+                self._mouse.start()
+            return
+        self._hover.invalidate()
+        self._invalidate_active_hover()
+        self._stop_observing_if_idle()
+
+    def observe(self, point: Point) -> None:
+        """Treat one point as movement, for a press with a stationary cursor.
+
+        Nothing moves when the user simply holds the chord over a word they are
+        already pointing at, so there is no event to start the dwell. This is
+        that event, and it goes through exactly the same path.
+        """
+
+        self._dispatcher(lambda: self._on_position(point))
+
+    def _stop_observing_if_idle(self) -> None:
+        """Stop watching the cursor once no popup needs its geometry."""
+
+        with self._lock:
+            watching = self._accepting or self._retained is not None or self._closed
+        if watching:
+            return
+        self._mouse.stop()
+
+    @property
     def delay_ms(self) -> float:
         """Return the live debounce delay used by the hover controller."""
 
@@ -195,6 +249,7 @@ class HoverLookupRuntime:
             self._readiness_generation += 1
             self._readiness_waiting = False
             self._startup_point = None
+            self._accepting = True
 
         self._mouse.stop()
         hover_request_id = self._hover.current_request_id
@@ -309,6 +364,7 @@ class HoverLookupRuntime:
             if self._closed or not self._running:
                 return
             retained = self._retained
+            accepting = self._accepting
         if retained is not None and retained.protects(point, margin=self._word_margin):
             # Still on the word, or on the popup itself. Nothing is captured,
             # nothing is recognized, and what is on screen stays there.
@@ -321,6 +377,11 @@ class HoverLookupRuntime:
             )
             return
         self._leave_retained_target()
+        if not accepting:
+            # Observation without permission to start anything: the exit above
+            # is the whole of the work, and nothing is captured.
+            self._stop_observing_if_idle()
+            return
         with self._lock:
             if not self._controller.worker_ready:
                 self._startup_point = point
@@ -401,6 +462,7 @@ class HoverLookupRuntime:
             self._retained = None
             self._grace_timer = None
         self._notify_invalidation()
+        self._stop_observing_if_idle()
 
     def _cancel_grace(self) -> None:
         with self._lock:

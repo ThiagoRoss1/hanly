@@ -525,7 +525,12 @@ class _DesktopSession:
         self.refresh_tray()
 
     def _start_if_always_active(self) -> None:
-        """Honour always-active hover at launch, or say why it cannot start."""
+        """Honour always-active hover at launch, or say why it cannot start.
+
+        Push to Hover deliberately does not start anything here: the default
+        launch leaves capture stopped, and a held chord must not be what
+        allocates a session.
+        """
 
         if self._settings.config.hover_activation is not HoverActivation.ALWAYS_ACTIVE:
             return
@@ -594,9 +599,10 @@ class _DesktopSession:
     def _hover_detail(self) -> str:
         """Say how a started session expects to be asked for a lookup."""
 
-        if self._settings.config.hover_activation is HoverActivation.ALWAYS_ACTIVE:
+        config = self._settings.config
+        if config.hover_activation is HoverActivation.ALWAYS_ACTIVE:
             return "Hanly is watching the screen."
-        return f"Hold {self._settings.config.hotkey} to look up."
+        return f"Hold {config.hotkey} to look up."
 
     def registered_hotkeys(self) -> dict[str, str]:
         """Report the shortcuts the operating system actually accepted.
@@ -939,7 +945,8 @@ class _DesktopSession:
                     self._status, self._diagnostics, error
                 ),
                 trace_sink=self._trace_sink,
-                on_toggle_hover=self.toggle_capture,
+                on_toggle_hover=self.toggle_hover_mute,
+                on_toggle_capture=self.toggle_capture,
                 on_error=self._diagnostics.report,
                 capture_refusal=self._capture_refusal,
                 on_diagnostic=lambda message: self._diagnostics.record(

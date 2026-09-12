@@ -8,7 +8,13 @@ from typing import Any, cast
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.capture import CaptureResult, ScreenRect
-from hanly_app.hotkeys import HotkeyAction
+from hanly_app.config import AppConfig, HoverActivation
+from hanly_app.hotkeys import (
+    HotkeyAction,
+    HotkeyEdge,
+    HotkeyEdgeHandler,
+    HotkeyService,
+)
 from hanly_app.hover_lookup import HoverLookupRuntime
 from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
@@ -23,6 +29,10 @@ def _result(headword: str = "책") -> LookupResult:
         entries=(DictionaryEntry(headword=headword, definitions=("book",)),),
     )
 
+
+#: These tests are about the hover pipeline, not about how it is switched on,
+#: so they use the mode that observes for the whole session.
+_ALWAYS_ACTIVE = AppConfig(hover_activation=HoverActivation.ALWAYS_ACTIVE)
 
 class _Handle:
     def __init__(self, callback: Callable[[], None]) -> None:
@@ -141,6 +151,47 @@ class _HotkeyFactory:
 
     def __call__(self, _handler, _bindings, _dispatcher) -> _HotkeyRuntime:
         return self.runtime
+
+
+class _KeyListener:
+    """A keyboard that both edges of a chord can be delivered through."""
+
+    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
+        self.callbacks = dict(callbacks)
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def join(self, timeout: float | None = None) -> None:
+        del timeout
+
+    def press(self, binding: str) -> None:
+        self.callbacks[binding](HotkeyEdge.DOWN)
+
+    def release(self, binding: str) -> None:
+        self.callbacks[binding](HotkeyEdge.UP)
+
+
+class _RealHotkeys:
+    """The production service over a fake keyboard, so edges really travel."""
+
+    def __init__(self) -> None:
+        self.listener: _KeyListener | None = None
+
+    def __call__(self, on_action, bindings, dispatcher) -> HotkeyService:
+        def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _KeyListener:
+            self.listener = _KeyListener(callbacks)
+            return self.listener
+
+        return HotkeyService(
+            on_action,
+            bindings=bindings,
+            dispatcher=dispatcher,
+            listener_factory=factory,
+        )
 
 
 def _runtime(
@@ -466,6 +517,7 @@ def test_manual_composition_attaches_hover_to_the_same_controller_capture_and_po
         hover_delay_ms=120,
         hover_scheduler=scheduler,
         hover_listener_factory=listeners,
+        app_config=_ALWAYS_ACTIVE,
     )
     manual.start()
     assert manual.hover_runtime is not None
@@ -502,6 +554,7 @@ def _manual_composition(
     scheduler: object | None = None,
     app_config: object | None = None,
     on_error: Callable[[str, BaseException], None] | None = None,
+    hotkeys: object | None = None,
 ) -> tuple[
     ManualLookupRuntime, _QueueDispatcher, _ListenerFactory, _Capture, list[LookupResult]
 ]:
@@ -534,12 +587,12 @@ def _manual_composition(
         close_popup=lambda: None,
         current_cursor=lambda: Point(0, 0),
         dispatcher=dispatcher,
-        hotkey_factory=_HotkeyFactory(),
+        hotkey_factory=cast(Any, hotkeys or _HotkeyFactory()),
         hover_enabled=True,
         hover_scheduler=cast(Any, scheduler or _Scheduler()),
         hover_listener_factory=listeners,
         hover_on_error=on_error,
-        app_config=cast(Any, app_config),
+        app_config=cast(Any, app_config or _ALWAYS_ACTIVE),
     )
     return manual, dispatcher, listeners, capture, popup_results
 
@@ -625,12 +678,12 @@ def test_invalidate_keeps_observing_while_pause_stops_observation() -> None:
 
 
 def test_configured_hover_delay_reaches_the_scheduler() -> None:
-    from hanly_app.config import AppConfig
-
     scheduler = _Scheduler()
     manual, dispatcher, listeners, capture, popup_results = _manual_composition(
         scheduler=scheduler,
-        app_config=AppConfig(hover_delay_ms=220),
+        app_config=AppConfig(
+            hover_delay_ms=220, hover_activation=HoverActivation.ALWAYS_ACTIVE
+        ),
     )
     manual.start()
     assert manual.hover_runtime is not None
@@ -678,6 +731,7 @@ def test_pausing_capture_clears_the_visible_lookup_popup() -> None:
         hover_enabled=True,
         hover_scheduler=cast(Any, _Scheduler()),
         hover_listener_factory=listeners,
+        app_config=_ALWAYS_ACTIVE,
     )
     manual.start()
 
@@ -691,3 +745,172 @@ def test_pausing_capture_clears_the_visible_lookup_popup() -> None:
 
     manual.shutdown()
     assert closed == ["close"]
+
+
+_PUSH = "<ctrl>+<shift>+<space>"
+_PUSH_CONFIG = AppConfig(hover_activation=HoverActivation.PUSH_TO_HOVER)
+
+
+def _push_composition() -> tuple[
+    ManualLookupRuntime, _QueueDispatcher, _ListenerFactory, _Capture, _RealHotkeys
+]:
+    hotkeys = _RealHotkeys()
+    manual, dispatcher, listeners, capture, _results = _manual_composition(
+        app_config=_PUSH_CONFIG, hotkeys=hotkeys
+    )
+    return manual, dispatcher, listeners, capture, hotkeys
+
+
+def test_push_to_hover_observes_only_while_the_chord_is_held() -> None:
+    """The whole point of the default mode: no observation, no dwell, and no
+    capture while the keys are up."""
+
+    manual, dispatcher, listeners, capture, hotkeys = _push_composition()
+    manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
+    assert hotkeys.listener is not None
+
+    # Started, but nothing held: movement reaches no listener at all.
+    assert listeners.listeners[-1].stopped == 1
+
+    hotkeys.listener.press(_PUSH)
+    _drain(dispatcher)
+    assert manual.hover_runtime.accepting is True
+    listeners.listeners[-1].emit(10, 20)
+    _drain(dispatcher)
+
+    hotkeys.listener.release(_PUSH)
+    _drain(dispatcher)
+
+    assert manual.hover_runtime.accepting is False
+    manual.shutdown()
+
+
+def test_a_repeated_push_press_is_one_activation() -> None:
+    manual, dispatcher, listeners, capture, hotkeys = _push_composition()
+    manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
+    assert hotkeys.listener is not None
+    started = len(listeners.listeners)
+
+    hotkeys.listener.press(_PUSH)
+    hotkeys.listener.press(_PUSH)
+    _drain(dispatcher)
+
+    # One press, one observation: auto-repeat must not re-arm anything.
+    assert len(listeners.listeners) == started + 1
+    manual.shutdown()
+
+
+def test_pushing_while_capture_is_stopped_does_nothing_and_does_not_latch() -> None:
+    """A hold must not allocate a capture session behind the user's back, and
+    the press that did nothing must not be inherited by the next Start."""
+
+    manual, dispatcher, listeners, capture, hotkeys = _push_composition()
+    manual.prepare()
+    assert hotkeys.listener is not None
+
+    hotkeys.listener.press(_PUSH)
+    _drain(dispatcher)
+
+    assert manual.started is False
+    assert capture.cursors == []
+
+    manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
+
+    assert manual.hover_runtime.accepting is False
+    manual.shutdown()
+
+
+def test_a_chord_held_across_start_needs_a_fresh_press() -> None:
+    manual, dispatcher, listeners, capture, hotkeys = _push_composition()
+    manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
+    assert hotkeys.listener is not None
+    hotkeys.listener.press(_PUSH)
+    _drain(dispatcher)
+    assert manual.hover_runtime.accepting is True
+
+    manual.stop()
+    manual.start()
+    _await_hover_ready(manual.hover_runtime, dispatcher)
+
+    assert manual.hover_runtime.accepting is False
+    hotkeys.listener.press(_PUSH)
+    _drain(dispatcher)
+    assert manual.hover_runtime.accepting is True
+    manual.shutdown()
+
+
+def test_switching_to_always_active_clears_the_held_chord() -> None:
+    manual, dispatcher, listeners, capture, hotkeys = _push_composition()
+    manual.start()
+    assert manual.hover_runtime is not None
+    _await_hover_ready(manual.hover_runtime, dispatcher)
+    assert hotkeys.listener is not None
+    hotkeys.listener.press(_PUSH)
+    _drain(dispatcher)
+
+    manual.apply_config(_ALWAYS_ACTIVE)
+    _drain(dispatcher)
+
+    # Always active observes for the whole session, and the release of a chord
+    # that no longer means anything must not switch it off again.
+    assert manual.hover_runtime.accepting is True
+    hotkeys.listener.release(_PUSH)
+    _drain(dispatcher)
+    assert manual.hover_runtime.accepting is True
+    manual.shutdown()
+
+
+def test_the_capture_shortcut_reaches_whoever_owns_the_session() -> None:
+    toggles: list[str] = []
+    hotkeys = _RealHotkeys()
+    listeners = _ListenerFactory()
+    dispatcher = _QueueDispatcher()
+    worker = _Worker()
+
+    class _RuntimeComposition:
+        def create_lookup_controller(
+            self,
+            on_result: Callable[[LookupResult], None] | None = None,
+            *,
+            result_dispatcher: ResultDispatcher | None = None,
+            thread_name: str | None = None,
+        ) -> LookupController:
+            del thread_name
+            assert on_result is not None
+            return LookupController(
+                lambda: worker, on_result, result_dispatcher=result_dispatcher
+            )
+
+    manual = create_manual_lookup(
+        _RuntimeComposition(),
+        _Capture(),
+        lambda _result: None,
+        close_popup=lambda: None,
+        current_cursor=lambda: Point(0, 0),
+        dispatcher=dispatcher,
+        hotkey_factory=hotkeys,
+        hover_enabled=True,
+        hover_scheduler=cast(Any, _Scheduler()),
+        hover_listener_factory=listeners,
+        app_config=_PUSH_CONFIG,
+        on_toggle_capture=lambda: toggles.append("toggle"),
+    )
+    manual.prepare()
+    assert hotkeys.listener is not None
+
+    hotkeys.listener.press("<ctrl>+<shift>+<f10>")
+    _drain(dispatcher)
+    hotkeys.listener.release("<ctrl>+<shift>+<f10>")
+    _drain(dispatcher)
+
+    # One tap, one toggle: the release is not a second press.
+    assert toggles == ["toggle"]
+    manual.shutdown()

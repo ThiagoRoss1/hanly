@@ -22,14 +22,31 @@ if TYPE_CHECKING:
 class HotkeyAction(str, Enum):
     """Actions that a desktop hotkey may request from application orchestration."""
 
+    #: One capture and lookup at the cursor. Still reachable for a caller that
+    #: binds it; the desktop no longer gives it a default shortcut, because the
+    #: combination it used to own is now the hold.
     LOOKUP = "lookup"
     START_CAPTURE = "start_capture"
     PAUSE_CAPTURE = "pause_capture"
-    #: One binding that turns automatic hover on and off. Separate actions for
-    #: starting and pausing are kept for callers that bind them, but a toggle
-    #: is what a user reaches for, and it is the only one the desktop registers
-    #: alongside the manual lookup key.
+    #: Held, not tapped: hover follows the chord and stops when it is let go.
+    PUSH_TO_HOVER = "push_to_hover"
+    #: Mute and continue automatic hover, without touching capture or residency.
     TOGGLE_HOVER = "toggle_hover"
+    #: Start and stop the capture session itself, which is what releases the
+    #: lookup providers.
+    TOGGLE_CAPTURE = "toggle_capture"
+
+
+class HotkeyEdge(str, Enum):
+    """Which half of a physical key press this delivery is.
+
+    A hold needs both; a toggle acts on ``DOWN`` and ignores ``UP``. Backends
+    that can only report activation deliver ``DOWN`` alone, which is why the
+    hold actions are the only ones that read this.
+    """
+
+    DOWN = "down"
+    UP = "up"
 
 
 class HotkeyError(ValueError):
@@ -59,25 +76,32 @@ class HotkeyListener(Protocol):
         """Wait briefly for the listener thread to finish after ``stop``."""
 
 
-HotkeyHandler: TypeAlias = Callable[[HotkeyAction], None]
+HotkeyHandler: TypeAlias = Callable[[HotkeyAction, HotkeyEdge], None]
 HotkeyDispatcher: TypeAlias = Callable[[Callable[[], None]], None]
+#: A backend reports both edges of one combination through this callback.
+HotkeyEdgeHandler: TypeAlias = Callable[[HotkeyEdge], None]
 HotkeyListenerFactory: TypeAlias = Callable[
-    [Mapping[str, Callable[[], None]]], HotkeyListener
+    [Mapping[str, HotkeyEdgeHandler]], HotkeyListener
 ]
 HotkeyBindings: TypeAlias = Mapping[HotkeyAction | str, str]
+
+#: The actions that follow a physical hold rather than a tap.
+HELD_ACTIONS: frozenset[HotkeyAction] = frozenset({HotkeyAction.PUSH_TO_HOVER})
 
 
 DEFAULT_HOTKEYS: Mapping[HotkeyAction | str, str] = MappingProxyType(
     {
-        HotkeyAction.LOOKUP: "ctrl+shift+space",
+        # Every action in this map has to be registrable alongside every other,
+        # so these avoid one another. What the desktop actually registers is
+        # the user's three preferences: the hold, the hover mute, and the
+        # capture session. The one-shot lookup is bindable but unregistered,
+        # because the combination it used to own is now the hold.
+        HotkeyAction.LOOKUP: "ctrl+alt+space",
         HotkeyAction.START_CAPTURE: "ctrl+shift+f9",
         HotkeyAction.PAUSE_CAPTURE: "ctrl+shift+f10",
-        # Every action in this map has to be registrable alongside every other,
-        # so the toggle's default here avoids the two capture keys. What the
-        # desktop actually registers is the user's ``hover_hotkey`` preference,
-        # which defaults to ctrl+shift+f9 because the desktop binds no separate
-        # start and pause keys.
+        HotkeyAction.PUSH_TO_HOVER: "ctrl+shift+space",
         HotkeyAction.TOGGLE_HOVER: "ctrl+shift+f11",
+        HotkeyAction.TOGGLE_CAPTURE: "ctrl+shift+f12",
     }
 )
 
@@ -88,7 +112,9 @@ _ACTION_ALIASES = {
     "lookup": HotkeyAction.LOOKUP,
     "start_capture": HotkeyAction.START_CAPTURE,
     "pause_capture": HotkeyAction.PAUSE_CAPTURE,
+    "push_to_hover": HotkeyAction.PUSH_TO_HOVER,
     "toggle_hover": HotkeyAction.TOGGLE_HOVER,
+    "toggle_capture": HotkeyAction.TOGGLE_CAPTURE,
 }
 
 _MODIFIER_ALIASES = {
@@ -235,7 +261,7 @@ def _normalize_bindings(bindings: HotkeyBindings) -> dict[HotkeyAction, str]:
 
 
 def _default_listener_factory(
-    callbacks: Mapping[str, Callable[[], None]],
+    callbacks: Mapping[str, HotkeyEdgeHandler],
 ) -> HotkeyListener:
     """Pick the backend the running operating system can actually use.
 
@@ -252,7 +278,7 @@ def _default_listener_factory(
 
 
 def _pynput_listener_factory(
-    callbacks: Mapping[str, Callable[[], None]],
+    callbacks: Mapping[str, HotkeyEdgeHandler],
 ) -> HotkeyListener:
     """Construct the concrete listener lazily so importing the app stays cheap."""
 
@@ -261,23 +287,97 @@ def _pynput_listener_factory(
     except ImportError as error:
         raise RuntimeError("pynput is required to register global hotkeys") from error
 
-    return _PynputListener(pynput_keyboard.GlobalHotKeys(dict(callbacks)))
+    return _PynputListener(pynput_keyboard, callbacks)
+
+
+class _Chord:
+    """The physical state of one combination, as both of its edges.
+
+    pynput's own ``GlobalHotKeys`` reports activation and nothing else, which
+    is enough for a tap and not enough for a hold: without the release edge
+    hover would stay on after the user let the keys go.
+    """
+
+    def __init__(self, keys: frozenset[object], handler: HotkeyEdgeHandler) -> None:
+        self._keys = keys
+        self._handler = handler
+        self._held: set[object] = set()
+        self._active = False
+
+    def press(self, key: object) -> None:
+        if key not in self._keys:
+            return
+        self._held.add(key)
+        # Already down means this is auto-repeat, which is not a new press.
+        if self._active or self._held != self._keys:
+            return
+        self._active = True
+        self._handler(HotkeyEdge.DOWN)
+
+    def release(self, key: object) -> None:
+        if key not in self._keys:
+            return
+        self._held.discard(key)
+        self._end()
+
+    def clear(self) -> None:
+        """Drop held state, reporting the release the user never got to make."""
+
+        self._held.clear()
+        self._end()
+
+    def _end(self) -> None:
+        if not self._active:
+            return
+        self._active = False
+        self._handler(HotkeyEdge.UP)
 
 
 class _PynputListener:
-    """Contain the external pynput listener object behind :class:`HotkeyListener`."""
+    """Track each configured chord over pynput's raw key events.
 
-    def __init__(self, listener: keyboard.GlobalHotKeys) -> None:
-        self._listener = listener
+    Raw events rather than ``GlobalHotKeys`` because the hold needs the release
+    edge. Keys are canonicalized through the listener, which is how the same
+    combination keeps working across layouts.
+    """
+
+    def __init__(
+        self,
+        keyboard_module: object,
+        callbacks: Mapping[str, HotkeyEdgeHandler],
+    ) -> None:
+        hotkey = getattr(keyboard_module, "HotKey")
+        self._chords = [
+            _Chord(frozenset(hotkey.parse(binding)), handler)
+            for binding, handler in callbacks.items()
+        ]
+        listener_factory = getattr(keyboard_module, "Listener")
+        self._listener: keyboard.Listener = listener_factory(
+            on_press=self._on_press, on_release=self._on_release
+        )
 
     def start(self) -> None:
         self._listener.start()
 
     def stop(self) -> None:
         self._listener.stop()
+        # A chord held when observation stops would otherwise stay latched
+        # until a release this listener will never see.
+        for chord in self._chords:
+            chord.clear()
 
     def join(self, timeout: float | None = None) -> None:
         self._listener.join(timeout)
+
+    def _on_press(self, key: keyboard.Key | keyboard.KeyCode) -> None:
+        canonical = self._listener.canonical(key)
+        for chord in self._chords:
+            chord.press(canonical)
+
+    def _on_release(self, key: keyboard.Key | keyboard.KeyCode) -> None:
+        canonical = self._listener.canonical(key)
+        for chord in self._chords:
+            chord.release(canonical)
 
 
 def _stop_listener(listener: HotkeyListener) -> None:
@@ -328,6 +428,9 @@ class HotkeyService:
         self._listener: HotkeyListener | None = None
         self._registered = False
         self._shutdown = False
+        # Which listener owns the keyboard; a rebind replaces it, and events
+        # from the previous one are no longer this service's.
+        self._generation = 0
 
     @property
     def registered(self) -> bool:
@@ -357,12 +460,15 @@ class HotkeyService:
                     return
 
                 callbacks = {
-                    binding: (lambda action=action: self._trigger(action))
+                    binding: (
+                        lambda edge, action=action: self._trigger(action, edge)
+                    )
                     for action, binding in self._bindings.items()
                 }
                 listener = self._listener_factory(callbacks)
                 self._listener = listener
                 self._registered = True
+                self._generation += 1
                 listener.start()
         except Exception:
             with self._lock:
@@ -420,7 +526,9 @@ class HotkeyService:
 
             callbacks = {
                 binding_value: (
-                    lambda configured_action=configured_action: self._trigger(configured_action)
+                    lambda edge, configured_action=configured_action: self._trigger(
+                        configured_action, edge
+                    )
                 )
                 for configured_action, binding_value in next_bindings.items()
             }
@@ -430,6 +538,7 @@ class HotkeyService:
             active_rebind = getattr(active_listener, "rebind", None)
             if callable(active_rebind):
                 active_rebind(callbacks)
+                self._generation += 1
                 self._bindings = next_bindings
                 return
 
@@ -444,7 +553,62 @@ class HotkeyService:
                 raise
             previous_listener = self._listener
             self._listener = listener
+            self._generation += 1
             self._bindings = next_bindings
+
+        if previous_listener is not None:
+            _stop_listener(previous_listener)
+
+    def unbind(self, action: HotkeyAction | str) -> None:
+        """Give up one action's combination, leaving the others registered.
+
+        A migration that found no free position leaves an action unbound, and
+        a user may clear one deliberately. Neither is a reason to stop
+        listening for the shortcuts that do exist.
+        """
+
+        normalized = _coerce_action(action)
+        previous_listener: HotkeyListener | None = None
+        with self._lock:
+            if self._shutdown or normalized not in self._bindings:
+                return
+            next_bindings = {
+                configured: binding
+                for configured, binding in self._bindings.items()
+                if configured is not normalized
+            }
+            if not self._registered:
+                self._bindings = next_bindings
+                return
+            if not next_bindings:
+                # Nothing is left to listen for; the listener itself goes.
+                previous_listener = self._listener
+                self._listener = None
+                self._registered = False
+                self._generation += 1
+                self._bindings = next_bindings
+            else:
+                callbacks = {
+                    binding_value: (
+                        lambda edge, configured_action=configured_action: self._trigger(
+                            configured_action, edge
+                        )
+                    )
+                    for configured_action, binding_value in next_bindings.items()
+                }
+                listener = self._listener_factory(callbacks)
+                try:
+                    listener.start()
+                except Exception:
+                    try:
+                        _stop_listener(listener)
+                    except Exception:
+                        pass
+                    raise
+                previous_listener = self._listener
+                self._listener = listener
+                self._generation += 1
+                self._bindings = next_bindings
 
         if previous_listener is not None:
             _stop_listener(previous_listener)
@@ -458,10 +622,18 @@ class HotkeyService:
             self._shutdown = True
         self.unregister()
 
-    def _trigger(self, action: HotkeyAction) -> None:
+    def _trigger(self, action: HotkeyAction, edge: HotkeyEdge) -> None:
+        """Deliver one edge, dropping a stale listener's late key events.
+
+        A rebound or stopped listener can still have an event in flight, and a
+        release from the chord the user no longer has must not reach the
+        application as if it were the current one.
+        """
+
         with self._lock:
             if not self._registered or self._shutdown:
                 return
+            generation = self._generation
             dispatcher = self._dispatcher
 
         def deliver() -> None:
@@ -471,16 +643,21 @@ class HotkeyService:
             with self._lock:
                 if not self._registered or self._shutdown:
                     return
+                if generation != self._generation:
+                    return
                 handler = self._on_action
-            handler(action)
+            handler(action, edge)
 
         dispatcher(deliver)
 
 
 __all__ = [
     "DEFAULT_HOTKEYS",
+    "HELD_ACTIONS",
     "DuplicateHotkeyError",
     "HotkeyAction",
+    "HotkeyEdge",
+    "HotkeyEdgeHandler",
     "HotkeyBindings",
     "HotkeyDispatcher",
     "HotkeyError",

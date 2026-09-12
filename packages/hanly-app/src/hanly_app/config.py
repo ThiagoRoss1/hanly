@@ -47,25 +47,45 @@ class LookupPreload(str, Enum):
 
 
 class HoverActivation(str, Enum):
-    """Whether automatic hover waits to be switched on."""
+    """How a started capture session decides that hover is on.
 
-    #: Off until the toggle hotkey, the tray, or the Control Center starts it.
-    HOTKEY = "hotkey"
-    #: On from launch, subject to the permissions hover needs.
+    ``push_to_hover`` is the default: hover follows a held chord, so nothing is
+    observed and nothing is recognized while the keys are up.
+    """
+
+    #: Hover while the push chord is physically held, and not otherwise.
+    PUSH_TO_HOVER = "push_to_hover"
+    #: On for the whole session, subject to the permissions hover needs.
     ALWAYS_ACTIVE = "always_active"
 
 
-#: What the hover toggle is bound to when nothing else is stored. The desktop
-#: binds no separate start and pause keys, so this position is free.
+#: The stored spelling a profile written before Push to Hover existed uses.
+LEGACY_HOVER_ACTIVATION = "hotkey"
+
+#: What the hover mute is bound to when nothing else is stored.
 DEFAULT_HOVER_HOTKEY = "ctrl+shift+f9"
 
-#: Tried in order when a stored manual binding already occupies the toggle's
-#: default. Deterministic so the same profile always migrates the same way.
+#: What Start/Stop Capture is bound to when nothing else is stored.
+DEFAULT_CAPTURE_HOTKEY = "ctrl+shift+f10"
+
+#: An action can be deliberately unbound, which is what a profile with no free
+#: position gets instead of having every other preference reset.
+UNBOUND_HOTKEY = ""
+
+#: Tried in order when a stored binding already occupies a default. Fixed lists
+#: so the same profile always migrates the same way.
 HOVER_HOTKEY_FALLBACKS: tuple[str, ...] = (
     DEFAULT_HOVER_HOTKEY,
     "ctrl+shift+f11",
     "ctrl+shift+f12",
     "ctrl+alt+h",
+)
+
+CAPTURE_HOTKEY_FALLBACKS: tuple[str, ...] = (
+    DEFAULT_CAPTURE_HOTKEY,
+    "ctrl+shift+f11",
+    "ctrl+shift+f12",
+    "ctrl+alt+c",
 )
 
 
@@ -82,6 +102,7 @@ SETTABLE_FIELDS = frozenset(
     {
         "hotkey",
         "hover_hotkey",
+        "capture_hotkey",
         "hover_activation",
         "lookup_preload",
         "hover_delay_ms",
@@ -125,6 +146,11 @@ def _coerce_activation(value: object) -> HoverActivation:
     if isinstance(value, HoverActivation):
         return value
     if isinstance(value, str):
+        # A profile that predates Push to Hover stored "hotkey" for a mode that
+        # was off until a toggle. That is the mode this one replaced, so it
+        # migrates rather than failing to load.
+        if value == LEGACY_HOVER_ACTIVATION:
+            return HoverActivation.PUSH_TO_HOVER
         try:
             return HoverActivation(value)
         except ValueError as error:
@@ -139,6 +165,25 @@ def _canonical(value: object, field: str) -> str:
         return canonical_hotkey(value)
     except HotkeyError as error:
         raise ValueError(f"{field} is not a usable key combination: {error}") from error
+
+
+def _require_distinct_bindings(*bindings: str) -> None:
+    """Refuse a profile where two actions would ask for the same combination.
+
+    Unbound actions are skipped: more than one action may legitimately have no
+    shortcut, and an empty binding is never registered.
+    """
+
+    names = ("hotkey", "hover_hotkey", "capture_hotkey")
+    seen: dict[str, str] = {}
+    for name, binding in zip(names, bindings, strict=False):
+        if not binding:
+            continue
+        canonical = canonical_hotkey(binding)
+        previous = seen.get(canonical)
+        if previous is not None:
+            raise ValueError(f"{previous} and {name} must be different key combinations")
+        seen[canonical] = name
 
 
 def _coerce_theme(value: object) -> Theme:
@@ -225,12 +270,16 @@ class AppConfig:
     part of the desktop preferences file.
     """
 
+    #: The chord that is held for Push to Hover. This is the combination the
+    #: old one-shot lookup used, which is deliberate: it is the key users
+    #: already reach for when they want a word explained.
     hotkey: str = "ctrl+shift+space"
-    #: One binding turns automatic hover on and off. It is never the old manual
-    #: lookup key: reinterpreting a key the user already has would change what
-    #: their muscle memory does.
+    #: Mute and continue automatic hover, without touching capture.
     hover_hotkey: str = DEFAULT_HOVER_HOTKEY
-    hover_activation: HoverActivation = HoverActivation.HOTKEY
+    #: Start and stop the capture session. May be empty when no position was
+    #: free at migration; the interface then asks the user to choose one.
+    capture_hotkey: str = DEFAULT_CAPTURE_HOTKEY
+    hover_activation: HoverActivation = HoverActivation.PUSH_TO_HOVER
     lookup_preload: LookupPreload = LookupPreload.WHEN_CAPTURE_STARTS
     # 80 ms sits at the low end of the architecture's empirical hover range.
     # It became affordable once a flat ROI stopped costing a full OCR call and
@@ -256,8 +305,11 @@ class AppConfig:
             )
         if not isinstance(self.lookup_preload, LookupPreload):
             object.__setattr__(self, "lookup_preload", _coerce_preload(self.lookup_preload))
-        if _canonical(self.hotkey, "hotkey") == _canonical(self.hover_hotkey, "hover_hotkey"):
-            raise ValueError("the lookup and hover shortcuts must be different keys")
+        if isinstance(self.capture_hotkey, str) and not self.capture_hotkey.strip():
+            object.__setattr__(self, "capture_hotkey", UNBOUND_HOTKEY)
+        else:
+            _canonical(self.capture_hotkey, "capture_hotkey")
+        _require_distinct_bindings(self.hotkey, self.hover_hotkey, self.capture_hotkey)
         if not isinstance(self.hover_delay_ms, int) or isinstance(self.hover_delay_ms, bool):
             raise ValueError("hover_delay_ms must be an integer")
         if not HOVER_DELAY_MIN_MS <= self.hover_delay_ms <= HOVER_DELAY_MAX_MS:
@@ -280,6 +332,7 @@ class AppConfig:
         """Return a JSON-compatible mapping with stable primitive values."""
 
         return {
+            "capture_hotkey": self.capture_hotkey,
             "capture_mode": self.capture_mode.value,
             "capture_monitor": self.capture_monitor,
             "capture_region": (
@@ -323,10 +376,24 @@ class AppConfig:
         notes: list[str] = []
         try:
             hotkey = cast(str, values.get("hotkey", defaults.hotkey))
-            hover_hotkey = _migrated_hover_hotkey(hotkey, values.get("hover_hotkey"), notes)
+            hover_hotkey = _migrated_binding(
+                "the hover pause",
+                HOVER_HOTKEY_FALLBACKS,
+                values.get("hover_hotkey"),
+                (hotkey,),
+                notes,
+            )
+            capture_hotkey = _migrated_binding(
+                "Start/Stop Capture",
+                CAPTURE_HOTKEY_FALLBACKS,
+                values.get("capture_hotkey"),
+                (hotkey, hover_hotkey),
+                notes,
+            )
             config = cls(
                 hotkey=hotkey,
                 hover_hotkey=hover_hotkey,
+                capture_hotkey=capture_hotkey,
                 hover_activation=_coerce_activation(
                     values.get("hover_activation", defaults.hover_activation)
                 ),
@@ -355,29 +422,38 @@ class AppConfig:
         return config, tuple(notes)
 
 
-def _migrated_hover_hotkey(
-    hotkey: object, stored: object, notes: list[str]
+def _migrated_binding(
+    description: str,
+    fallbacks: tuple[str, ...],
+    stored: object,
+    taken: tuple[str, ...],
+    notes: list[str],
 ) -> str:
-    """Choose the toggle's binding, moving it rather than the manual key.
+    """Choose one new action's binding without moving the keys a user has.
 
-    A stored value is the user's own choice and is kept. Without one, the
-    default is used unless the manual lookup key already occupies it, in which
-    case the next free position in a fixed list is taken and said out loud.
+    A stored value is the user's own choice and is kept untouched. Without one,
+    the first free position in a fixed list is taken and said out loud. If none
+    is free the action is left unbound: losing one shortcut is much better than
+    resetting a profile to make room for it.
     """
 
     if stored is not None:
         return cast(str, stored)
 
-    manual = _canonical(hotkey, "hotkey")
-    for candidate in HOVER_HOTKEY_FALLBACKS:
-        if _canonical(candidate, "hover_hotkey") != manual:
-            if candidate != DEFAULT_HOVER_HOTKEY:
+    occupied = {_canonical(binding, "hotkey") for binding in taken if binding}
+    for candidate in fallbacks:
+        if _canonical(candidate, "binding") not in occupied:
+            if candidate != fallbacks[0]:
                 notes.append(
-                    f"Your lookup shortcut already uses {DEFAULT_HOVER_HOTKEY}, so the "
-                    f"hover toggle was set to {candidate}."
+                    f"{fallbacks[0]} was already in use, so {description} was set "
+                    f"to {candidate}."
                 )
             return candidate
-    raise ValueError("no hover toggle shortcut is free beside the lookup shortcut")
+    notes.append(
+        f"No free shortcut was left for {description}, so it is unassigned. "
+        "Choose one in Shortcuts."
+    )
+    return UNBOUND_HOTKEY
 
 
 class ConfigManager:
@@ -477,6 +553,9 @@ class ConfigManager:
         return AppConfig(
             hotkey=cast(str, changes.get("hotkey", self._config.hotkey)),
             hover_hotkey=cast(str, changes.get("hover_hotkey", self._config.hover_hotkey)),
+            capture_hotkey=cast(
+                str, changes.get("capture_hotkey", self._config.capture_hotkey)
+            ),
             hover_activation=_coerce_activation(
                 changes.get("hover_activation", self._config.hover_activation)
             ),
@@ -503,7 +582,11 @@ class ConfigManager:
 
 
 __all__ = [
+    "CAPTURE_HOTKEY_FALLBACKS",
+    "DEFAULT_CAPTURE_HOTKEY",
     "DEFAULT_HOVER_HOTKEY",
+    "LEGACY_HOVER_ACTIVATION",
+    "UNBOUND_HOTKEY",
     "HOVER_DELAY_MAX_MS",
     "HOVER_DELAY_MIN_MS",
     "HOVER_HOTKEY_FALLBACKS",

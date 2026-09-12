@@ -3,17 +3,25 @@
 pynput's keyboard listener asks for the input-source list off the main queue,
 which macOS 26 aborts instead of raising. Carbon needs no privacy grant and
 delivers physical-key combinations on the Qt-owned main run loop.
+
+Both edges are installed, so a held combination is a real hold here. Carbon
+reports a hot key as released when its non-modifier key goes up: letting a
+modifier go first while the primary key stays down does not end the hold. That
+was measured on this backend, and the alternatives -- a global ``NSEvent``
+monitor, which needs an Accessibility grant this backend deliberately does not
+ask for, or polling the modifier state -- both cost more than the case is
+worth.
 """
 
 from __future__ import annotations
 
 import ctypes
 import ctypes.util
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from itertools import count
 from threading import RLock
 
-from .hotkeys import HotkeyError, HotkeyListener
+from .hotkeys import HotkeyEdge, HotkeyEdgeHandler, HotkeyError, HotkeyListener
 
 #: Carbon modifier bits, which are not the Cocoa or Quartz ones.
 _MODIFIER_MASKS = {
@@ -54,6 +62,8 @@ _HOT_KEY_EXISTS = -9878
 
 _EVENT_CLASS_KEYBOARD = 0x6B657962  # 'keyb'
 _EVENT_HOT_KEY_PRESSED = 5
+_EVENT_HOT_KEY_RELEASED = 6
+_EVENT_KINDS = (_EVENT_HOT_KEY_PRESSED, _EVENT_HOT_KEY_RELEASED)
 _PARAM_DIRECT_OBJECT = 0x2D2D2D2D  # '----'
 _TYPE_EVENT_HOT_KEY_ID = 0x686B6964  # 'hkid'
 _HANLY_SIGNATURE = 0x686E6C79  # 'hnly'
@@ -101,7 +111,7 @@ def carbon_binding(binding: str) -> tuple[int, int]:
 
 
 def darwin_listener_factory(
-    callbacks: Mapping[str, Callable[[], None]],
+    callbacks: Mapping[str, HotkeyEdgeHandler],
 ) -> HotkeyListener:
     """Build the macOS listener for already-canonical bindings."""
 
@@ -145,6 +155,8 @@ def _load_carbon() -> ctypes.CDLL:
         ]
         carbon.UnregisterEventHotKey.restype = ctypes.c_int32
         carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+        carbon.GetEventKind.restype = ctypes.c_uint32
+        carbon.GetEventKind.argtypes = [ctypes.c_void_p]
         carbon.GetEventParameter.restype = ctypes.c_int32
         carbon.GetEventParameter.argtypes = [
             ctypes.c_void_p,
@@ -175,7 +187,7 @@ class _CarbonHotkeyListener:
     ordinary error rather than a half-registered listener.
     """
 
-    def __init__(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
         self._bindings = {
             binding: (carbon_binding(binding), callback)
             for binding, callback in callbacks.items()
@@ -188,7 +200,11 @@ class _CarbonHotkeyListener:
         # handler is still installed.
         self._handler_proc = _EventHandlerProc(self._handle_event)
         self._hotkey_refs: dict[str, tuple[ctypes.c_void_p, int]] = {}
-        self._callbacks: dict[int, Callable[[], None]] = {}
+        self._callbacks: dict[int, HotkeyEdgeHandler] = {}
+        # Carbon does not repeat a hot key press, but a duplicate down edge
+        # would still latch a hold twice, so the state is tracked rather than
+        # assumed.
+        self._held: set[int] = set()
 
     def start(self) -> None:
         """Install the handler and register every combination, or nothing."""
@@ -215,7 +231,7 @@ class _CarbonHotkeyListener:
     def join(self, timeout: float | None = None) -> None:
         """Satisfy the listener seam; this backend owns no thread."""
 
-    def rebind(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+    def rebind(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
         """Replace one active registration without installing a second handler."""
 
         bindings = {
@@ -261,13 +277,15 @@ class _CarbonHotkeyListener:
             self._bindings = bindings
 
     def _install_handler(self, carbon: ctypes.CDLL) -> None:
-        spec = _EventTypeSpec(_EVENT_CLASS_KEYBOARD, _EVENT_HOT_KEY_PRESSED)
+        specs = (_EventTypeSpec * len(_EVENT_KINDS))(
+            *(_EventTypeSpec(_EVENT_CLASS_KEYBOARD, kind) for kind in _EVENT_KINDS)
+        )
         handler_ref = ctypes.c_void_p()
         status = carbon.InstallEventHandler(
             ctypes.c_void_p(carbon.GetEventDispatcherTarget()),
             self._handler_proc,
-            1,
-            ctypes.byref(spec),
+            len(_EVENT_KINDS),
+            specs,
             None,
             ctypes.byref(handler_ref),
         )
@@ -282,7 +300,7 @@ class _CarbonHotkeyListener:
         carbon: ctypes.CDLL,
         binding: str,
         combination: tuple[int, int],
-        callback: Callable[[], None],
+        callback: HotkeyEdgeHandler,
     ) -> None:
         key_code, modifiers = combination
         hotkey_id = next(_next_hotkey_id)
@@ -309,6 +327,7 @@ class _CarbonHotkeyListener:
             )
         del self._hotkey_refs[binding]
         self._callbacks.pop(hotkey_id, None)
+        self._held.discard(hotkey_id)
 
     def _teardown(self) -> None:
         carbon = self._carbon
@@ -320,6 +339,7 @@ class _CarbonHotkeyListener:
         # Dropped before the hot keys are released, so a combination that
         # arrives while teardown is still running finds nothing left to run.
         self._callbacks = {}
+        self._held = set()
         if carbon is None:
             return
         for reference, _hotkey_id in hotkey_refs:
@@ -344,21 +364,30 @@ class _CarbonHotkeyListener:
         """
 
         try:
-            callback = self._callback_for(event)
+            delivery = self._delivery_for(event)
         except Exception:
             return _EVENT_NOT_HANDLED
-        if callback is None:
+        if delivery is None:
             return _EVENT_NOT_HANDLED
+        callback, edge = delivery
         try:
-            callback()
+            callback(edge)
         except Exception:
             return _EVENT_NOT_HANDLED
         return _NO_ERROR
 
-    def _callback_for(self, event: int | None) -> Callable[[], None] | None:
+    def _delivery_for(
+        self, event: int | None
+    ) -> tuple[HotkeyEdgeHandler, HotkeyEdge] | None:
+        """Resolve one Carbon event into this listener's callback and edge."""
+
         with self._lock:
             carbon = self._carbon
         if carbon is None or event is None:
+            return None
+
+        kind = carbon.GetEventKind(ctypes.c_void_p(event))
+        if kind not in _EVENT_KINDS:
             return None
 
         hotkey_id = _EventHotKeyID()
@@ -374,8 +403,21 @@ class _CarbonHotkeyListener:
         )
         if status != _NO_ERROR or hotkey_id.signature != _HANLY_SIGNATURE:
             return None
+
+        down = kind == _EVENT_HOT_KEY_PRESSED
         with self._lock:
-            return self._callbacks.get(hotkey_id.id)
+            callback = self._callbacks.get(hotkey_id.id)
+            if callback is None:
+                return None
+            if down == (hotkey_id.id in self._held):
+                # A second down for a chord already held, or an up for one that
+                # was never seen going down: neither is an edge.
+                return None
+            if down:
+                self._held.add(hotkey_id.id)
+            else:
+                self._held.discard(hotkey_id.id)
+        return callback, HotkeyEdge.DOWN if down else HotkeyEdge.UP
 
 
 __all__ = ["carbon_binding", "darwin_listener_factory"]

@@ -7,12 +7,14 @@ import pytest
 from hanly_app.hotkeys import (
     DuplicateHotkeyError,
     HotkeyAction,
+    HotkeyEdge,
+    HotkeyEdgeHandler,
     HotkeyService,
 )
 
 
 class _Listener:
-    def __init__(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
         self.callbacks = dict(callbacks)
         self.started = 0
         self.stopped = 0
@@ -28,19 +30,19 @@ class _Listener:
         assert timeout == 1.0
         self.joined += 1
 
-    def trigger(self, binding: str) -> None:
-        self.callbacks[binding]()
+    def trigger(self, binding: str, edge: HotkeyEdge = HotkeyEdge.DOWN) -> None:
+        self.callbacks[binding](edge)
 
 
 def _service(
-    on_action: Callable[[HotkeyAction], None],
+    on_action: Callable[[HotkeyAction, HotkeyEdge], None],
     *,
     bindings: Mapping[HotkeyAction | str, str] | None = None,
     dispatcher: Callable[[Callable[[], None]], None] | None = None,
 ) -> tuple[HotkeyService, list[_Listener]]:
     listeners: list[_Listener] = []
 
-    def factory(callbacks: Mapping[str, Callable[[], None]]) -> _Listener:
+    def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _Listener:
         listener = _Listener(callbacks)
         listeners.append(listener)
         return listener
@@ -57,40 +59,44 @@ def _service(
 
 
 def test_registers_all_actions_with_normalized_pynput_bindings() -> None:
-    service, listeners = _service(lambda _action: None)
+    service, listeners = _service(lambda _action, _edge: None)
 
     service.register()
 
     assert service.registered is True
     assert listeners[0].started == 1
     assert set(listeners[0].callbacks) == {
+        "<ctrl>+<alt>+<space>",
         "<ctrl>+<shift>+<space>",
         "<ctrl>+<shift>+<f9>",
         "<ctrl>+<shift>+<f10>",
         "<ctrl>+<shift>+<f11>",
+        "<ctrl>+<shift>+<f12>",
     }
 
 
-def test_trigger_delivers_normalized_actions_to_orchestration() -> None:
-    received: list[HotkeyAction] = []
+def test_trigger_delivers_normalized_actions_and_both_edges() -> None:
+    received: list[tuple[HotkeyAction, HotkeyEdge]] = []
     service, listeners = _service(
-        received.append,
+        lambda action, edge: received.append((action, edge)),
         bindings={
-            HotkeyAction.LOOKUP: "Ctrl+Shift+Space",
-            HotkeyAction.START_CAPTURE: "Ctrl+Shift+F9",
-            HotkeyAction.PAUSE_CAPTURE: "Ctrl+Shift+F10",
+            HotkeyAction.PUSH_TO_HOVER: "Ctrl+Shift+Space",
+            HotkeyAction.TOGGLE_HOVER: "Ctrl+Shift+F9",
+            HotkeyAction.TOGGLE_CAPTURE: "Ctrl+Shift+F10",
         },
     )
     service.register()
 
     listeners[0].trigger("<ctrl>+<shift>+<space>")
+    listeners[0].trigger("<ctrl>+<shift>+<space>", HotkeyEdge.UP)
     listeners[0].trigger("<ctrl>+<shift>+<f9>")
     listeners[0].trigger("<ctrl>+<shift>+<f10>")
 
     assert received == [
-        HotkeyAction.LOOKUP,
-        HotkeyAction.START_CAPTURE,
-        HotkeyAction.PAUSE_CAPTURE,
+        (HotkeyAction.PUSH_TO_HOVER, HotkeyEdge.DOWN),
+        (HotkeyAction.PUSH_TO_HOVER, HotkeyEdge.UP),
+        (HotkeyAction.TOGGLE_HOVER, HotkeyEdge.DOWN),
+        (HotkeyAction.TOGGLE_CAPTURE, HotkeyEdge.DOWN),
     ]
 
 
@@ -98,7 +104,7 @@ def test_dispatcher_posts_without_running_application_handler_on_listener_thread
     received: list[HotkeyAction] = []
     posted: list[Callable[[], None]] = []
     service, listeners = _service(
-        received.append,
+        lambda action, _edge: received.append(action),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         dispatcher=posted.append,
     )
@@ -115,7 +121,7 @@ def test_dispatcher_posts_without_running_application_handler_on_listener_thread
 def test_duplicate_bindings_are_rejected_after_normalization() -> None:
     with pytest.raises(DuplicateHotkeyError):
         _service(
-            lambda _action: None,
+            lambda _action, _edge: None,
             bindings={
                 HotkeyAction.LOOKUP: "ctrl+shift+space",
                 HotkeyAction.PAUSE_CAPTURE: "SHIFT+CTRL+<space>",
@@ -124,7 +130,7 @@ def test_duplicate_bindings_are_rejected_after_normalization() -> None:
 
 
 def test_registration_is_idempotent_and_unregister_is_idempotent() -> None:
-    service, listeners = _service(lambda _action: None)
+    service, listeners = _service(lambda _action, _edge: None)
 
     service.register()
     service.register()
@@ -141,7 +147,7 @@ def test_registration_is_idempotent_and_unregister_is_idempotent() -> None:
 def test_rebind_replaces_active_listener_without_losing_registration() -> None:
     received: list[HotkeyAction] = []
     service, listeners = _service(
-        received.append,
+        lambda action, _edge: received.append(action),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
     )
     service.register()
@@ -160,7 +166,7 @@ def test_dispatch_queued_before_unregister_is_suppressed() -> None:
     posted: list[Callable[[], None]] = []
     received: list[HotkeyAction] = []
     service, listeners = _service(
-        received.append,
+        lambda action, _edge: received.append(action),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         dispatcher=posted.append,
     )
@@ -181,13 +187,13 @@ def test_partial_registration_failure_rolls_back_listener_state() -> None:
             super().start()
             raise RuntimeError("listener could not start")
 
-    def factory(callbacks: Mapping[str, Callable[[], None]]) -> _FailingListener:
+    def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _FailingListener:
         listener = _FailingListener(callbacks)
         listeners.append(listener)
         return listener
 
     service = HotkeyService(
-        lambda _action: None,
+        lambda _action, _edge: None,
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         listener_factory=factory,
     )
@@ -201,7 +207,7 @@ def test_partial_registration_failure_rolls_back_listener_state() -> None:
 
 
 def test_shutdown_unregisters_once_and_rejects_future_registration() -> None:
-    service, listeners = _service(lambda _action: None)
+    service, listeners = _service(lambda _action, _edge: None)
     service.register()
 
     service.shutdown()
@@ -223,13 +229,13 @@ def test_handler_that_shuts_down_the_service_does_not_self_join() -> None:
 
     listeners: list[_SelfJoiningListener] = []
 
-    def factory(callbacks: Mapping[str, Callable[[], None]]) -> _SelfJoiningListener:
+    def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _SelfJoiningListener:
         listener = _SelfJoiningListener(callbacks)
         listeners.append(listener)
         return listener
 
     service = HotkeyService(
-        lambda _action: service.shutdown(),
+        lambda _action, _edge: service.shutdown(),
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
         listener_factory=factory,
     )
@@ -250,7 +256,7 @@ def test_action_handler_does_not_block_shutdown_from_another_thread() -> None:
     release = threading.Event()
     shutdown_returned = threading.Event()
 
-    def handler(_action: HotkeyAction) -> None:
+    def handler(_action: HotkeyAction, _edge: HotkeyEdge) -> None:
         in_handler.set()
         release.wait(2.0)
 
@@ -290,7 +296,7 @@ def test_platforms_other_than_darwin_report_a_missing_pynput_installation(
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "pynput", None)
     service = HotkeyService(
-        lambda _action: None,
+        lambda _action, _edge: None,
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
     )
 
@@ -306,9 +312,9 @@ def test_darwin_registers_through_the_carbon_backend(
     # pynput's macOS keyboard listener reads the keyboard layout off the main
     # thread, which current macOS aborts the process for, so Darwin must not
     # reach it.
-    built: list[Mapping[str, Callable[[], None]]] = []
+    built: list[Mapping[str, HotkeyEdgeHandler]] = []
 
-    def darwin_factory(callbacks: Mapping[str, Callable[[], None]]) -> _Listener:
+    def darwin_factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _Listener:
         built.append(callbacks)
         return _Listener(callbacks)
 
@@ -318,7 +324,7 @@ def test_darwin_registers_through_the_carbon_backend(
     )
     monkeypatch.setitem(sys.modules, "pynput", None)
     service = HotkeyService(
-        lambda _action: None,
+        lambda _action, _edge: None,
         bindings={HotkeyAction.LOOKUP: "ctrl+shift+space"},
     )
 

@@ -15,14 +15,23 @@ import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation, LookupPreload
-from hanly_app.hotkeys import HotkeyAction, HotkeyService
+from hanly_app.hotkeys import (
+    HotkeyAction,
+    HotkeyEdge,
+    HotkeyEdgeHandler,
+    HotkeyService,
+)
 from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
 _CURSOR = Point(120.0, 80.0)
 _CAPTURE = CaptureResult(_IMAGE, ScreenRect(20, 30, 2, 1), Point(1.0, 0.5))
-_LOOKUP_BINDING = "<ctrl>+<shift>+<space>"
+#: The one-shot lookup has no default shortcut any more, so the tests that
+#: drive that path bind one, the way an embedding client would.
+_LOOKUP_HOTKEY = "ctrl+alt+space"
+_LOOKUP_BINDING = "<ctrl>+<alt>+<space>"
+_PUSH_BINDING = "<ctrl>+<shift>+<space>"
 _TOGGLE_BINDING = "<ctrl>+<shift>+<f9>"
 
 
@@ -98,7 +107,7 @@ class _Dispatcher:
 
 
 class _Listener:
-    def __init__(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
         self.callbacks = dict(callbacks)
         self.started = 0
         self.stopped = 0
@@ -112,8 +121,11 @@ class _Listener:
     def join(self, timeout: float | None = None) -> None:
         del timeout
 
-    def press(self, binding: str) -> None:
-        self.callbacks[binding]()
+    def press(self, binding: str, edge: HotkeyEdge = HotkeyEdge.DOWN) -> None:
+        self.callbacks[binding](edge)
+
+    def release(self, binding: str) -> None:
+        self.callbacks[binding](HotkeyEdge.UP)
 
 
 class _Hotkeys:
@@ -122,7 +134,7 @@ class _Hotkeys:
         self._fail = fail
 
     def __call__(self, on_action: Any, bindings: Any, dispatcher: Any) -> HotkeyService:
-        def factory(callbacks: Mapping[str, Callable[[], None]]) -> _Listener:
+        def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _Listener:
             if self._fail:
                 raise RuntimeError("another application already uses that shortcut")
             self.listener = _Listener(callbacks)
@@ -215,6 +227,7 @@ def _session(
         on_toggle_hover=on_toggle_hover,
         on_error=on_error,
         capture_refusal=capture_refusal,
+        lookup_hotkey=_LOOKUP_HOTKEY,
     )
     return manual, engine, clock, dispatcher, factory, results
 
@@ -503,8 +516,8 @@ def test_changing_a_binding_alone_does_not_disturb_a_running_session() -> None:
     manual.shutdown()
 
 
-def test_the_default_activation_leaves_hover_off_until_it_is_asked_for() -> None:
-    assert AppConfig().hover_activation is HoverActivation.HOTKEY
+def test_the_default_activation_is_the_held_chord() -> None:
+    assert AppConfig().hover_activation is HoverActivation.PUSH_TO_HOVER
     assert AppConfig().lookup_preload is LookupPreload.WHEN_CAPTURE_STARTS
 
 

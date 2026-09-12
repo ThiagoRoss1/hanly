@@ -426,6 +426,7 @@ class ControlCenterBridge:
         supported = {
             "hotkey",
             "hover_hotkey",
+            "capture_hotkey",
             "hover_activation",
             "lookup_preload",
             "hover_delay_ms",
@@ -439,9 +440,9 @@ class ControlCenterBridge:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"unsupported Control Center setting(s): {names}")
         values = dict(changes)
-        for field in ("hotkey", "hover_hotkey"):
+        for field in ("hotkey", "hover_hotkey", "capture_hotkey"):
             if field in values:
-                values[field] = _validated_hotkey(values[field])
+                values[field] = _validated_binding(values[field], field)
         if "hover_activation" in values:
             values["hover_activation"] = _validated_choice(
                 values["hover_activation"], HoverActivation, "hover activation"
@@ -908,6 +909,7 @@ def _rebinds(previous: AppConfig, candidate: AppConfig) -> bool:
     return (
         previous.hotkey != candidate.hotkey
         or previous.hover_hotkey != candidate.hover_hotkey
+        or previous.capture_hotkey != candidate.capture_hotkey
     )
 
 
@@ -921,6 +923,19 @@ def _validated_choice(value: object, choices: type[Enum], label: str) -> str:
     except ValueError as error:
         offered = ", ".join(str(item.value) for item in choices)
         raise ValueError(f"{label} must be one of: {offered}") from error
+
+
+def _validated_binding(binding: object, field: str) -> str:
+    """Validate one shortcut, allowing an action to be deliberately unbound.
+
+    Only Start/Stop may be left without a shortcut, and only because a
+    migration can find no free position for it; the page then asks for one
+    rather than resetting the preferences that were already there.
+    """
+
+    if field == "capture_hotkey" and isinstance(binding, str) and not binding.strip():
+        return ""
+    return _validated_hotkey(binding)
 
 
 def _validated_hotkey(hotkey: object) -> str:

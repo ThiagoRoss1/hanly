@@ -8,7 +8,12 @@ from typing import Any, cast
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.capture import CaptureResult, ScreenRect
-from hanly_app.hotkeys import HotkeyAction, HotkeyService
+from hanly_app.hotkeys import (
+    HotkeyAction,
+    HotkeyEdge,
+    HotkeyEdgeHandler,
+    HotkeyService,
+)
 from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import (
     ManualLookupRuntime,
@@ -17,6 +22,11 @@ from hanly_app.manual_lookup import (
 )
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
+#: The one-shot lookup no longer has a default shortcut, so a test that drives
+#: that path binds one explicitly, the way an embedding client would.
+_LOOKUP_BINDING = "ctrl+alt+space"
+_CANONICAL_LOOKUP_BINDING = "<ctrl>+<alt>+<space>"
+
 _CURSOR = Point(120.0, 80.0)
 _CAPTURE = CaptureResult(_IMAGE, ScreenRect(20, 30, 2, 1), Point(1.0, 0.5))
 
@@ -45,7 +55,7 @@ class _QueueDispatcher:
 
 
 class _Listener:
-    def __init__(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
         self.callbacks = dict(callbacks)
         self.started = False
         self.stopped = False
@@ -59,8 +69,8 @@ class _Listener:
     def join(self, timeout: float | None = None) -> None:
         assert timeout == 1.0
 
-    def trigger_lookup(self, binding: str) -> None:
-        self.callbacks[binding]()
+    def trigger(self, binding: str, edge: HotkeyEdge = HotkeyEdge.DOWN) -> None:
+        self.callbacks[binding](edge)
 
 
 class _HotkeyFactory:
@@ -71,7 +81,7 @@ class _HotkeyFactory:
     def __call__(self, on_action, bindings, dispatcher):
         self.dispatcher = dispatcher
 
-        def listener_factory(callbacks: Mapping[str, Callable[[], None]]) -> _Listener:
+        def listener_factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _Listener:
             self.listener = _Listener(callbacks)
             return self.listener
 
@@ -200,6 +210,9 @@ def _composition(
         dispatcher=queue,
         hotkey_factory=hotkeys,
         trace_sink=trace_sink,
+        # The one-shot lookup has no default shortcut any more, so a test that
+        # is about that path has to bind it the way an embedding client would.
+        lookup_hotkey=_LOOKUP_BINDING,
     )
     return composition, queue, hotkeys, capture, popup, actual_worker
 
@@ -212,8 +225,8 @@ def test_lookup_hotkey_posts_to_ui_captures_there_and_delivers_result_on_ui() ->
     assert hotkeys.listener is not None
     listener = hotkeys.listener
     trigger_thread = Thread(
-        target=listener.trigger_lookup,
-        args=("<ctrl>+<shift>+<space>",),
+        target=listener.trigger,
+        args=(_CANONICAL_LOOKUP_BINDING,),
     )
     trigger_thread.start()
     trigger_thread.join(timeout=5)
@@ -272,13 +285,13 @@ def test_superseded_manual_lookup_result_is_not_presented() -> None:
     composition.start()
     assert hotkeys.listener is not None
     listener = hotkeys.listener
-    binding = "<ctrl>+<shift>+<space>"
+    binding = _CANONICAL_LOOKUP_BINDING
 
-    listener.trigger_lookup(binding)
+    listener.trigger(binding)
     queue.drain_one()
     assert worker.started.wait(timeout=2)
 
-    listener.trigger_lookup(binding)
+    listener.trigger(binding)
     queue.drain_one()
     worker.release.set()
 
@@ -303,7 +316,7 @@ def test_normal_non_success_result_reaches_the_same_popup_path() -> None:
     composition.start()
     assert hotkeys.listener is not None
 
-    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
     queue.drain_one()
     assert worker.started.wait(timeout=2)
     worker.release.set()
@@ -321,7 +334,7 @@ def test_shutdown_returns_without_waiting_for_lookup_or_hotkey_cleanup() -> None
     composition, queue, hotkeys, capture, popup, worker = _composition()
     composition.start()
     assert hotkeys.listener is not None
-    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
     queue.drain_one()
     assert worker.started.wait(timeout=2)
 
@@ -461,7 +474,7 @@ def test_the_manual_hotkey_path_traces_every_stage_it_reaches() -> None:
     composition.start()
     assert hotkeys.listener is not None
 
-    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
     queue.drain_one()
     assert worker.started.wait(timeout=2)
     worker.release.set()
@@ -497,7 +510,7 @@ def test_a_manual_lookup_that_cannot_capture_says_where_it_stopped() -> None:
     composition.start()
     assert hotkeys.listener is not None
 
-    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
     queue.drain_one()
 
     assert trace.kinds("manual_") == ["manual_action_received", "manual_action_error"]
@@ -522,7 +535,7 @@ def test_the_manual_hotkey_still_completes_a_lookup_after_capture_stops() -> Non
     assert hotkeys.listener is not None
     composition.stop()
 
-    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
     queue.drain_one()
     assert worker.started.wait(timeout=2)
     worker.release.set()
@@ -553,7 +566,7 @@ def test_a_hotkey_that_arrives_before_the_session_is_prepared_is_ignored() -> No
     composition.hotkeys.register()
     assert hotkeys.listener is not None
 
-    hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
     queue.drain_one()
 
     assert trace.kinds("manual_") == ["manual_action_ignored"]
