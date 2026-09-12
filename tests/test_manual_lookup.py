@@ -509,8 +509,8 @@ def test_a_manual_lookup_that_cannot_capture_says_where_it_stopped() -> None:
     composition.shutdown()
 
 
-def test_the_manual_hotkey_still_completes_a_lookup_while_hover_is_paused() -> None:
-    """Stop Capture pauses hover; the one-shot hotkey is a separate trigger.
+def test_the_manual_hotkey_still_completes_a_lookup_after_capture_stops() -> None:
+    """Stop ends the capture session; the one-shot hotkey is a separate trigger.
 
     This is the Stop-then-hotkey path a user takes to look one word up without
     Hanly watching the screen, so the whole sequence has to still run.
@@ -520,7 +520,7 @@ def test_the_manual_hotkey_still_completes_a_lookup_while_hover_is_paused() -> N
     composition, queue, hotkeys, capture, popup, worker = _composition(trace_sink=trace)
     composition.start()
     assert hotkeys.listener is not None
-    composition.pause()
+    composition.stop()
 
     hotkeys.listener.trigger_lookup("<ctrl>+<shift>+<space>")
     queue.drain_one()

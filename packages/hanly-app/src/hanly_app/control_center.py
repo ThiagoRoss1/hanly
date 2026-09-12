@@ -110,11 +110,11 @@ class DesktopLifecycle(Protocol):
     def start(self) -> None:
         """Start capture from a new or shut-down state."""
 
-    def pause(self) -> None:
-        """Stop capture while leaving the desktop startable."""
+    def stop(self) -> None:
+        """Stop capture, releasing the providers and leaving Hanly startable."""
 
     def resume(self) -> None:
-        """Resume capture after :meth:`pause`."""
+        """Resume capture after :meth:`stop`."""
 
     def apply_config(self, config: AppConfig) -> None:
         """Apply persisted desktop preferences to running services."""
@@ -332,10 +332,10 @@ class ControlCenterBridge:
         return self.get_state()
 
     def stop_capture(self) -> dict[str, Any]:
-        """Pause capture through the existing desktop lifecycle controller."""
+        """Stop capture through the one application action every surface uses."""
 
         if self._desktop_controller is not None:
-            self._desktop_controller.pause()
+            self._desktop_controller.stop()
         self._capture_running = False
         self._notify_lifecycle_changed()
         return self.get_state()

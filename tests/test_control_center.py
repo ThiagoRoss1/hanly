@@ -61,7 +61,7 @@ class _Controller:
         self._runtime.start()
         self.state = DesktopState.RUNNING
 
-    def pause(self) -> None:
+    def stop(self) -> None:
         self._runtime.invalidate()
         self.state = DesktopState.PAUSED
 
@@ -769,7 +769,7 @@ class _Bindings:
     def start(self) -> None:
         self.state = DesktopState.RUNNING
 
-    def pause(self) -> None:
+    def stop(self) -> None:
         self.state = DesktopState.PAUSED
 
     def resume(self) -> None:

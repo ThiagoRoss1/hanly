@@ -381,3 +381,62 @@ def _settle(condition: object, timeout: float = _WAIT_SECONDS) -> None:
 def test_the_one_pixel_fixture_stays_a_valid_roi() -> None:
     assert PIXEL.width == 1 and PIXEL.pixel_format is PixelFormat.RGB_888
     assert isinstance(TARGET, Point)
+
+
+def test_a_stop_during_preparation_does_not_spawn_a_replacement(
+    providers: RecordingProviders,
+) -> None:
+    """Waiting for the start lock can outlast the stop that was asked for.
+
+    A background preparation queued behind a start is what made Stop a promise
+    the engine could take back: the thread woke up on the far side of the
+    retirement and loaded a child the user had just released.
+    """
+
+    spawner = ThreadChildSpawner()
+    engine = LookupEngine(settings(), spawn=spawner)  # type: ignore[arg-type]
+    holding = threading.Event()
+    released = threading.Event()
+
+    # Hold the start lock so the background preparation is parked behind it
+    # while the retirement happens, which is the race in production.
+    def hold_start_lock() -> None:
+        with engine._start_lock:
+            holding.set()
+            released.wait(_WAIT_SECONDS)
+
+    holder = threading.Thread(target=hold_start_lock, daemon=True)
+    holder.start()
+    assert holding.wait(_WAIT_SECONDS)
+    try:
+        engine.prepare()
+        engine.retire()
+    finally:
+        released.set()
+        holder.join(_WAIT_SECONDS)
+
+    for _ in range(50):
+        if spawner.spawns:
+            break
+        threading.Event().wait(0.02)
+
+    assert spawner.spawns == 0
+    assert engine.state == "sleeping"
+    engine.close()
+
+
+def test_a_lookup_after_a_stop_is_still_allowed_to_wake_the_engine(
+    providers: RecordingProviders,
+) -> None:
+    """The guard is on queued residency requests, not on asking for an answer."""
+
+    spawner = ThreadChildSpawner()
+    engine = _engine(spawner)
+    try:
+        assert engine(_request(1)).status is LookupStatus.SUCCESS
+        engine.retire()
+        assert engine(_request(2)).status is LookupStatus.SUCCESS
+    finally:
+        engine.close()
+
+    assert spawner.spawns == 2

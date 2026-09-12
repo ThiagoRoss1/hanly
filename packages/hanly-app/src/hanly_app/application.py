@@ -138,7 +138,7 @@ class QtApplication(Protocol):
 class _Lifecycle(Protocol):
     def start(self) -> None: ...
 
-    def pause(self) -> None: ...
+    def stop(self) -> None: ...
 
     def resume(self) -> None: ...
 
@@ -277,8 +277,10 @@ class DesktopApplication:
         with self._lock:
             self._startup = startup
 
-    def pause_capture(self) -> None:
-        self._controller.pause()
+    def stop_capture(self) -> None:
+        """Stop watching the screen and give the lookup providers back."""
+
+        self._controller.stop()
         self._diagnostics.record("Capture", "Hanly stopped watching the screen.")
         self._tray.refresh()
 
@@ -444,8 +446,6 @@ class _DesktopSession:
         self._pending_release: list[DesktopController] = []
         self._engine_state: tuple[str, str] = ("sleeping", "")
         self._activation = settings.config.hover_activation
-        self._hover_muted = False
-        self._stopping = False
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
@@ -477,7 +477,7 @@ class _DesktopSession:
             ready_provider=lambda: status.status.ready,
             on_start=lambda: self.desktop.request_capture(),
             on_resume=lambda: self.desktop.request_capture(),
-            on_pause=lambda: self.desktop.pause_capture(),
+            on_pause=lambda: self.desktop.stop_capture(),
             on_open_control_center=lambda: self.desktop.open_control_center(),
             on_quit=lambda: self.desktop.quit(),
         )
@@ -571,13 +571,14 @@ class _DesktopSession:
         """
 
         engine_state, engine_message = self._engine_state
+        manual = self._manual
         return derive_application_snapshot(
             self._status.status,
             engine_state=engine_state,
             engine_message=engine_message,
             capture_requested=self.state is DesktopState.RUNNING,
-            stopping=self._stopping,
-            hover_muted=self._hover_muted,
+            stopping=manual is not None and manual.retiring,
+            hover_muted=manual is not None and manual.hover_muted,
             hover_detail=self._hover_detail(),
             wakes_on_demand=(
                 self._settings.config.lookup_preload is LookupPreload.ON_DEMAND
@@ -614,15 +615,50 @@ class _DesktopSession:
         }
 
     def toggle_capture(self) -> None:
-        """Turn watching the screen on or off, from the one hover shortcut."""
+        """Start or stop the capture session, from any surface that asks.
+
+        This is the whole of the Start/Stop action: the tray item, the page's
+        buttons, and the global shortcut all arrive here, so one stop is
+        logged, published, and reported the same way whichever asked for it.
+        """
 
         controller = self._controller
         if controller is None:
             raise ControlCenterUnavailable(RUNTIME_NOT_READY)
         if controller.state is DesktopState.RUNNING:
-            self.desktop.pause_capture()
+            self.desktop.stop_capture()
             return
         self.desktop.request_capture()
+
+    def toggle_hover_mute(self) -> None:
+        """Mute or continue hover, keeping the warm lookup child resident.
+
+        Muting is only meaningful for Always active: in Push to Hover the
+        chord is already the on/off switch, and with capture stopped there is
+        nothing to mute. Both are documented no-ops rather than an implicit
+        Start or a hidden mute that survives the next start.
+        """
+
+        controller = self._controller
+        manual = self._manual
+        if controller is None or manual is None:
+            raise ControlCenterUnavailable(RUNTIME_NOT_READY)
+        if controller.state is not DesktopState.RUNNING:
+            self._diagnostics.record(
+                "Capture", "Hover is not running, so there was nothing to pause."
+            )
+            return
+        if self._settings.config.hover_activation is not HoverActivation.ALWAYS_ACTIVE:
+            self._diagnostics.record(
+                "Capture", "Hover follows the push shortcut, so there is no mute."
+            )
+            return
+        muted = not manual.hover_muted
+        controller.set_hover_muted(muted)
+        self._diagnostics.record(
+            "Capture", "Hover is paused." if muted else "Hover continues."
+        )
+        self.refresh_tray()
 
     def _on_engine_state(self, state: str, message: str) -> None:
         """Take engine news from whichever thread reported it, onto Qt."""
@@ -722,8 +758,8 @@ class _DesktopSession:
     def start(self) -> None:
         self._start_or_resume()
 
-    def pause(self) -> None:
-        self._on_qt(lambda: self._with_controller(DesktopController.pause))
+    def stop(self) -> None:
+        self._on_qt(lambda: self._with_controller(DesktopController.stop))
 
     def resume(self) -> None:
         self._start_or_resume()
@@ -750,7 +786,7 @@ class _DesktopSession:
         if activation is HoverActivation.ALWAYS_ACTIVE:
             self._start_if_always_active()
             return
-        self._with_controller(DesktopController.pause)
+        self._with_controller(DesktopController.stop)
         self.refresh_tray()
 
     def set_capture_preferences(
@@ -802,14 +838,19 @@ class _DesktopSession:
 
         def choose() -> None:
             controller = self._controller
+            manual = self._manual
             observing = controller is not None and controller.state is DesktopState.RUNNING
+            # Muting, not stopping: choosing where to read is not a reason to
+            # unload the providers and pay for them again afterwards. A user
+            # who had already paused hover keeps that choice.
+            muted = manual is not None and manual.hover_muted
             if observing and controller is not None:
-                controller.pause()
+                controller.set_hover_muted(True)
             try:
                 chosen.append(select_capture_area())
             finally:
                 if observing and controller is not None:
-                    controller.resume()
+                    controller.set_hover_muted(muted)
 
         self._on_qt(choose, timeout=_SELECTION_TIMEOUT_SECONDS)
         return chosen[0] if chosen else None
@@ -905,6 +946,7 @@ class _DesktopSession:
                     "Lookup engine", message
                 ),
                 on_engine_state=self._on_engine_state,
+                on_stopped=lambda: self._dispatcher(self.refresh_tray),
             )
         except Exception:
             capture.close()
@@ -965,7 +1007,7 @@ class _DesktopSession:
             if self._previous_state in {DesktopState.RUNNING, DesktopState.PAUSED}:
                 controller.start()
             if self._previous_state is DesktopState.PAUSED:
-                controller.pause()
+                controller.stop()
             self.refresh_tray()
 
         self.clean_up_leftovers()

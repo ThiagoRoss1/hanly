@@ -484,7 +484,7 @@ def test_manual_composition_attaches_hover_to_the_same_controller_capture_and_po
 
     assert popup_results == [_result()]
 
-    manual.pause()
+    manual.stop()
     # Pausing stops watching the screen; the session and its shortcuts stay up.
     assert manual.started is False
     assert manual.prepared is True
@@ -614,7 +614,7 @@ def test_invalidate_keeps_observing_while_pause_stops_observation() -> None:
     assert hover.mouse_observer.running is True
     assert listeners.listeners[0].stopped == 0
 
-    manual.pause()
+    manual.stop()
     assert hover.running is False
     assert hover.mouse_observer.running is False
     assert listeners.listeners[0].stopped == 1
@@ -685,7 +685,7 @@ def test_pausing_capture_clears_the_visible_lookup_popup() -> None:
     manual.invalidate()
     assert cleared == []
 
-    manual.pause()
+    manual.stop()
     assert cleared == ["clear"]
     assert closed == []
 

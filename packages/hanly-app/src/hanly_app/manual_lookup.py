@@ -163,6 +163,7 @@ class ManualLookupRuntime:
         origins: CaptureOrigins | None = None,
         idle_scheduler: IdleScheduler | None = None,
         idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS,
+        on_stopped: Callable[[], None] | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -205,6 +206,7 @@ class ManualLookupRuntime:
         self._origins = origins if origins is not None else CaptureOrigins()
         self._idle_scheduler = idle_scheduler or _schedule_idle
         self._idle_timeout = float(idle_timeout_seconds)
+        self._on_stopped = on_stopped
         self._hotkeys = (hotkey_factory or _create_hotkey)(
             self._handle_action,
             {HotkeyAction.LOOKUP: hotkey, HotkeyAction.TOGGLE_HOVER: hover_hotkey},
@@ -219,6 +221,8 @@ class ManualLookupRuntime:
         self._capture_mode = CaptureMode.FULL_MONITOR
         self._idle_timer: Cancellable | None = None
         self._idle_generation = 0
+        self._hover_muted = False
+        self._retiring = False
 
     @property
     def controller(self) -> LookupController:
@@ -369,6 +373,20 @@ class ManualLookupRuntime:
             return self._prepared and not self._closed
 
     @property
+    def hover_muted(self) -> bool:
+        """Whether automatic hover is muted while the session keeps running."""
+
+        with self._lock:
+            return self._hover_muted
+
+    @property
+    def retiring(self) -> bool:
+        """Whether a stop is still waiting for the lookup child to let go."""
+
+        with self._lock:
+            return self._retiring
+
+    @property
     def engine(self) -> LookupResidency | None:
         """The lookup engine whose residency this policy controls, if any."""
 
@@ -411,10 +429,12 @@ class ManualLookupRuntime:
                 raise RuntimeError("manual lookup runtime has been shut down")
             if self._started:
                 hover_runtime = self._hover_runtime
+                self._hover_muted = False
                 if hover_runtime is not None and not hover_runtime.failed:
                     hover_runtime.resume()
                 return
             self._started = True
+            self._hover_muted = False
 
         # A deliberate activation, so the engine gets a fresh allowance for the
         # one automatic restart an unexpected exit is permitted.
@@ -522,6 +542,8 @@ class ManualLookupRuntime:
             self._closed = True
             self._started = False
             self._prepared = False
+            self._hover_muted = False
+            self._retiring = False
         self._cancel_idle_expiry()
 
         # Invalidate before stop so queued or in-flight results fail the
@@ -555,12 +577,13 @@ class ManualLookupRuntime:
         if hover_runtime is not None:
             hover_runtime.invalidate()
 
-    def pause(self) -> None:
-        """Stop watching the screen, leaving the shortcuts live.
+    def stop(self) -> None:
+        """Stop watching the screen and give the lookup providers back.
 
-        Every policy but Always gives the providers back here. Always is the
-        choice that deliberately opts into residency through a pause, which is
-        the whole reason it exists.
+        Explicit Stop releases residency under every preload policy, Always
+        included. Always means eager preparation on launch and on Start, and
+        residency through a hover mute -- not resurrection after the user has
+        asked Hanly to stop. The user's saved policy is untouched.
         """
 
         with self._lock:
@@ -568,6 +591,8 @@ class ManualLookupRuntime:
                 return
             hover_runtime = self._hover_runtime
             self._started = False
+            self._hover_muted = False
+            self._retiring = self._engine is not None
         self._controller.invalidate()
         if hover_runtime is not None:
             hover_runtime.pause()
@@ -575,8 +600,69 @@ class ManualLookupRuntime:
         # running, so stopping capture must not leave it on screen.
         self._clear_popup()
         self._cancel_idle_expiry()
-        if self._preload is not LookupPreload.ALWAYS:
-            self._with_engine(lambda engine: engine.retire())
+        self._retire_off_thread()
+
+    def set_hover_muted(self, muted: bool) -> None:
+        """Mute or continue automatic hover without changing residency.
+
+        This is the warm half of the model: nothing is observed and the popup
+        is dismissed, but the child that makes the next lookup instant stays
+        loaded. Only :meth:`stop` gives that memory back.
+        """
+
+        with self._lock:
+            if self._closed or not self._started:
+                return
+            if self._hover_muted == bool(muted):
+                return
+            self._hover_muted = bool(muted)
+            hover_runtime = self._hover_runtime
+        self._controller.invalidate()
+        if muted:
+            if hover_runtime is not None:
+                hover_runtime.pause()
+            self._clear_popup()
+        elif hover_runtime is not None and not hover_runtime.failed:
+            hover_runtime.resume()
+
+    def _retire_off_thread(self) -> None:
+        """Join the lookup child away from the thread that asked for the stop.
+
+        Retiring waits for a child process to exit, which is measured in
+        hundreds of milliseconds. Doing that inside the Qt action would freeze
+        the tray, the window, and the popup for exactly as long as it takes.
+        """
+
+        if self._engine is None:
+            self._settle_stop()
+            return
+
+        def retire() -> None:
+            try:
+                self._with_engine(lambda residency: residency.retire())
+            finally:
+                self._settle_stop()
+
+        try:
+            self._shutdown_scheduler(retire)
+        except Exception as error:
+            self._report_error("Lookup engine", error)
+            retire()
+
+    def _settle_stop(self) -> None:
+        """Report the stop as finished, once the child has actually let go."""
+
+        with self._lock:
+            self._retiring = False
+        callback = self._on_stopped
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            # Telling the interface a stop finished is a presentation
+            # callback; losing it must not replace the stop itself.
+            pass
 
     def _arm_idle_expiry(self) -> None:
         """Give a manual session an expiry, but only while capture is off.
@@ -637,7 +723,7 @@ class ManualLookupRuntime:
             timer.cancel()
 
     def resume(self) -> None:
-        """Resume the shared lookup path after :meth:`pause`."""
+        """Resume the shared lookup path after :meth:`stop`."""
 
         self.start()
 
@@ -818,6 +904,7 @@ def create_manual_lookup(
     on_diagnostic: Callable[[str], None] | None = None,
     on_engine_state: Callable[[str, str], None] | None = None,
     idle_scheduler: IdleScheduler | None = None,
+    on_stopped: Callable[[], None] | None = None,
 ) -> ManualLookupRuntime:
     """Compose a manual path from the existing runtime and desktop seams."""
 
@@ -870,6 +957,7 @@ def create_manual_lookup(
         capture_refusal=capture_refusal,
         origins=origins,
         idle_scheduler=idle_scheduler,
+        on_stopped=on_stopped,
     )
     manual_holder.append(manual)
     if hover_enabled:
@@ -913,6 +1001,7 @@ def create_qt_manual_lookup(
     on_diagnostic: Callable[[str], None] | None = None,
     on_engine_state: Callable[[str, str], None] | None = None,
     idle_scheduler: IdleScheduler | None = None,
+    on_stopped: Callable[[], None] | None = None,
 ) -> ManualLookupRuntime:
     """Build the real Qt alpha composition on the caller's UI thread.
 
@@ -991,6 +1080,7 @@ def create_qt_manual_lookup(
         capture_refusal=capture_refusal,
         origins=origins,
         idle_scheduler=idle_scheduler,
+        on_stopped=on_stopped,
     )
     manual_holder.append(manual)
     if hover_enabled:

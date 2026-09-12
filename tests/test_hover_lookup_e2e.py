@@ -466,7 +466,7 @@ def test_hover_e2e_pause_cancels_pending_delay_before_capture_or_lookup() -> Non
         listener.emit(_UI_POINT)
         assert dispatcher.drain_one()
 
-        manual.pause()
+        manual.stop()
         scheduler.fire_latest()
 
         assert capture.cursors == []

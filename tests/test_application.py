@@ -4,6 +4,7 @@ import ast
 import json
 import queue
 import sys
+import tempfile
 import threading
 import types
 from collections.abc import Callable
@@ -24,7 +25,7 @@ from hanly_app.application import (
     discover_runtime_config,
     load_update_service,
 )
-from hanly_app.config import AppConfig, ConfigManager
+from hanly_app.config import AppConfig, ConfigManager, HoverActivation
 from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailable
 from hanly_app.desktop_controller import DesktopState
 from hanly_app.hotkeys import HotkeyAction
@@ -85,8 +86,8 @@ class _Service:
     def start(self) -> None:
         self.events.append(f"{self.name}.start")
 
-    def pause(self) -> None:
-        self.events.append(f"{self.name}.pause")
+    def stop(self) -> None:
+        self.events.append(f"{self.name}.stop")
 
     def resume(self) -> None:
         self.events.append(f"{self.name}.resume")
@@ -203,12 +204,12 @@ def test_desktop_actions_refresh_tray_and_capture_control_center_errors() -> Non
         diagnostics=diagnostics,
     )
     desktop.start_capture()
-    desktop.pause_capture()
+    desktop.stop_capture()
     desktop.resume_capture()
     desktop.open_control_center()
     desktop.quit()
 
-    assert "controller.pause" in events
+    assert "controller.stop" in events
     assert "controller.resume" in events
     assert "Control Center: host failed" in diagnostics.snapshot()
     assert qt.events == ["quit"]
@@ -723,9 +724,12 @@ class _QtOwnedController:
         self._record("start")
         self.state = DesktopState.RUNNING
 
-    def pause(self) -> None:
-        self._record("pause")
+    def stop(self) -> None:
+        self._record("stop")
         self.state = DesktopState.PAUSED
+
+    def set_hover_muted(self, muted: bool) -> None:
+        self._record(f"mute={muted}")
 
     def resume(self) -> None:
         self._record("resume")
@@ -765,7 +769,7 @@ class _Desktop:
     def resume_capture(self) -> None:
         return None
 
-    def pause_capture(self) -> None:
+    def stop_capture(self) -> None:
         return None
 
     def open_control_center(self) -> None:
@@ -851,7 +855,7 @@ def test_a_cancelled_selection_restores_observation_in_one_dispatch(
     finally:
         worker.join(_WAIT_SECONDS)
 
-    assert controller.calls == ["pause", "overlay", "resume"]
+    assert controller.calls == ["mute=True", "overlay", "mute=False"]
     assert pending.empty()
     assert controller.state is DesktopState.RUNNING
 
@@ -1158,3 +1162,75 @@ def test_shortcuts_a_backend_refused_are_not_reported_as_registered(
 
     session._manual = cast(Any, _Manual(False))
     assert session.registered_hotkeys() == {}
+
+
+def _prepared_session(
+    tmp_path: Path,
+    pending: queue.Queue[Callable[[], None]],
+    *,
+    activation: HoverActivation = HoverActivation.ALWAYS_ACTIVE,
+    muted: bool = False,
+) -> tuple[Any, _QtOwnedController]:
+    """A session whose runtime is already composed, for the mute policy."""
+
+    class _Manual:
+        def __init__(self) -> None:
+            self.hover_muted = muted
+            self.retiring = False
+
+    settings = ConfigManager(tmp_path / "config.json")
+    settings.save(AppConfig(hover_activation=activation))
+    session = application_module._DesktopSession(
+        settings,
+        diagnostics=DiagnosticLog(),
+        status=RuntimeStatusPublisher(pending.put),
+        dispatcher=pending.put,
+        permission_service=PermissionService(),
+    )
+    session.attach(cast(Any, _Desktop()))
+    controller = _QtOwnedController(DesktopState.RUNNING)
+    session._controller = cast(Any, controller)
+    session._manual = cast(Any, _Manual())
+    while not pending.empty():
+        pending.get_nowait()
+    return session, controller
+
+
+def test_the_hover_mute_shortcut_keeps_the_session_and_its_providers() -> None:
+    """Pause/Continue Hover is the warm half: no Stop, no retirement."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    with tempfile.TemporaryDirectory() as directory:
+        session, controller = _prepared_session(Path(directory), pending)
+
+        session.toggle_hover_mute()
+
+    assert controller.calls == ["mute=True"]
+    assert controller.state is DesktopState.RUNNING
+
+
+def test_the_hover_mute_shortcut_is_a_no_op_in_push_to_hover_mode() -> None:
+    """The chord is already the on/off switch, so a mute would be a second,
+    invisible one that outlives the key the user let go of."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    with tempfile.TemporaryDirectory() as directory:
+        session, controller = _prepared_session(
+            Path(directory), pending, activation=HoverActivation.HOTKEY
+        )
+
+        session.toggle_hover_mute()
+
+    assert controller.calls == []
+
+
+def test_the_hover_mute_shortcut_never_starts_a_stopped_session() -> None:
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    with tempfile.TemporaryDirectory() as directory:
+        session, controller = _prepared_session(Path(directory), pending)
+        controller.state = DesktopState.PAUSED
+
+        session.toggle_hover_mute()
+
+    assert controller.calls == []
+    assert controller.state is DesktopState.PAUSED
