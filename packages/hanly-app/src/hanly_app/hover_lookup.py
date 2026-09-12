@@ -16,13 +16,15 @@ from typing import Protocol
 
 from hanly import Point
 
-from .capture import CaptureResult
+from .capture import CaptureResult, ScreenRect
 from .hover_controller import Cancellable, HoverController, HoverRequest, HoverScheduler
 from .hover_target import (
-    EXIT_GRACE_MS,
+    POPUP_TRANSFER_MS,
     WORD_MARGIN_PIXELS,
     CaptureOrigins,
     RetainedTarget,
+    distance_to,
+    in_transfer_corridor,
 )
 from .lookup_controller import LookupController
 from .mouse_observer import MouseListenerFactory, MouseObserver
@@ -42,6 +44,10 @@ HoverDispatcher = Callable[[Callable[[], None]], None]
 
 def _inline_dispatch(callback: Callable[[], None]) -> None:
     callback()
+
+
+def _centre(rect: ScreenRect) -> Point:
+    return Point(rect.left + rect.width / 2, rect.top + rect.height / 2)
 
 
 class HoverLookupRuntime:
@@ -67,7 +73,8 @@ class HoverLookupRuntime:
         on_invalidate: Callable[[], None] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
         origins: CaptureOrigins | None = None,
-        grace_ms: float = EXIT_GRACE_MS,
+        exit_scheduler: HoverScheduler | None = None,
+        transfer_ms: float = POPUP_TRANSFER_MS,
         word_margin: int = WORD_MARGIN_PIXELS,
     ) -> None:
         if not isinstance(controller, LookupController):
@@ -102,12 +109,19 @@ class HoverLookupRuntime:
         self._readiness_generation = 0
         self._readiness_waiting = False
         self._origins = origins if origins is not None else CaptureOrigins()
+        # The dwell and the popup crossing overlap in time, so they cannot
+        # share one timer: the production Qt scheduler reuses a single QTimer,
+        # and the dwell scheduled on the way out replaced the crossing's own
+        # callback, which is how an exit stopped dismissing anything at all.
+        self._exit_scheduler = exit_scheduler
         self._scheduler = scheduler
-        self._grace_ms = float(grace_ms)
+        self._transfer_ms = float(transfer_ms)
         self._word_margin = int(word_margin)
         self._retained: RetainedTarget | None = None
         self._target_generation = 0
-        self._grace_timer: Cancellable | None = None
+        self._transfer_timer: Cancellable | None = None
+        self._protected_point: Point | None = None
+        self._transfer_distance: float | None = None
         self._hover = HoverController(
             self._on_stable,
             delay_ms=delay_ms,
@@ -320,7 +334,7 @@ class HoverLookupRuntime:
             "hover_cancellation",
             hover_request_id=hover_request_id,
         )
-        self._cancel_grace()
+        self._cancel_transfer()
         self._invalidate_active_hover()
         self._controller.stop(wait=False)
 
@@ -349,8 +363,13 @@ class HoverLookupRuntime:
                 return
             self._retained = target
             self._target_generation += 1
-            timer = self._grace_timer
-            self._grace_timer = None
+            # The word is where the cursor was when this answer was produced,
+            # so the crossing to the popup is measured from there even if the
+            # next movement is already outside it.
+            self._protected_point = None if target is None else _centre(target.word)
+            self._transfer_distance = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
         if timer is not None:
             timer.cancel()
 
@@ -368,13 +387,20 @@ class HoverLookupRuntime:
         if retained is not None and retained.protects(point, margin=self._word_margin):
             # Still on the word, or on the popup itself. Nothing is captured,
             # nothing is recognized, and what is on screen stays there.
-            self._cancel_grace()
+            self._cancel_transfer()
+            with self._lock:
+                self._protected_point = point
             self._hover.invalidate()
             emit_trace(
                 self._trace_sink,
                 "hover_inside_retained_target",
                 lookup_request_id=retained.lookup_request_id,
             )
+            return
+        if retained is not None and self._crossing_to_popup(point, retained):
+            # In the gap between the word and its popup: the answer stays and
+            # nothing is captured against the empty space in between.
+            self._hover.invalidate()
             return
         self._leave_retained_target()
         if not accepting:
@@ -410,64 +436,101 @@ class HoverLookupRuntime:
             hover_request_id=self._hover.current_request_id,
         )
 
-    def _leave_retained_target(self) -> None:
-        """Leave the word, keeping its answer visible for the grace interval.
+    def _crossing_to_popup(self, point: Point, retained: RetainedTarget) -> bool:
+        """Whether this movement is the user reaching for the popup.
 
-        The gap between a word and the popup beside it is real screen distance,
-        and dismissing on the first pixel outside the word makes the popup
-        impossible to reach. Request currency is retired immediately either
-        way; only the visible result waits.
+        Only a cursor that left the word inside the narrow corridor towards the
+        popup, and that keeps getting closer to it, is crossing. Anything else
+        -- sideways, backwards, or towards the next word -- is a real exit.
+        """
+
+        popup = retained.popup
+        if popup is None:
+            return False
+        with self._lock:
+            origin = self._protected_point
+            previous = self._transfer_distance
+        if origin is None or not in_transfer_corridor(point, origin, popup):
+            return False
+
+        distance = distance_to(popup, point)
+        if previous is not None and distance > previous:
+            # Turning back is leaving, whatever the corridor says.
+            return False
+        with self._lock:
+            self._transfer_distance = distance
+            starting = self._transfer_timer is None
+        if starting:
+            self._arm_transfer()
+        return True
+
+    def _leave_retained_target(self) -> None:
+        """Leave for good: the answer goes now, not after a delay.
+
+        Crossing to the popup was already decided against by the caller, so
+        there is nothing left to wait for. A cursor moving away from the word
+        it was reading about wants the next word, and a popup that lingers is
+        covering it.
         """
 
         with self._lock:
             retained = self._retained
-            already_leaving = self._grace_timer is not None
         if retained is None:
             self._notify_invalidation()
             return
-        if already_leaving:
-            return
-        self._arm_grace()
+        self._dismiss_retained()
 
-    def _arm_grace(self) -> None:
+    def _arm_transfer(self) -> None:
+        """Bound the crossing, so a cursor parked in the gap does not hold it."""
+
         with self._lock:
             generation = self._target_generation
-            scheduler = self._scheduler
+            scheduler = self._exit_scheduler
+        if scheduler is None:
+            # Nothing can end the crossing later, so it does not begin.
+            self._dismiss_retained()
+            return
         try:
-            timer = (
-                scheduler(self._grace_ms, lambda: self._grace_expired(generation))
-                if scheduler is not None
-                else None
+            timer = scheduler(
+                self._transfer_ms, lambda: self._transfer_expired(generation)
             )
         except Exception as error:
-            self._report_error("popup grace", error)
-            self._notify_invalidation()
-            return
-        if timer is None:
-            # No scheduler was supplied, so there is nothing to wait on and
-            # leaving the word is the dismissal.
-            self._notify_invalidation()
+            self._report_error("popup transfer", error)
+            self._dismiss_retained()
             return
         with self._lock:
             current = generation == self._target_generation and not self._closed
             if current:
-                self._grace_timer = timer
+                self._transfer_timer = timer
         if not current:
             timer.cancel()
 
-    def _grace_expired(self, generation: int) -> None:
+    def _transfer_expired(self, generation: int) -> None:
         with self._lock:
             if self._closed or generation != self._target_generation:
                 return
+        self._dismiss_retained()
+
+    def _dismiss_retained(self) -> None:
+        """Drop the answer on screen and whatever was protecting it."""
+
+        with self._lock:
             self._retained = None
-            self._grace_timer = None
+            self._target_generation += 1
+            self._protected_point = None
+            self._transfer_distance = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
+        if timer is not None:
+            timer.cancel()
         self._notify_invalidation()
         self._stop_observing_if_idle()
 
-    def _cancel_grace(self) -> None:
+    def _cancel_transfer(self) -> None:
         with self._lock:
-            timer = self._grace_timer
-            self._grace_timer = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
+            self._transfer_distance = None
         if timer is not None:
             timer.cancel()
 

@@ -3,17 +3,19 @@
 A popup that disappears the moment the cursor moves towards it cannot be read,
 and one that survives any movement covers the next word. Between those, Hanly
 keeps a successful result while the cursor is still on the word it describes or
-on the popup itself, and gives a short grace for the gap between the two.
+on the popup itself, and while it is crossing the gap between the two.
 
-The protected area is deliberately a union of two rectangles rather than one
-rectangle around both: the hull of a word and a popup placed diagonally from it
-covers whatever is in between, which is usually other words the user wants to
-look up.
+Both protected areas are deliberately kept apart rather than merged into one
+rectangle: the hull of a word and a popup placed diagonally from it covers
+whatever is in between, which is usually other words the user wants to look up.
+The crossing is a narrow corridor along the line between them for the same
+reason.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from math import hypot
 from threading import RLock
 
 from hanly import BoundingBox, Point
@@ -25,9 +27,15 @@ from .capture import ScreenRect
 #: the distance to the next word.
 WORD_MARGIN_PIXELS = 4
 
-#: How long a result survives a real exit. Long enough to cross the gap to the
-#: popup, short enough that a deliberate move away feels immediate.
-EXIT_GRACE_MS = 120.0
+#: How long the cursor may spend crossing the gap between a word and its popup.
+#: This is a cap on a transfer that is already under way, not a delay every
+#: exit pays: a cursor leaving in any other direction is dismissed at once.
+POPUP_TRANSFER_MS = 120.0
+
+#: How far to either side of the straight line from the word to the popup the
+#: cursor may stray and still count as crossing towards it. Narrow on purpose:
+#: a wider band would cover the words beside the one being left.
+TRANSFER_CORRIDOR_PIXELS = 24
 
 #: How many recent captures keep their screen origin. The executor bounds work
 #: to one running plus one latest pending, so this is already generous.
@@ -53,6 +61,51 @@ class RetainedTarget:
         """Adopt the frame the popup actually took, once it has been placed."""
 
         return replace(self, popup=popup)
+
+
+def nearest_point(rect: ScreenRect, point: Point) -> Point:
+    """The point of ``rect`` closest to ``point``, which is inside it if it is."""
+
+    return Point(
+        min(max(point.x, float(rect.left)), float(rect.left + rect.width)),
+        min(max(point.y, float(rect.top)), float(rect.top + rect.height)),
+    )
+
+
+def distance_to(rect: ScreenRect, point: Point) -> float:
+    """How far the cursor is from a rectangle, in screen pixels."""
+
+    near = nearest_point(rect, point)
+    return hypot(point.x - near.x, point.y - near.y)
+
+
+def in_transfer_corridor(
+    point: Point,
+    origin: Point,
+    popup: ScreenRect,
+    *,
+    half_width: int = TRANSFER_CORRIDOR_PIXELS,
+) -> bool:
+    """Whether the cursor is in the narrow band from ``origin`` to the popup.
+
+    Deliberately a band around one line rather than a rectangle enclosing both:
+    the hull of a word and a popup placed diagonally from it covers whatever is
+    between them, which is usually the next words the user wants to read.
+    """
+
+    return _distance_to_segment(point, origin, nearest_point(popup, origin)) <= half_width
+
+
+def _distance_to_segment(point: Point, start: Point, end: Point) -> float:
+    span_x, span_y = end.x - start.x, end.y - start.y
+    length_squared = span_x * span_x + span_y * span_y
+    if length_squared <= 0:
+        return hypot(point.x - start.x, point.y - start.y)
+    position = ((point.x - start.x) * span_x + (point.y - start.y) * span_y) / length_squared
+    clamped = min(max(position, 0.0), 1.0)
+    return hypot(
+        point.x - (start.x + clamped * span_x), point.y - (start.y + clamped * span_y)
+    )
 
 
 def expanded(rect: ScreenRect, margin: int) -> ScreenRect:
@@ -125,11 +178,15 @@ class CaptureOrigins:
 
 
 __all__ = [
-    "EXIT_GRACE_MS",
     "ORIGIN_LIMIT",
+    "POPUP_TRANSFER_MS",
+    "TRANSFER_CORRIDOR_PIXELS",
     "WORD_MARGIN_PIXELS",
     "CaptureOrigins",
     "RetainedTarget",
+    "distance_to",
     "expanded",
+    "in_transfer_corridor",
+    "nearest_point",
     "screen_rect",
 ]

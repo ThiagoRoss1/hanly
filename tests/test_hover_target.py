@@ -2,8 +2,9 @@
 
 The retained target is what the cursor may rest on without Hanly capturing,
 recognizing, or dismissing anything: the word the answer came from, plus the
-popup frame, plus a short grace for the gap between them. These drive the real
-hover runtime with a scheduler the test fires by hand.
+popup frame, plus the narrow corridor between them. Every other movement is a
+real exit, and dismisses at once. These drive the real hover runtime with
+schedulers the test fires by hand.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from hanly.word_resolver import WordResolver
 from hanly_app.capture import ScreenRect
 from hanly_app.hover_lookup import HoverLookupRuntime
 from hanly_app.hover_target import (
-    EXIT_GRACE_MS,
+    POPUP_TRANSFER_MS,
     WORD_MARGIN_PIXELS,
     CaptureOrigins,
     RetainedTarget,
@@ -152,6 +153,7 @@ class _Hover:
     def __init__(self) -> None:
         self.dispatcher = _QueueDispatcher()
         self.scheduler = _Scheduler()
+        self.exit_scheduler = _Scheduler()
         self.listeners = _ListenerFactory()
         self.capture = _Capture()
         self.cleared = 0
@@ -163,6 +165,7 @@ class _Hover:
             self.capture,
             delay_ms=80,
             scheduler=self.scheduler,
+            exit_scheduler=self.exit_scheduler,
             dispatcher=self.dispatcher,
             listener_factory=self.listeners,
             on_invalidate=self._cleared,
@@ -186,16 +189,16 @@ class _Hover:
     def retain(self, word: ScreenRect, popup: ScreenRect | None = None) -> None:
         self.runtime.retain(RetainedTarget(1, word, popup))
 
-    def grace_handle(self) -> object:
-        """The exit grace, not the dwell timer armed for the next word."""
+    def transfer_handle(self) -> object:
+        """The crossing's own timer, which never shares the dwell's."""
 
-        for delay, handle in reversed(self.scheduler.calls):
-            if delay == pytest.approx(EXIT_GRACE_MS):
+        for delay, handle in reversed(self.exit_scheduler.calls):
+            if delay == pytest.approx(POPUP_TRANSFER_MS):
                 return handle
-        raise AssertionError("no exit grace is scheduled")
+        raise AssertionError("no popup crossing is scheduled")
 
-    def fire_grace(self) -> None:
-        handle = self.grace_handle()
+    def fire_transfer(self) -> None:
+        handle = self.transfer_handle()
         assert not getattr(handle, "cancelled")
         getattr(handle, "callback")()
 
@@ -235,44 +238,88 @@ def test_moving_into_the_popup_keeps_it_open(hover: _Hover) -> None:
     assert hover.capture.cursors == []
 
 
-def test_the_gap_between_word_and_popup_is_bridged_by_a_grace(hover: _Hover) -> None:
-    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 300, 320, 180))
+def test_crossing_the_gap_towards_the_popup_keeps_the_answer(hover: _Hover) -> None:
+    """The corridor exists so the popup can be reached, and only for that."""
 
-    hover.move(200, 200)
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+
+    hover.move(200, 110)
 
     assert hover.cleared == 0
-    hover.fire_grace()
+    assert hover.capture.cursors == []
+    assert hover.runtime.retained_target is not None
+
+    # The crossing is capped: a cursor parked in the gap does not hold it.
+    hover.fire_transfer()
     assert hover.cleared == 1
     assert hover.runtime.retained_target is None
 
 
-def test_coming_back_to_the_word_cancels_the_grace(hover: _Hover) -> None:
+def test_leaving_the_word_in_any_other_direction_dismisses_at_once(
+    hover: _Hover,
+) -> None:
+    """The defect this replaces: every exit paid a delay, and on the real Qt
+    scheduler the next dwell took the delay's timer, so nothing dismissed."""
+
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+
+    hover.move(120, 400)
+
+    assert hover.cleared == 1
+    assert hover.runtime.retained_target is None
+
+
+def test_a_retained_word_with_no_popup_dismisses_on_the_first_exit(
+    hover: _Hover,
+) -> None:
     hover.retain(ScreenRect(100, 100, 40, 20))
+
     hover.move(200, 200)
-    grace = hover.grace_handle()
 
-    hover.move(110, 105)
+    assert hover.cleared == 1
+    assert hover.runtime.retained_target is None
 
-    assert getattr(grace, "cancelled")
+
+def test_turning_back_while_crossing_dismisses_the_answer(hover: _Hover) -> None:
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    hover.move(220, 110)
+    assert hover.cleared == 0
+
+    hover.move(180, 110)
+
+    assert hover.cleared == 1
+    assert hover.runtime.retained_target is None
+
+
+def test_entering_the_popup_ends_the_crossing(hover: _Hover) -> None:
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    hover.move(220, 110)
+    crossing = hover.transfer_handle()
+
+    hover.move(400, 150)
+
+    assert getattr(crossing, "cancelled")
     assert hover.cleared == 0
     assert hover.runtime.retained_target is not None
 
 
-def test_a_real_exit_arms_a_new_dwell_for_the_next_word(hover: _Hover) -> None:
+def test_a_real_exit_arms_a_dwell_for_the_next_word_and_no_exit_delay(
+    hover: _Hover,
+) -> None:
     hover.retain(ScreenRect(100, 100, 40, 20))
     hover.scheduler.calls.clear()
+    hover.exit_scheduler.calls.clear()
 
     hover.move(400, 400)
 
-    delays = [delay for delay, _handle in hover.scheduler.calls]
-    assert EXIT_GRACE_MS in delays
-    assert 80 in delays
+    assert [delay for delay, _handle in hover.scheduler.calls] == [80]
+    assert hover.exit_scheduler.calls == []
 
 
-def test_a_newer_result_cannot_be_dismissed_by_the_old_grace(hover: _Hover) -> None:
-    hover.retain(ScreenRect(100, 100, 40, 20))
-    hover.move(400, 400)
-    stale = hover.grace_handle()
+def test_a_newer_result_cannot_be_dismissed_by_an_old_crossing(hover: _Hover) -> None:
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    hover.move(220, 110)
+    stale = hover.transfer_handle()
 
     hover.runtime.retain(RetainedTarget(2, ScreenRect(400, 400, 40, 20)))
     getattr(stale, "callback")()
@@ -282,12 +329,12 @@ def test_a_newer_result_cannot_be_dismissed_by_the_old_grace(hover: _Hover) -> N
     assert retained is not None and retained.lookup_request_id == 2
 
 
-def test_retaining_a_new_result_cancels_the_grace_running_for_the_old_one(
+def test_retaining_a_new_result_cancels_the_crossing_of_the_old_one(
     hover: _Hover,
 ) -> None:
-    hover.retain(ScreenRect(100, 100, 40, 20))
-    hover.move(400, 400)
-    stale = hover.grace_handle()
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    hover.move(220, 110)
+    stale = hover.transfer_handle()
 
     hover.runtime.retain(RetainedTarget(2, ScreenRect(400, 400, 40, 20)))
 
