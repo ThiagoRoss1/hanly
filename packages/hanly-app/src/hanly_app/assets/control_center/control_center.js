@@ -310,6 +310,10 @@
       byId("status-line").dataset.state = next;
       byId("app-state").textContent =
         next === "lost" ? "Connection lost" : "Connecting…";
+      // A bridge that is not answering can only ever stop a poll, so that
+      // follows the state change itself. A restored one cannot decide here:
+      // the snapshot it is about to render is what the timer depends on.
+      syncRefreshTimer(currentState);
     }
   }
 

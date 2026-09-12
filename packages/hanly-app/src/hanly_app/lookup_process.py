@@ -503,7 +503,12 @@ class LookupEngine:
             raise TypeError("lookup worker items must be LookupRequest values")
         if item.is_cancelled():
             raise LookupCancelled("lookup was superseded before worker execution")
-        process = self._ensure()
+
+        # Read before the start lock: a stop landing while this lookup waits
+        # for a child to finish loading must not be answered by a new one.
+        with self._lock:
+            wake = self._wake
+        process = self._ensure(wake)
         started = monotonic()
         try:
             return process.lookup(item)
@@ -538,11 +543,12 @@ class LookupEngine:
     def _ensure(self, wake: int | None = None) -> LookupProcess:
         """Return a live child, starting one and waiting if there is none.
 
-        ``wake`` identifies the residency request a background preparation or
-        recovery was started for. Waiting for the start lock can outlast a
-        stop, and a task that wakes up on the far side of one must not spawn
-        the child the user just released. A real lookup passes nothing: asking
-        for an answer is always allowed to wake the engine.
+        ``wake`` identifies the residency request this call was started for.
+        Waiting for the start lock can outlast a stop, and a task that wakes up
+        on the far side of one must not spawn the child the user just released.
+        A lookup reads the epoch as it enters the worker, so one already in
+        flight at a stop is refused while one submitted afterwards reads the
+        current epoch and still wakes the engine.
         """
 
         with self._lock:
@@ -558,17 +564,19 @@ class LookupEngine:
 
         with self._start_lock:
             with self._lock:
-                if self._closed or (wake is not None and wake != self._wake):
-                    raise LookupProcessError(
-                        "the lookup engine was stopped before it finished loading"
-                    )
                 process = self._process
             if process is not None and process.ready:
                 return process
-            return self._start_now()
+            return self._start_now(wake)
 
-    def _start_now(self) -> LookupProcess:
+    def _start_now(self, wake: int | None = None) -> LookupProcess:
         with self._lock:
+            # The last check before the spawn, and the only one that matters:
+            # everything above it ran outside the start lock or before it.
+            if self._closed or (wake is not None and wake != self._wake):
+                raise LookupProcessError(
+                    "the lookup engine was stopped before it finished loading"
+                )
             self._generation += 1
             generation = self._generation
             self._state = "preparing"
@@ -621,6 +629,7 @@ class LookupEngine:
             self._process = None
             self._state = "error"
             self._failure = "The lookup engine stopped unexpectedly."
+            wake = self._wake
             recoverable = self._budget > 0
             if recoverable:
                 self._budget -= 1
@@ -631,8 +640,6 @@ class LookupEngine:
             self._publish("error", "The lookup engine stopped and could not be restarted.")
             return
         self._publish("error", "The lookup engine stopped unexpectedly.")
-        with self._lock:
-            wake = self._wake
         threading.Thread(
             target=self._prepare_quietly,
             args=(wake,),

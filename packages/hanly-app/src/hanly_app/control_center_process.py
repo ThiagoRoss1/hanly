@@ -308,8 +308,8 @@ class ControlCenterProcess:
                 daemon=True,
             )
             self._reader = reader
-        reader.start()
         self._settle(_ChildPhase.RUNNING)
+        reader.start()
         self._report_diagnostic(
             f"Window {generation} started (pid {process.pid})."
         )
@@ -424,16 +424,31 @@ class ControlCenterProcess:
         A close in progress is already joining the process and will retire it,
         so the reader must leave that transition alone rather than opening the
         door for a replacement while the old window is still being reaped.
+
+        EOF only says the pipe is gone. This reaps the process before giving
+        ownership up, so a reopen cannot start a window beside one that is
+        still exiting. It runs on the reader thread, never the shell's loop.
         """
 
         with self._lock:
             if generation != self._generation:
                 return
-            if self._phase is _ChildPhase.CLOSING:
+            if self._phase is not _ChildPhase.RUNNING:
                 return
+            self._phase = _ChildPhase.CLOSING
+            process = self._process
         if reason is not None:
             self._report_diagnostic(reason)
-        self._retire(generation)
+        try:
+            if process is not None and not stop_process(
+                process, timeout=CLOSE_TIMEOUT_SECONDS
+            ):
+                self._report_diagnostic(
+                    f"Window {generation} (pid {process.pid}) did not exit in "
+                    f"{CLOSE_TIMEOUT_SECONDS:.0f}s and had to be terminated."
+                )
+        finally:
+            self._retire(generation)
         if self._on_closed is not None:
             try:
                 self._on_closed()
@@ -459,7 +474,11 @@ class ControlCenterProcess:
 
     def _is_current(self, generation: int) -> bool:
         with self._lock:
-            return generation == self._generation
+            return (
+                generation == self._generation
+                and self._phase is _ChildPhase.RUNNING
+                and self._transport is not None
+            )
 
     def _reserve(self, generation: int) -> bool:
         with self._lock:

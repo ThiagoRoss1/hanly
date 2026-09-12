@@ -151,8 +151,16 @@ _SPECIAL_KEY_ALIASES = {
 }
 
 
+#: Where each modifier sits in the canonical spelling; anything else follows.
+_MODIFIER_ORDER = {"<ctrl>": 0, "<shift>": 1, "<alt>": 2, "<cmd>": 3}
+
+
 def _inline_dispatch(callback: Callable[[], None]) -> None:
     callback()
+
+
+def _canonical_sort_key(part: str) -> tuple[int, str]:
+    return (_MODIFIER_ORDER.get(part, len(_MODIFIER_ORDER)), part)
 
 
 def _coerce_action(value: HotkeyAction | str) -> HotkeyAction:
@@ -214,8 +222,7 @@ def canonical_hotkey(value: str) -> str:
     # A combination is unordered. Canonical sorting catches the same binding
     # written as ``shift+ctrl+k`` and ``ctrl+shift+k`` while keeping the usual
     # modifier-first spelling expected by pynput and configuration files.
-    modifier_order = {"<ctrl>": 0, "<shift>": 1, "<alt>": 2, "<cmd>": 3}
-    return "+".join(sorted(parts, key=lambda part: (modifier_order.get(part, 4), part)))
+    return "+".join(sorted(parts, key=_canonical_sort_key))
 
 
 def validate_binding(value: str) -> str:
@@ -459,16 +466,12 @@ class HotkeyService:
                 if self._registered:
                     return
 
-                callbacks = {
-                    binding: (
-                        lambda edge, action=action: self._trigger(action, edge)
-                    )
-                    for action, binding in self._bindings.items()
-                }
+                candidate = self._generation + 1
+                callbacks = self._callbacks(self._bindings, candidate)
                 listener = self._listener_factory(callbacks)
                 self._listener = listener
                 self._registered = True
-                self._generation += 1
+                self._generation = candidate
                 listener.start()
         except Exception:
             with self._lock:
@@ -524,21 +527,15 @@ class HotkeyService:
                 self._bindings = next_bindings
                 return
 
-            callbacks = {
-                binding_value: (
-                    lambda edge, configured_action=configured_action: self._trigger(
-                        configured_action, edge
-                    )
-                )
-                for configured_action, binding_value in next_bindings.items()
-            }
+            candidate = self._generation + 1
+            callbacks = self._callbacks(next_bindings, candidate)
             active_listener = self._listener
             if active_listener is None:
                 raise RuntimeError("registered hotkey service has no listener")
             active_rebind = getattr(active_listener, "rebind", None)
             if callable(active_rebind):
                 active_rebind(callbacks)
-                self._generation += 1
+                self._generation = candidate
                 self._bindings = next_bindings
                 return
 
@@ -553,7 +550,7 @@ class HotkeyService:
                 raise
             previous_listener = self._listener
             self._listener = listener
-            self._generation += 1
+            self._generation = candidate
             self._bindings = next_bindings
 
         if previous_listener is not None:
@@ -588,14 +585,15 @@ class HotkeyService:
                 self._generation += 1
                 self._bindings = next_bindings
             else:
-                callbacks = {
-                    binding_value: (
-                        lambda edge, configured_action=configured_action: self._trigger(
-                            configured_action, edge
-                        )
-                    )
-                    for configured_action, binding_value in next_bindings.items()
-                }
+                candidate = self._generation + 1
+                callbacks = self._callbacks(next_bindings, candidate)
+                active_rebind = getattr(self._listener, "rebind", None)
+                if callable(active_rebind):
+                    active_rebind(callbacks)
+                    self._generation = candidate
+                    self._bindings = next_bindings
+                    return
+
                 listener = self._listener_factory(callbacks)
                 try:
                     listener.start()
@@ -607,7 +605,7 @@ class HotkeyService:
                     raise
                 previous_listener = self._listener
                 self._listener = listener
-                self._generation += 1
+                self._generation = candidate
                 self._bindings = next_bindings
 
         if previous_listener is not None:
@@ -622,7 +620,29 @@ class HotkeyService:
             self._shutdown = True
         self.unregister()
 
-    def _trigger(self, action: HotkeyAction, edge: HotkeyEdge) -> None:
+    def _callbacks(
+        self,
+        bindings: Mapping[HotkeyAction, str],
+        generation: int,
+    ) -> dict[str, HotkeyEdgeHandler]:
+        """Bind each action to a handler that answers only for ``generation``.
+
+        ``generation`` is the candidate a caller commits once its listener has
+        started, never the current one: a start that fails must leave the
+        listener that is still running current rather than silently stale.
+        """
+
+        def handler_for(action: HotkeyAction) -> HotkeyEdgeHandler:
+            def handler(edge: HotkeyEdge) -> None:
+                self._trigger(action, edge, generation)
+
+            return handler
+
+        return {
+            binding: handler_for(action) for action, binding in bindings.items()
+        }
+
+    def _trigger(self, action: HotkeyAction, edge: HotkeyEdge, generation: int) -> None:
         """Deliver one edge, dropping a stale listener's late key events.
 
         A rebound or stopped listener can still have an event in flight, and a
@@ -633,7 +653,8 @@ class HotkeyService:
         with self._lock:
             if not self._registered or self._shutdown:
                 return
-            generation = self._generation
+            if generation != self._generation:
+                return
             dispatcher = self._dispatcher
 
         def deliver() -> None:

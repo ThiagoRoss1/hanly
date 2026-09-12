@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.hanly_fixtures.process_probe import PROCESS_ROWS_PROGRAM
+
 #: Qt's own complaint when a second ``exec`` runs inside a live loop. This is
 #: what the released build produced, and what one loop owner removes.
 NESTED_LOOP_WARNING = "The event loop is already running"
@@ -74,11 +76,9 @@ def descendants():
     import os
     import subprocess
 
-    rows = subprocess.run(
-        ["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True
-    ).stdout
+    rows = process_rows()
     parents, commands = {}, {}
-    for line in rows.splitlines():
+    for line in rows:
         parts = line.split(None, 2)
         if len(parts) < 3:
             continue
@@ -322,7 +322,7 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     _skip_without_a_desktop()
 
     program = tmp_path / "lifecycle_child.py"
-    program.write_text(_CHILD_PROGRAM, encoding="utf-8")
+    program.write_text(PROCESS_ROWS_PROGRAM + _CHILD_PROGRAM, encoding="utf-8")
     child = subprocess.run(
         [sys.executable, str(program)],
         capture_output=True,
@@ -436,3 +436,40 @@ def test_the_window_child_is_not_a_second_application_on_macos(tmp_path: Path) -
     registrations = report["registrations"]
     assert registrations, "no owned process was registered with LaunchServices"
     assert "Foreground" not in registrations.values(), registrations
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX terminal signal delivery")
+def test_owned_child_leaves_sigint_to_parent_shutdown(tmp_path: Path) -> None:
+    program = tmp_path / "child_sigint.py"
+    program.write_text('''
+import os
+import signal
+from hanly_app.process_transport import Transport, spawn_child, stop_process
+
+
+def child(connection):
+    transport = Transport(connection)
+    transport.send({"kind": "ready"})
+    message = transport.receive()
+    transport.send(message)
+    transport.close()
+
+
+if __name__ == "__main__":
+    process, transport = spawn_child(child, name="hanly-signal-test")
+    try:
+        assert transport.receive()["kind"] == "ready"
+        os.kill(process.pid, signal.SIGINT)
+        transport.send({"kind": "close"})
+        assert transport.receive()["kind"] == "close"
+        assert stop_process(process, timeout=5)
+        assert process.exitcode == 0
+    finally:
+        transport.close()
+        stop_process(process, timeout=1)
+''', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(program)], capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, result.stderr
+    assert "KeyboardInterrupt" not in result.stderr

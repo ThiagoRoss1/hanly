@@ -176,6 +176,7 @@ class _Hover:
 
     def start(self) -> None:
         self.runtime.start()
+        assert self.controller.wait_until_ready(timeout=2)
         self.drain()
 
     def drain(self) -> None:

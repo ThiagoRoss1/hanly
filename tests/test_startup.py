@@ -11,6 +11,8 @@ from hanly_app.diagnostics import DiagnosticLog
 from hanly_app.runtime_status import RuntimeStatus, RuntimeStatusPublisher
 from hanly_app.startup import StartupCoordinator
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 _WAIT_SECONDS = 5.0
 
 
@@ -205,7 +207,7 @@ def test_a_coordinator_rejects_seams_it_cannot_call() -> None:
     status = RuntimeStatusPublisher()
     with pytest.raises(TypeError, match="prepare"):
         StartupCoordinator(
-            "not callable",  # type: ignore[arg-type]
+            unchecked("not callable"),
             lambda _runtime: None,
             status=status,
             dispatcher=lambda callback: callback(),

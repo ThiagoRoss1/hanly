@@ -22,6 +22,8 @@ from hanly import (
     TokenAnalysis,
 )
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 
 def _quad(left: float, top: float, right: float, bottom: float) -> Quad:
     return Quad(
@@ -56,7 +58,7 @@ def test_value_contracts_are_typed_frozen_dataclasses() -> None:
     assert isinstance(entry.definitions, tuple)
 
     with pytest.raises(FrozenInstanceError):
-        box.left = 10  # type: ignore[misc]
+        setattr(box, "left", 10)
 
     assert [field.name for field in fields(BoundingBox)] == [
         "left",
@@ -185,7 +187,7 @@ def test_roi_image_rejects_a_non_pixel_format_value() -> None:
         ROIImage(
             width=1,
             height=1,
-            pixel_format="RGB_888",  # type: ignore[arg-type]
+            pixel_format=unchecked("RGB_888"),
             data=bytes(3),
         )
 
@@ -305,7 +307,7 @@ def test_lookup_result_is_frozen() -> None:
     )
 
     with pytest.raises(FrozenInstanceError):
-        result.status = LookupStatus.EMPTY  # type: ignore[misc]
+        setattr(result, "status", LookupStatus.EMPTY)
 
 
 def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None:

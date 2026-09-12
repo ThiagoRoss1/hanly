@@ -213,7 +213,7 @@ This capability integrates only behavior already implemented by the current prov
 
 ### Manual Hotkey Lookup
 
-- **Goal:** Deliver the first full desktop vertical slice and retain it as a V1 feature.
+- **Goal:** Deliver the first full desktop vertical slice and retain its one-shot lookup capability internally; a default one-shot shortcut is not required.
 - **Dependencies:** `Concrete Hanly V1 Engine Integration`, `Capture Service`, `Basic Popup`, `Hotkey Service`, `LookupPipeline`, and the desktop foundation that hosts them.
 - **Blocks:** Automatic hover integration; it deliberately validates the complete desktop stack first.
 - **Parallelism:** This is a convergence point, not an independent parallel branch.
@@ -462,7 +462,7 @@ Detailed implementation plans are created just in time when a capability becomes
 - **DAG-INV-02 (diagram rule 2):** Reusable engine functionality is validated independently before desktop composition and interaction.
 - **DAG-INV-03 (diagram rule 3):** Core contracts unlock parallel provider, resolver, and resource-manager work.
 - **DAG-INV-04 (diagram rule 4):** Manual Hotkey Lookup precedes automatic hover.
-- **DAG-INV-05 (diagram rule 5):** Manual Hotkey Lookup remains a V1 feature.
+- **DAG-INV-05 (diagram rule 5):** V1 has three default global interaction actions: Push to Hover, Pause/Continue Hover, and Start/Stop Capture. One-shot lookup remains available internally and bindable, without a required default shortcut.
 - **DAG-INV-06 (diagram rule 6):** Basic Control Center exists before final hover integration.
 - **DAG-INV-07 (diagram rule 7):** `ResourceManager Core` is mandatory and developed early.
 - **DAG-INV-08 (diagram rule 8):** `UpdateService / ResourceFetcher` is separate from `ResourceManager` and never depends on UI.

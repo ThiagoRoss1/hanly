@@ -33,6 +33,8 @@ from hanly_app.permissions import (
 )
 from hanly_app.runtime_status import RuntimeStatus
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 
 class _Runtime:
     def __init__(self) -> None:
@@ -235,8 +237,8 @@ def test_update_actions_use_the_application_coordinator(tmp_path: Path) -> None:
     bridge, _, _ = _bridge(tmp_path)
     coordinator = _Coordinator()
     bridge = ControlCenterBridge(
-        config_manager=bridge._config_manager,  # type: ignore[attr-defined]
-        update_coordinator=coordinator,  # type: ignore[arg-type]
+        config_manager=bridge._config_manager,
+        update_coordinator=unchecked(coordinator),
     )
 
     assert bridge.get_state()["updates"]["status"] == "available"
@@ -248,7 +250,7 @@ def test_update_actions_use_the_application_coordinator(tmp_path: Path) -> None:
 
 def test_bridge_validates_region_and_monitor_target_choices(tmp_path: Path) -> None:
     bridge, _, _ = _bridge(tmp_path)
-    bridge._capture_service = SimpleNamespace(  # type: ignore[attr-defined]
+    bridge._capture_service = SimpleNamespace(
         enumerate_monitors=lambda: (
             type(
                 "Monitor",

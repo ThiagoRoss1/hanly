@@ -506,7 +506,7 @@ def test_a_manual_lookup_that_cannot_capture_says_where_it_stopped() -> None:
     def failing_capture(cursor: Point) -> CaptureResult:
         raise RuntimeError("the screen is unavailable")
 
-    capture.capture_at_cursor = failing_capture  # type: ignore[method-assign]
+    setattr(capture, "capture_at_cursor", failing_capture)
     composition.start()
     assert hotkeys.listener is not None
 

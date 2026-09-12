@@ -80,9 +80,9 @@ def test_update_validates_and_persists_a_new_config(tmp_path: Path) -> None:
         ("theme", "neon"),
     ],
 )
-def test_invalid_preferences_are_rejected(field: str, value: object) -> None:
+def test_invalid_preferences_are_rejected(field: str, value: Any) -> None:
     with pytest.raises(ValueError):
-        AppConfig(**{field: value})  # type: ignore[arg-type]
+        AppConfig(**{field: value})
 
 
 def test_save_replaces_existing_file_without_leaving_a_temp_file(tmp_path: Path) -> None:

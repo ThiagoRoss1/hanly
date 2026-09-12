@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import sys
 from pathlib import Path
+from typing import Any
 
 import hanly_app.qt_bootstrap as qt_bootstrap
 import pytest
@@ -71,7 +72,7 @@ def _install_widgets(
 
     _Recorded.reset()
     widgets = types.ModuleType("PyQt6.QtWidgets")
-    widgets.QApplication = _Recorded  # type: ignore[attr-defined]
+    setattr(widgets, "QApplication", _Recorded)
     monkeypatch.setitem(sys.modules, "PyQt6.QtWidgets", widgets)
     return _Recorded
 
@@ -115,10 +116,10 @@ def test_a_missing_qt_runtime_is_reported_rather_than_worked_around(
 
     real_import = builtins.__import__
 
-    def refuse(name: str, *arguments: object, **keywords: object) -> object:
+    def refuse(name: str, *arguments: Any, **keywords: Any) -> object:
         if name == "PyQt6.QtWidgets":
             raise ImportError("no Qt")
-        return real_import(name, *arguments, **keywords)  # type: ignore[arg-type]
+        return real_import(name, *arguments, **keywords)
 
     monkeypatch.delitem(sys.modules, "PyQt6.QtWidgets", raising=False)
     monkeypatch.setattr(builtins, "__import__", refuse)

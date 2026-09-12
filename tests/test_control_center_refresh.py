@@ -368,3 +368,14 @@ def test_the_explicit_retry_reconnects_without_starting_a_poll(tmp_path: Path) -
     assert trace[-1]["connection_hidden"] is True
     assert trace[-1]["runtime_state"] == "ready"
     assert trace[-1]["timer_running"] is False
+
+
+def test_lost_connection_stops_an_already_running_poll(tmp_path: Path) -> None:
+    trace = _run(
+        [_snapshot("preparing"), {"__reject__": "Hanly closed before answering."}],
+        tmp_path,
+    )
+
+    assert trace[0]["timer_running"] is True
+    assert trace[-1]["connection_state"] == "Connection lost"
+    assert trace[-1]["timer_running"] is False

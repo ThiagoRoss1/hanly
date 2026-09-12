@@ -573,8 +573,8 @@ def test_native_startup_reporter_preloads_ocr_before_opening_the_qt_dialog(
             events.extend([title, message])
 
     widgets = types.ModuleType("PyQt6.QtWidgets")
-    widgets.QApplication = _Application  # type: ignore[attr-defined]
-    widgets.QMessageBox = _MessageBox  # type: ignore[attr-defined]
+    setattr(widgets, "QApplication", _Application)
+    setattr(widgets, "QMessageBox", _MessageBox)
     monkeypatch.setitem(sys.modules, "PyQt6.QtWidgets", widgets)
 
     def bootstrap() -> object:

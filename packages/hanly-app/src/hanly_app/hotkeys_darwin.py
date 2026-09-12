@@ -245,30 +245,27 @@ class _CarbonHotkeyListener:
 
             removed = self._bindings.keys() - bindings.keys()
             added = bindings.keys() - self._bindings.keys()
-            if len(removed) != 1 or len(added) != 1:
-                raise RuntimeError("macOS hotkey rebind must replace exactly one binding")
+            if len(removed) > 1 or len(added) > 1:
+                raise RuntimeError("macOS hotkey rebind changes at most one binding")
 
-            old_binding = next(iter(removed))
-            new_binding = next(iter(added))
-            old_combination, old_callback = self._bindings[old_binding]
-            new_combination, new_callback = bindings[new_binding]
             carbon = self._carbon
-
-            self._unregister_one(carbon, old_binding)
+            old_binding = next(iter(removed), None)
+            if old_binding is not None:
+                self._unregister_one(carbon, old_binding)
             try:
-                self._register_one(
-                    carbon, new_binding, new_combination, new_callback
-                )
+                for binding in added:
+                    combination, callback = bindings[binding]
+                    self._register_one(carbon, binding, combination, callback)
             except Exception:
-                try:
-                    self._register_one(
-                        carbon, old_binding, old_combination, old_callback
-                    )
-                except Exception as rollback_error:
-                    raise RuntimeError(
-                        "macOS hotkey rebind failed and the previous binding "
-                        "could not be restored"
-                    ) from rollback_error
+                if old_binding is not None:
+                    combination, callback = self._bindings[old_binding]
+                    try:
+                        self._register_one(carbon, old_binding, combination, callback)
+                    except Exception as rollback_error:
+                        raise RuntimeError(
+                            "macOS hotkey rebind failed and the previous binding "
+                            "could not be restored"
+                        ) from rollback_error
                 raise
 
             for binding in self._bindings.keys() & bindings.keys():

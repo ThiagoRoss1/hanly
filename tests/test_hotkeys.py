@@ -332,3 +332,48 @@ def test_darwin_registers_through_the_carbon_backend(
 
     assert service.registered is True
     assert list(built[0]) == ["<ctrl>+<shift>+<space>"]
+
+
+def test_replaced_listener_cannot_deliver_late_edges() -> None:
+    received: list[HotkeyAction] = []
+    service, listeners = _service(
+        lambda action, _edge: received.append(action),
+        bindings={HotkeyAction.PUSH_TO_HOVER: "ctrl+shift+space"},
+    )
+    service.register()
+    service.rebind(HotkeyAction.PUSH_TO_HOVER, "ctrl+shift+h")
+
+    listeners[0].trigger("<ctrl>+<shift>+<space>", HotkeyEdge.UP)
+    listeners[0].trigger("<ctrl>+<shift>+<space>")
+    listeners[1].trigger("<ctrl>+<shift>+h")
+
+    assert received == [HotkeyAction.PUSH_TO_HOVER]
+
+
+def test_unbind_uses_native_rebind_without_duplicate_registration() -> None:
+    class NativeListener(_Listener):
+        def rebind(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
+            self.callbacks = dict(callbacks)
+
+    listeners: list[NativeListener] = []
+
+    def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> NativeListener:
+        assert not listeners, "native backend cannot register an owned chord twice"
+        listener = NativeListener(callbacks)
+        listeners.append(listener)
+        return listener
+
+    service = HotkeyService(
+        lambda _action, _edge: None,
+        bindings={
+            HotkeyAction.PUSH_TO_HOVER: "ctrl+shift+space",
+            HotkeyAction.TOGGLE_CAPTURE: "ctrl+shift+f10",
+        },
+        listener_factory=factory,
+    )
+    service.register()
+    service.unbind(HotkeyAction.TOGGLE_CAPTURE)
+
+    assert service.registered
+    assert list(listeners[0].callbacks) == ["<ctrl>+<shift>+<space>"]
+    service.shutdown()

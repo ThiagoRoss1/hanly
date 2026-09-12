@@ -89,11 +89,11 @@ def _build_invoker() -> Any:
 
         def __init__(self) -> None:
             super().__init__()
-            # PyQt6's stubs only declare the single-argument connect(), so the
-            # connection type has to be passed past the type checker.
-            self.requested.connect(  # type: ignore[call-arg]
-                self._run, Qt.ConnectionType.QueuedConnection
-            )
+            # PyQt6's stubs declare connect() with the slot alone, so the
+            # explicit connection type goes through an untyped reference
+            # rather than a suppression that goes stale when they improve.
+            connect: Any = self.requested.connect
+            connect(self._run, Qt.ConnectionType.QueuedConnection)
 
         def post(self, callback: Callable[[], None]) -> None:
             self.requested.emit(callback)

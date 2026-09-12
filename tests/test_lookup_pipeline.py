@@ -283,7 +283,7 @@ def test_korean_target_with_spaces_and_punctuation_reaches_morphology_and_dictio
 def test_error_diagnostic_does_not_repeat_the_stage_prefix() -> None:
     events: list[str] = []
     pipeline = _pipeline(events)
-    pipeline._ocr_provider = _RaisingOCR()  # type: ignore[assignment]
+    pipeline._ocr_provider = _RaisingOCR()
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 

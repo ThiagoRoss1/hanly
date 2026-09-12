@@ -47,7 +47,7 @@ cursor over word
 → popup
 ```
 
-This establishes that manual lookup crosses the same capture, worker, engine, result, and popup seams used by hover lookup. The Implementation DAG also requires manual lookup to precede automatic hover integration and remain a V1 feature.
+This establishes that manual lookup crosses the same capture, worker, engine, result, and popup seams used by hover lookup. The Implementation DAG requires manual lookup to precede automatic hover integration. V1 retains the one-shot capability internally without requiring a default shortcut; the three default global actions are Push to Hover, Pause/Continue Hover, and Start/Stop Capture (DAG-INV-05).
 
 > **Open clarification:** The Runtime Flow diagram does not specify the manual path's request-state rules, capture-mode preconditions, or exact trigger-to-capture lifecycle. Those details must not be inferred from the hover flow without an approved clarification.
 

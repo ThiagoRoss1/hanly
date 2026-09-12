@@ -30,6 +30,8 @@ from hanly_app.process_transport import (
     TransportClosed,
 )
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 #: Bounded so a marshalling regression fails the test instead of hanging it.
 _WAIT_SECONDS = 5.0
 
@@ -258,7 +260,7 @@ def test_a_transport_that_is_open_never_disguises_a_type_error_as_a_close() -> N
     transport = Transport(parent_end)
 
     with pytest.raises(TypeError):
-        transport.poll("soon")  # type: ignore[arg-type]
+        transport.poll(unchecked("soon"))
 
     transport.close()
 
@@ -347,7 +349,7 @@ def _child_half(host: _FakeHost) -> tuple[_ControlCenterChild, Transport]:
     child = _ControlCenterChild(
         Transport(child_end, max_bytes=MAX_CONTROL_MESSAGE_BYTES), ControlCenterOptions()
     )
-    child._host = host  # type: ignore[assignment]
+    child._host = unchecked(host)
     return child, Transport(parent_end, max_bytes=MAX_CONTROL_MESSAGE_BYTES)
 
 
@@ -469,3 +471,31 @@ def test_an_operation_from_a_replaced_window_neither_runs_nor_takes_capacity() -
 
     assert calls == []
     assert manager._outstanding == 0
+
+
+def test_closed_window_cannot_run_a_queued_mutation_before_reopen() -> None:
+    child = _Child()
+    mutations: list[str] = []
+    manager = ControlCenterProcess(
+        {"start_capture": lambda: mutations.append("start")}, spawn=child.spawn
+    )
+    manager.show()
+    generation = manager.generation
+    manager.close()
+
+    manager._run_operation(child.parent, generation, 1, "start_capture", ())
+
+    assert mutations == []
+
+
+def test_reader_eof_reaps_child_before_forgetting_ownership() -> None:
+    child = _Child()
+    closed = threading.Event()
+    manager = _manager(child, on_closed=closed.set)
+    manager.show()
+    child.transport.close()
+
+    assert closed.wait(_WAIT_SECONDS)
+    assert child.process.joined
+    assert not child.process.is_alive()
+    assert not manager.running

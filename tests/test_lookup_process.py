@@ -11,6 +11,7 @@ from __future__ import annotations
 import pickle
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hanly import LookupStatus, PixelFormat, Point, ROIImage
@@ -51,10 +52,10 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> RecordingProviders:
     return recorder
 
 
-def _engine(spawner: ThreadChildSpawner, **options: object) -> LookupEngine:
+def _engine(spawner: ThreadChildSpawner, **options: Any) -> LookupEngine:
     """Build an engine and attach it the way the executor thread does."""
 
-    engine = LookupEngine(settings(), spawn=spawner, **options)  # type: ignore[arg-type]
+    engine = LookupEngine(settings(), spawn=spawner, **options)
     engine.attach()
     return engine
 
@@ -394,7 +395,7 @@ def test_a_stop_during_preparation_does_not_spawn_a_replacement(
     """
 
     spawner = ThreadChildSpawner()
-    engine = LookupEngine(settings(), spawn=spawner)  # type: ignore[arg-type]
+    engine = LookupEngine(settings(), spawn=spawner)
     holding = threading.Event()
     released = threading.Event()
 
@@ -463,3 +464,24 @@ def test_ten_wake_and_retire_cycles_leave_one_child_and_no_accumulation(
     assert spawner.spawns == 10
     assert engine.generation >= 10
     assert not any(child.is_alive() for child in spawner.children)
+
+
+def test_lookup_waiting_for_start_cannot_resurrect_a_stopped_engine(
+    providers: RecordingProviders, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawner = ThreadChildSpawner()
+    engine = LookupEngine(settings(), spawn=spawner)
+    ensure = engine._ensure
+
+    def stop_before_ensure(wake: int | None = None) -> object:
+        engine.retire()
+        return ensure(wake)
+
+    monkeypatch.setattr(engine, "_ensure", stop_before_ensure)
+    try:
+        with pytest.raises(LookupProcessError, match="stopped"):
+            engine(_request(1))
+        assert spawner.spawns == 0
+        assert engine.state == "sleeping"
+    finally:
+        engine.close()

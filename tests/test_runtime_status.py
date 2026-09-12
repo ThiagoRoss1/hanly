@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hanly import LookupResult, PixelFormat, Point, ROIImage
 from hanly_app.lookup_controller import LookupController
@@ -23,11 +25,11 @@ def _roi_image() -> ROIImage:
     return ROIImage(width=4, height=4, pixel_format=PixelFormat.RGB_888, data=bytes(4 * 4 * 3))
 
 
-def _failing_controller(**options: object) -> LookupController:
+def _failing_controller(**options: Any) -> LookupController:
     def factory() -> object:
         raise _BrokenProviders("kiwipiepy is unavailable")
 
-    return LookupController(factory, **options)  # type: ignore[arg-type]
+    return LookupController(factory, **options)
 
 
 def test_a_status_snapshot_is_immutable_and_json_ready() -> None:
@@ -40,7 +42,7 @@ def test_a_status_snapshot_is_immutable_and_json_ready() -> None:
     }
     assert not status.ready and not status.failed
     with pytest.raises(AttributeError):
-        status.phase = "ready"  # type: ignore[misc]
+        setattr(status, "phase", "ready")
 
 
 def test_observers_receive_the_current_snapshot_and_every_change() -> None:

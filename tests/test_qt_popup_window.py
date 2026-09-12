@@ -86,6 +86,9 @@ class _PlacementRecordingView(QtPopupView):
         super().__init__()
         self.moved_to: list[tuple[int, int]] = []
 
+    # Deliberately narrower than QWidget.move's QPoint overload: the view under
+    # test is only ever moved by coordinates, and widening this to accept both
+    # would trade a clear signature for an unpack that can fail differently.
     def move(self, x: int, y: int) -> None:  # type: ignore[override]
         self.moved_to.append((x, y))
         super().move(x, y)

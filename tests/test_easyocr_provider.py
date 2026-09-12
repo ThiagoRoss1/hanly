@@ -25,6 +25,8 @@ from hanly.easyocr_provider import (
 )
 from hanly.errors import LookupCancelled
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 
 def _roi(pixel_format: PixelFormat = PixelFormat.RGB_888) -> ROIImage:
     """A 2x1 ROI whose byte count matches the requested format."""
@@ -97,10 +99,10 @@ def test_configuration_forwards_explicit_paths_and_unknown_options() -> None:
     [((), None), (("",), None), (("ko",), 0), (("ko",), True)],
 )
 def test_invalid_configuration_is_rejected_at_construction(
-    languages: tuple[str, ...], cpu_threads: object
+    languages: tuple[str, ...], cpu_threads: Any
 ) -> None:
     with pytest.raises(ValueError):
-        EasyOCRConfig(languages=languages, cpu_threads=cpu_threads)  # type: ignore[arg-type]
+        EasyOCRConfig(languages=languages, cpu_threads=cpu_threads)
 
 
 def test_engine_and_engine_factory_are_mutually_exclusive() -> None:
@@ -266,7 +268,7 @@ def test_a_non_roi_input_is_a_programming_error_not_a_provider_error() -> None:
     provider = EasyOCRProvider(engine=_FakeReader([]))
 
     with pytest.raises(TypeError):
-        provider.recognize(object())  # type: ignore[arg-type]
+        provider.recognize(unchecked(object()))
 
 
 @pytest.mark.parametrize(

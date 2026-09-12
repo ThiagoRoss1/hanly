@@ -60,12 +60,9 @@ split is unchanged. `HotkeyHandler` now carries a `HotkeyEdge`, and
 `LookupRuntime.pause` became `stop` with a new `set_hover_muted`; both are
 internal desktop seams.
 
-**Proposed, not applied.** `DAG-INV-05` says "Manual Hotkey Lookup remains a V1
-feature". The capture-and-submit path is unchanged and reachable through
-`ManualLookupRuntime.lookup_at_cursor()`, and a client may still bind it, but
-the desktop no longer gives it a default shortcut: that combination is now the
-hold. Whether the invariant's wording should be clarified is a human decision;
-nothing in `docs/architecture/` was edited.
+**Approved during focused review (2026-09-12).** DAG-INV-05 now states the
+three default global actions. One-shot lookup remains internally available
+and bindable, without requiring a fourth default shortcut.
 
 ## Relevant files / diff areas
 
@@ -151,4 +148,225 @@ including new `tests/test_hover_exit_qt.py` and
 
 ## Review assignment
 
-Human-selected after implementation. Not started.
+Human selected Codex/Astra for the focused review below. The final full-project
+super-review remains separate.
+
+## Focused technical review outcome — 2026-09-12
+
+Reviewer: Codex/Astra, on macOS arm64. This is the human-authorized surface
+review of `git diff main...HEAD`, plus directly affected boundaries; the final
+project-wide super-review remains separate. Review baseline: `3f1eb81`.
+
+### Reviewed and confirmed
+
+The shell/Control Center/lookup ownership split, normalized provider seams,
+final result-currency gate, configurable independent interaction bindings and
+preservation of custom bindings in migration remain intact. Start/Stop and
+hover mute remain distinct; separate dwell and exit timers avoid interference.
+The responsive Control Center layout and parent-derived activity are retained.
+No OCR model, backend, dependency-pruning or speculative optimization work was
+introduced. The current F-key defaults were retained.
+
+### Bugs found and fixed now
+
+- Terminal SIGINT interrupted the lookup child independently of shell shutdown,
+  producing the reported `KeyboardInterrupt`. Spawned roles ignore SIGINT before
+  initialization; the shell owns their graceful shutdown and bounded retirement.
+- Hotkey callbacks captured the generation when an event arrived, so a replaced
+  listener could deliver late presses/releases as current. Callbacks now capture
+  their registration generation, with the existing delivery-time check retained.
+- Clearing/restoring a capture shortcut could duplicate live Carbon registrations
+  or fail its replace-only operation. Native rebind now supports adding/removing
+  one binding while keeping the other registrations.
+- Closing a Control Center did not invalidate queued mutations until another
+  window opened. Operation currency now also requires a live running owner.
+  Reader EOF also reaps its child before dropping ownership.
+- An already-submitted lookup and crash recovery could adopt residency after Stop.
+  Their wake epochs are retained through the start boundary; deliberate new
+  lookups after Stop remain allowed.
+- A lost page connection did not cancel an already-running refresh interval.
+  Failure now stops polling instead of repeatedly calling a disconnected bridge.
+- Native smoke process inventories invoked POSIX `ps` on Windows. Windows now
+  uses PowerShell/CIM process IDs and names; macOS/Linux retain `ps`. This path
+  still needs native Windows execution.
+- The approved three-action decision is reflected narrowly in DAG-INV-05, its
+  visual companion, and manual-lookup companion text. Invariant numbering and
+  order are unchanged; one-shot lookup stays internally available/bindable.
+
+### macOS source validation
+
+A real `.venv/bin/hanly` launch with an isolated preferences file and local
+KRDICT/models reached ready with the lookup child loaded. Terminal Ctrl+C
+returned 130 with no child traceback or WebEngine warning in that run. The exact
+shell, resource tracker, Control Center, renderer and lookup PIDs were absent
+once shutdown completed. The initial sandboxed launch could not reach the native
+macOS services; only the subsequent unsandboxed run is native evidence.
+
+The diagnostic log still recorded a late Control Center close notification as
+`DesktopShuttingDown` during shutdown. Deferred as harmless shutdown log noise:
+revisit in the final lifecycle review if it obscures real failures. pywebview
+installs its own SIGINT handler for the UI child, so the common child bootstrap
+specifically fixes the lookup interruption; it is not a claim of exclusive shell
+signal handling throughout the third-party UI loop.
+
+### Clean macOS frozen build
+
+One clean PyInstaller build completed from the reviewed runtime tree, using
+`/private/tmp/hanly-release-build/venv` (Python 3.10.20, system packages disabled,
+repository packages rebound to this checkout). EasyOCR 1.7.2, PyInstaller
+6.22.2 and hooks 2026.7 match `packaging/release-constraints.txt`; build-venv
+`pip check` passed. This reused the isolated metadata-built dependency environment,
+not the developer `.venv`; it was not a newly downloaded environment.
+
+Outputs: `dist/macos/Hanly.app`, `dist/hanly-desktop-macos.zip`, and
+`dist/hanly-desktop-macos.dmg`. Strict deep codesign verification and the DMG checksum verification passed.
+The application build and ZIP succeeded in the sandbox; only `hdiutil` needed
+native access, and the DMG was completed from that same app without rebuilding.
+
+The full suite's three frozen gates passed: inventory, actual Korean fixture
+through EasyOCR/Kiwi/KRDICT on an isolated profile, and window/JavaScript bridge.
+A separate ordinary frozen launch reached ready with the heavy child loaded.
+LaunchServices reported exactly one `Foreground` Hanly (shell) and one
+`UIElement` Hanly (Control Center); the lookup child had no app registration.
+SIGINT to the shell returned 130; the Control Center exited 0 and all recorded
+owned PIDs disappeared. No child traceback or profile warning appeared in that
+frozen shutdown.
+
+**Still unverified:** interactive frozen Start/Stop, close/reopen and page Quit,
+and a Finder-originated launch. The native UI tool timed out before those
+interactions; the automatic source lifecycle tests are not substituted as frozen
+proof. Thus the requested complete macOS interactive smoke/stop condition is
+not fully closed. Carry these items into the next native review.
+
+
+### Mechanical gates
+
+- Full `.venv/bin/python -m pytest`: **1227 passed, 3 skipped, 2 failed** in
+  124.12 s. Both failures were in test harnesses: macOS identity process-row
+  parsing (introduced while making the other probes portable) and a hover test
+  assuming its background worker was already ready. Both were corrected.
+- Focused reruns: macOS identity **1 passed**; retained-target tests **23 passed**.
+  Focused bug regressions also passed. The entire suite was not repeated after
+  these test-only corrections, per the proportional-testing instruction.
+- Ruff: clean. Mypy: clean, **195 source files**. Repository and build-venv
+  `pip check`: no broken requirements. `git diff --check`: clean.
+- Native source layout, lifecycle/reopen, bridge, lookup process retirement and
+  the three frozen smoke gates passed in the full run. Windows/native and Linux
+  native results remain unclaimed.
+
+A tiny test-only readiness wait replaced a scheduling assumption; no production
+hover behavior was changed to make that test pass.
+
+
+### Remaining Windows native verification
+
+Run from this final branch with the Windows authoritative venv. Verify source
+and a clean frozen build: window open/close/reopen, working page bridge, one
+shell and only its intended children, Start/Stop provider retirement, no child
+resurrection after Stop, Ctrl+C/Quit cleanup, three custom binding changes,
+clear/restore capture binding, held chord release and auto-repeat on pynput,
+Korean OCR/Kiwi/KRDICT fixture, and no leaked renderer/lookup processes. Exercise
+the PowerShell/CIM smoke probes. Observe DirectComposition warnings separately
+from functional failures. macOS is not Windows evidence.
+
+### Remaining Linux/native concerns
+
+No new Linux investigation or expensive CI rerun was requested. Verify native
+pynput press/release and modifier ordering, tray-dependent close behavior, and
+window/child cleanup on the intended X11/Wayland environment. CI status must be
+read for the pushed commit; this review does not claim a Linux native pass.
+
+### Deferred QA/performance and product decision
+
+Retest physical keys, sustained hold/rebind use, fractional/mixed DPI, popup
+crossing geometry on real screens, CPU/memory residency and perceived latency in
+the later QA/performance pass. No benchmarks or model optimization ran here.
+The intermittent pywebview WebEngine profile warning remains a known upstream
+teardown limitation; absence in one smoke does not prove it eliminated.
+
+**Product decision pending: final default shortcuts, especially on stock macOS
+where F9/F10-style bindings may be inert unless standard function keys are
+enabled.**
+
+### Diff produced by this review
+
+The [review patch](patches/post-runtime-product-review.patch) captures the
+Codex/Astra changes relative to `3f1eb81`, including the visual companion and
+the new portable process-probe fixture, and excludes this handoff and the patch
+itself. It is a record of that pass only: the second pass below amended several
+of those files, so the patch no longer reconstructs the branch. Read the
+commits instead.
+
+## Second pass — human-requested review of the above, 2026-09-12
+
+Reviewer: Claude, on macOS arm64, over the uncommitted Codex/Astra tree.
+Baseline `3f1eb81`; everything below is committed on
+`fix/post-runtime-product-fixes`.
+
+### Confirmed in the first pass
+
+The SIGINT child bootstrap (main thread, `terminate()`/SIGTERM unaffected,
+target still picklable under spawn); moving the RUNNING settle before the
+reader starts, which operation currency now requires; the `_child_exited` wake
+capture that actually closes the post-Stop resurrection window; and the Carbon
+add/remove/rollback paths, where `_unregister_one` already clears `_callbacks`
+and `_held`. No leak, no behavior to correct in any of those.
+
+### Corrected
+
+- **The Windows process inventory was broken.** It selected `Name`, so every
+  row read `python.exe`, while both smoke tests identify multiprocessing's
+  resource tracker and the inventory command by command-line substring. Every
+  Windows run would have reported a false leaked child, and a null parent id
+  would have crashed the caller's unguarded `int()`. Now selects `CommandLine`
+  with a name fallback, and skips rows with no pid or ppid. This is squarely in
+  the Windows-pending checklist below and is still unverified natively.
+- **The hotkey generation coupling was implicit.** `_callbacks` returned
+  handlers bound to `self._generation + 1`, obliging three call sites to bump
+  the counter exactly once afterwards with nothing enforcing it. The candidate
+  is now a parameter, committed by name after the listener starts so a failed
+  start leaves the running listener current. The handler became a named
+  closure, which types cleanly and removes both the default-argument trick and
+  the suppression it needed.
+- **The lookup engine guarded one stop condition twice**, three lines apart,
+  with different wording. One guard remains, immediately before the generation
+  bump and the spawn. The `_ensure` docstring said a lookup carries its
+  "submission" epoch; it reads the epoch on entry to the worker, which is the
+  distinction the whole race turns on.
+- **The EOF reap was silent.** A window it has to terminate is now reported the
+  way an explicit close already reports it.
+- **The refresh-timer stop moved to the state change.** It is scoped to the
+  not-connected branch on purpose: `setConnection("connected")` runs before the
+  snapshot is rendered, so deciding there starts a timer against the
+  placeholder state. Caught by `test_control_center_refresh` on the first
+  attempt; the narrower placement is what shipped.
+- `canonical_hotkey` no longer rebuilds its modifier ordering per call.
+
+### Repository-wide type-suppression cleanup
+
+Reviewed as a separate concern and committed separately. 45 of 48 suppressions
+were replaced; several had already gone dead with nothing reporting it, so
+`warn_unused_ignores = true` is now set and the repository is clean under it.
+
+Every replacement is an annotation, an identity call (`unchecked()`), or the
+same attribute write spelled `setattr` — no runtime behavior was changed to
+satisfy the type checker. Two production typing changes were reverted for
+exactly that reason: the `live_telemetry` output checks, whose `hasattr`
+duck-typing deliberately accepts any writable and must not be narrowed to the
+declared union, keep their `[assignment]` suppressions. A test view's `move()`
+override keeps `[override]`, being deliberately narrower than `QWidget`'s
+`QPoint` overload; widening it traded a clear signature for an unpack that
+fails differently.
+
+The PyQt6 workaround was inspected specifically. The stubs declare
+`connect()` with the slot alone, so the connection type goes through one local
+untyped reference, confined to that statement and documented at both sites.
+`PYQT_SLOT` is `Callable[..., Any] | pyqtBoundSignal`, so the removed
+`[call-arg]` suppression was protecting nothing; the emitted call is identical.
+
+### Gates for this pass
+
+`pytest` 1229 passed, 3 skipped. Ruff clean. Mypy clean, 196 source files, with
+`warn_unused_ignores` on. `pip check` clean. Focused reruns for every touched
+area passed. macOS source only: this pass adds no native, frozen, Windows or
+Linux evidence, and the pending checklists above are unchanged by it.

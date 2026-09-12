@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.hanly_fixtures.process_probe import PROCESS_ROWS_PROGRAM
+
 #: What the shell must never load. Memory a library does not return can only
 #: be returned by the process that holds it exiting.
 HEAVY_MODULES = ("easyocr", "torch", "kiwipiepy")
@@ -52,12 +54,10 @@ def owned_children():
     resource tracker lives for as long as this process does by design.
     """
 
-    rows = subprocess.run(
-        ["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True
-    ).stdout
+    rows = process_rows()
     mine = os.getpid()
     found = []
-    for line in rows.splitlines():
+    for line in rows:
         parts = line.split(None, 2)
         if len(parts) < 3 or int(parts[1]) != mine:
             continue
@@ -198,7 +198,7 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     dictionary, models, fixture = _requirements()
 
     program = tmp_path / "spawn_child.py"
-    program.write_text(_CHILD_PROGRAM, encoding="utf-8")
+    program.write_text(PROCESS_ROWS_PROGRAM + _CHILD_PROGRAM, encoding="utf-8")
     child = subprocess.run(
         [sys.executable, str(program), str(dictionary), str(models), str(fixture)],
         capture_output=True,

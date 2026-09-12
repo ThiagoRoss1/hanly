@@ -295,20 +295,28 @@ class DeferredRoiObserver:
             previous_region = region
 
 
+class _CaptureSource(Protocol):
+    """The two capture operations the observing wrapper delegates to."""
+
+    def capture_at_cursor(self, cursor: Any) -> Any: ...
+
+    def close(self) -> None: ...
+
+
 class ObservedCaptureSource:
     """Delegate the real capture and enqueue a private digest observation."""
 
-    def __init__(self, source: object, observer: DeferredRoiObserver) -> None:
+    def __init__(self, source: _CaptureSource, observer: DeferredRoiObserver) -> None:
         self._source = source
         self._observer = observer
 
     def capture_at_cursor(self, cursor: Any) -> Any:
-        capture = self._source.capture_at_cursor(cursor)  # type: ignore[attr-defined]
+        capture = self._source.capture_at_cursor(cursor)
         self._observer.observe(capture)
         return capture
 
     def close(self) -> None:
-        self._source.close()  # type: ignore[attr-defined]
+        self._source.close()
 
 
 class MarkerHotkey:
@@ -330,7 +338,7 @@ class MarkerHotkey:
     def start(self) -> None:
         if self._listener is not None:
             return
-        from hanly_app.hotkeys import canonical_hotkey  # type: ignore[import-untyped]
+        from hanly_app.hotkeys import canonical_hotkey
 
         listener = self._factory({canonical_hotkey(self._binding): self._on_marker})
         listener.start()
@@ -466,14 +474,14 @@ def run_live_hover(args: Any) -> int:
         report("Preparing the real resident hover composition; do not move yet.")
 
         # Match production startup ordering: native OCR preload precedes Qt.
-        from hanly_app.ocr_preload import preload_ocr_runtime  # type: ignore[import-untyped]
+        from hanly_app.ocr_preload import preload_ocr_runtime
 
         preload_ocr_runtime()
-        from hanly_app.capture import CaptureService  # type: ignore[import-untyped]
-        from hanly_app.manual_lookup import (  # type: ignore[import-untyped]
+        from hanly_app.capture import CaptureService
+        from hanly_app.manual_lookup import (
             create_qt_manual_lookup,
         )
-        from hanly_app.runtime import load_runtime  # type: ignore[import-untyped]
+        from hanly_app.runtime import load_runtime
         from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QApplication
 

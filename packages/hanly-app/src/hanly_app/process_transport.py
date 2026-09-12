@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import signal
 import socket
 import sys
 import threading
@@ -219,8 +220,8 @@ def spawn_child(
     context = get_context("spawn")
     parent_end, child_end = context.Pipe(duplex=True)
     process = context.Process(
-        target=target,
-        args=(child_end, *arguments),
+        target=_run_child,
+        args=(target, child_end, *arguments),
         name=name,
         daemon=True,
     )
@@ -237,6 +238,13 @@ def spawn_child(
         # close shuts the connection down for both of them.
         child_end.close()
     return process, Transport(parent_end, max_bytes=max_bytes)
+
+
+def _run_child(target: ChildTarget, connection: PipeEnd, *arguments: object) -> None:
+    """Leave terminal interrupts to the shell that owns child shutdown."""
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    target(connection, *arguments)
 
 
 def stop_process(

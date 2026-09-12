@@ -438,3 +438,25 @@ def test_a_binding_macos_cannot_register_fails_at_registration(
 
     assert service.registered is False
     assert carbon.registered == []
+
+
+def test_service_can_clear_and_restore_one_native_binding(carbon: _FakeCarbon) -> None:
+    received: list[HotkeyAction] = []
+    service = HotkeyService(
+        lambda action, _edge: received.append(action),
+        bindings={
+            HotkeyAction.PUSH_TO_HOVER: "ctrl+shift+space",
+            HotkeyAction.TOGGLE_CAPTURE: "ctrl+shift+f10",
+        },
+        listener_factory=darwin_listener_factory,
+    )
+    service.register()
+    held_id = carbon.registered[0][2]
+    service.unbind(HotkeyAction.TOGGLE_CAPTURE)
+    carbon.press(held_id)
+    service.rebind(HotkeyAction.TOGGLE_CAPTURE, "ctrl+shift+f10")
+    carbon.press(carbon.registered[-1][2])
+
+    assert carbon.installed == 1
+    assert received == [HotkeyAction.PUSH_TO_HOVER, HotkeyAction.TOGGLE_CAPTURE]
+    service.shutdown()
