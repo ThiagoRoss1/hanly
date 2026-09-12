@@ -63,6 +63,60 @@ def await_call(bridge, count):
     return False
 
 
+def descendants():
+    """Every process this one still owns, whatever the manager believes.
+
+    The ``ps`` doing the asking is itself a child, and multiprocessing's
+    resource tracker lives for as long as the shell does by design, so neither
+    is a leaked window.
+    """
+
+    import os
+    import subprocess
+
+    rows = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True
+    ).stdout
+    parents, commands = {}, {}
+    for line in rows.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid, parent, command = int(parts[0]), int(parts[1]), parts[2]
+        parents.setdefault(parent, []).append(pid)
+        commands[pid] = command
+
+    owned, frontier = [], [os.getpid()]
+    while frontier:
+        for child in parents.get(frontier.pop(), ()):
+            if child in owned:
+                continue
+            owned.append(child)
+            frontier.append(child)
+    ignored = ("resource_tracker", "ps -axo")
+    return [
+        pid
+        for pid in owned
+        if not any(marker in commands.get(pid, "") for marker in ignored)
+    ]
+
+
+def settled_descendants():
+    """Wait a bounded time for reaping, then report what is actually left.
+
+    A manager field saying the child is gone is not the same fact as the
+    process having exited, and only the second one is the leak.
+    """
+
+    waiter = threading.Event()
+    for _ in range(40):
+        remaining = descendants()
+        if not remaining:
+            return remaining
+        waiter.wait(0.25)
+    return descendants()
+
+
 def main():
     bridge = CountingBridge()
     notes = []
@@ -76,9 +130,11 @@ def main():
         report["page_reached_the_bridge"] = await_call(bridge, 1)
         report["running_after_open"] = control.running
         report["generation_after_open"] = control.generation
+        report["descendants_while_open"] = descendants()
 
         control.close()
         report["running_after_close"] = control.running
+        report["descendants_after_close"] = settled_descendants()
 
         control.show()
         report["page_reached_the_bridge_again"] = await_call(bridge, 2)
@@ -87,6 +143,7 @@ def main():
 
         control.shutdown()
         report["running_after_shutdown"] = control.running
+        report["descendants_after_shutdown"] = settled_descendants()
     except BaseException as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
         control.shutdown()
@@ -294,6 +351,12 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     assert report["generation_after_reopen"] == 2
     assert report["running_after_reopen"] is True
     assert report["running_after_shutdown"] is False
+
+    # The window and its Chromium helpers are real processes: a manager that
+    # says they are gone while they are still running is the leak.
+    assert report["descendants_while_open"], "the window process was never owned"
+    assert report["descendants_after_close"] == []
+    assert report["descendants_after_shutdown"] == []
 
     assert report["heavy_modules_in_the_shell"] == []
     recorded = "\n".join(report["diagnostics"]) + child.stderr

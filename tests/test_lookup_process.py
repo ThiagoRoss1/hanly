@@ -440,3 +440,26 @@ def test_a_lookup_after_a_stop_is_still_allowed_to_wake_the_engine(
         engine.close()
 
     assert spawner.spawns == 2
+
+
+def test_ten_wake_and_retire_cycles_leave_one_child_and_no_accumulation(
+    providers: RecordingProviders,
+) -> None:
+    """Repeated Start/Stop is the ordinary way Hanly is used all day."""
+
+    spawner = ThreadChildSpawner()
+    engine = _engine(spawner)
+    try:
+        for cycle in range(10):
+            result = engine(_request(cycle + 1))
+            assert result.status is LookupStatus.SUCCESS
+            assert engine.state == "ready"
+            engine.retire()
+            assert engine.state == "sleeping"
+            assert not any(child.is_alive() for child in spawner.children)
+    finally:
+        engine.close()
+
+    assert spawner.spawns == 10
+    assert engine.generation >= 10
+    assert not any(child.is_alive() for child in spawner.children)

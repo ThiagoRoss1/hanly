@@ -29,6 +29,8 @@ _CHILD_TIMEOUT_SECONDS = 420
 
 _CHILD_PROGRAM = '''
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -41,6 +43,41 @@ from hanly_app.lookup_process import LookupEngine, LookupSettings
 
 REPORT_PREFIX = "SPAWN_REPORT "
 HEAVY_MODULES = ("easyocr", "torch", "kiwipiepy")
+
+
+def owned_children():
+    """Processes this one still owns, less the ones that are not the engine.
+
+    The ``ps`` doing the asking is itself a child, and multiprocessing's
+    resource tracker lives for as long as this process does by design.
+    """
+
+    rows = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True
+    ).stdout
+    mine = os.getpid()
+    found = []
+    for line in rows.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3 or int(parts[1]) != mine:
+            continue
+        if "resource_tracker" in parts[2] or "ps -axo" in parts[2]:
+            continue
+        found.append(int(parts[0]))
+    return found
+
+
+def settled_children():
+    """Wait a bounded time for an exit, then report what is actually left."""
+
+    import time
+
+    for _ in range(40):
+        remaining = owned_children()
+        if not remaining:
+            return remaining
+        time.sleep(0.25)
+    return owned_children()
 
 
 def roi(path):
@@ -77,8 +114,13 @@ def main(krdict, models, fixture):
         report["headwords"] = [entry.headword for entry in result.entries]
         report["generation"] = engine.generation
 
+        report["children_while_ready"] = owned_children()
+
         engine.retire()
         report["state_after_retire"] = engine.state
+        # The memory a library does not give back is only returned by the
+        # process holding it exiting, so the state is not the property.
+        report["children_after_retire"] = settled_children()
 
         # A retired engine is still usable; the next request wakes a new child.
         again = engine(
@@ -91,6 +133,7 @@ def main(krdict, models, fixture):
     finally:
         engine.close()
         report["state_after_close"] = engine.state
+        report["children_after_close"] = settled_children()
 
     report["heavy_modules_in_the_shell"] = [
         name for name in HEAVY_MODULES if name in sys.modules
@@ -188,5 +231,10 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     assert report["status_after_wake"] == "SUCCESS"
     assert report["generation_after_wake"] > report["generation"]
     assert report["state_after_close"] == "sleeping"
+
+    # Retiring and closing are promises about processes, not about a field.
+    assert len(report["children_while_ready"]) == 1
+    assert report["children_after_retire"] == []
+    assert report["children_after_close"] == []
 
     assert report["heavy_modules_in_the_shell"] == []
