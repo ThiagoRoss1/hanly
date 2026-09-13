@@ -179,6 +179,30 @@ python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --window-onl
 Mounting is not the disk-image check: a DMG that opens onto something other
 than `Hanly.app` fails, because that is the download a person would find empty.
 
+### Which source the bundle came from
+
+A stale bundle passes every check it ever passed. Working is therefore not
+evidence that an artifact is this tree's build, and one tested bundle reported
+`0.1.3` beside a `0.5.0` checkout with nothing in the run saying so.
+
+`--expect-version` makes the bundle answer for itself, from the metadata its
+own interpreter collected:
+
+```bash
+python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop \
+    --image tests/hanly_fixtures/assets/korean_reading_roi.png \
+    --krdict /tmp/hanly-smoke/krdict.sqlite3 \
+    --expect-version "$(python tools/release_version.py)"
+```
+
+Both `hanly` and `hanly-app` must report that version. A mismatch fails, and so
+does a report that names no version at all — a missing identity leaves the
+release in the same position a wrong one does. The option is refused alongside
+`--inventory-only` and `--reconstruct-only`: neither starts the executable, so
+neither has anything to compare. `dist/reports/hanly-artifact-<platform>.json`
+records the build commit and the source version beside the archive hashes,
+because a hash says two downloads are the same file, not which source made it.
+
 The inventory also names the two build inputs a frozen bundle cannot fetch:
 `certifi/cacert.pem` and both EasyOCR weights. A bundle missing them has
 working code and no way to verify a certificate or read a word.

@@ -26,7 +26,7 @@ import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 #: Packages the desktop imports by name at runtime. Their absence is exactly
 #: the defect that shipped in v0.1.0: readiness waits on morphology forever.
@@ -136,6 +136,12 @@ WINDOWS_FATAL_STATUS = {
 #: Named here rather than imported: this harness runs against a frozen bundle
 #: and must not depend on the source package it is checking.
 LOCAL_KRDICT_VARIABLE = "HANLY_KRDICT_DB"
+
+#: The packages a frozen bundle has to be able to name itself by. A build that
+#: works and cannot say which source produced it is not release evidence: one
+#: tested bundle reported 0.1.3 while the tree it was compared against was
+#: 0.5.0, and nothing in the run said so.
+IDENTITY_PACKAGES = ("hanly", "hanly-app")
 
 #: The self-check writes one flushed JSON line per stage boundary on stderr.
 #: Named here for the same reason as the variable above. A process killed by a
@@ -323,6 +329,33 @@ def _marker_payload(line: str) -> str | None:
     if start < 0:
         return None
     return line[start + len(STAGE_MARKER_PREFIX) :].strip()
+
+
+def verify_frozen_identity(
+    report: Mapping[str, object], expected: str
+) -> dict[str, object]:
+    """Compare the versions a frozen bundle reports with the one it claims.
+
+    The bundle answers for itself, from the metadata its own interpreter
+    collected. A missing version is a failure rather than an absence: a report
+    that cannot name its packages proves nothing about which build it came
+    from.
+    """
+
+    versions = report.get("versions")
+    collected = versions if isinstance(versions, Mapping) else {}
+    packages = {name: collected.get(name) for name in IDENTITY_PACKAGES}
+    problems = [
+        f"the frozen bundle reports {name} {value!r}, expected {expected!r}"
+        for name, value in packages.items()
+        if value != expected
+    ]
+    return {
+        "expected": expected,
+        "packages": packages,
+        "ok": not problems,
+        "problems": problems,
+    }
 
 
 def _collection_roots(root: Path) -> tuple[Path, ...]:
@@ -773,6 +806,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="check collected dependencies without running the executable",
     )
     parser.add_argument(
+        "--expect-version",
+        help=(
+            "the product version this bundle must report for both packages; "
+            "a mismatch or a missing version fails the check"
+        ),
+    )
+    parser.add_argument(
         "--reconstruct-only",
         action="store_true",
         help=(
@@ -830,6 +870,10 @@ def _argument_problem(args: argparse.Namespace) -> str | None:
         return "name an application directory, --from-archive, or --disk-image"
     if args.reconstruct_only and args.from_archive is None:
         return "--reconstruct-only needs --from-archive"
+    if args.expect_version is not None and (args.inventory_only or args.reconstruct_only):
+        # The bundle answers for its own version by running; a check that does
+        # not run it would report an identity it never asked for.
+        return "--expect-version needs a check that runs the executable"
     return None
 
 
@@ -891,8 +935,16 @@ def _report(
             timeout=args.timeout,
         )
     output["self_check"] = report
+    identity: dict[str, object] | None = None
+    if args.expect_version is not None:
+        identity = verify_frozen_identity(report, args.expect_version)
+        output["identity"] = identity
     print(json.dumps(output, indent=2))
 
+    if identity is not None and not identity["ok"]:
+        for problem in cast(list[str], identity["problems"]):
+            print(f"Hanly smoke: {problem}", file=sys.stderr)
+        return 1
     if report.get("ok") is True and report.get("exit_code") == 0:
         return 0
     for failure in _iter_failures(report):
@@ -928,6 +980,7 @@ __all__ = [
     "HEADLESS_QT_PLATFORM",
     "HEADLESS_SELF_CHECK_MODES",
     "HOME_VARIABLES",
+    "IDENTITY_PACKAGES",
     "LOCAL_KRDICT_VARIABLE",
     "QT_PLATFORM_VARIABLE",
     "REQUIRED_DATA_FILES",
@@ -947,4 +1000,5 @@ __all__ = [
     "reconstruct_application",
     "run_packaged_self_check",
     "verify_disk_image",
+    "verify_frozen_identity",
 ]

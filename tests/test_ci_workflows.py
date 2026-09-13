@@ -515,12 +515,32 @@ def test_each_smoke_keeps_the_output_of_a_harness_that_never_reported() -> None:
 
 
 def test_each_artifact_records_the_identity_it_was_built_from() -> None:
-    """One macOS runner architecture cannot stand in for the other."""
+    """One macOS runner architecture cannot stand in for the other, and an
+    archive hash says two downloads are the same file, not which source made
+    it."""
 
     record = _step(_workflow("build.yml"), "build", name="Record the artifact identity")
 
     for field in ("archive_sha256", "runner_arch", "os_version", "python"):
         assert field in record["run"]
+    assert record["env"]["BUILD_COMMIT"] == "${{ github.sha }}"
+    for field in ("build_commit", "source_version"):
+        assert field in record["run"]
+
+
+def test_the_frozen_bundle_has_to_report_the_version_that_built_it() -> None:
+    """A bundle that works and reports another version is a stale artifact, and
+    one of those was tested as release evidence for a version it was not."""
+
+    steps = _steps(_workflow("build.yml"), "build")
+    names = [step.get("name", "") for step in steps]
+    resolve = names.index("Resolve the product version this build must carry")
+    smoke = _step(_workflow("build.yml"), "build", step_id="worker_smoke")
+
+    assert resolve < names.index("Build application package")
+    assert "release_version.py" in steps[resolve]["run"]
+    assert _uses_quoted_shell_variable(smoke["run"], "SOURCE_VERSION")
+    assert "--expect-version" in smoke["run"]
 
 
 def test_build_rejects_an_archive_too_large_for_github_releases() -> None:
@@ -559,8 +579,8 @@ def test_workflow_env_writes_do_not_shadow_job_environment() -> None:
 def test_build_refuses_a_tag_that_disagrees_with_the_product_version() -> None:
     build = _steps(_workflow("build.yml"), "build")
 
-    tag_push_check = next(
-        step for step in build if "release_version.py" in step.get("run", "")
+    tag_push_check = _step(
+        _workflow("build.yml"), "build", name="Verify the tag matches the product version"
     )
     assert tag_push_check["if"] == "startsWith(github.ref, 'refs/tags/')"
     assert tag_push_check["env"]["RELEASE_TAG"] == "${{ github.ref_name }}"
@@ -575,7 +595,9 @@ def test_build_refuses_a_tag_that_disagrees_with_the_product_version() -> None:
 
 def test_build_context_values_are_env_backed_in_shell_commands() -> None:
     steps = _steps(_workflow("build.yml"), "build")
-    version_check = next(step for step in steps if "release_version.py" in step.get("run", ""))
+    version_check = _step(
+        _workflow("build.yml"), "build", name="Verify the tag matches the product version"
+    )
     assert version_check.get("env", {}).get("RELEASE_TAG") == "${{ github.ref_name }}"
     assert _uses_quoted_shell_variable(version_check["run"], "RELEASE_TAG")
     # The build job runs one step list on three platforms. GitHub's default

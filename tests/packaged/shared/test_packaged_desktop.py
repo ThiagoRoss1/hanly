@@ -21,11 +21,13 @@ from tests.hanly_fixtures import FIXTURE_ASSETS, REPO_ROOT
 from tests.hanly_fixtures.capabilities import REQUIRE_PACKAGED, require_display, unavailable
 from tools.build_package import PackageLayout, host_platform
 from tools.build_smoke_krdict import build_smoke_krdict
+from tools.release_version import product_version
 from tools.smoke_packaged_runtime import (
     UI_TIMEOUT_SECONDS,
     _executable_in,
     inspect_bundle,
     run_packaged_self_check,
+    verify_frozen_identity,
 )
 
 #: Points the gate at a bundle outside ``dist/``, such as an extracted release.
@@ -128,6 +130,13 @@ def test_the_frozen_worker_becomes_ready_on_an_isolated_profile(tmp_path: Path) 
         "morphology",
         "dictionary",
     }
+
+    # The same run says which source produced it. A stale bundle passes every
+    # functional check it ever passed, so working is not evidence of being
+    # this tree's build: one tested artifact reported 0.1.3 beside a 0.5.0
+    # checkout and nothing in the run said so.
+    identity = verify_frozen_identity(report, product_version())
+    assert identity["ok"], identity["problems"]
 
 
 def test_the_frozen_control_center_opens_and_answers_its_own_page(

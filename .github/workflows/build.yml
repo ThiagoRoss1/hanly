@@ -96,6 +96,14 @@ jobs:
           --with-torch
           --output "dist/reports/hanly-host-runtime-${{ matrix.platform }}.json"
 
+      # What every product of this run has to report for itself afterwards.
+      # A bundle that works and cannot name the source that produced it is not
+      # release evidence, however green the rest of the job is.
+      - name: Resolve the product version this build must carry
+        id: source_version
+        shell: bash
+        run: echo "SOURCE_VERSION=$(python tools/release_version.py)" >> "$GITHUB_ENV"
+
       # A tag push is the release identity, so the tag and the product
       # version must agree before any artifact is produced under that name.
       - name: Verify the tag matches the product version
@@ -191,6 +199,7 @@ jobs:
             "$SMOKE_APP" \
             --image tests/hanly_fixtures/assets/korean_reading_roi.png \
             --krdict "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3" \
+            --expect-version "$SOURCE_VERSION" \
             > "$report.json" 2> "$report.err" || status=$?
           cat "$report.json"
           tail -c 200000 "$report.err" >&2
@@ -266,6 +275,7 @@ jobs:
           RUNNER_PLATFORM: ${{ matrix.platform }}
           RUNNER_OS_NAME: ${{ runner.os }}
           RUNNER_ARCHITECTURE: ${{ runner.arch }}
+          BUILD_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist/reports
@@ -292,6 +302,10 @@ jobs:
           json.dump(
               {
                   "platform": os.environ["RUNNER_PLATFORM"],
+                  # An archive hash says two downloads are the same file. Only
+                  # these say which source the file was made from.
+                  "build_commit": os.environ["BUILD_COMMIT"],
+                  "source_version": os.environ["SOURCE_VERSION"],
                   "runner_os": os.environ["RUNNER_OS_NAME"],
                   "runner_arch": os.environ["RUNNER_ARCHITECTURE"],
                   "os_version": platform.platform(),

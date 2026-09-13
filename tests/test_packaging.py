@@ -1262,3 +1262,59 @@ def test_an_invocation_that_names_no_product_is_refused(
 ) -> None:
     assert smoke_packaged_runtime.main([]) == 2
     assert "name an application directory" in capsys.readouterr().err
+
+
+# --- which source a frozen bundle says it came from --------------------------
+
+
+def test_a_frozen_bundle_that_reports_another_version_is_not_this_build() -> None:
+    """A stale artifact passes every check it ever passed. Only its own
+    reported version says which source produced it, and one tested bundle
+    reported 0.1.3 beside a 0.5.0 checkout with nothing in the run saying so."""
+
+    identity = smoke_packaged_runtime.verify_frozen_identity(
+        {"versions": {"hanly": "0.1.3", "hanly-app": "0.1.3"}}, "0.5.0"
+    )
+
+    assert identity["ok"] is False
+    assert len(cast(list[str], identity["problems"])) == 2
+    assert "expected '0.5.0'" in cast(list[str], identity["problems"])[0]
+
+
+def test_a_report_that_names_no_version_is_a_failure_not_an_absence() -> None:
+    """Missing identity proves nothing about the build, which is the same
+    position a mismatch leaves the release in."""
+
+    identity = smoke_packaged_runtime.verify_frozen_identity({}, "0.5.0")
+
+    assert identity["ok"] is False
+    assert cast(dict[str, object], identity["packages"]) == {
+        "hanly": None,
+        "hanly-app": None,
+    }
+
+
+def test_both_packages_agreeing_with_the_source_is_the_whole_check() -> None:
+    identity = smoke_packaged_runtime.verify_frozen_identity(
+        {"versions": {"hanly": "0.5.0", "hanly-app": "0.5.0", "torch": "2.4.1"}}, "0.5.0"
+    )
+
+    assert identity["ok"] is True
+    assert identity["problems"] == []
+
+
+def test_an_identity_check_that_never_runs_the_executable_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An inventory reads files. The version comes from the bundle's own
+    interpreter, so a check that does not start one has nothing to compare."""
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    status = smoke_packaged_runtime.main(
+        [str(bundle), "--inventory-only", "--expect-version", "0.5.0"]
+    )
+
+    assert status == 2
+    assert "runs the executable" in capsys.readouterr().err
