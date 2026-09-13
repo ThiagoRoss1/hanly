@@ -51,7 +51,6 @@ jobs:
       # which machine it died on. The crash this exists for is a native library
       # meeting a CPU that does not implement what it was compiled to use.
       - name: Record the host fingerprint
-        id: fingerprint
         shell: bash
         run: >
           python tools/native_host_fingerprint.py
@@ -88,7 +87,6 @@ jobs:
       # Torch is probed only once it exists, and in a child of its own: the
       # import is one of the things that ends a packaging run outright.
       - name: Record what the installed runtime reports
-        id: runtime_fingerprint
         shell: bash
         run: >
           python tools/native_host_fingerprint.py
@@ -100,7 +98,6 @@ jobs:
       # A bundle that works and cannot name the source that produced it is not
       # release evidence, however green the rest of the job is.
       - name: Resolve the product version this build must carry
-        id: source_version
         shell: bash
         run: echo "SOURCE_VERSION=$(python tools/release_version.py)" >> "$GITHUB_ENV"
 
@@ -235,11 +232,13 @@ jobs:
           && steps.dictionary.outcome == 'success' }}
         shell: bash
         env:
+          RUNNER_PLATFORM: ${{ matrix.platform }}
           HANLY_REQUIRE_PACKAGED: "1"
           HANLY_PACKAGED_APP: ${{ env.SMOKE_APP }}
         run: |
+          set -euo pipefail
           display=""
-          if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
+          if [ "$RUNNER_PLATFORM" = "linux" ]; then display="xvfb-run -a"; fi
           $display python -m pytest --suite packaged
 
       - name: Verify the release archive exists

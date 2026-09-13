@@ -16,7 +16,7 @@
 | --- | --- | --- | --- | --- |
 | HAN-44 | Implemented | Stage progress markers on stderr (`self_check.py`) and their harness side (`read_progress`, `current_stage` in the failure description); `tools/native_host_fingerprint.py`; per-product `build.yml` failure graph with step ids and explicit prerequisites; failure-safe `hanly-diagnostics-<platform>` upload; `--reconstruct-only` and standalone `--disk-image` in the smoke harness. | `pytest tests/test_packaging.py tests/test_ci_workflows.py tests/test_host_fingerprint.py` 153 passed; full `pytest` 1275 passed / 3 skipped; ruff + mypy clean. | |
 | HAN-43 | Implemented | Native and packaged cases routed into `tests/native/{shared,macos,windows}` and `tests/packaged/shared`; `--suite portable\|native\|packaged` selection that excludes a suite before its modules import; `HANLY_REQUIRE_NATIVE` / `HANLY_REQUIRE_PACKAGED` turn capability skips into failures in the jobs that own them; `ci.yml` gains three source-native jobs and `build.yml` gives up the duplicated portable suite, lint, and types. | Collected node IDs compared before/after: every case has an owner (`--suite` totals 1286 + 1 skipped, and the two Windows-only cases are now OS-routed rather than collected-and-skipped on macOS). `pytest --suite native` 35 passed on this host; full `pytest` 1286 passed / 1 skipped; ruff + mypy clean. | |
-| Super QA | Pending | | | |
+| Super QA | In progress | SUPERQA-005: `--expect-version` in the smoke harness plus build commit / source version in the artifact record. SUPERQA-002: `verify_primary_screen` between Qt initialization and pywebview window creation. SUPERQA-004: the embedded process inventory raises `ProcessInspectionUnavailable` instead of returning nothing, and both consumers report it as unavailable rather than as a retired child. | The stale `dist/macos/Hanly.app` on this machine reports `hanly`/`hanly-app` `0.1.3` against a `0.5.0` tree; `smoke_packaged_runtime.py --expect-version 0.5.0` now exits 1 on it, naming both packages. `pytest --suite native` 37 passed. | |
 
 ## HAN-43 routing inventory
 
@@ -47,6 +47,18 @@ behavior (xcb plugin, display) is exercised by the shared cases on the Linux job
 | `worker close` became a reported stage | A crash while releasing native handles used to be attributed to the last provider stage | Implemented. The worker report now carries one extra stage | If a consumer parses the stage list positionally |
 | `torch.backends.cpu.get_cpu_capability()` reports `DEFAULT` on this host | Local fingerprint run, macOS arm64 | Observation only; it is the field the Windows `ILLEGAL_INSTRUCTION` hypothesis needs from the real runners | When a Windows runner produces a fingerprint alongside a crash |
 
+## SUPERQA-001-006 dispositions
+
+| ID | Outcome | Evidence |
+| --- | --- | --- |
+| SUPERQA-001 | pending fresh-build validation | |
+| SUPERQA-002 | Implemented | |
+| SUPERQA-003 | Not reproduced | |
+| SUPERQA-004 | Not reproduced (environment), hardened | |
+| SUPERQA-005 | Confirmed and now enforced | |
+| SUPERQA-006 | pending fresh-build measurement | |
+
 ## Next action / blockers
-- HAN-43: route native cases into `tests/native/**` and `tests/packaged/**`, add suite
-  selection, and rebuild the CI job layout.
+- Build the macOS artifact from this branch with the 3.10 packaging interpreter,
+  then run the packaged suite, the native UI confirmations, and the SUPERQA-006
+  measurements against it.

@@ -165,6 +165,9 @@ def test_the_frozen_control_center_opens_and_answers_its_own_page(
 
     assert report.get("ok") is True, failures or str(report)
     assert {stage.get("name") for stage in recorded} == {
+        # Importing Qt WebEngine is its own stage: a frozen build can die there
+        # before a window exists at all.
+        "window host",
         "main window",
         "document",
         "controls",
