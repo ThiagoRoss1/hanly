@@ -144,3 +144,92 @@ def test_qt_messages_are_recorded_when_diagnostics_are_supplied(
     qt_bootstrap.ensure_qt_application(diagnostics=log)
 
     assert installed == [log]
+
+
+def _linux(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(qt_bootstrap.sys, "platform", "linux")
+
+
+def _unloadable_plugin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A file with the plugin's name that the dynamic loader will refuse."""
+
+    plugin = tmp_path / qt_bootstrap.XCB_PLUGIN_FILE
+    plugin.write_text("not a shared library", encoding="utf-8")
+    monkeypatch.setattr(qt_bootstrap, "_xcb_plugin_path", lambda: plugin)
+    return plugin
+
+
+def test_an_unloadable_xcb_plugin_raises_where_qt_would_abort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Qt calls qFatal on a platform plugin it cannot load, and SIGABRT is not
+    an exception any caller can catch or any report can survive."""
+
+    _linux(monkeypatch)
+    _unloadable_plugin(monkeypatch, tmp_path)
+
+    with pytest.raises(ControlCenterUnavailable, match="libxkbcommon-x11-0"):
+        qt_bootstrap.verify_platform_plugin({"DISPLAY": ":0"})
+
+
+def test_a_linux_session_without_a_display_is_reported_before_qt_sees_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _linux(monkeypatch)
+
+    with pytest.raises(ControlCenterUnavailable, match="DISPLAY"):
+        qt_bootstrap.verify_platform_plugin({})
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [
+        {"QT_QPA_PLATFORM": "offscreen"},
+        {"QT_QPA_PLATFORM": "wayland;xcb", "DISPLAY": ":0"},
+        {"WAYLAND_DISPLAY": "wayland-0"},
+    ],
+)
+def test_only_the_plugin_qt_will_actually_load_is_checked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, environment: dict[str, str]
+) -> None:
+    """The xcb dependencies are irrelevant to a session Qt will not open with
+    xcb, and a headless check must not be failed by a display it never wanted."""
+
+    _linux(monkeypatch)
+    _unloadable_plugin(monkeypatch, tmp_path)
+
+    qt_bootstrap.verify_platform_plugin(environment)
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_no_other_platform_pays_for_the_linux_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, platform: str
+) -> None:
+    """Windows and macOS link their platform plugin against the operating
+    system, so there is nothing outside the bundle for them to be missing."""
+
+    monkeypatch.setattr(qt_bootstrap.sys, "platform", platform)
+
+    def refuse() -> Path:
+        raise AssertionError("the platform plugin is only checked on Linux")
+
+    monkeypatch.setattr(qt_bootstrap, "_xcb_plugin_path", refuse)
+
+    qt_bootstrap.verify_platform_plugin({})
+
+
+def test_the_platform_plugin_is_checked_before_the_application_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After construction the check is worthless: the abort has already
+    happened."""
+
+    order: list[str] = []
+    _install_widgets(monkeypatch, order)
+    monkeypatch.setattr(
+        qt_bootstrap, "verify_platform_plugin", lambda: order.append("verify")
+    )
+
+    qt_bootstrap.ensure_qt_application()
+
+    assert order == ["verify", "qapplication"]

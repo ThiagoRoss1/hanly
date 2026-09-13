@@ -47,16 +47,18 @@ jobs:
         with:
           node-version: "22"
 
-      # PyInstaller inspects PyQt6.QtWidgets during Linux collection. The
-      # Ubuntu hosted image does not include the loader that owns libEGL.so.1.
-      # Xvfb is the display the frozen window gate runs in; a hosted Linux
-      # runner has no session of its own, and Qt 6.5 and later refuse to load
-      # the xcb platform plugin without libxcb-cursor0.
       - name: Install Linux packaging dependencies
         if: matrix.platform == 'linux'
         run: |
+          packages=(
+            libegl1 libgl1 libfontconfig1 libx11-xcb1
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
+            libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+            libxkbcommon-x11-0 xvfb
+          )
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libegl1 libxcb-cursor0 xvfb
+          sudo apt-get install --yes --no-install-recommends "${packages[@]}"
 
       - name: Install development dependencies
         run: |

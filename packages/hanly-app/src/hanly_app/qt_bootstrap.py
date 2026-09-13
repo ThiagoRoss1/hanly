@@ -15,13 +15,24 @@ child and the OCR runtime to the lookup child; the shell has neither.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import os
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from .control_center import ControlCenterUnavailable
 from .diagnostics import DiagnosticLog, install_qt_message_handler
 
 QT_PROGRAM_ARGUMENTS: tuple[str, ...] = ("hanly",)
+
+XCB_PLATFORM = "xcb"
+XCB_PLUGIN_FILE = "libqxcb.so"
+
+XCB_SYSTEM_PACKAGES = (
+    "libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-shape0, "
+    "libxcb-xkb1, libxkbcommon-x11-0"
+)
 
 _application: Any = None
 _invoker: Any = None
@@ -36,7 +47,9 @@ def ensure_qt_application(
 
     ``diagnostics``, when given, also receives Qt's own messages, so a fatal
     Qt error is recorded before the abort rather than lost with the missing
-    console of a windowed build.
+    console of a windowed build. Construction is preceded by
+    :func:`verify_platform_plugin`, because one class of Qt failure is an
+    abort rather than a message.
     """
 
     global _application
@@ -55,8 +68,74 @@ def ensure_qt_application(
     if isinstance(existing, QApplication):
         _application = existing
     elif not isinstance(_application, QApplication):
+        verify_platform_plugin()
         _application = QApplication(list(argv) or list(QT_PROGRAM_ARGUMENTS))
     return _application
+
+
+def verify_platform_plugin(environment: Mapping[str, str] | None = None) -> None:
+    """Fail with an exception where Qt would abort the process instead.
+
+    Qt calls ``qFatal`` when its platform plugin cannot be loaded, which is a
+    ``SIGABRT`` no caller can catch. Only Linux can reach that: its xcb plugin
+    depends on X client libraries that live outside the application, while the
+    Windows and macOS plugins link against the operating system itself.
+    """
+
+    if not sys.platform.startswith("linux"):
+        return
+
+    env = os.environ if environment is None else environment
+    if _selected_platform(env) != XCB_PLATFORM:
+        return
+    if not env.get("DISPLAY"):
+        raise ControlCenterUnavailable(
+            "Hanly cannot open a window: this session has no X display (DISPLAY is unset)"
+        )
+
+    plugin = _xcb_plugin_path()
+    if plugin is not None:
+        _load_plugin(plugin)
+
+
+def _selected_platform(environment: Mapping[str, str]) -> str:
+    """Name the plugin Qt will try first, the way Qt itself resolves it.
+
+    ``QT_QPA_PLATFORM`` may carry a semicolon-separated fallback list, and the
+    first entry is the one whose absence would end the process.
+    """
+
+    named = environment.get("QT_QPA_PLATFORM", "").split(";")[0].strip()
+    if named:
+        return named
+    return "wayland" if environment.get("WAYLAND_DISPLAY") else XCB_PLATFORM
+
+
+def _xcb_plugin_path() -> Path | None:
+    """Locate the plugin file, or return ``None`` when Qt ships none to check."""
+
+    from PyQt6.QtCore import QLibraryInfo
+
+    plugins = QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)
+    if not plugins:
+        return None
+    candidate = Path(plugins) / "platforms" / XCB_PLUGIN_FILE
+    return candidate if candidate.is_file() else None
+
+
+def _load_plugin(plugin: Path) -> None:
+    """Resolve the plugin's own dependencies, where a gap is still catchable."""
+
+    import ctypes
+
+    try:
+        ctypes.CDLL(str(plugin))
+    except OSError as error:
+        raise ControlCenterUnavailable(
+            f"Hanly cannot open a window: Qt's {XCB_PLATFORM} platform plugin "
+            f"could not be loaded ({error}). Install the X client libraries it "
+            f"needs: {XCB_SYSTEM_PACKAGES}."
+        ) from error
 
 
 def qt_application() -> Any:
@@ -108,7 +187,11 @@ def _build_invoker() -> Any:
 
 __all__ = [
     "QT_PROGRAM_ARGUMENTS",
+    "XCB_PLATFORM",
+    "XCB_PLUGIN_FILE",
+    "XCB_SYSTEM_PACKAGES",
     "ensure_qt_application",
     "install_qt_thread_invoker",
     "qt_application",
+    "verify_platform_plugin",
 ]

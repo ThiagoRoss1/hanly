@@ -175,8 +175,11 @@ def test_every_pytest_job_declares_the_node_runtime_used_by_browser_tests(
     assert steps.index(setup) < steps.index(tests)
 
 
-def test_linux_build_installs_only_what_freezing_and_the_window_gate_need(
-) -> None:
+def test_linux_build_installs_what_qts_xcb_platform_plugin_needs() -> None:
+    """PyInstaller collects a shared library only if the build machine has it,
+    so this list is not only the runner's display stack -- it is what ends up
+    inside the Linux artifact. Without it Qt aborts on an unloadable plugin."""
+
     steps = _steps(_workflow("build.yml"), "build")
     linux_dependencies = [
         step for step in steps if step.get("name") == "Install Linux packaging dependencies"
@@ -185,16 +188,40 @@ def test_linux_build_installs_only_what_freezing_and_the_window_gate_need(
     assert len(linux_dependencies) == 1
     step = linux_dependencies[0]
     assert step["if"] == "matrix.platform == 'linux'"
-    commands = [line.strip() for line in step["run"].splitlines() if line.strip()]
-    # libegl1 is what PyInstaller's Qt collection needs, libxcb-cursor0 what
-    # Qt 6.5 and later need to load the xcb plugin, and xvfb is the display the
-    # frozen window opens in. Nothing else belongs on a hosted runner.
-    assert commands == [
-        "sudo apt-get update",
-        "sudo apt-get install --yes --no-install-recommends libegl1 libxcb-cursor0 xvfb",
-    ]
+    assert "sudo apt-get update" in step["run"]
+    assert "--no-install-recommends" in step["run"]
+    # Every external soname of libqxcb.so and libQt6XcbQpa that an Ubuntu
+    # image does not already carry, plus libegl1 for PyInstaller's Qt
+    # collection and xvfb for the display the frozen window opens in.
+    assert _installed_packages(step["run"]) == {
+        "libegl1",
+        "libgl1",
+        "libfontconfig1",
+        "libx11-xcb1",
+        "libxcb-cursor0",
+        "libxcb-icccm4",
+        "libxcb-image0",
+        "libxcb-keysyms1",
+        "libxcb-randr0",
+        "libxcb-render-util0",
+        "libxcb-shape0",
+        "libxcb-shm0",
+        "libxcb-sync1",
+        "libxcb-util1",
+        "libxcb-xfixes0",
+        "libxcb-xkb1",
+        "libxkbcommon-x11-0",
+        "xvfb",
+    }
     build = next(item for item in steps if item.get("name") == "Build application package")
     assert steps.index(step) < steps.index(build)
+
+
+def _installed_packages(run: str) -> set[str]:
+    """Read the apt package list the step declares before it installs it."""
+
+    body = run.split("packages=(", 1)[1].split(")", 1)[0]
+    return set(body.split())
 
 
 def test_linux_build_uses_the_cpu_only_ocr_runtime() -> None:

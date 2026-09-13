@@ -85,20 +85,33 @@ it never installs dependencies, downloads models, or contacts a remote service.
 
 PyInstaller loads `PyQt6.QtWidgets` while analyzing a Linux build, which needs
 the system `libEGL.so.1` loader. On Ubuntu 22.04 and 24.04 that loader is
-provided by `libegl1`. The build workflow installs only what the build and the
-window gate need, without recommended extras, on its Linux job. A local Ubuntu
-builder can prepare the same dependencies with:
+provided by `libegl1`. Qt's xcb platform plugin then needs the X client
+libraries `libqxcb.so` and `libQt6XcbQpa` are linked against — thirteen xcb
+and xkbcommon libraries the distribution owns rather than the Qt wheel. A
+local Ubuntu builder prepares both with:
 
 ```bash
+packages=(
+  libegl1 libgl1 libfontconfig1 libx11-xcb1
+  libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
+  libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
+  libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+  libxkbcommon-x11-0 xvfb
+)
 sudo apt-get update
-sudo apt-get install --yes --no-install-recommends libegl1 libxcb-cursor0 xvfb
+sudo apt-get install --yes --no-install-recommends "${packages[@]}"
 ```
 
-`libegl1` is what PyInstaller's Qt collection needs, `libxcb-cursor0` is what
-Qt 6.5 and later require before the xcb platform plugin will load, and `xvfb`
-is the display the frozen window check opens in. Without the cursor library Qt
-does not raise: it aborts the process, so the window check dies with SIGABRT
-rather than reporting a failure.
+This list is not only the build machine's display stack. PyInstaller collects
+a shared library only if the machine it builds on has it, so a builder missing
+these freezes a Linux bundle carrying no loadable platform plugin, and the
+artifact fails on every user's machine that does not happen to supply them
+itself. `xvfb` is the display the frozen window check opens in.
+
+Qt does not raise when a platform plugin will not load: it aborts the process,
+so an unprepared machine used to lose the window check to SIGABRT with no
+report. `hanly_app.qt_bootstrap.verify_platform_plugin` now loads that plugin
+before the `QApplication` exists and names the missing library instead.
 
 ## Proving a build before it ships
 
