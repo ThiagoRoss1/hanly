@@ -11,6 +11,9 @@ from tests.hanly_fixtures.capabilities import require_display, require_modules
 
 _CHILD_TIMEOUT_SECONDS = 300
 
+#: macOS registers every process that creates a ``QApplication`` as a
+#: user-facing application, which made the Control Center child a second Hanly
+#: in the Dock and the app switcher beside the shell.
 _IDENTITY_PROGRAM = '''
 import json
 import re

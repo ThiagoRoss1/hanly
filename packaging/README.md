@@ -263,6 +263,18 @@ the last stage that passed would invent a diagnosis. Provider construction,
 OCR, morphology, dictionary, closing the worker, the Qt WebEngine import, the
 window itself, and each page probe all carry a marker.
 
+Two native boundaries now say what they could not do instead of reaching into
+it. The Control Center checks for a usable primary screen after Qt
+initializes and before pywebview creates its window: pywebview reads the
+primary screen's geometry there without checking that there is one, so a
+screenless session used to fail from inside that library, under Qt's own fatal
+"no screens available". The check runs after the `QApplication` exists, so it
+cannot prevent an abort inside the constructor — that case stays with the
+stage markers above. And the process inventory the native smokes embed raises
+rather than returning nothing when the host refuses to answer: a denied `ps`
+and an empty child list look identical and mean opposite things, and only one
+of them is a retired child.
+
 `tools/native_host_fingerprint.py` records what the machine actually is —
 operating system and build, CPU model and vendor, core counts, the build
 interpreter — before the first install, so a run that dies later still says

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.hanly_fixtures.capabilities import require_display, require_modules
+from tests.hanly_fixtures.capabilities import require_display, require_modules, unavailable
 from tests.hanly_fixtures.process_probe import PROCESS_ROWS_PROGRAM
 
 #: Qt's own complaint when a second ``exec`` runs inside a live loop. This is
@@ -144,6 +144,11 @@ def main():
         control.shutdown()
         report["running_after_shutdown"] = control.running
         report["descendants_after_shutdown"] = settled_descendants()
+    except ProcessInspectionUnavailable as refusal:
+        # Not a leak and not a defect: this host will not say what is running,
+        # and an empty descendant list would claim the opposite.
+        report["inspection_unavailable"] = str(refusal)
+        control.shutdown()
     except BaseException as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
         control.shutdown()
@@ -224,12 +229,21 @@ if __name__ == "__main__":
 '''
 
 
-#: macOS registers every process that creates a ``QApplication`` as a
-#: user-facing application, which made the Control Center child a second Hanly
-#: in the Dock and the app switcher beside the shell.
 def _require_a_desktop() -> None:
     require_modules("PyQt6.QtWebEngineWidgets", "webview")
     require_display()
+
+
+def _require_inspection(report: dict[str, object]) -> None:
+    """A host that will not say what is running has proved no retirement.
+
+    Reading an empty descendant list as a clean close would turn a refused
+    ``ps`` into evidence of exactly the thing it could not observe.
+    """
+
+    refusal = report.get("inspection_unavailable")
+    if refusal:
+        unavailable(f"process inspection is unavailable here: {refusal}")
 
 
 def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
@@ -254,6 +268,7 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     )
     assert line is not None, f"stdout={child.stdout!r} stderr={child.stderr!r}"
     report = json.loads(line[len(marker) :])
+    _require_inspection(report)
 
     assert report["errors"] == []
     # The page itself calls the parent bridge, which is the whole proxy path:

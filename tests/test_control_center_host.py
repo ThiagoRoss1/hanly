@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from hanly_app import control_center_host
 from hanly_app.control_center import ControlCenterUnavailable
 from hanly_app.control_center_host import QT_BACKEND_MODULE, ControlCenterHost
 
@@ -185,3 +186,32 @@ def test_the_loop_refuses_to_run_twice() -> None:
     assert len(webview.reentered) == 1
     assert "already running" in str(webview.reentered[0])
     assert webview.names.count("start") == 1
+
+
+def test_a_session_without_a_screen_is_reported_before_pywebview_is_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Order is the whole point: past this call pywebview reaches the primary
+    screen's geometry itself, and answers for a session that has none from
+    inside its own window creation."""
+
+    reached: list[str] = []
+    monkeypatch.setattr(
+        control_center_host, "prepare_control_center_qt", lambda: reached.append("backend")
+    )
+    monkeypatch.setattr(
+        control_center_host,
+        "ensure_qt_application",
+        lambda **_: reached.append("application"),
+    )
+
+    def refuse() -> None:
+        reached.append("screen")
+        raise ControlCenterUnavailable("this session has no usable screen")
+
+    monkeypatch.setattr(control_center_host, "verify_primary_screen", refuse)
+
+    with pytest.raises(ControlCenterUnavailable, match="no usable screen"):
+        ControlCenterHost(object())._load_webview()
+
+    assert reached == ["backend", "application", "screen"]

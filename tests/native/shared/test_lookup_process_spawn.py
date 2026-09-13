@@ -127,12 +127,17 @@ def main(krdict, models, fixture):
         )
         report["status_after_wake"] = again.status.value
         report["generation_after_wake"] = engine.generation
+    except ProcessInspectionUnavailable as refusal:
+        # Not a leak and not a defect: this host will not say what is running,
+        # and an empty child list would claim the opposite.
+        report["inspection_unavailable"] = str(refusal)
     except BaseException as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
     finally:
         engine.close()
         report["state_after_close"] = engine.state
-        report["children_after_close"] = settled_children()
+        if "inspection_unavailable" not in report:
+            report["children_after_close"] = settled_children()
 
     report["heavy_modules_in_the_shell"] = [
         name for name in HEAVY_MODULES if name in sys.modules
@@ -185,6 +190,18 @@ def _requirements() -> tuple[Path, Path, Path]:
     return dictionary, models, fixture
 
 
+def _require_inspection(report: dict[str, object]) -> None:
+    """A host that will not say what is running has proved no retirement.
+
+    Reading an empty child list as a retired engine would turn a refused ``ps``
+    into evidence of exactly the thing it could not observe.
+    """
+
+    refusal = report.get("inspection_unavailable")
+    if refusal:
+        unavailable(f"process inspection is unavailable here: {refusal}")
+
+
 def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Path) -> None:
     dictionary, models, fixture = _requirements()
 
@@ -211,6 +228,7 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     )
     assert line is not None, f"stdout={child.stdout!r} stderr={child.stderr[-3000:]!r}"
     report = json.loads(line[len(marker) :])
+    _require_inspection(report)
 
     assert report["errors"] == []
     assert report["state_after_attach"] == "ready"
