@@ -411,6 +411,40 @@ def test_a_reader_fault_fails_the_page_calls_instead_of_stranding_them() -> None
     assert failures == ["Hanly closed before answering."]
 
 
+def test_quit_is_answered_by_hanly_going_away_not_by_a_failed_call() -> None:
+    """Quitting retires this window, so the reply it asked for never arrives.
+
+    The page used to receive that as ``Hanly closed before answering``, which
+    pywebview printed as a traceback on every successful Quit.
+    """
+
+    host = _FakeHost()
+    child, parent = _child_half(host)
+    host.ready = True
+    child._host_ready()
+    assert dict(parent.receive()) == {"kind": "ready"}
+
+    answers: list[object] = []
+    failures: list[str] = []
+
+    def call() -> None:
+        try:
+            answers.append(child.call("quit"))
+        except RuntimeError as error:
+            failures.append(str(error))
+
+    caller = threading.Thread(target=call, daemon=True)
+    caller.start()
+    assert dict(parent.receive())["method"] == "quit"
+
+    child._transport.close()
+    child._read_until_gone()
+    caller.join(_WAIT_SECONDS)
+
+    assert failures == []
+    assert answers == [None]
+
+
 def test_two_simultaneous_opens_start_one_child() -> None:
     """Both callers see no window and would both have decided to spawn."""
 

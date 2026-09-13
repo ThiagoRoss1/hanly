@@ -14,7 +14,7 @@ reason.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from math import hypot
 from threading import RLock
 
@@ -56,11 +56,6 @@ class RetainedTarget:
         return expanded(self.word, margin).contains(point) or (
             self.popup is not None and self.popup.contains(point)
         )
-
-    def with_popup(self, popup: ScreenRect | None) -> RetainedTarget:
-        """Adopt the frame the popup actually took, once it has been placed."""
-
-        return replace(self, popup=popup)
 
 
 def nearest_point(rect: ScreenRect, point: Point) -> Point:

@@ -418,9 +418,12 @@
     if (!api || typeof api[name] !== "function") return Promise.resolve(currentState);
     showActionError("");
     // A rejected action -- "Hanly is still preparing", an unusable region --
-    // has to reach the page, or the button silently does nothing.
+    // has to reach the page, or the button silently does nothing. An operation
+    // answering with no snapshot leaves the page as it is: Quit is answered by
+    // Hanly exiting, and a fallback repaint would flash "Preparing" on the way
+    // out.
     return (value === undefined ? api[name]() : api[name](value))
-      .then(renderState)
+      .then(function (state) { if (state) renderState(state); })
       .catch(showActionError);
   }
 

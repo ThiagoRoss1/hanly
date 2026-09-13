@@ -577,16 +577,6 @@ class ManualLookupRuntime:
 
         self._shutdown(wait=False)
 
-    def shutdown_gracefully(self) -> None:
-        """Close desktop resources and wait for worker-owned providers to close.
-
-        Only safe on a thread that may block, such as process exit. A UI
-        thread must use :meth:`begin_shutdown` and :meth:`await_shutdown`.
-        """
-
-        self._shutdown(wait=True)
-        self.await_shutdown()
-
     def begin_shutdown(self) -> None:
         """Release UI-owned resources and request worker shutdown without waiting.
 

@@ -370,3 +370,93 @@ untyped reference, confined to that statement and documented at both sites.
 `warn_unused_ignores` on. `pip check` clean. Focused reruns for every touched
 area passed. macOS source only: this pass adds no native, frozen, Windows or
 Linux evidence, and the pending checklists above are unchanged by it.
+
+## Windows native verification — 2026-09-12
+
+Reviewer: Claude, on Windows 10 19045 with the repository `.venv` (Python
+3.13.11, PyQt6 6.10.2, pywebview 6.2.1, EasyOCR 1.7.2, torch 2.13.0). Source
+only; no frozen build was produced here. Two 1920x1080 displays at DPR 1, the
+second at a negative origin (-1920, 0).
+
+### Gates
+
+- `python -m pytest` -> **1215 passed, 13 skipped** (the skips are the macOS
+  tests). Re-run green after the cleanup below.
+- `ruff` clean. `mypy` clean.
+- `mypy` re-run with the PyQt6 typing marker removed, which is what CI sees
+  because it installs `hanly-app` without the runtime extra: this reproduced
+  the reported `tests/test_qt_popup_window.py:92: Unused "type: ignore"`
+  exactly, and is clean after the fix.
+- `hanly --self-check worker --self-check-image tests/hanly_fixtures/assets/korean_reading_roi.png`
+  -> ok: OCR, morphology (`한국어`) and one KRDICT entry.
+- `hanly --self-check ui` -> ok: window, document, 4 controls, bridge.
+
+### Native behaviour, driven end to end
+
+Real Korean text on screen, cursor moved with `SendInput` and the chords
+delivered through `pynput` to a live desktop:
+
+- **Push to Hover.** Moving over the word with the chord up does nothing. The
+  hold produces the popup (EasyOCR -> Kiwi -> KRDICT, `책`/`사과` resolved and
+  rendered). Releasing keeps the answer on screen; leaving the word dismisses
+  it; moving onto the popup keeps it. Auto-repeat is one activation, a partial
+  chord is nothing, and a release while the listener stops is synthesised.
+- **Start/Stop Capture.** `ctrl+shift+f10`-class binding starts capture and
+  spawns the lookup child (about 1.0 GB resident); stopping it exits that child
+  and leaves only the Control Center child (about 180 MB). Unlike macOS, the
+  function-key defaults are delivered by Windows out of the box: `f9`, `f10`
+  and `f12` chords all registered and fired both edges.
+- **Migration.** The pre-wave profile in `%LOCALAPPDATA%/Hanly/config.json`
+  (`hover_activation: "hotkey"`, no `capture_hotkey`) migrates to
+  `push_to_hover` with `capture_hotkey` `ctrl+shift+f10` and no notes.
+- **Process hygiene.** Hard-killing the shell left no orphan: the Control
+  Center child, its WebEngine renderer and the lookup child all exited.
+- **Processes.** `hanly.exe` shows an extra `python.exe` level; that is the
+  venv launcher stub (no `python313.dll` loaded, 1 thread, 4 MB), not a second
+  shell. `python -m pytest` shows the same pair.
+
+### Not established here
+
+Frozen build and its spawn dispatch, the PowerShell/CIM smoke probes inside
+`tools/smoke_packaged_runtime.py`, mixed or fractional DPI geometry, the
+Control Center close/reopen and page Quit by hand, updater accepted/rejected
+paths, and `Ctrl+C` in a real console.
+
+### Observations, not from this wave
+
+- KRDICT text reaches the popup with HTML entities intact: 386 of 75145
+  translation rows contain `&quot;` and friends, and the popup renders
+  `A word used to indicate &quot;a book.&quot;`. The build path does not
+  unescape. Pre-existing, user-visible, worth a small issue.
+- Stopping capture logs `Capture: Hanly stopped watching the screen.` and the
+  engine's `sleeping` line twice each.
+- Two desktops sharing one settings directory also share one rotating log.
+
+### Quit from the window reported its own success as a failure
+
+Quitting from the Control Center printed a pywebview traceback ending in
+`RuntimeError: Hanly closed before answering.` on every successful Quit. The
+page's `quit` call is answered by the parent retiring that window and exiting,
+so the reply it waits for is deliberately never sent, and the child treated
+that as a lost call. `TERMINAL_OPERATIONS` now names the operations whose
+success is the end of the session, and for those the connection ending *is*
+the answer. `invoke` in the page leaves the view alone when an operation
+returns no snapshot, so the window does not flash "Preparing" on the way out.
+Covered by `test_quit_is_answered_by_hanly_going_away_not_by_a_failed_call`,
+which reproduces the reported message without the fix.
+
+The other two lines in that console are not Hanly's: the
+`IDCompositionDevice4` error is Chromium probing an interface this GPU driver
+does not implement, and `Release of profile requested but WebEnginePage still
+not deleted` is the known upstream pywebview teardown ordering already
+recorded above for macOS.
+
+### Repository cleanup done with this review
+
+- `tests/test_qt_popup_window.py` records the popup's requested placement by
+  replacing the bound `move` through `monkeypatch` instead of subclassing with
+  a narrower override, so no suppression is needed in either environment.
+- Removed four definitions nothing reaches: `runtime._configuration_string`,
+  `tray.TrayMenuAction`, `RetainedTarget.with_popup` (the popup frame is passed
+  to the constructor), and `ManualLookupRuntime.shutdown_gracefully` (the
+  desktop uses `begin_shutdown` / `await_shutdown`).

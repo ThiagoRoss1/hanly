@@ -74,37 +74,37 @@ def test_the_popup_stays_a_frameless_always_on_top_tool_window(
     assert flags & Qt.WindowType.Tool
 
 
-class _PlacementRecordingView(QtPopupView):
+def test_showing_and_updating_still_renders_and_repositions(
+    application: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Record the placement asked for, which is the part Hanly decides.
 
     Where a top-level window finally lands is the window system's answer, and
     it differs by platform, work area, and frame; the view's contract is that
     both showing and updating render the result and request its position.
+
+    The recorder replaces the bound method rather than overriding it in a
+    subclass: ``QWidget.move`` is overloaded, and a narrower override is only
+    valid where the Qt stubs are absent.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.moved_to: list[tuple[int, int]] = []
+    view = QtPopupView()
+    moved_to: list[tuple[int, int]] = []
+    placed = view.move
 
-    # Deliberately narrower than QWidget.move's QPoint overload: the view under
-    # test is only ever moved by coordinates, and widening this to accept both
-    # would trade a clear signature for an unpack that can fail differently.
-    def move(self, x: int, y: int) -> None:  # type: ignore[override]
-        self.moved_to.append((x, y))
-        super().move(x, y)
+    def record(x: int, y: int) -> None:
+        moved_to.append((x, y))
+        placed(x, y)
 
-
-def test_showing_and_updating_still_renders_and_repositions(
-    application: QApplication,
-) -> None:
-    view = _PlacementRecordingView()
+    monkeypatch.setattr(view, "move", record)
     try:
         view.show_result(_result(), PopupPosition(120, 140))
         assert view.isVisible() is True
 
         view.update_result(_result(), PopupPosition(220, 260))
         assert view.isVisible() is True
-        assert view.moved_to == [(120, 140), (220, 260)]
+        assert moved_to == [(120, 140), (220, 260)]
     finally:
         view.close()
 

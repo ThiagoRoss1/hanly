@@ -46,7 +46,6 @@ TrayActivityProvider: TypeAlias = Callable[[], tuple[str, str | None]]
 TrayReadyProvider: TypeAlias = Callable[[], bool]
 TrayCallback: TypeAlias = Callable[[], None]
 TrayDispatcher: TypeAlias = Callable[[TrayCallback], None]
-TrayMenuAction: TypeAlias = Callable[..., None]
 
 
 class TrayIcon(Protocol):

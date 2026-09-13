@@ -59,6 +59,11 @@ CONTROL_CENTER_OPERATIONS: tuple[str, ...] = (
     "update_settings",
 )
 
+#: Operations whose success is the end of the session. The parent stops
+#: answering because it is doing what was asked -- it closes this window and
+#: exits -- so the connection ending is the reply, not a failure to report.
+TERMINAL_OPERATIONS: frozenset[str] = frozenset({"quit"})
+
 #: How many page operations may be in flight in the parent at once. The page
 #: issues them one at a time; anything past this is a defect, and is refused
 #: rather than allowed to accumulate threads.
@@ -708,6 +713,8 @@ class _ControlCenterChild:
             )
             return self._await_reply(identifier, method)
         except TransportClosed as error:
+            if method in TERMINAL_OPERATIONS:
+                return None
             raise RuntimeError("Hanly is no longer available.") from error
         finally:
             with self._lock:
@@ -753,6 +760,11 @@ class _ControlCenterChild:
         with self._lock:
             replies = list(self._replies.get(identifier) or ())
         if not replies:
+            if method in TERMINAL_OPERATIONS:
+                # Quit is answered by Hanly going away: the parent retires this
+                # window as part of doing it, and raising here reported a
+                # successful shutdown to the page as a failed call.
+                return None
             raise RuntimeError("Hanly closed before answering.")
         return _value_of(replies[0])
 
@@ -866,6 +878,7 @@ __all__ = [
     "CONTROL_CENTER_OPERATIONS",
     "MAX_OUTSTANDING_OPERATIONS",
     "OWNERSHIP_TIMEOUT_SECONDS",
+    "TERMINAL_OPERATIONS",
     "ControlCenterOptions",
     "ControlCenterProcess",
     "ControlCenterProxy",
