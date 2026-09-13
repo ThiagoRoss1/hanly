@@ -147,23 +147,39 @@ def test_desktop_build_runs_only_manually_or_for_release_tags() -> None:
     assert "branches" not in triggers.get("push", {})
 
 
-def test_build_runs_repository_gates_before_producing_an_artifact() -> None:
+def test_the_packaging_job_owns_the_product_and_nothing_ci_already_owns() -> None:
+    """Three packaging jobs used to rerun the whole portable suite, the lint,
+    and the type check with the runtime installed -- three more full runs of
+    what `ci.yml` had already proved, on the slowest machines in the project."""
+
     commands = [step.get("run", "") for step in _steps(_workflow("build.yml"), "build")]
     joined = "\n".join(commands)
 
     assert 'python -m pip install --editable "packages/hanly-app[runtime]"' in joined
-    assert "python -m pytest" in joined
-    assert "python -m ruff check packages packaging tests tools benchmarks" in joined
-    assert "python -m mypy packages packaging tests tools benchmarks" in joined
+    assert "--suite portable" not in joined
+    assert "ruff check" not in joined
+    assert "mypy" not in joined
 
-    gates = [index for index, command in enumerate(commands) if "python -m pytest" in command]
+    # What it does own: the frozen product, checked after it exists.
+    packaged = [index for index, command in enumerate(commands) if "--suite packaged" in command]
     builds = [index for index, command in enumerate(commands) if "build_package.py" in command]
-    assert gates and builds and max(gates) < min(builds)
+    assert packaged and builds and min(packaged) > max(builds)
+
+
+def test_the_packaged_gate_cannot_pass_by_skipping_itself() -> None:
+    """The bundle it needs is the artifact this job produced, so "no bundle" is
+    a failure of the job rather than a machine this one does not have."""
+
+    step = _step(_workflow("build.yml"), "build", step_id="packaged_tests")
+
+    assert step["env"]["HANLY_REQUIRE_PACKAGED"] == "1"
+    assert step["env"]["HANLY_PACKAGED_APP"] == "${{ env.SMOKE_APP }}"
+    assert "xvfb-run" in step["run"], "the frozen window needs a display on Linux"
 
 
 @pytest.mark.parametrize(
     ("workflow_name", "job_name"),
-    [("ci.yml", "quality"), ("ci.yml", "windows-tests"), ("build.yml", "build")],
+    [("ci.yml", "quality"), ("ci.yml", "native"), ("build.yml", "build")],
 )
 def test_every_pytest_job_declares_the_node_runtime_used_by_browser_tests(
     workflow_name: str, job_name: str
@@ -589,24 +605,46 @@ def test_release_lane_actions_are_pinned_to_immutable_commits(name: str) -> None
         assert re.search(r"#\s*v\d+\.\d+\.\d+", trailer), (name, reference)
 
 
-def test_every_push_is_checked_on_windows_without_renaming_the_linux_gates() -> None:
-    """A POSIX-only assumption in a test is invisible on a Linux-only matrix
-    until a tag build runs it. The Linux job keeps its name because required
-    status checks are pinned to it, so Windows arrives as its own job."""
+def test_the_portable_matrix_keeps_its_name_and_stays_free_of_the_runtime() -> None:
+    """Required status checks are pinned to this job's name, and its whole
+    point is a machine with none of the desktop runtime installed."""
 
     workflow = _workflow("ci.yml")
     quality = workflow["jobs"]["quality"]
-    windows = workflow["jobs"]["windows-tests"]
+    commands = "\n".join(step.get("run", "") for step in _steps(workflow, "quality"))
 
     assert quality["name"] == "quality (py${{ matrix.python-version }})"
     assert quality["runs-on"] == "ubuntu-latest"
-    assert windows["runs-on"] == "windows-latest"
     assert "push" in _triggers(workflow)
+    assert "python -m pytest --suite portable" in commands
+    assert "[runtime]" not in commands
 
-    commands = "\n".join(step.get("run", "") for step in _steps(workflow, "windows-tests"))
-    assert "python -m pip install --group dev" in commands
-    assert "python -m pip install --editable packages/hanly-app" in commands
-    assert "python -m pytest" in commands
+
+def test_every_platform_that_can_run_native_cases_has_a_job_that_does() -> None:
+    """A POSIX-only assumption is invisible on a Linux-only matrix until a tag
+    build runs it, and a macOS-only one was invisible everywhere."""
+
+    native = _workflow("ci.yml")["jobs"]["native"]
+    runners = [entry["runner"] for entry in native["strategy"]["matrix"]["include"]]
+    commands = "\n".join(step.get("run", "") for step in _steps(_workflow("ci.yml"), "native"))
+
+    assert native["strategy"]["fail-fast"] is False
+    assert runners == ["windows-latest", "macos-latest", "ubuntu-latest"]
+    assert "needs" not in native, "a native job waits for no other platform"
+    # The real runtime, the real weights, and a real dictionary: without all
+    # three these cases would have nothing to exercise but their own skips.
+    assert 'python -m pip install --editable "packages/hanly-app[runtime]"' in commands
+    assert "tools/prepare_easyocr_models.py" in commands
+    assert "tools/build_smoke_krdict.py" in commands
+    assert "python -m pytest --suite native" in commands
+    assert "xvfb-run" in commands
+
+
+def test_a_native_job_that_cannot_run_its_cases_fails_instead_of_skipping() -> None:
+    """Every capability is installed by the job itself, so a skip here would be
+    a green run reporting that it checked the thing it did not check."""
+
+    assert _workflow("ci.yml")["jobs"]["native"]["env"]["HANLY_REQUIRE_NATIVE"] == "1"
 
 
 @pytest.mark.parametrize(

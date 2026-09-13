@@ -17,7 +17,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
+from tests.hanly_fixtures import REPO_ROOT
+from tests.hanly_fixtures.capabilities import (
+    require_display,
+    require_modules,
+    unavailable,
+)
 
 #: The child writes its report to a file rather than a pipe. Qt WebEngine
 #: spawns helper processes that inherit stdout on Windows, so waiting for the
@@ -114,13 +119,7 @@ def _existing_models() -> Path | None:
     """Find prepared EasyOCR weights, which are an input rather than a download."""
 
     candidates = [
-        Path(__file__).parents[2]
-        / "packages"
-        / "hanly-app"
-        / "src"
-        / "hanly_app"
-        / "assets"
-        / "easyocr_models",
+        REPO_ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "assets" / "easyocr_models",
         Path.home() / ".EasyOCR" / "model",
     ]
     return next(
@@ -139,31 +138,26 @@ def _existing_dictionary() -> Path | None:
     local = os.environ.get("LOCALAPPDATA")
     if local:
         candidates.append(Path(local) / "Hanly" / "resources" / "krdict" / "krdict.sqlite3")
-    candidates.append(Path(__file__).parents[2] / "data" / "generated" / "krdict.sqlite3")
+    candidates.append(REPO_ROOT / "data" / "generated" / "krdict.sqlite3")
     return next((path for path in candidates if path.is_file()), None)
 
 
-def _skip_without_a_desktop_runtime() -> tuple[Path, Path]:
-    pytest.importorskip("PyQt6.QtWebEngineWidgets")
-    pytest.importorskip("webview")
-    pytest.importorskip("kiwipiepy")
-    if sys.platform.startswith("linux") and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
-        pytest.skip("desktop startup needs a real display session")
+def _require_a_desktop_runtime() -> tuple[Path, Path]:
+    require_modules("PyQt6.QtWebEngineWidgets", "webview", "kiwipiepy")
+    require_display()
     dictionary = _existing_dictionary()
     if dictionary is None:
-        pytest.skip("no built KRDICT database; see data/README.md")
+        unavailable("no built KRDICT database; see data/README.md")
     models = _existing_models()
     if models is None:
-        pytest.skip("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
+        unavailable("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
     return dictionary, models
 
 
 def test_the_desktop_opens_and_reaches_ready_without_starting_capture(
     tmp_path: Path,
 ) -> None:
-    dictionary, models = _skip_without_a_desktop_runtime()
+    dictionary, models = _require_a_desktop_runtime()
 
     config = tmp_path / "runtime.json"
     config.write_text(

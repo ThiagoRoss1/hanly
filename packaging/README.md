@@ -183,10 +183,46 @@ The inventory also names the two build inputs a frozen bundle cannot fetch:
 `certifi/cacert.pem` and both EasyOCR weights. A bundle missing them has
 working code and no way to verify a certificate or read a word.
 
-`tests/integration/test_packaged_desktop.py` is the same gate as a test. It
+`tests/packaged/shared/test_packaged_desktop.py` is the same gate as a test. It
 uses the platform's build output (`dist/<platform>/hanly-desktop`, or
 `dist/macos/Hanly.app`) by default, or the bundle named by
-`HANLY_PACKAGED_APP`.
+`HANLY_PACKAGED_APP`:
+
+```bash
+python -m pytest --suite packaged
+```
+
+## Three suites, three machines
+
+`python -m pytest` runs everything and stays the full local gate. Each suite is
+also selectable on its own, because each needs a different machine:
+
+```bash
+python -m pytest --suite portable   # no Qt, no Torch, no display
+python -m pytest --suite native     # the desktop runtime and a window server
+python -m pytest --suite packaged   # a frozen bundle
+```
+
+| Suite | Where it lives | What it needs |
+| --- | --- | --- |
+| portable | everything outside the two below | the root `dev` group only |
+| native | `tests/native/shared/`, plus `tests/native/<os>/` for this host | `hanly-app[runtime]`, a display, the EasyOCR weights, a KRDICT database |
+| packaged | `tests/packaged/` | a built bundle |
+
+Selection excludes a suite **before its modules are imported**, so a portable
+run never loads Qt, pywebview, or the OCR stack, and one platform's adapters
+are never imported on another. A marker cannot do that: deselection by marker
+happens after the import.
+
+`ci.yml` owns the first two — a Python matrix for the portable suite plus one
+native job per platform, each installing the runtime and building the
+dictionary its cases read. `build.yml` owns the third and no longer repeats the
+portable suite, the lint, or the type check.
+
+A capability a developer's machine lacks is a skip with a reason. In the jobs
+that exist to exercise it, `HANLY_REQUIRE_NATIVE=1` and
+`HANLY_REQUIRE_PACKAGED=1` turn every one of those reasons into a failure: a
+native gate that skipped everything would be a green run proving nothing.
 
 ## What a failed run leaves behind
 

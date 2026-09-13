@@ -17,6 +17,13 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests", "benchmarks/dev/tests"]
 pythonpath = ["."]
+# Applied by the suite conftests from the directory a case lives in, so a
+# report says which machine ran what. Selection itself is `--suite`, which
+# excludes a suite before its modules are imported.
+markers = [
+    "native: runs real Qt, child-process, or OS-adapter behavior",
+    "packaged: runs the frozen product rather than the checkout",
+]
 
 [tool.ruff]
 target-version = "py310"

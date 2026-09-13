@@ -110,15 +110,6 @@ jobs:
           python -m pip install "pyinstaller>=6,<7" pyinstaller-hooks-contrib
           -c packaging/release-constraints.txt
 
-      - name: Run tests
-        run: python -m pytest
-
-      - name: Run lint
-        run: python -m ruff check packages packaging tests tools benchmarks
-
-      - name: Run type checks
-        run: python -m mypy packages packaging tests tools benchmarks
-
       - name: Prepare the bundled EasyOCR weights
         run: python tools/prepare_easyocr_models.py
 
@@ -225,6 +216,22 @@ jobs:
           cat "$report.json"
           tail -c 200000 "$report.err" >&2
           exit "$status"
+
+      # The gate as a test, against the bundle this job just froze. Nothing
+      # here may skip: the artifact it needs is the thing being produced.
+      - name: Run the packaged tests
+        id: packaged_tests
+        if: >-
+          ${{ !cancelled() && steps.resolve.outcome == 'success'
+          && steps.dictionary.outcome == 'success' }}
+        shell: bash
+        env:
+          HANLY_REQUIRE_PACKAGED: "1"
+          HANLY_PACKAGED_APP: ${{ env.SMOKE_APP }}
+        run: |
+          display=""
+          if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
+          $display python -m pytest --suite packaged
 
       - name: Verify the release archive exists
         id: archives

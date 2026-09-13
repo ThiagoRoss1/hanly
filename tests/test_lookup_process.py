@@ -3,7 +3,7 @@
 These run the real child body on a thread over a real pipe, so the transport,
 the reader/processing split, cancellation, and generation handling are the
 production ones. The process boundary itself is covered by
-``tests/integration/test_lookup_process_spawn.py``.
+``tests/native/shared/test_lookup_process_spawn.py``.
 """
 
 from __future__ import annotations

@@ -366,7 +366,7 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 | `benchmarks/dev/` | Developer-only measurement harness — code, its own `tests/`, and the unwired hover `hud/`. Nothing in `packages/` imports it |
 | `data/` | Local KRDICT source and build outputs. Gitignored except the README |
 | `resources/dev/` | Machine-local benchmark configuration. Gitignored |
-| `tests/` | Product tests for both packages |
+| `tests/` | Product tests for both packages, in three selectable suites: portable by default, `tests/native/` for real Qt and OS adapters, `tests/packaged/` for the frozen product |
 
 ---
 
@@ -420,3 +420,7 @@ python -m pytest
 python -m ruff check packages packaging tests tools benchmarks
 python -m mypy packages packaging tests tools benchmarks
 ```
+
+`python -m pytest` is the full local gate. CI splits it by the machine each
+suite needs — `--suite portable`, `--suite native`, `--suite packaged` — and
+`packaging/README.md` says what each one requires.

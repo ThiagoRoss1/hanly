@@ -9,12 +9,11 @@ real window and reads the boxes back out of it.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
+from tests.hanly_fixtures.capabilities import require_display, require_modules
 
 #: Every width the window can actually be, plus the narrower viewports display
 #: scaling and page zoom produce inside it. 780 is the one that overflowed.
@@ -94,13 +93,9 @@ print(REPORT_PREFIX + json.dumps(report), flush=True)
 '''
 
 
-def _skip_without_a_desktop() -> None:
-    pytest.importorskip("PyQt6.QtWebEngineWidgets")
-    pytest.importorskip("webview")
-    if sys.platform.startswith("linux") and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
-        pytest.skip("the Control Center layout needs a real desktop session")
+def _require_a_desktop() -> None:
+    require_modules("PyQt6.QtWebEngineWidgets", "webview")
+    require_display()
 
 
 def test_every_supported_width_fits_without_scrolling_sideways(tmp_path: Path) -> None:
@@ -110,7 +105,7 @@ def test_every_supported_width_fits_without_scrolling_sideways(tmp_path: Path) -
     controls on the right went past the edge.
     """
 
-    _skip_without_a_desktop()
+    _require_a_desktop()
 
     program = tmp_path / "layout_child.py"
     program.write_text(_CHILD_PROGRAM, encoding="utf-8")

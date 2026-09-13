@@ -1,5 +1,10 @@
 name: CI
 
+# Two owners, deliberately separated. `quality` proves the portable contracts
+# across every supported Python on a machine with none of the desktop runtime;
+# the `native` jobs prove the real Qt, child-process, and OS-adapter behavior
+# on the three platforms that can actually run it. `build.yml` owns the frozen
+# product and no longer repeats either of these.
 on:
   push:
   pull_request:
@@ -31,16 +36,32 @@ jobs:
         run: |
           python -m pip install --editable packages/hanly
           python -m pip install --editable packages/hanly-app
-      - name: Run tests
-        run: python -m pytest
+      # Without the runtime extra, so a portable test that quietly needs Qt or
+      # the OCR stack fails here instead of passing on a developer's machine.
+      - name: Run the portable tests
+        run: python -m pytest --suite portable
       - name: Run lint
         run: python -m ruff check packages packaging tests tools benchmarks
       - name: Run type checks
         run: python -m mypy packages packaging tests tools benchmarks
-        
-  windows-tests:
-    name: windows tests (py3.10)
-    runs-on: windows-latest
+
+  native:
+    name: native (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-latest
+          - platform: macos
+            runner: macos-latest
+          - platform: linux
+            runner: ubuntu-latest
+    env:
+      # Every capability these cases need is installed below, so a missing one
+      # is a defect in this job rather than a reason to pass without running.
+      HANLY_REQUIRE_NATIVE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -49,13 +70,48 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+
+      # The same libraries Qt's xcb plugin is linked against, plus the display
+      # the real windows open in. A hosted Linux runner has neither.
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          packages=(
+            libegl1 libgl1 libfontconfig1 libx11-xcb1
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
+            libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
+            libxkbcommon-x11-0 xvfb
+          )
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends "${packages[@]}"
+
       - name: Install development dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install --group dev
-      - name: Install packages
+
+      - name: Install CPU-only OCR runtime on Linux
+        if: matrix.platform == 'linux'
+        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install packages with the desktop runtime
         run: |
           python -m pip install --editable packages/hanly
-          python -m pip install --editable packages/hanly-app
-      - name: Run tests
-        run: python -m pytest
+          python -m pip install --editable "packages/hanly-app[runtime]"
+
+      # The real lookup child reads both. Neither is in the repository: the
+      # weights are fetched and verified, and the dictionary is built here so
+      # the run never reaches the public release channel for one.
+      - name: Prepare the EasyOCR weights
+        run: python tools/prepare_easyocr_models.py
+
+      - name: Build the dictionary the native lookup reads
+        run: python tools/build_smoke_krdict.py data/generated/krdict.sqlite3
+
+      - name: Run the native tests
+        shell: bash
+        run: |
+          display=""
+          if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
+          $display python -m pytest --suite native

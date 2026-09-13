@@ -14,11 +14,10 @@ import json
 import os
 import subprocess
 import sys
-from importlib.util import find_spec
 from pathlib import Path
 
-import pytest
-
+from tests.hanly_fixtures import FIXTURE_ASSETS, REPO_ROOT
+from tests.hanly_fixtures.capabilities import require_modules, unavailable
 from tests.hanly_fixtures.process_probe import PROCESS_ROWS_PROGRAM
 
 #: What the shell must never load. Memory a library does not return can only
@@ -149,13 +148,7 @@ if __name__ == "__main__":
 
 def _existing_models() -> Path | None:
     candidates = [
-        Path(__file__).parents[2]
-        / "packages"
-        / "hanly-app"
-        / "src"
-        / "hanly_app"
-        / "assets"
-        / "easyocr_models",
+        REPO_ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "assets" / "easyocr_models",
         Path.home() / ".EasyOCR" / "model",
     ]
     return next(
@@ -171,7 +164,7 @@ def _existing_models() -> Path | None:
 def _existing_dictionary() -> Path | None:
     configured = os.environ.get("HANLY_KRDICT_DB")
     candidates = [Path(configured)] if configured else []
-    candidates.append(Path(__file__).parents[2] / "data" / "generated" / "krdict.sqlite3")
+    candidates.append(REPO_ROOT / "data" / "generated" / "krdict.sqlite3")
     return next((path for path in candidates if path.is_file()), None)
 
 
@@ -179,18 +172,16 @@ def _requirements() -> tuple[Path, Path, Path]:
     # Presence, not an import: loading the runtime to decide whether to run
     # would put the very libraries this test says the shell never imports into
     # the process running it.
-    missing = [name for name in ("easyocr", "kiwipiepy", "PIL") if find_spec(name) is None]
-    if missing:
-        pytest.skip(f"the lookup runtime is not installed: {', '.join(missing)}")
+    require_modules("easyocr", "kiwipiepy", "PIL")
     dictionary = _existing_dictionary()
     if dictionary is None:
-        pytest.skip("no built KRDICT database; see data/README.md")
+        unavailable("no built KRDICT database; see data/README.md")
     models = _existing_models()
     if models is None:
-        pytest.skip("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
-    fixture = Path(__file__).parents[1] / "hanly_fixtures" / "assets" / "korean_reading_roi.png"
+        unavailable("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
+    fixture = FIXTURE_ASSETS / "korean_reading_roi.png"
     if not fixture.is_file():
-        pytest.skip("the Korean reading fixture is not available")
+        unavailable("the Korean reading fixture is not available")
     return dictionary, models, fixture
 
 
