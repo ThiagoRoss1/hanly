@@ -43,7 +43,7 @@ from .permissions import (
     permission_from_id,
 )
 from .runtime import HanlyRuntime
-from .runtime_status import RuntimeStatus
+from .runtime_status import ApplicationSnapshot, RuntimeStatus
 from .update_coordinator import UpdateCoordinator
 
 
@@ -110,11 +110,11 @@ class DesktopLifecycle(Protocol):
     def start(self) -> None:
         """Start capture from a new or shut-down state."""
 
-    def pause(self) -> None:
-        """Stop capture while leaving the desktop startable."""
+    def stop(self) -> None:
+        """Stop capture, releasing the providers and leaving Hanly startable."""
 
     def resume(self) -> None:
-        """Resume capture after :meth:`pause`."""
+        """Resume capture after :meth:`stop`."""
 
     def apply_config(self, config: AppConfig) -> None:
         """Apply persisted desktop preferences to running services."""
@@ -213,6 +213,7 @@ class ControlCenterBridge:
         ocr_provider: str = "EasyOCR",
         engine_status: Callable[[], Mapping[str, str]] | None = None,
         registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
+        application_snapshot: Callable[[], ApplicationSnapshot] | None = None,
         diagnostic_log: DiagnosticLog | None = None,
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
@@ -236,6 +237,8 @@ class ControlCenterBridge:
             raise TypeError("engine_status must be callable")
         if registered_hotkeys is not None and not callable(registered_hotkeys):
             raise TypeError("registered_hotkeys must be callable")
+        if application_snapshot is not None and not callable(application_snapshot):
+            raise TypeError("application_snapshot must be callable")
         if permission_service is not None and not isinstance(permission_service, PermissionService):
             raise TypeError("permission_service must be a PermissionService")
 
@@ -250,6 +253,7 @@ class ControlCenterBridge:
         self._runtime_status = runtime_status
         self._engine_status = engine_status
         self._registered_hotkeys = registered_hotkeys
+        self._application_snapshot = application_snapshot
         self._diagnostic_log = diagnostic_log
         self._capture_ready = capture_ready
         # Bound by set_retry() once startup exists to retry.
@@ -269,9 +273,12 @@ class ControlCenterBridge:
 
         config = self._current_config()
         state_name = self._desktop_state()
+        activity = self._activity_snapshot()
         return {
             "app": {
                 "state": state_name,
+                "activity": activity["activity"],
+                "detail": activity["detail"],
                 "capture_running": self._is_capture_running(state_name),
                 "capture_mode": config.capture_mode.value,
                 "target": _target_name(config.capture_monitor),
@@ -325,10 +332,10 @@ class ControlCenterBridge:
         return self.get_state()
 
     def stop_capture(self) -> dict[str, Any]:
-        """Pause capture through the existing desktop lifecycle controller."""
+        """Stop capture through the one application action every surface uses."""
 
         if self._desktop_controller is not None:
-            self._desktop_controller.pause()
+            self._desktop_controller.stop()
         self._capture_running = False
         self._notify_lifecycle_changed()
         return self.get_state()
@@ -419,6 +426,7 @@ class ControlCenterBridge:
         supported = {
             "hotkey",
             "hover_hotkey",
+            "capture_hotkey",
             "hover_activation",
             "lookup_preload",
             "hover_delay_ms",
@@ -432,9 +440,9 @@ class ControlCenterBridge:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"unsupported Control Center setting(s): {names}")
         values = dict(changes)
-        for field in ("hotkey", "hover_hotkey"):
+        for field in ("hotkey", "hover_hotkey", "capture_hotkey"):
             if field in values:
-                values[field] = _validated_hotkey(values[field])
+                values[field] = _validated_binding(values[field], field)
         if "hover_activation" in values:
             values["hover_activation"] = _validated_choice(
                 values["hover_activation"], HoverActivation, "hover activation"
@@ -770,6 +778,14 @@ class ControlCenterBridge:
             return {"state": "unknown", "message": ""}
         return {str(key): str(value) for key, value in self._engine_status().items()}
 
+    def _activity_snapshot(self) -> dict[str, str]:
+        """The one derived label, or the honest unknown before one exists."""
+
+        if self._application_snapshot is None:
+            return {"activity": "preparing", "detail": ""}
+        snapshot = self._application_snapshot()
+        return {"activity": snapshot.activity, "detail": snapshot.detail}
+
     def _registered_bindings(self) -> dict[str, str]:
         """Report the shortcuts actually registered, not the stored intent.
 
@@ -893,6 +909,7 @@ def _rebinds(previous: AppConfig, candidate: AppConfig) -> bool:
     return (
         previous.hotkey != candidate.hotkey
         or previous.hover_hotkey != candidate.hover_hotkey
+        or previous.capture_hotkey != candidate.capture_hotkey
     )
 
 
@@ -906,6 +923,19 @@ def _validated_choice(value: object, choices: type[Enum], label: str) -> str:
     except ValueError as error:
         offered = ", ".join(str(item.value) for item in choices)
         raise ValueError(f"{label} must be one of: {offered}") from error
+
+
+def _validated_binding(binding: object, field: str) -> str:
+    """Validate one shortcut, allowing an action to be deliberately unbound.
+
+    Only Start/Stop may be left without a shortcut, and only because a
+    migration can find no free position for it; the page then asks for one
+    rather than resetting the preferences that were already there.
+    """
+
+    if field == "capture_hotkey" and isinstance(binding, str) and not binding.strip():
+        return ""
+    return _validated_hotkey(binding)
 
 
 def _validated_hotkey(hotkey: object) -> str:

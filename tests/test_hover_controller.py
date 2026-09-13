@@ -215,7 +215,7 @@ def test_request_is_frozen_and_request_ids_are_positive() -> None:
     request = HoverRequest(7, Point(1, 2))
 
     with pytest.raises(AttributeError):
-        request.request_id = 8  # type: ignore[misc]
+        setattr(request, "request_id", 8)
 
     with pytest.raises(ValueError, match="positive"):
         HoverRequest(0, Point(1, 2))

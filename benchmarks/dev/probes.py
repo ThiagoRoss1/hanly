@@ -345,7 +345,7 @@ class ProcessSampler:
         if self.process is not None:
             return self.process
         try:
-            import psutil  # type: ignore[import-untyped]
+            import psutil
 
             return psutil.Process(os.getpid())
         except Exception:

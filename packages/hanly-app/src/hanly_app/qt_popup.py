@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from typing import Any
 
 from hanly import LookupResult, Point
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
@@ -42,12 +43,11 @@ class _QueuedCallbackBridge(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         # The explicit queued type keeps dispatch non-blocking even when a
-        # caller happens to emit from the UI thread itself. PyQt6's stubs only
-        # declare the single-argument connect(), so the connection type has to
-        # be passed past the type checker.
-        self.callback_ready.connect(  # type: ignore[call-arg]
-            self._run, Qt.ConnectionType.QueuedConnection
-        )
+        # caller happens to emit from the UI thread itself. PyQt6's stubs
+        # declare connect() with the slot alone, so it goes through an untyped
+        # reference rather than a suppression that goes stale when they improve.
+        connect: Any = self.callback_ready.connect
+        connect(self._run, Qt.ConnectionType.QueuedConnection)
 
     @pyqtSlot(object)
     def _run(self, callback: object) -> None:

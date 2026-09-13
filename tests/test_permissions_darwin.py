@@ -20,6 +20,8 @@ from hanly_app.permissions import (
     UnsupportedPermission,
 )
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 
 @pytest.fixture
 def probe(monkeypatch: pytest.MonkeyPatch) -> permissions_darwin.DarwinPermissionProbe:
@@ -160,6 +162,6 @@ def test_a_permission_macos_does_not_gate_is_refused(
         value = "camera"
 
     with pytest.raises(UnsupportedPermission):
-        probe.state(_Other())  # type: ignore[arg-type]
+        probe.state(unchecked(_Other()))
     with pytest.raises(UnsupportedPermission):
-        probe.request(_Other())  # type: ignore[arg-type]
+        probe.request(unchecked(_Other()))

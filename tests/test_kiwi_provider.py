@@ -6,6 +6,8 @@ import pytest
 from hanly import MorphologyProvider, ProviderError, TokenAnalysis
 from hanly.kiwi_provider import KiwiProvider
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 
 @dataclass(frozen=True)
 class _FakeToken:
@@ -101,7 +103,7 @@ def test_kiwi_provider_wraps_malformed_tokens() -> None:
 
 def test_kiwi_provider_rejects_non_string_input() -> None:
     with pytest.raises(TypeError, match="input must be a string"):
-        KiwiProvider(analyzer=_FakeAnalyzer(())).analyze(None)  # type: ignore[arg-type]
+        KiwiProvider(analyzer=_FakeAnalyzer(())).analyze(unchecked(None))
 
 
 def test_kiwi_provider_can_use_installed_kiwi_for_a_cheap_smoke() -> None:

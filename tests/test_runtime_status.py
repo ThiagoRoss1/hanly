@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from hanly import LookupResult, PixelFormat, Point, ROIImage
 from hanly_app.lookup_controller import LookupController
 from hanly_app.runtime_status import (
     RuntimeStatus,
     RuntimeStatusPublisher,
+    derive_application_snapshot,
     watch_worker_readiness,
 )
 
@@ -22,11 +25,11 @@ def _roi_image() -> ROIImage:
     return ROIImage(width=4, height=4, pixel_format=PixelFormat.RGB_888, data=bytes(4 * 4 * 3))
 
 
-def _failing_controller(**options: object) -> LookupController:
+def _failing_controller(**options: Any) -> LookupController:
     def factory() -> object:
         raise _BrokenProviders("kiwipiepy is unavailable")
 
-    return LookupController(factory, **options)  # type: ignore[arg-type]
+    return LookupController(factory, **options)
 
 
 def test_a_status_snapshot_is_immutable_and_json_ready() -> None:
@@ -39,7 +42,7 @@ def test_a_status_snapshot_is_immutable_and_json_ready() -> None:
     }
     assert not status.ready and not status.failed
     with pytest.raises(AttributeError):
-        status.phase = "ready"  # type: ignore[misc]
+        setattr(status, "phase", "ready")
 
 
 def test_observers_receive_the_current_snapshot_and_every_change() -> None:
@@ -160,3 +163,77 @@ def test_a_retired_watcher_cannot_report_over_the_current_runtime() -> None:
     assert publisher.status == RuntimeStatus(
         "preparing", "resources", "Preparing Hanly's resources..."
     )
+
+
+def test_a_started_session_whose_providers_are_loading_is_not_running() -> None:
+    """The defect this derivation exists for: the shell reported RUNNING the
+    moment capture was requested, while the lookup engine was still loading."""
+
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("ready", "lookup providers", "Hanly is ready."),
+        engine_state="preparing",
+        engine_message="Loading the lookup engine.",
+        capture_requested=True,
+    )
+
+    assert snapshot.activity == "preparing"
+    assert snapshot.detail == "Loading the lookup engine."
+    assert snapshot.busy is True
+
+
+def test_an_armed_session_says_the_engine_wakes_on_the_first_lookup() -> None:
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("ready"),
+        engine_state="sleeping",
+        capture_requested=True,
+        wakes_on_demand=True,
+    )
+
+    assert snapshot.activity == "armed"
+    assert "first lookup" in snapshot.detail
+
+
+def test_a_muted_session_keeps_running_and_says_hover_is_paused() -> None:
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("ready"),
+        engine_state="ready",
+        capture_requested=True,
+        hover_muted=True,
+    )
+
+    assert snapshot.activity == "running"
+    assert snapshot.detail == "Hover paused."
+
+
+def test_stopping_outranks_a_lookup_engine_that_has_not_let_go_yet() -> None:
+    """Stop is not finished until the child is retired, and the interface must
+    not advertise a completed stop while that is still under way."""
+
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("ready"),
+        engine_state="ready",
+        capture_requested=False,
+        stopping=True,
+    )
+
+    assert snapshot.activity == "stopping"
+
+
+def test_a_failed_runtime_outranks_everything_the_engine_reports() -> None:
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("failed", "resources", "krdict is unavailable"),
+        engine_state="ready",
+        capture_requested=True,
+    )
+
+    assert snapshot.activity == "error"
+    assert snapshot.detail == "krdict is unavailable"
+
+
+def test_a_stopped_session_is_stopped_however_resident_the_engine_is() -> None:
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("ready"), engine_state="ready", capture_requested=False
+    )
+
+    assert snapshot.activity == "stopped"
+    assert snapshot.busy is False

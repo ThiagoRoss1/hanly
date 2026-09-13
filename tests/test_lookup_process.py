@@ -11,6 +11,7 @@ from __future__ import annotations
 import pickle
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hanly import LookupStatus, PixelFormat, Point, ROIImage
@@ -51,10 +52,10 @@ def providers(monkeypatch: pytest.MonkeyPatch) -> RecordingProviders:
     return recorder
 
 
-def _engine(spawner: ThreadChildSpawner, **options: object) -> LookupEngine:
+def _engine(spawner: ThreadChildSpawner, **options: Any) -> LookupEngine:
     """Build an engine and attach it the way the executor thread does."""
 
-    engine = LookupEngine(settings(), spawn=spawner, **options)  # type: ignore[arg-type]
+    engine = LookupEngine(settings(), spawn=spawner, **options)
     engine.attach()
     return engine
 
@@ -381,3 +382,106 @@ def _settle(condition: object, timeout: float = _WAIT_SECONDS) -> None:
 def test_the_one_pixel_fixture_stays_a_valid_roi() -> None:
     assert PIXEL.width == 1 and PIXEL.pixel_format is PixelFormat.RGB_888
     assert isinstance(TARGET, Point)
+
+
+def test_a_stop_during_preparation_does_not_spawn_a_replacement(
+    providers: RecordingProviders,
+) -> None:
+    """Waiting for the start lock can outlast the stop that was asked for.
+
+    A background preparation queued behind a start is what made Stop a promise
+    the engine could take back: the thread woke up on the far side of the
+    retirement and loaded a child the user had just released.
+    """
+
+    spawner = ThreadChildSpawner()
+    engine = LookupEngine(settings(), spawn=spawner)
+    holding = threading.Event()
+    released = threading.Event()
+
+    # Hold the start lock so the background preparation is parked behind it
+    # while the retirement happens, which is the race in production.
+    def hold_start_lock() -> None:
+        with engine._start_lock:
+            holding.set()
+            released.wait(_WAIT_SECONDS)
+
+    holder = threading.Thread(target=hold_start_lock, daemon=True)
+    holder.start()
+    assert holding.wait(_WAIT_SECONDS)
+    try:
+        engine.prepare()
+        engine.retire()
+    finally:
+        released.set()
+        holder.join(_WAIT_SECONDS)
+
+    for _ in range(50):
+        if spawner.spawns:
+            break
+        threading.Event().wait(0.02)
+
+    assert spawner.spawns == 0
+    assert engine.state == "sleeping"
+    engine.close()
+
+
+def test_a_lookup_after_a_stop_is_still_allowed_to_wake_the_engine(
+    providers: RecordingProviders,
+) -> None:
+    """The guard is on queued residency requests, not on asking for an answer."""
+
+    spawner = ThreadChildSpawner()
+    engine = _engine(spawner)
+    try:
+        assert engine(_request(1)).status is LookupStatus.SUCCESS
+        engine.retire()
+        assert engine(_request(2)).status is LookupStatus.SUCCESS
+    finally:
+        engine.close()
+
+    assert spawner.spawns == 2
+
+
+def test_ten_wake_and_retire_cycles_leave_one_child_and_no_accumulation(
+    providers: RecordingProviders,
+) -> None:
+    """Repeated Start/Stop is the ordinary way Hanly is used all day."""
+
+    spawner = ThreadChildSpawner()
+    engine = _engine(spawner)
+    try:
+        for cycle in range(10):
+            result = engine(_request(cycle + 1))
+            assert result.status is LookupStatus.SUCCESS
+            assert engine.state == "ready"
+            engine.retire()
+            assert engine.state == "sleeping"
+            assert not any(child.is_alive() for child in spawner.children)
+    finally:
+        engine.close()
+
+    assert spawner.spawns == 10
+    assert engine.generation >= 10
+    assert not any(child.is_alive() for child in spawner.children)
+
+
+def test_lookup_waiting_for_start_cannot_resurrect_a_stopped_engine(
+    providers: RecordingProviders, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawner = ThreadChildSpawner()
+    engine = LookupEngine(settings(), spawn=spawner)
+    ensure = engine._ensure
+
+    def stop_before_ensure(wake: int | None = None) -> object:
+        engine.retire()
+        return ensure(wake)
+
+    monkeypatch.setattr(engine, "_ensure", stop_before_ensure)
+    try:
+        with pytest.raises(LookupProcessError, match="stopped"):
+            engine(_request(1))
+        assert spawner.spawns == 0
+        assert engine.state == "sleeping"
+    finally:
+        engine.close()

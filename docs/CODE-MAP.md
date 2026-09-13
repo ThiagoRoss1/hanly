@@ -68,7 +68,7 @@ hanly (the shell)                 Qt Widgets, tray, hotkeys, capture, hover,
   ├── hanly-control-center        pywebview + Qt WebEngine + the page
   │     (spawned on open, gone on close; opening again is a new process)
   └── hanly-lookup                EasyOCR + Kiwi + KRDICT + the pipeline
-        (spawned by the preload policy; retired on pause, or after an idle
+        (spawned by the preload policy; retired on Stop, or after an idle
          manual session; a lookup wakes a sleeping engine on demand)
 ```
 
@@ -131,7 +131,7 @@ launch pays for is `config.LookupPreload`.
 ## 4. The lookup pipeline
 
 ```
-hover (or hotkey)
+hover (while the push chord is held, or for the whole session)
   → is the cursor still on the last answer?   hover_target.py     (if so, stop here)
   → debounce + cursor-validity check          hover_controller.py
   → small ROI capture                         capture.py
@@ -312,9 +312,10 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 | `qt_hover_scheduler.py` | Hover timing on the Qt thread |
 | `capture.py` | Screen ROI capture |
 | `capture_selector.py` | The "which area?" overlay, reached from settings |
-| `hotkeys.py` | Global hotkeys, and the backend choice per platform |
-| `hotkeys_darwin.py` | The macOS backend: Carbon `RegisterEventHotKey` |
+| `hotkeys.py` | Global hotkeys, both edges of a chord, and the backend per platform |
+| `hotkeys_darwin.py` | The macOS backend: Carbon `RegisterEventHotKey`, pressed and released |
 | `popup_darwin.py` | Keeps the macOS popup panel on screen while Hanly is inactive |
+| `app_identity_darwin.py` | What macOS thinks a Hanly process is, so only one is an application |
 | `permissions.py` | Which grant each feature needs, and how it is reported |
 | `permissions_darwin.py` | The macOS status and grant flows, through ctypes |
 
@@ -326,8 +327,8 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 | `job_executor.py` | The executor thread: one job running, one latest pending |
 | `lookup_process.py` | The lookup child, its transport, and the engine that owns provider residency |
 | `hover_lookup.py` | The hover-driven lookup runtime, and the answer the cursor may rest on |
-| `hover_target.py` | Where a result came from on screen, and what protects it |
-| `manual_lookup.py` | The hotkey-driven runtime, the preload policy, and the Qt composition |
+| `hover_target.py` | Where a result came from on screen, what protects it, and the crossing to the popup |
+| `manual_lookup.py` | The shortcut-driven runtime, the preload policy, and the Qt composition |
 | `runtime_trace.py` | Structured per-stage trace events, forwarded from the child |
 
 **Presentation and shell**

@@ -112,3 +112,42 @@ def test_cancelling_a_superseded_handle_leaves_the_newer_delay_pending(
 
     assert _spin_until(lambda: bool(fired))
     assert fired == ["current"]
+
+
+def test_a_dwell_and_a_popup_crossing_do_not_take_each_others_timer(
+    application: QApplication,
+) -> None:
+    """The production defect: one ``QtHoverScheduler`` is one ``QTimer``.
+
+    The hover runtime used to schedule the exit and the next word's dwell on
+    the same scheduler, so the dwell replaced the exit's callback and the
+    answer on screen was never dismissed. Two schedulers are two timers.
+    """
+
+    del application
+    dwell = QtHoverScheduler()
+    crossing = QtHoverScheduler()
+    fired: list[str] = []
+
+    crossing(40, lambda: fired.append("crossing"))
+    dwell(10, lambda: fired.append("dwell"))
+
+    assert _spin_until(lambda: len(fired) == 2)
+    assert fired == ["dwell", "crossing"]
+
+
+def test_one_scheduler_still_replaces_its_own_pending_delay(
+    application: QApplication,
+) -> None:
+    """Which is exactly why the exit cannot share the dwell's scheduler."""
+
+    del application
+    scheduler = QtHoverScheduler()
+    fired: list[str] = []
+
+    scheduler(40, lambda: fired.append("first"))
+    scheduler(10, lambda: fired.append("second"))
+
+    assert _spin_until(lambda: fired == ["second"])
+    _spin(60)
+    assert fired == ["second"]

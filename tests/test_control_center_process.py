@@ -17,8 +17,10 @@ from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailab
 from hanly_app.control_center_process import (
     CONTROL_CENTER_OPERATIONS,
     MAX_OUTSTANDING_OPERATIONS,
+    ControlCenterOptions,
     ControlCenterProcess,
     ControlCenterProxy,
+    _ControlCenterChild,
     bridge_operations,
 )
 from hanly_app.process_transport import (
@@ -27,6 +29,8 @@ from hanly_app.process_transport import (
     Transport,
     TransportClosed,
 )
+
+from tests.hanly_fixtures.unchecked import unchecked
 
 #: Bounded so a marshalling regression fails the test instead of hanging it.
 _WAIT_SECONDS = 5.0
@@ -39,6 +43,8 @@ class _FakeProcess:
         self.alive = True
         self.joined: list[float | None] = []
         self.terminated = False
+        self.pid = 4321
+        self.exitcode: int | None = None
 
     def is_alive(self) -> bool:
         return self.alive
@@ -49,9 +55,11 @@ class _FakeProcess:
     def terminate(self) -> None:
         self.terminated = True
         self.alive = False
+        self.exitcode = -15
 
     def kill(self) -> None:
         self.alive = False
+        self.exitcode = -9
 
 
 class _Child:
@@ -252,7 +260,7 @@ def test_a_transport_that_is_open_never_disguises_a_type_error_as_a_close() -> N
     transport = Transport(parent_end)
 
     with pytest.raises(TypeError):
-        transport.poll("soon")  # type: ignore[arg-type]
+        transport.poll(unchecked("soon"))
 
     transport.close()
 
@@ -311,3 +319,217 @@ def test_closing_a_transport_reaches_the_other_end_despite_a_blocked_reader() ->
     reader.join(_WAIT_SECONDS)
     assert not reader.is_alive()
     child.close()
+
+
+class _FakeHost:
+    """A window that records what was asked of it, and when it existed."""
+
+    def __init__(self, *, fail_before_ready: bool = True) -> None:
+        self.ready = False
+        self.fail_before_ready = fail_before_ready
+        self.shown = 0
+        self.closed = 0
+
+    def show(self) -> None:
+        if self.fail_before_ready and not self.ready:
+            raise ControlCenterUnavailable("the Control Center window is not available")
+        self.shown += 1
+
+    def close(self) -> None:
+        self.closed += 1
+
+    def evaluate(self, _script: str) -> None:
+        return None
+
+
+def _child_half(host: _FakeHost) -> tuple[_ControlCenterChild, Transport]:
+    """Build the child half against a fake window and a real pipe."""
+
+    parent_end, child_end = multiprocessing.Pipe(duplex=True)
+    child = _ControlCenterChild(
+        Transport(child_end, max_bytes=MAX_CONTROL_MESSAGE_BYTES), ControlCenterOptions()
+    )
+    child._host = unchecked(host)
+    return child, Transport(parent_end, max_bytes=MAX_CONTROL_MESSAGE_BYTES)
+
+
+def test_focus_before_the_window_exists_is_deferred_rather_than_fatal() -> None:
+    """The reader starts before the host does, so an early focus must not be
+    the exception that kills the only thread answering the page."""
+
+    host = _FakeHost()
+    child, _parent = _child_half(host)
+
+    child._receive_one({"kind": "focus"})
+    assert host.shown == 0
+
+    host.ready = True
+    child._host_ready()
+
+    assert host.shown == 1
+
+
+def test_a_close_during_startup_does_not_leave_an_orphan_window() -> None:
+    host = _FakeHost()
+    child, _parent = _child_half(host)
+
+    child._receive_one({"kind": "close"})
+    assert host.closed == 0
+
+    host.ready = True
+    child._host_ready()
+
+    assert host.closed == 1
+    assert host.shown == 0
+
+
+def test_a_reader_fault_fails_the_page_calls_instead_of_stranding_them() -> None:
+    """A dead reader used to leave every call waiting out the whole timeout."""
+
+    host = _FakeHost()
+    child, parent = _child_half(host)
+    host.ready = True
+    child._host_ready()
+    assert dict(parent.receive()) == {"kind": "ready"}
+
+    failures: list[str] = []
+
+    def call() -> None:
+        try:
+            child.call("get_state")
+        except RuntimeError as error:
+            failures.append(str(error))
+
+    caller = threading.Thread(target=call, daemon=True)
+    caller.start()
+    assert dict(parent.receive())["method"] == "get_state"
+
+    child._transport.close()
+    child._read_until_gone()
+    caller.join(_WAIT_SECONDS)
+
+    assert failures == ["Hanly closed before answering."]
+
+
+def test_quit_is_answered_by_hanly_going_away_not_by_a_failed_call() -> None:
+    """Quitting retires this window, so the reply it asked for never arrives.
+
+    The page used to receive that as ``Hanly closed before answering``, which
+    pywebview printed as a traceback on every successful Quit.
+    """
+
+    host = _FakeHost()
+    child, parent = _child_half(host)
+    host.ready = True
+    child._host_ready()
+    assert dict(parent.receive()) == {"kind": "ready"}
+
+    answers: list[object] = []
+    failures: list[str] = []
+
+    def call() -> None:
+        try:
+            answers.append(child.call("quit"))
+        except RuntimeError as error:
+            failures.append(str(error))
+
+    caller = threading.Thread(target=call, daemon=True)
+    caller.start()
+    assert dict(parent.receive())["method"] == "quit"
+
+    child._transport.close()
+    child._read_until_gone()
+    caller.join(_WAIT_SECONDS)
+
+    assert failures == []
+    assert answers == [None]
+
+
+def test_two_simultaneous_opens_start_one_child() -> None:
+    """Both callers see no window and would both have decided to spawn."""
+
+    child = _Child()
+    manager = _manager(child)
+    barrier = threading.Barrier(2)
+
+    def open_it() -> None:
+        barrier.wait(_WAIT_SECONDS)
+        manager.show()
+
+    openers = [threading.Thread(target=open_it, daemon=True) for _ in range(2)]
+    for opener in openers:
+        opener.start()
+    for opener in openers:
+        opener.join(_WAIT_SECONDS)
+
+    assert child.spawned == 1
+    assert manager.generation == 1
+
+
+def test_a_retired_generation_cannot_detach_its_replacement() -> None:
+    """The old reader's cleanup runs late; it must not take the new window."""
+
+    first = _Child()
+    manager = _manager(first)
+    manager.show()
+    first.die()
+
+    replacement = _Child()
+    manager._spawn = replacement.spawn
+    manager.show()
+    assert manager.generation == 2
+
+    manager._child_gone(1, "The Control Center window closed unexpectedly.")
+    manager._retire(1)
+
+    assert manager.running is True
+    assert manager.generation == 2
+
+
+def test_an_operation_from_a_replaced_window_neither_runs_nor_takes_capacity() -> None:
+    child = _Child()
+    calls: list[str] = []
+
+    def record() -> str:
+        calls.append("ran")
+        return "done"
+
+    manager = ControlCenterProcess(
+        {name: record for name in CONTROL_CENTER_OPERATIONS}, spawn=child.spawn
+    )
+    manager.show()
+    stale = manager.generation
+    manager._generation += 1  # a replacement window took over
+
+    manager._run_operation(child.parent, stale, 7, "get_state", ())
+
+    assert calls == []
+    assert manager._outstanding == 0
+
+
+def test_closed_window_cannot_run_a_queued_mutation_before_reopen() -> None:
+    child = _Child()
+    mutations: list[str] = []
+    manager = ControlCenterProcess(
+        {"start_capture": lambda: mutations.append("start")}, spawn=child.spawn
+    )
+    manager.show()
+    generation = manager.generation
+    manager.close()
+
+    manager._run_operation(child.parent, generation, 1, "start_capture", ())
+
+    assert mutations == []
+
+
+def test_reader_eof_reaps_child_before_forgetting_ownership() -> None:
+    child = _Child()
+    closed = threading.Event()
+    manager = _manager(child, on_closed=closed.set)
+    manager.show()
+    child.transport.close()
+
+    assert closed.wait(_WAIT_SECONDS)
+    assert child.process.joined
+    assert not child.process.is_alive()
+    assert not manager.running

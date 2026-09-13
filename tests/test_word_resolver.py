@@ -4,6 +4,7 @@ from hanly import BoundingBox, OCRResult, Point, Quad
 from hanly.word_resolver import WordResolver
 
 from tests.hanly_fixtures.korean import KOREAN_OCR_RESULTS
+from tests.hanly_fixtures.unchecked import unchecked
 
 
 def _result(text: str, quad: Quad) -> OCRResult:
@@ -115,8 +116,8 @@ def test_resolver_returns_none_for_empty_or_unusable_inputs() -> None:
 
     assert resolver.resolve((), Point(x=1, y=1)) is None
     assert resolver.resolve((unusable,), Point(x=1, y=1)) is None
-    assert resolver.resolve((object(),), Point(x=1, y=1)) is None  # type: ignore[arg-type]
-    assert resolver.resolve(KOREAN_OCR_RESULTS, None) is None  # type: ignore[arg-type]
+    assert resolver.resolve(unchecked((object(),)), Point(x=1, y=1)) is None
+    assert resolver.resolve(KOREAN_OCR_RESULTS, unchecked(None)) is None
 
 
 def test_resolver_skips_a_near_collinear_sliver_quad() -> None:

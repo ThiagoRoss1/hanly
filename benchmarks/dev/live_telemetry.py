@@ -392,7 +392,7 @@ class LiveResourceSampler:
             if self.process_factory is not None:
                 self.process = self.process_factory()
                 return self.process
-            import psutil  # type: ignore[import-untyped]
+            import psutil
 
             self.process = psutil.Process(os.getpid())
             return self.process

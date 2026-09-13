@@ -16,12 +16,20 @@ from typing import Any, Protocol, TypeAlias, cast
 from hanly import HanlyError, LookupResult, LookupStatus, Point
 
 from .capture import CaptureResult, ConfiguredCaptureService, ScreenRect
-from .config import DEFAULT_HOVER_HOTKEY, AppConfig, CaptureMode, LookupPreload
+from .config import (
+    DEFAULT_CAPTURE_HOTKEY,
+    DEFAULT_HOVER_HOTKEY,
+    AppConfig,
+    CaptureMode,
+    HoverActivation,
+    LookupPreload,
+)
 from .hotkeys import (
     DEFAULT_HOTKEYS,
     HotkeyAction,
     HotkeyBindings,
     HotkeyDispatcher,
+    HotkeyEdge,
     HotkeyHandler,
     HotkeyService,
 )
@@ -63,6 +71,10 @@ class HotkeyRuntime(Protocol):
     @property
     def bindings(self) -> Mapping[HotkeyAction, str]:
         """The combinations this service currently owns, not what was asked for."""
+
+    @property
+    def registered(self) -> bool:
+        """Whether the operating system actually accepted those combinations."""
 
     def register(self) -> None:
         """Start listening for the configured shortcuts."""
@@ -120,6 +132,34 @@ IdleScheduler: TypeAlias = Callable[[float, Callable[[], None]], Cancellable]
 IDLE_TIMEOUT_SECONDS = 60.0
 
 
+def _session_bindings(
+    hotkey: str,
+    hover_hotkey: str,
+    capture_hotkey: str,
+    lookup_hotkey: str = "",
+) -> dict[HotkeyAction | str, str]:
+    """The shortcuts a session registers, minus any that is unbound.
+
+    The desktop's three are the hold, the hover mute, and the capture session.
+    The one-shot lookup is bindable for a client that wants it and unbound by
+    default, because the combination it used to own is now the hold.
+    """
+
+    configured: dict[HotkeyAction | str, str] = {
+        HotkeyAction.PUSH_TO_HOVER: hotkey,
+        HotkeyAction.TOGGLE_HOVER: hover_hotkey,
+        HotkeyAction.TOGGLE_CAPTURE: capture_hotkey,
+        HotkeyAction.LOOKUP: lookup_hotkey,
+    }
+    return {
+        action: binding for action, binding in configured.items() if binding.strip()
+    }
+
+
+def _hotkey_action(value: HotkeyAction | str) -> HotkeyAction:
+    return value if isinstance(value, HotkeyAction) else HotkeyAction(value)
+
+
 def _schedule_idle(seconds: float, callback: Callable[[], None]) -> Cancellable:
     """Default one-shot timer; composition may supply a deterministic one."""
 
@@ -146,8 +186,12 @@ class ManualLookupRuntime:
         current_cursor: CursorProvider,
         dispatcher: ResultDispatcher,
         clear_popup: Callable[[], None] | None = None,
-        hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
+        hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.PUSH_TO_HOVER],
         hover_hotkey: str = DEFAULT_HOVER_HOTKEY,
+        capture_hotkey: str = DEFAULT_CAPTURE_HOTKEY,
+        lookup_hotkey: str = "",
+        activation: HoverActivation = HoverActivation.PUSH_TO_HOVER,
+        on_toggle_capture: Callable[[], None] | None = None,
         hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
         trace_sink: RuntimeTraceSink | None = None,
@@ -159,6 +203,7 @@ class ManualLookupRuntime:
         origins: CaptureOrigins | None = None,
         idle_scheduler: IdleScheduler | None = None,
         idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS,
+        on_stopped: Callable[[], None] | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -201,9 +246,12 @@ class ManualLookupRuntime:
         self._origins = origins if origins is not None else CaptureOrigins()
         self._idle_scheduler = idle_scheduler or _schedule_idle
         self._idle_timeout = float(idle_timeout_seconds)
+        self._on_stopped = on_stopped
+        self._activation = activation
+        self._on_toggle_capture = on_toggle_capture
         self._hotkeys = (hotkey_factory or _create_hotkey)(
             self._handle_action,
-            {HotkeyAction.LOOKUP: hotkey, HotkeyAction.TOGGLE_HOVER: hover_hotkey},
+            _session_bindings(hotkey, hover_hotkey, capture_hotkey, lookup_hotkey),
             dispatcher,
         )
         self._lock = RLock()
@@ -212,9 +260,14 @@ class ManualLookupRuntime:
         self._closed = False
         self._hotkey = hotkey
         self._hover_hotkey = hover_hotkey
+        self._capture_hotkey = capture_hotkey
+        self._lookup_hotkey = lookup_hotkey
+        self._push_held = False
         self._capture_mode = CaptureMode.FULL_MONITOR
         self._idle_timer: Cancellable | None = None
         self._idle_generation = 0
+        self._hover_muted = False
+        self._retiring = False
 
     @property
     def controller(self) -> LookupController:
@@ -249,19 +302,29 @@ class ManualLookupRuntime:
         with self._lock:
             if self._closed:
                 return
-            changed = {
-                HotkeyAction.LOOKUP: config.hotkey,
-                HotkeyAction.TOGGLE_HOVER: config.hover_hotkey,
-            }
-            current = {
-                HotkeyAction.LOOKUP: self._hotkey,
-                HotkeyAction.TOGGLE_HOVER: self._hover_hotkey,
-            }
+            changed = _session_bindings(
+                config.hotkey,
+                config.hover_hotkey,
+                config.capture_hotkey,
+                self._lookup_hotkey,
+            )
+            current = _session_bindings(
+                self._hotkey,
+                self._hover_hotkey,
+                self._capture_hotkey,
+                self._lookup_hotkey,
+            )
             hover_runtime = self._hover_runtime
 
+        # A binding that moves takes the held state with it: the key the user
+        # is still holding is no longer the one this action listens to.
         for action, binding in changed.items():
-            if binding != current[action]:
-                self._rebind(action, binding)
+            if current.get(action) != binding:
+                self._release_push()
+                self._rebind(_hotkey_action(action), binding)
+        for action in current.keys() - changed.keys():
+            self._release_push()
+            self._unbind(_hotkey_action(action))
 
         if hover_runtime is not None:
             hover_runtime.set_delay_ms(float(config.hover_delay_ms))
@@ -274,9 +337,14 @@ class ManualLookupRuntime:
             monitor=self._capture_service.monitor,
             region=self._capture_service.region,
         )
+        if config.hover_activation is not self._activation:
+            self._release_push()
+            self._activation = config.hover_activation
+            self._apply_activation_mode()
         with self._lock:
             self._hotkey = config.hotkey
             self._hover_hotkey = config.hover_hotkey
+            self._capture_hotkey = config.capture_hotkey
 
     def _rebind(self, action: HotkeyAction, binding: str) -> None:
         """Replace one live binding, or refuse if the backend cannot."""
@@ -288,6 +356,13 @@ class ManualLookupRuntime:
         with self._lock:
             if self._prepared:
                 raise RuntimeError("configured hotkey cannot be changed while running")
+
+    def _unbind(self, action: HotkeyAction) -> None:
+        """Give up one action's shortcut, which a migration may have left free."""
+
+        unbind = getattr(self._hotkeys, "unbind", None)
+        if callable(unbind):
+            unbind(action)
 
     def _apply_preload_change(self, preload: LookupPreload) -> None:
         """Apply a policy change immediately, without disturbing capture.
@@ -365,6 +440,20 @@ class ManualLookupRuntime:
             return self._prepared and not self._closed
 
     @property
+    def hover_muted(self) -> bool:
+        """Whether automatic hover is muted while the session keeps running."""
+
+        with self._lock:
+            return self._hover_muted
+
+    @property
+    def retiring(self) -> bool:
+        """Whether a stop is still waiting for the lookup child to let go."""
+
+        with self._lock:
+            return self._retiring
+
+    @property
     def engine(self) -> LookupResidency | None:
         """The lookup engine whose residency this policy controls, if any."""
 
@@ -407,10 +496,17 @@ class ManualLookupRuntime:
                 raise RuntimeError("manual lookup runtime has been shut down")
             if self._started:
                 hover_runtime = self._hover_runtime
+                self._hover_muted = False
                 if hover_runtime is not None and not hover_runtime.failed:
                     hover_runtime.resume()
+                self._apply_activation_mode()
                 return
             self._started = True
+            self._hover_muted = False
+            # Starting while the chord is already down does not count as a
+            # press: the user has to let go and press again, or the session
+            # would inherit an activation nothing visible caused.
+            self._push_held = False
 
         # A deliberate activation, so the engine gets a fresh allowance for the
         # one automatic restart an unexpected exit is permitted.
@@ -422,6 +518,7 @@ class ManualLookupRuntime:
         try:
             if self._hover_runtime is not None:
                 self._hover_runtime.start()
+                self._apply_activation_mode()
         except Exception as error:
             # Roll back through the ordinary shutdown path so the popup and
             # capture service acquired before start() are closed too. Marking
@@ -480,16 +577,6 @@ class ManualLookupRuntime:
 
         self._shutdown(wait=False)
 
-    def shutdown_gracefully(self) -> None:
-        """Close desktop resources and wait for worker-owned providers to close.
-
-        Only safe on a thread that may block, such as process exit. A UI
-        thread must use :meth:`begin_shutdown` and :meth:`await_shutdown`.
-        """
-
-        self._shutdown(wait=True)
-        self.await_shutdown()
-
     def begin_shutdown(self) -> None:
         """Release UI-owned resources and request worker shutdown without waiting.
 
@@ -518,6 +605,9 @@ class ManualLookupRuntime:
             self._closed = True
             self._started = False
             self._prepared = False
+            self._hover_muted = False
+            self._push_held = False
+            self._retiring = False
         self._cancel_idle_expiry()
 
         # Invalidate before stop so queued or in-flight results fail the
@@ -551,12 +641,13 @@ class ManualLookupRuntime:
         if hover_runtime is not None:
             hover_runtime.invalidate()
 
-    def pause(self) -> None:
-        """Stop watching the screen, leaving the shortcuts live.
+    def stop(self) -> None:
+        """Stop watching the screen and give the lookup providers back.
 
-        Every policy but Always gives the providers back here. Always is the
-        choice that deliberately opts into residency through a pause, which is
-        the whole reason it exists.
+        Explicit Stop releases residency under every preload policy, Always
+        included. Always means eager preparation on launch and on Start, and
+        residency through a hover mute -- not resurrection after the user has
+        asked Hanly to stop. The user's saved policy is untouched.
         """
 
         with self._lock:
@@ -564,6 +655,9 @@ class ManualLookupRuntime:
                 return
             hover_runtime = self._hover_runtime
             self._started = False
+            self._hover_muted = False
+            self._push_held = False
+            self._retiring = self._engine is not None
         self._controller.invalidate()
         if hover_runtime is not None:
             hover_runtime.pause()
@@ -571,8 +665,69 @@ class ManualLookupRuntime:
         # running, so stopping capture must not leave it on screen.
         self._clear_popup()
         self._cancel_idle_expiry()
-        if self._preload is not LookupPreload.ALWAYS:
-            self._with_engine(lambda engine: engine.retire())
+        self._retire_off_thread()
+
+    def set_hover_muted(self, muted: bool) -> None:
+        """Mute or continue automatic hover without changing residency.
+
+        This is the warm half of the model: nothing is observed and the popup
+        is dismissed, but the child that makes the next lookup instant stays
+        loaded. Only :meth:`stop` gives that memory back.
+        """
+
+        with self._lock:
+            if self._closed or not self._started:
+                return
+            if self._hover_muted == bool(muted):
+                return
+            self._hover_muted = bool(muted)
+            hover_runtime = self._hover_runtime
+        self._controller.invalidate()
+        if muted:
+            if hover_runtime is not None:
+                hover_runtime.pause()
+            self._clear_popup()
+        elif hover_runtime is not None and not hover_runtime.failed:
+            hover_runtime.resume()
+
+    def _retire_off_thread(self) -> None:
+        """Join the lookup child away from the thread that asked for the stop.
+
+        Retiring waits for a child process to exit, which is measured in
+        hundreds of milliseconds. Doing that inside the Qt action would freeze
+        the tray, the window, and the popup for exactly as long as it takes.
+        """
+
+        if self._engine is None:
+            self._settle_stop()
+            return
+
+        def retire() -> None:
+            try:
+                self._with_engine(lambda residency: residency.retire())
+            finally:
+                self._settle_stop()
+
+        try:
+            self._shutdown_scheduler(retire)
+        except Exception as error:
+            self._report_error("Lookup engine", error)
+            retire()
+
+    def _settle_stop(self) -> None:
+        """Report the stop as finished, once the child has actually let go."""
+
+        with self._lock:
+            self._retiring = False
+        callback = self._on_stopped
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            # Telling the interface a stop finished is a presentation
+            # callback; losing it must not replace the stop itself.
+            pass
 
     def _arm_idle_expiry(self) -> None:
         """Give a manual session an expiry, but only while capture is off.
@@ -633,17 +788,27 @@ class ManualLookupRuntime:
             timer.cancel()
 
     def resume(self) -> None:
-        """Resume the shared lookup path after :meth:`pause`."""
+        """Resume the shared lookup path after :meth:`stop`."""
 
         self.start()
 
-    def _handle_action(self, action: HotkeyAction) -> None:
-        """Capture and submit from the UI-dispatched application callback.
+    def lookup_at_cursor(self) -> None:
+        """Capture and look up once at the cursor, without watching the screen.
 
-        The trace events are what makes the one-shot hotkey path observable:
-        the global backend delivers a key combination with no visible effect
-        of its own, so each stage says where a lookup that never reached the
-        popup actually stopped.
+        The V1 desktop no longer gives this a shortcut of its own -- the
+        combination it used to own is the hold -- but the path is unchanged and
+        stays available to a client that wants a single explicit lookup.
+        """
+
+        self._handle_action(HotkeyAction.LOOKUP, HotkeyEdge.DOWN)
+
+    def _handle_action(self, action: HotkeyAction, edge: HotkeyEdge) -> None:
+        """Route one shortcut edge to the action it stands for.
+
+        The trace events are what makes the shortcut paths observable: the
+        global backend delivers a key combination with no visible effect of its
+        own, so each stage says where a lookup that never reached the popup
+        actually stopped.
         """
 
         with self._lock:
@@ -654,8 +819,18 @@ class ManualLookupRuntime:
         if ignored:
             emit_trace(self._trace_sink, "manual_action_ignored", stage="manual_action")
             return
+        if action is HotkeyAction.PUSH_TO_HOVER:
+            self._set_push_held(edge is HotkeyEdge.DOWN)
+            return
+        # Every remaining action is a tap, and a tap happens once, on the way
+        # down. Acting on the release too would run each of them twice.
+        if edge is not HotkeyEdge.DOWN:
+            return
         if action is HotkeyAction.TOGGLE_HOVER:
             self._toggle_hover()
+            return
+        if action is HotkeyAction.TOGGLE_CAPTURE:
+            self._toggle_capture()
             return
         if action is not HotkeyAction.LOOKUP:
             return
@@ -762,6 +937,78 @@ class ManualLookupRuntime:
             return None
         return screen_rect(region, bounds)
 
+    def _set_push_held(self, held: bool) -> None:
+        """Follow the push chord: hover exists exactly while it is down.
+
+        Pressing while capture is stopped does nothing: Start/Stop is the
+        explicit action that allocates a session, and a hold must not allocate
+        one behind the user's back. Releasing stops new work but leaves an
+        answer already on screen to the exit geometry, so it can be read.
+        """
+
+        with self._lock:
+            if self._closed or self._activation is not HoverActivation.PUSH_TO_HOVER:
+                return
+            if self._push_held == held:
+                return
+            started = self._started
+            hover_runtime = self._hover_runtime
+            if held and not started:
+                # No latch: a press that did nothing must not become an
+                # activation the next Start silently inherits.
+                emit_trace(
+                    self._trace_sink, "push_ignored_capture_stopped", stage="manual_action"
+                )
+                return
+            self._push_held = held
+
+        emit_trace(
+            self._trace_sink,
+            "push_pressed" if held else "push_released",
+            stage="manual_action",
+        )
+        if hover_runtime is None:
+            return
+        hover_runtime.set_accepting(held)
+        if held:
+            # A press with a stationary cursor still has to look something up,
+            # and no movement event is coming to say where it is.
+            hover_runtime.observe(self._current_cursor())
+
+    def _release_push(self) -> None:
+        """Drop held state that the user can no longer end with a key."""
+
+        with self._lock:
+            if not self._push_held:
+                return
+            self._push_held = False
+            hover_runtime = self._hover_runtime
+        if hover_runtime is not None:
+            hover_runtime.set_accepting(False)
+
+    def _apply_activation_mode(self) -> None:
+        """Let hover follow the mode: always observing, or only while held."""
+
+        with self._lock:
+            hover_runtime = self._hover_runtime
+            always = self._activation is HoverActivation.ALWAYS_ACTIVE
+            started = self._started
+        if hover_runtime is None:
+            return
+        hover_runtime.set_accepting(always and started)
+
+    def _toggle_capture(self) -> None:
+        """Hand Start/Stop to whoever owns the capture lifecycle."""
+
+        emit_trace(self._trace_sink, "capture_toggle_received", stage="manual_action")
+        callback = self._on_toggle_capture
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as error:
+            self._report_error("Capture shortcut", error)
+
     def _toggle_hover(self) -> None:
         """Hand the toggle to whoever owns the capture lifecycle.
 
@@ -797,7 +1044,7 @@ def create_manual_lookup(
     current_cursor: CursorProvider,
     dispatcher: ResultDispatcher,
     clear_popup: Callable[[], None] | None = None,
-    hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
+    hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.PUSH_TO_HOVER],
     hotkey_factory: HotkeyFactory | None = None,
     shutdown_scheduler: ShutdownScheduler | None = None,
     hover_enabled: bool = False,
@@ -814,6 +1061,9 @@ def create_manual_lookup(
     on_diagnostic: Callable[[str], None] | None = None,
     on_engine_state: Callable[[str, str], None] | None = None,
     idle_scheduler: IdleScheduler | None = None,
+    on_stopped: Callable[[], None] | None = None,
+    on_toggle_capture: Callable[[], None] | None = None,
+    lookup_hotkey: str = "",
 ) -> ManualLookupRuntime:
     """Compose a manual path from the existing runtime and desktop seams."""
 
@@ -856,6 +1106,10 @@ def create_manual_lookup(
         clear_popup=clear_popup,
         hotkey=configured_hotkey,
         hover_hotkey=_configured_hover_hotkey(app_config),
+        capture_hotkey=_configured_capture_hotkey(app_config),
+        lookup_hotkey=lookup_hotkey,
+        activation=_configured_activation(app_config),
+        on_toggle_capture=on_toggle_capture,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
         trace_sink=trace_sink,
@@ -866,6 +1120,7 @@ def create_manual_lookup(
         capture_refusal=capture_refusal,
         origins=origins,
         idle_scheduler=idle_scheduler,
+        on_stopped=on_stopped,
     )
     manual_holder.append(manual)
     if hover_enabled:
@@ -892,7 +1147,7 @@ def create_qt_manual_lookup(
     runtime: RuntimeComposition,
     capture_service: CaptureSource,
     *,
-    hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.LOOKUP],
+    hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.PUSH_TO_HOVER],
     hotkey_factory: HotkeyFactory | None = None,
     shutdown_scheduler: ShutdownScheduler | None = None,
     hover_enabled: bool = True,
@@ -909,6 +1164,9 @@ def create_qt_manual_lookup(
     on_diagnostic: Callable[[str], None] | None = None,
     on_engine_state: Callable[[str, str], None] | None = None,
     idle_scheduler: IdleScheduler | None = None,
+    on_stopped: Callable[[], None] | None = None,
+    on_toggle_capture: Callable[[], None] | None = None,
+    lookup_hotkey: str = "",
 ) -> ManualLookupRuntime:
     """Build the real Qt alpha composition on the caller's UI thread.
 
@@ -977,6 +1235,10 @@ def create_qt_manual_lookup(
         dispatcher=dispatcher,
         hotkey=configured_hotkey,
         hover_hotkey=_configured_hover_hotkey(app_config),
+        capture_hotkey=_configured_capture_hotkey(app_config),
+        lookup_hotkey=lookup_hotkey,
+        activation=_configured_activation(app_config),
+        on_toggle_capture=on_toggle_capture,
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
         trace_sink=trace_sink,
@@ -987,6 +1249,7 @@ def create_qt_manual_lookup(
         capture_refusal=capture_refusal,
         origins=origins,
         idle_scheduler=idle_scheduler,
+        on_stopped=on_stopped,
     )
     manual_holder.append(manual)
     if hover_enabled:
@@ -996,8 +1259,11 @@ def create_qt_manual_lookup(
                 manual.capture_service,
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
                 # Debounce on the Qt UI thread that already dispatches movement
-                # rather than spawning a timer thread per cursor event.
+                # rather than spawning a timer thread per cursor event. The
+                # crossing to the popup gets its own timer: one QTimer cannot
+                # hold both, and sharing it is what stopped exits dismissing.
                 scheduler=hover_scheduler or QtHoverScheduler(),
+                exit_scheduler=QtHoverScheduler(),
                 dispatcher=dispatcher,
                 listener_factory=hover_listener_factory,
                 on_error=hover_on_error,
@@ -1053,6 +1319,16 @@ def _configured_preload(app_config: AppConfig | None) -> LookupPreload:
 
 def _configured_hover_hotkey(app_config: AppConfig | None) -> str:
     return DEFAULT_HOVER_HOTKEY if app_config is None else app_config.hover_hotkey
+
+
+def _configured_capture_hotkey(app_config: AppConfig | None) -> str:
+    return DEFAULT_CAPTURE_HOTKEY if app_config is None else app_config.capture_hotkey
+
+
+def _configured_activation(app_config: AppConfig | None) -> HoverActivation:
+    if app_config is None:
+        return HoverActivation.PUSH_TO_HOVER
+    return app_config.hover_activation
 
 
 def _create_engine(

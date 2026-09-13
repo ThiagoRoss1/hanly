@@ -647,17 +647,6 @@ def _mapping_field(value: object, field_name: str, resource_id: str) -> Mapping[
     return dict(value)
 
 
-def _configuration_string(
-    configuration: Mapping[str, Any], key: str, resource_id: str
-) -> str:
-    value = configuration.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise RuntimeConfigError(
-            f"resource {resource_id} configuration {key!r} must be a non-empty string"
-        )
-    return value
-
-
 __all__ = [
     "KRDICT_RESOURCE_ID",
     "OCR_DISPLAY_NAME",

@@ -12,6 +12,7 @@ decides what that means — for the child process it means exiting.
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -22,7 +23,7 @@ from .control_center import (
     prepare_control_center_qt,
 )
 from .diagnostics import DiagnosticLog, StartupTimeline
-from .qt_bootstrap import ensure_qt_application
+from .qt_bootstrap import ensure_qt_application, install_qt_thread_invoker
 
 #: The backend module Hanly's single-Qt design requires. pywebview falls back
 #: to Cocoa, GTK, or WinForms when Qt cannot load, which would silently mix two
@@ -69,6 +70,7 @@ class ControlCenterHost:
         self._running = False
         self._visible = False
         self._destroyed = False
+        self._to_qt_thread: Callable[[Callable[[], None]], None] | None = None
 
     @property
     def created(self) -> bool:
@@ -116,6 +118,9 @@ class ControlCenterHost:
             self._running = True
 
         webview = self._load_webview()
+        # Before the window, not after: a Dock tile that has already appeared
+        # does not go away.
+        self._claim_process_identity()
         self._create_window(webview)
         try:
             self._start_loop(webview, on_started)
@@ -130,6 +135,7 @@ class ControlCenterHost:
 
         window = self._require_window()
         self._call_window(window, "show")
+        self._activate_process()
         with self._lock:
             self._visible = True
 
@@ -278,6 +284,54 @@ class ControlCenterHost:
             method()
         except Exception as error:
             self._report(f"Control Center {action}", error)
+
+    def _claim_process_identity(self) -> None:
+        """Say what this process is before it has a window to be judged by.
+
+        On macOS every process that creates a ``QApplication`` becomes a
+        user-facing application, so the Control Center child appeared beside
+        the shell as a second Hanly. This has to happen before the window
+        exists: a Dock tile that has already appeared does not go away.
+        """
+
+        if not self._on_cocoa():
+            return
+        from .app_identity_darwin import run_as_accessory_application
+
+        # Built here, on the thread that owns the loop, because it is the way
+        # everything else reaches that thread afterwards.
+        self._to_qt_thread = install_qt_thread_invoker()
+        try:
+            run_as_accessory_application()
+        except Exception as error:
+            self._report("Control Center application identity", error)
+
+    def _activate_process(self) -> None:
+        """An Accessory application is not brought forward by its own window.
+
+        Cocoa refuses this from anywhere but the main thread, and focus arrives
+        on the transport reader's, so it goes back through the Qt loop.
+        """
+
+        post = self._to_qt_thread
+        if post is None:
+            return
+        from .app_identity_darwin import activate_application
+
+        def activate() -> None:
+            try:
+                activate_application()
+            except Exception as error:
+                self._report("Control Center activation", error)
+
+        post(activate)
+
+    def _on_cocoa(self) -> bool:
+        if sys.platform != "darwin":
+            return False
+        from PyQt6.QtGui import QGuiApplication
+
+        return bool(QGuiApplication.platformName() == "cocoa")
 
     def _report(self, stage: str, error: BaseException) -> None:
         if self._diagnostics is not None:

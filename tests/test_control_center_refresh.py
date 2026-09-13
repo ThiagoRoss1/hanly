@@ -30,6 +30,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+#: The shell derives its activity from more than readiness, but a fixture that
+#: only varies the runtime phase gets the settled activity that phase implies.
+_ACTIVITY_FOR_PHASE = {"ready": "stopped", "failed": "error"}
+
 #: What a platform with no privacy gates reports, and the shape macOS fills in.
 NO_PERMISSIONS: dict[str, Any] = {"supported": False, "items": []}
 
@@ -61,10 +65,14 @@ def _snapshot(
     message: str = "",
     update_status: str = "idle",
     permissions: dict[str, Any] | None = None,
+    activity: str | None = None,
+    detail: str = "",
 ) -> dict[str, Any]:
     return {
         "app": {
             "state": "new",
+            "activity": activity or _ACTIVITY_FOR_PHASE.get(phase, "preparing"),
+            "detail": detail,
             "capture_running": False,
             "capture_mode": "full_monitor",
             "target": "cursor",
@@ -324,3 +332,50 @@ def test_a_grant_the_user_never_makes_stops_being_watched_for(tmp_path: Path) ->
     assert trace[-1]["timer_running"] is False
     assert trace[-1]["permission_rows"][0]["badge"] == "Required"
     assert len(trace) < 90
+
+
+def test_a_bridge_that_never_answers_is_reported_rather_than_rendered(
+    tmp_path: Path,
+) -> None:
+    """A window whose parent has gone must not show a convincing snapshot.
+
+    The page owns a fallback state so it can render before the first answer.
+    Presenting that fallback as the runtime is how a dead bridge became a
+    Hanly that looked new and idle rather than disconnected.
+    """
+
+    trace = _run([{"__reject__": "Hanly is no longer available."}], tmp_path)
+
+    assert trace[0]["connection_hidden"] is False
+    assert trace[0]["connection_state"] == "Connection lost"
+    assert trace[0]["app_state"] == "Connection lost"
+    assert trace[0]["reconnect_hidden"] is False
+    # An unreachable parent is not something to poll for.
+    assert trace[0]["timer_running"] is False
+
+
+def test_the_explicit_retry_reconnects_without_starting_a_poll(tmp_path: Path) -> None:
+    trace = _run(
+        [
+            {"__reject__": "Hanly is no longer available."},
+            _snapshot("ready", message="Hanly is ready."),
+        ],
+        tmp_path,
+        actions=[{"step": 0, "click": "reconnect"}],
+    )
+
+    assert trace[0]["connection_state"] == "Connection lost"
+    assert trace[-1]["connection_hidden"] is True
+    assert trace[-1]["runtime_state"] == "ready"
+    assert trace[-1]["timer_running"] is False
+
+
+def test_lost_connection_stops_an_already_running_poll(tmp_path: Path) -> None:
+    trace = _run(
+        [_snapshot("preparing"), {"__reject__": "Hanly closed before answering."}],
+        tmp_path,
+    )
+
+    assert trace[0]["timer_running"] is True
+    assert trace[-1]["connection_state"] == "Connection lost"
+    assert trace[-1]["timer_running"] is False

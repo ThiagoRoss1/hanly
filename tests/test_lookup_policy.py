@@ -15,14 +15,23 @@ import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation, LookupPreload
-from hanly_app.hotkeys import HotkeyAction, HotkeyService
+from hanly_app.hotkeys import (
+    HotkeyAction,
+    HotkeyEdge,
+    HotkeyEdgeHandler,
+    HotkeyService,
+)
 from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
 _CURSOR = Point(120.0, 80.0)
 _CAPTURE = CaptureResult(_IMAGE, ScreenRect(20, 30, 2, 1), Point(1.0, 0.5))
-_LOOKUP_BINDING = "<ctrl>+<shift>+<space>"
+#: The one-shot lookup has no default shortcut any more, so the tests that
+#: drive that path bind one, the way an embedding client would.
+_LOOKUP_HOTKEY = "ctrl+alt+space"
+_LOOKUP_BINDING = "<ctrl>+<alt>+<space>"
+_PUSH_BINDING = "<ctrl>+<shift>+<space>"
 _TOGGLE_BINDING = "<ctrl>+<shift>+<f9>"
 
 
@@ -98,7 +107,7 @@ class _Dispatcher:
 
 
 class _Listener:
-    def __init__(self, callbacks: Mapping[str, Callable[[], None]]) -> None:
+    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
         self.callbacks = dict(callbacks)
         self.started = 0
         self.stopped = 0
@@ -112,8 +121,11 @@ class _Listener:
     def join(self, timeout: float | None = None) -> None:
         del timeout
 
-    def press(self, binding: str) -> None:
-        self.callbacks[binding]()
+    def press(self, binding: str, edge: HotkeyEdge = HotkeyEdge.DOWN) -> None:
+        self.callbacks[binding](edge)
+
+    def release(self, binding: str) -> None:
+        self.callbacks[binding](HotkeyEdge.UP)
 
 
 class _Hotkeys:
@@ -122,7 +134,7 @@ class _Hotkeys:
         self._fail = fail
 
     def __call__(self, on_action: Any, bindings: Any, dispatcher: Any) -> HotkeyService:
-        def factory(callbacks: Mapping[str, Callable[[], None]]) -> _Listener:
+        def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _Listener:
             if self._fail:
                 raise RuntimeError("another application already uses that shortcut")
             self.listener = _Listener(callbacks)
@@ -215,6 +227,7 @@ def _session(
         on_toggle_hover=on_toggle_hover,
         on_error=on_error,
         capture_refusal=capture_refusal,
+        lookup_hotkey=_LOOKUP_HOTKEY,
     )
     return manual, engine, clock, dispatcher, factory, results
 
@@ -274,14 +287,19 @@ def test_when_capture_starts_keeps_the_engine_asleep_until_capture_does() -> Non
     assert "prepare" in engine.calls
     assert engine.state == "ready"
 
-    manual.pause()
+    manual.stop()
     assert engine.calls[-1] == "retire"
     assert engine.state == "sleeping"
     manual.shutdown()
 
 
-def test_always_loads_at_launch_and_keeps_residency_through_a_pause() -> None:
-    """This is the choice that deliberately opts into holding the memory."""
+def test_always_loads_at_launch_and_keeps_residency_through_a_hover_mute() -> None:
+    """This is the choice that deliberately opts into holding the memory.
+
+    It buys residency through a mute, which is what the warm pause is for. It
+    does not survive an explicit Stop: the user asking Hanly to stop is the one
+    action that gives the memory back whatever the policy says.
+    """
 
     manual, engine, _clock, _dispatcher, _factory, _results = _session(
         preload=LookupPreload.ALWAYS
@@ -291,10 +309,52 @@ def test_always_loads_at_launch_and_keeps_residency_through_a_pause() -> None:
     assert engine.calls == ["preload=True", "prepare"]
 
     manual.start()
-    manual.pause()
+    manual.set_hover_muted(True)
 
     assert "retire" not in engine.calls
     assert engine.state == "ready"
+    assert manual.hover_muted is True
+
+    manual.stop()
+
+    assert engine.calls[-1] == "retire"
+    assert engine.state == "sleeping"
+    assert manual.hover_muted is False
+    manual.shutdown()
+
+
+def test_a_hover_mute_never_retires_the_engine_under_any_policy() -> None:
+    manual, engine, _clock, _dispatcher, _factory, _results = _session()
+    manual.start()
+    assert engine.state == "ready"
+
+    manual.set_hover_muted(True)
+    manual.set_hover_muted(False)
+
+    assert "retire" not in engine.calls
+    assert engine.state == "ready"
+    assert manual.hover_muted is False
+    manual.shutdown()
+
+
+def test_starting_again_clears_a_mute_rather_than_resuming_into_it() -> None:
+    manual, _engine, _clock, _dispatcher, _factory, _results = _session()
+    manual.start()
+    manual.set_hover_muted(True)
+
+    manual.start()
+
+    assert manual.hover_muted is False
+    manual.shutdown()
+
+
+def test_muting_a_session_that_is_not_started_does_nothing() -> None:
+    manual, _engine, _clock, _dispatcher, _factory, _results = _session()
+    manual.prepare()
+
+    manual.set_hover_muted(True)
+
+    assert manual.hover_muted is False
     manual.shutdown()
 
 
@@ -456,6 +516,47 @@ def test_changing_a_binding_alone_does_not_disturb_a_running_session() -> None:
     manual.shutdown()
 
 
-def test_the_default_activation_leaves_hover_off_until_it_is_asked_for() -> None:
-    assert AppConfig().hover_activation is HoverActivation.HOTKEY
+def test_the_default_activation_is_the_held_chord() -> None:
+    assert AppConfig().hover_activation is HoverActivation.PUSH_TO_HOVER
     assert AppConfig().lookup_preload is LookupPreload.WHEN_CAPTURE_STARTS
+
+
+def test_stop_returns_before_the_lookup_child_has_been_joined() -> None:
+    """Retiring joins a child process, which is far too slow for a UI action.
+
+    The stop has to be visible immediately and confirmed afterwards, or the
+    tray, the window, and the popup freeze for as long as the child takes.
+    """
+
+    engine = _Engine()
+    retirements: list[Callable[[], None]] = []
+    settled: list[str] = []
+    manual = create_manual_lookup(
+        cast(Any, _Runtime(engine)),
+        _Capture(),
+        lambda _result: None,
+        close_popup=lambda: None,
+        current_cursor=lambda: _CURSOR,
+        dispatcher=_Dispatcher(),
+        hotkey_factory=_Hotkeys(),
+        shutdown_scheduler=retirements.append,
+        app_config=AppConfig(),
+        idle_scheduler=_Clock(),
+        on_stopped=lambda: settled.append("stopped"),
+    )
+    manual.start()
+
+    manual.stop()
+
+    # The action is over; the child has not been joined yet.
+    assert manual.started is False
+    assert manual.retiring is True
+    assert "retire" not in engine.calls
+    assert settled == []
+
+    retirements.pop()()
+
+    assert manual.retiring is False
+    assert engine.calls[-1] == "retire"
+    assert settled == ["stopped"]
+    manual.shutdown()

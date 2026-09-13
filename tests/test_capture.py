@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import warnings
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from hanly import PixelFormat, Point, ROIImage
@@ -151,10 +152,10 @@ def test_explicit_region_clips_cursor_roi_and_requires_cursor_inside_region() ->
     ],
 )
 def test_screen_geometry_requires_positive_integer_dimensions(
-    bad_region: tuple[object, object, object, object],
+    bad_region: tuple[Any, Any, Any, Any],
 ) -> None:
     with pytest.raises((TypeError, ValueError), match="(integer|positive)"):
-        ScreenRect(*bad_region)  # type: ignore[arg-type]
+        ScreenRect(*bad_region)
 
 
 def test_backend_rgb_bytes_are_normalized_to_roi_image() -> None:

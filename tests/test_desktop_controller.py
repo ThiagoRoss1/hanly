@@ -17,8 +17,11 @@ class _LookupRuntime:
     def start(self) -> None:
         self.events.append("start")
 
-    def pause(self) -> None:
-        self.events.append("pause")
+    def stop(self) -> None:
+        self.events.append("stop")
+
+    def set_hover_muted(self, muted: bool) -> None:
+        self.events.append(f"mute={muted}")
 
     def resume(self) -> None:
         self.events.append("resume")
@@ -49,7 +52,7 @@ class _LookupRuntime:
         self.preferences.append((capture_mode, monitor, region))
 
 
-def test_start_pause_resume_and_shutdown_have_explicit_idempotent_states() -> None:
+def test_start_stop_resume_and_shutdown_have_explicit_idempotent_states() -> None:
     runtime = _LookupRuntime()
     controller = DesktopController(runtime)
 
@@ -60,42 +63,42 @@ def test_start_pause_resume_and_shutdown_have_explicit_idempotent_states() -> No
     assert controller.state is DesktopState.RUNNING
     assert runtime.events == ["start"]
 
-    controller.pause()
-    controller.pause()
+    controller.stop()
+    controller.stop()
     assert controller.state is DesktopState.PAUSED
-    assert runtime.events == ["start", "pause"]
+    assert runtime.events == ["start", "stop"]
 
     controller.resume()
     controller.resume()
     assert controller.state is DesktopState.RUNNING
-    assert runtime.events == ["start", "pause", "resume"]
+    assert runtime.events == ["start", "stop", "resume"]
 
     controller.shutdown()
     controller.shutdown()
     assert controller.state is DesktopState.SHUTDOWN
-    assert runtime.events == ["start", "pause", "resume", "invalidate", "shutdown"]
+    assert runtime.events == ["start", "stop", "resume", "invalidate", "shutdown"]
 
 
-def test_pause_before_start_and_resume_while_new_are_safe_no_ops() -> None:
+def test_stop_before_start_and_resume_while_new_are_safe_no_ops() -> None:
     runtime = _LookupRuntime()
     controller = DesktopController(runtime)
 
-    controller.pause()
+    controller.stop()
     controller.resume()
 
     assert controller.state is DesktopState.NEW
     assert runtime.events == []
 
 
-def test_pause_and_resume_prefer_runtime_lifecycle_semantics_when_available() -> None:
+def test_stop_and_resume_prefer_runtime_lifecycle_semantics_when_available() -> None:
     runtime = _LookupRuntime()
     controller = DesktopController(runtime)
 
     controller.start()
-    controller.pause()
+    controller.stop()
     controller.resume()
 
-    assert runtime.events == ["start", "pause", "resume"]
+    assert runtime.events == ["start", "stop", "resume"]
 
 
 def test_shutdown_invalidates_before_stopping_runtime() -> None:
@@ -121,3 +124,27 @@ def test_shutdown_runtime_can_be_replaced_after_safe_resource_activation() -> No
     assert controller.state is DesktopState.RUNNING
     assert first.events == ["start", "invalidate", "shutdown"]
     assert replacement.events == ["start"]
+
+
+def test_muting_hover_is_not_a_capture_change() -> None:
+    """The distinction this controller exists to keep: a mute leaves the
+    session running and its providers loaded, and only Stop releases them."""
+
+    runtime = _LookupRuntime()
+    controller = DesktopController(runtime)
+    controller.start()
+
+    controller.set_hover_muted(True)
+    controller.set_hover_muted(False)
+
+    assert controller.state is DesktopState.RUNNING
+    assert runtime.events == ["start", "mute=True", "mute=False"]
+
+
+def test_muting_a_session_that_is_not_running_does_nothing() -> None:
+    runtime = _LookupRuntime()
+    controller = DesktopController(runtime)
+
+    controller.set_hover_muted(True)
+
+    assert runtime.events == []

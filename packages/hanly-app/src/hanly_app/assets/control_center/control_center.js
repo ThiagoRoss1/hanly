@@ -2,8 +2,8 @@
   "use strict";
 
   const fallbackState = {
-    app: { state: "new", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
-    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", hover_activation: "hotkey", lookup_preload: "when_capture_starts" },
+    app: { state: "new", activity: "preparing", detail: "", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
+    config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", capture_hotkey: "ctrl+shift+f10", hover_activation: "push_to_hover", lookup_preload: "when_capture_starts" },
     runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" }, engine: { state: "sleeping", message: "" }, hotkeys: {} },
     updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
     permissions: { supported: false, items: [] }
@@ -18,6 +18,20 @@
   // phase this page does not know about from polling forever.
   const RUNTIME_PENDING_PHASES = ["preparing", "stopping"];
 
+  // Hanly's own derived activity, which the shell computes from readiness,
+  // provider residency and whether capture was actually asked for.
+  const ACTIVITY_LABELS = {
+    preparing: "Preparing",
+    stopped: "Stopped",
+    armed: "Armed",
+    running: "Running",
+    stopping: "Stopping",
+    error: "Error"
+  };
+
+  // The two activities that still change on their own.
+  const ACTIVITY_PENDING = ["preparing", "stopping"];
+
   // Update statuses that mean an update worker is still running.
   const UPDATE_BUSY_STATUSES = ["checking", "downloading", "verifying", "installing", "validating"];
 
@@ -31,6 +45,10 @@
   let currentState = fallbackState;
   let refreshTimer = null;
   let permissionWatchTicks = 0;
+  // Whether the parent has ever answered this window. Until it has, the page
+  // is showing its own placeholder, and saying "new" would be a convincing
+  // description of a runtime it has never actually seen.
+  let connection = "connecting";
 
   // pywebview injects its api after the document is parsed, so the bridge has
   // to be resolved per call. Capturing it here would pin it to null forever.
@@ -220,13 +238,31 @@
 
   // What the operating system actually accepted, which is not always what was
   // asked for: a combination another application owns stays with that one.
-  function renderRegisteredHotkeys(runtime) {
+  function renderRegisteredHotkeys(runtime, app) {
     const registered = runtime.hotkeys || {};
-    [["hotkey", "lookup"], ["hover-hotkey", "toggle_hover"]].forEach(function (pair) {
+    // Before the session is prepared there is no listener yet, so an absent
+    // combination means "not started", not "refused".
+    const prepared = (app.state || "new") !== "new";
+    const fields = [
+      ["hotkey", "push_to_hover"],
+      ["hover-hotkey", "toggle_hover"],
+      ["capture-hotkey", "toggle_capture"]
+    ];
+    fields.forEach(function (pair) {
       const hint = byId(pair[0] + "-registered");
       const live = registered[pair[1]];
       const asked = byId(pair[0]).value;
-      hint.textContent = live && live !== asked ? "Registered as " + live : "";
+      if (live && live !== asked) {
+        hint.textContent = "Registered as " + live;
+        hint.classList.remove("hint-error");
+        return;
+      }
+      // An action the user deliberately left unbound is not a failure.
+      const missing = prepared && !live && asked !== "";
+      hint.textContent = missing
+        ? "Not registered. Another application may already use this combination."
+        : "";
+      hint.classList.toggle("hint-error", missing);
     });
   }
 
@@ -258,6 +294,34 @@
     return "No region selected. Choose a scope to keep capture close to the word.";
   }
 
+  // The bridge is a pipe to another process. When it stops answering, the page
+  // says so and offers one explicit retry rather than polling for a parent
+  // that may never come back.
+  function setConnection(next, detail) {
+    connection = next;
+    const item = byId("connection-item");
+    item.hidden = next === "connected";
+    item.dataset.connection = next;
+    byId("connection-state").textContent =
+      next === "lost" ? "Connection lost" : "Connecting…";
+    byId("connection-message").textContent = detail || "";
+    byId("reconnect").hidden = next !== "lost";
+    if (next !== "connected") {
+      byId("status-line").dataset.state = next;
+      byId("app-state").textContent =
+        next === "lost" ? "Connection lost" : "Connecting…";
+      // A bridge that is not answering can only ever stop a poll, so that
+      // follows the state change itself. A restored one cannot decide here:
+      // the snapshot it is about to render is what the timer depends on.
+      syncRefreshTimer(currentState);
+    }
+  }
+
+  function connectionLost(error) {
+    const message = error && error.message ? error.message : String(error || "");
+    setConnection("lost", message || "Hanly did not answer this window.");
+  }
+
   function showActionError(error) {
     const line = byId("action-error");
     const message = error && error.message ? error.message : String(error || "");
@@ -271,9 +335,10 @@
     const config = currentState.config || fallbackState.config;
     const runtime = currentState.runtime || fallbackState.runtime;
     const updates = currentState.updates || fallbackState.updates;
-    const stateName = formatStatus(app.state);
-    byId("status-line").dataset.state = app.state || "unknown";
-    byId("app-state").textContent = stateName;
+    const activity = app.activity || "preparing";
+    byId("status-line").dataset.state = activity;
+    byId("app-state").textContent = ACTIVITY_LABELS[activity] || formatStatus(activity);
+    byId("app-detail").textContent = app.detail || "";
     byId("capture-state").textContent = app.capture_running ? "Running" : "Stopped";
     byId("ocr-provider").textContent = runtime.ocr_provider || "—";
     byId("resource-count").textContent = (runtime.resources || []).length + " resources";
@@ -283,7 +348,8 @@
     byId("hover-delay").value = config.hover_delay_ms || 150;
     byId("hotkey").value = config.hotkey || "";
     byId("hover-hotkey").value = config.hover_hotkey || "";
-    byId("hover-activation").value = config.hover_activation || "hotkey";
+    byId("capture-hotkey").value = config.capture_hotkey || "";
+    byId("hover-activation").value = config.hover_activation || "push_to_hover";
     byId("lookup-preload").value = config.lookup_preload || "when_capture_starts";
     byId("region-hint").textContent = regionHint(app);
     ["left", "top", "width", "height"].forEach(function (field) {
@@ -291,7 +357,7 @@
     });
     renderRuntimeStatus(runtime);
     renderEngine(runtime);
-    renderRegisteredHotkeys(runtime);
+    renderRegisteredHotkeys(runtime, app);
     renderUpdates(updates);
     renderTargets(app.targets, app.target);
     renderResources(runtime.resources);
@@ -305,9 +371,14 @@
   // renderer own the timer meant the idle one cancelled the refresh the other
   // still needed.
   function refreshRequired(state) {
+    // A page that has not been answered is showing its own placeholder, and
+    // polling for a parent that may never reply is not a recovery strategy.
+    if (connection !== "connected") return false;
     const runtime = state.runtime || fallbackState.runtime;
     const status = runtime.status || fallbackState.runtime.status;
+    const activity = (state.app || fallbackState.app).activity || "preparing";
     return (
+      ACTIVITY_PENDING.indexOf(activity) !== -1 ||
       RUNTIME_PENDING_PHASES.indexOf(status.phase) !== -1 ||
       updatesBusy(state.updates || fallbackState.updates) ||
       permissionWatchTicks > 0
@@ -332,7 +403,14 @@
     if (permissionWatchTicks > 0) permissionWatchTicks -= 1;
     const api = bridge();
     if (!api || typeof api.get_state !== "function") return;
-    api.get_state().then(renderState).catch(function () {});
+    api.get_state().then(connected).catch(connectionLost);
+  }
+
+  // One place turns an answered question into a rendered page, so the window
+  // stops claiming a connection it does not have.
+  function connected(state) {
+    setConnection("connected");
+    renderState(state);
   }
 
   function invoke(name, value) {
@@ -340,9 +418,12 @@
     if (!api || typeof api[name] !== "function") return Promise.resolve(currentState);
     showActionError("");
     // A rejected action -- "Hanly is still preparing", an unusable region --
-    // has to reach the page, or the button silently does nothing.
+    // has to reach the page, or the button silently does nothing. An operation
+    // answering with no snapshot leaves the page as it is: Quit is answered by
+    // Hanly exiting, and a fallback repaint would flash "Preparing" on the way
+    // out.
     return (value === undefined ? api[name]() : api[name](value))
-      .then(renderState)
+      .then(function (state) { if (state) renderState(state); })
       .catch(showActionError);
   }
 
@@ -390,6 +471,7 @@
   byId("hover-delay").addEventListener("change", function (event) { invoke("set_hover_delay", Number(event.target.value)); });
   byId("hotkey").addEventListener("change", function (event) { invoke("set_hotkey", event.target.value); });
   byId("hover-hotkey").addEventListener("change", function (event) { settings({ hover_hotkey: event.target.value }); });
+  byId("capture-hotkey").addEventListener("change", function (event) { settings({ capture_hotkey: event.target.value }); });
   byId("hover-activation").addEventListener("change", function (event) { settings({ hover_activation: event.target.value }); });
   byId("lookup-preload").addEventListener("change", function (event) { settings({ lookup_preload: event.target.value }); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });
@@ -511,9 +593,15 @@
   });
 
   function load() {
-    invoke("get_state");
+    const api = bridge();
+    if (!api || typeof api.get_state !== "function") return;
+    setConnection("connecting");
+    showActionError("");
+    api.get_state().then(connected).catch(connectionLost);
     loadLogs();
   }
+
+  byId("reconnect").addEventListener("click", load);
 
   window.addEventListener("pywebviewready", load);
   // Hanly itself pushes a nudge when state it owns moved under the page --

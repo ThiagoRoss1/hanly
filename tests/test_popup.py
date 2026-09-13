@@ -22,6 +22,8 @@ from hanly_app.popup import (
     format_lookup_result,
 )
 
+from tests.hanly_fixtures.unchecked import unchecked
+
 _IMAGE = ROIImage(1, 1, PixelFormat.GRAYSCALE_8, b"\x00")
 
 
@@ -144,7 +146,7 @@ def test_popup_requires_normalized_lookup_result() -> None:
     controller = PopupController(_RecordingView([]))
 
     with pytest.raises(TypeError, match="LookupResult"):
-        controller.open(object(), Point(0, 0), ScreenGeometry(0, 0, 100, 100))  # type: ignore[arg-type]
+        controller.open(unchecked(object()), Point(0, 0), ScreenGeometry(0, 0, 100, 100))
 
 
 def test_ui_shutdown_uses_non_waiting_lookup_stop_against_queued_dispatch() -> None:

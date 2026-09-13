@@ -385,6 +385,10 @@ class LookupEngine:
         # a child takes to build its providers.
         self._start_lock = threading.Lock()
         self._generation = 0
+        # Which residency request is current. Distinct from the child
+        # generation: a stop invalidates queued preparation even when no child
+        # was ever published for it.
+        self._wake = 0
         self._budget = max(0, int(recovery_budget))
         self._blocked = False
         self._closed = False
@@ -443,8 +447,12 @@ class LookupEngine:
         with self._lock:
             if self._closed or (self._process is not None and self._process.ready):
                 return
+            wake = self._wake
         threading.Thread(
-            target=self._prepare_quietly, name="hanly-lookup-prepare", daemon=True
+            target=self._prepare_quietly,
+            args=(wake,),
+            name="hanly-lookup-prepare",
+            daemon=True,
         ).start()
 
     def retire(self) -> None:
@@ -459,6 +467,10 @@ class LookupEngine:
             process = self._process
             self._process = None
             self._generation += 1
+            # A background preparation may be queued behind the start lock.
+            # Moving this is what tells it the residency it was asked for is
+            # no longer wanted, so a completed stop cannot spawn a replacement.
+            self._wake += 1
             self._failure = None
             already_asleep = self._state == "sleeping"
             self._state = "sleeping"
@@ -491,7 +503,12 @@ class LookupEngine:
             raise TypeError("lookup worker items must be LookupRequest values")
         if item.is_cancelled():
             raise LookupCancelled("lookup was superseded before worker execution")
-        process = self._ensure()
+
+        # Read before the start lock: a stop landing while this lookup waits
+        # for a child to finish loading must not be answered by a new one.
+        with self._lock:
+            wake = self._wake
+        process = self._ensure(wake)
         started = monotonic()
         try:
             return process.lookup(item)
@@ -515,16 +532,24 @@ class LookupEngine:
             self._closed = True
         self.retire()
 
-    def _prepare_quietly(self) -> None:
+    def _prepare_quietly(self, wake: int) -> None:
         try:
-            self._ensure()
+            self._ensure(wake)
         except Exception:
             # The failure is already published as engine state and reported as
             # a diagnostic; a background preparation has nowhere else to raise.
             pass
 
-    def _ensure(self) -> LookupProcess:
-        """Return a live child, starting one and waiting if there is none."""
+    def _ensure(self, wake: int | None = None) -> LookupProcess:
+        """Return a live child, starting one and waiting if there is none.
+
+        ``wake`` identifies the residency request this call was started for.
+        Waiting for the start lock can outlast a stop, and a task that wakes up
+        on the far side of one must not spawn the child the user just released.
+        A lookup reads the epoch as it enters the worker, so one already in
+        flight at a stop is refused while one submitted afterwards reads the
+        current epoch and still wakes the engine.
+        """
 
         with self._lock:
             if self._closed:
@@ -542,10 +567,16 @@ class LookupEngine:
                 process = self._process
             if process is not None and process.ready:
                 return process
-            return self._start_now()
+            return self._start_now(wake)
 
-    def _start_now(self) -> LookupProcess:
+    def _start_now(self, wake: int | None = None) -> LookupProcess:
         with self._lock:
+            # The last check before the spawn, and the only one that matters:
+            # everything above it ran outside the start lock or before it.
+            if self._closed or (wake is not None and wake != self._wake):
+                raise LookupProcessError(
+                    "the lookup engine was stopped before it finished loading"
+                )
             self._generation += 1
             generation = self._generation
             self._state = "preparing"
@@ -598,6 +629,7 @@ class LookupEngine:
             self._process = None
             self._state = "error"
             self._failure = "The lookup engine stopped unexpectedly."
+            wake = self._wake
             recoverable = self._budget > 0
             if recoverable:
                 self._budget -= 1
@@ -609,7 +641,10 @@ class LookupEngine:
             return
         self._publish("error", "The lookup engine stopped unexpectedly.")
         threading.Thread(
-            target=self._prepare_quietly, name="hanly-lookup-recovery", daemon=True
+            target=self._prepare_quietly,
+            args=(wake,),
+            name="hanly-lookup-recovery",
+            daemon=True,
         ).start()
 
     def _publish(self, state: str, detail: str) -> None:

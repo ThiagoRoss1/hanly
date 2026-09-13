@@ -34,7 +34,14 @@ from .app_update import (
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .capture_selector import CaptureSelection, select_capture_area
-from .config import AppConfig, CaptureMode, ConfigError, ConfigManager, HoverActivation
+from .config import (
+    AppConfig,
+    CaptureMode,
+    ConfigError,
+    ConfigManager,
+    HoverActivation,
+    LookupPreload,
+)
 from .control_center import (
     RUNTIME_NOT_READY,
     ControlCenterBridge,
@@ -79,7 +86,14 @@ from .runtime import (
     HanlyRuntime,
     load_runtime,
 )
-from .runtime_status import RuntimeStatus, RuntimeStatusPublisher, watch_worker_readiness
+from .runtime_status import (
+    ACTIVITY_LABELS,
+    ApplicationSnapshot,
+    RuntimeStatus,
+    RuntimeStatusPublisher,
+    derive_application_snapshot,
+    watch_worker_readiness,
+)
 from .runtime_trace import RuntimeTraceSink
 from .signal_bridge import QtSignalBridge
 from .startup import StartupCoordinator
@@ -124,7 +138,7 @@ class QtApplication(Protocol):
 class _Lifecycle(Protocol):
     def start(self) -> None: ...
 
-    def pause(self) -> None: ...
+    def stop(self) -> None: ...
 
     def resume(self) -> None: ...
 
@@ -263,8 +277,10 @@ class DesktopApplication:
         with self._lock:
             self._startup = startup
 
-    def pause_capture(self) -> None:
-        self._controller.pause()
+    def stop_capture(self) -> None:
+        """Stop watching the screen and give the lookup providers back."""
+
+        self._controller.stop()
         self._diagnostics.record("Capture", "Hanly stopped watching the screen.")
         self._tray.refresh()
 
@@ -445,6 +461,7 @@ class _DesktopSession:
             ocr_provider=OCR_DISPLAY_NAME,
             engine_status=self.engine_status,
             registered_hotkeys=self.registered_hotkeys,
+            application_snapshot=self.application_snapshot,
             diagnostic_log=diagnostics,
         )
         self.host = ControlCenterProcess(
@@ -456,11 +473,11 @@ class _DesktopSession:
         self.tray = TrayService(
             lambda: self.state,
             dispatcher=dispatcher,
-            detail_provider=lambda: status.status.message or None,
+            activity_provider=self._tray_activity,
             ready_provider=lambda: status.status.ready,
             on_start=lambda: self.desktop.request_capture(),
             on_resume=lambda: self.desktop.request_capture(),
-            on_pause=lambda: self.desktop.pause_capture(),
+            on_pause=lambda: self.desktop.stop_capture(),
             on_open_control_center=lambda: self.desktop.open_control_center(),
             on_quit=lambda: self.desktop.quit(),
         )
@@ -508,7 +525,12 @@ class _DesktopSession:
         self.refresh_tray()
 
     def _start_if_always_active(self) -> None:
-        """Honour always-active hover at launch, or say why it cannot start."""
+        """Honour always-active hover at launch, or say why it cannot start.
+
+        Push to Hover deliberately does not start anything here: the default
+        launch leaves capture stopped, and a held chord must not be what
+        allocates a session.
+        """
 
         if self._settings.config.hover_activation is not HoverActivation.ALWAYS_ACTIVE:
             return
@@ -544,26 +566,105 @@ class _DesktopSession:
         state, message = self._engine_state
         return {"state": state, "message": message}
 
+    def application_snapshot(self) -> ApplicationSnapshot:
+        """Derive the one label every surface shows, from every input at once.
+
+        Readiness, provider residency, and whether the user asked for capture
+        are three separate facts, and each surface used to pick whichever one
+        it had. Deriving them together is what stops a session whose providers
+        are still loading from calling itself running.
+        """
+
+        engine_state, engine_message = self._engine_state
+        manual = self._manual
+        return derive_application_snapshot(
+            self._status.status,
+            engine_state=engine_state,
+            engine_message=engine_message,
+            capture_requested=self.state is DesktopState.RUNNING,
+            stopping=manual is not None and manual.retiring,
+            hover_muted=manual is not None and manual.hover_muted,
+            hover_detail=self._hover_detail(),
+            wakes_on_demand=(
+                self._settings.config.lookup_preload is LookupPreload.ON_DEMAND
+            ),
+        )
+
+    def _tray_activity(self) -> tuple[str, str | None]:
+        """The same words the Control Center shows, for the tray title."""
+
+        snapshot = self.application_snapshot()
+        return ACTIVITY_LABELS[snapshot.activity], snapshot.detail or None
+
+    def _hover_detail(self) -> str:
+        """Say how a started session expects to be asked for a lookup."""
+
+        config = self._settings.config
+        if config.hover_activation is HoverActivation.ALWAYS_ACTIVE:
+            return "Hanly is watching the screen."
+        return f"Hold {config.hotkey} to look up."
+
     def registered_hotkeys(self) -> dict[str, str]:
-        """Report the shortcuts the operating system actually accepted."""
+        """Report the shortcuts the operating system actually accepted.
+
+        A backend that refused every combination still reports the bindings it
+        was configured with, so asking it what it owns is not the same question
+        as asking whether it owns anything. Reporting the configured list for a
+        listener that never started tells the user their shortcuts work.
+        """
 
         manual = self._manual
-        if manual is None:
+        if manual is None or not manual.hotkeys.registered:
             return {}
         return {
             action.value: binding for action, binding in manual.hotkeys.bindings.items()
         }
 
     def toggle_capture(self) -> None:
-        """Turn watching the screen on or off, from the one hover shortcut."""
+        """Start or stop the capture session, from any surface that asks.
+
+        This is the whole of the Start/Stop action: the tray item, the page's
+        buttons, and the global shortcut all arrive here, so one stop is
+        logged, published, and reported the same way whichever asked for it.
+        """
 
         controller = self._controller
         if controller is None:
             raise ControlCenterUnavailable(RUNTIME_NOT_READY)
         if controller.state is DesktopState.RUNNING:
-            self.desktop.pause_capture()
+            self.desktop.stop_capture()
             return
         self.desktop.request_capture()
+
+    def toggle_hover_mute(self) -> None:
+        """Mute or continue hover, keeping the warm lookup child resident.
+
+        Muting is only meaningful for Always active: in Push to Hover the
+        chord is already the on/off switch, and with capture stopped there is
+        nothing to mute. Both are documented no-ops rather than an implicit
+        Start or a hidden mute that survives the next start.
+        """
+
+        controller = self._controller
+        manual = self._manual
+        if controller is None or manual is None:
+            raise ControlCenterUnavailable(RUNTIME_NOT_READY)
+        if controller.state is not DesktopState.RUNNING:
+            self._diagnostics.record(
+                "Capture", "Hover is not running, so there was nothing to pause."
+            )
+            return
+        if self._settings.config.hover_activation is not HoverActivation.ALWAYS_ACTIVE:
+            self._diagnostics.record(
+                "Capture", "Hover follows the push shortcut, so there is no mute."
+            )
+            return
+        muted = not manual.hover_muted
+        controller.set_hover_muted(muted)
+        self._diagnostics.record(
+            "Capture", "Hover is paused." if muted else "Hover continues."
+        )
+        self.refresh_tray()
 
     def _on_engine_state(self, state: str, message: str) -> None:
         """Take engine news from whichever thread reported it, onto Qt."""
@@ -663,8 +764,8 @@ class _DesktopSession:
     def start(self) -> None:
         self._start_or_resume()
 
-    def pause(self) -> None:
-        self._on_qt(lambda: self._with_controller(DesktopController.pause))
+    def stop(self) -> None:
+        self._on_qt(lambda: self._with_controller(DesktopController.stop))
 
     def resume(self) -> None:
         self._start_or_resume()
@@ -691,7 +792,7 @@ class _DesktopSession:
         if activation is HoverActivation.ALWAYS_ACTIVE:
             self._start_if_always_active()
             return
-        self._with_controller(DesktopController.pause)
+        self._with_controller(DesktopController.stop)
         self.refresh_tray()
 
     def set_capture_preferences(
@@ -743,14 +844,19 @@ class _DesktopSession:
 
         def choose() -> None:
             controller = self._controller
+            manual = self._manual
             observing = controller is not None and controller.state is DesktopState.RUNNING
+            # Muting, not stopping: choosing where to read is not a reason to
+            # unload the providers and pay for them again afterwards. A user
+            # who had already paused hover keeps that choice.
+            muted = manual is not None and manual.hover_muted
             if observing and controller is not None:
-                controller.pause()
+                controller.set_hover_muted(True)
             try:
                 chosen.append(select_capture_area())
             finally:
                 if observing and controller is not None:
-                    controller.resume()
+                    controller.set_hover_muted(muted)
 
         self._on_qt(choose, timeout=_SELECTION_TIMEOUT_SECONDS)
         return chosen[0] if chosen else None
@@ -839,13 +945,15 @@ class _DesktopSession:
                     self._status, self._diagnostics, error
                 ),
                 trace_sink=self._trace_sink,
-                on_toggle_hover=self.toggle_capture,
+                on_toggle_hover=self.toggle_hover_mute,
+                on_toggle_capture=self.toggle_capture,
                 on_error=self._diagnostics.report,
                 capture_refusal=self._capture_refusal,
                 on_diagnostic=lambda message: self._diagnostics.record(
                     "Lookup engine", message
                 ),
                 on_engine_state=self._on_engine_state,
+                on_stopped=lambda: self._dispatcher(self.refresh_tray),
             )
         except Exception:
             capture.close()
@@ -906,7 +1014,7 @@ class _DesktopSession:
             if self._previous_state in {DesktopState.RUNNING, DesktopState.PAUSED}:
                 controller.start()
             if self._previous_state is DesktopState.PAUSED:
-                controller.pause()
+                controller.stop()
             self.refresh_tray()
 
         self.clean_up_leftovers()

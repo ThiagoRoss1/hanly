@@ -65,7 +65,7 @@ def _recording_manager(validations: list[str]) -> ResourceManager:
         validations.append("validate")
         return original()
 
-    manager.validate = validate  # type: ignore[method-assign]
+    setattr(manager, "validate", validate)
     return manager
 
 
@@ -595,7 +595,7 @@ def test_a_stale_callback_cannot_speak_for_the_operation_that_replaced_it() -> N
     executor.callbacks.clear()
     # Release ownership the way the first callback would have, then start the
     # operation that now holds it. Only the older callback is delivered.
-    coordinator._future = None  # type: ignore[attr-defined]
+    coordinator._future = None
     coordinator.install_update("krdict")
     pending = list(executor.callbacks)
     executor.callbacks[:] = stale
