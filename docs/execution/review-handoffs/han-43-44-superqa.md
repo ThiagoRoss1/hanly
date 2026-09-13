@@ -7,8 +7,8 @@
   `superqa.md`
 - Implementation ecosystem: Claude Opus 5, directly
 - Date: 2026-09-13
-- Branch: `codex/han-43-44-superqa`, five commits on top of `5f7eb2a`. Nothing
-  pushed; Linear untouched (the MCP server is unauthenticated in this session)
+- Branch: `codex/han-43-44-superqa`, seven commits on top of `5f7eb2a`. Nothing
+  pushed
 
 ## Implemented
 
@@ -85,6 +85,48 @@ its capability fails rather than passing quietly.
 
 The ledger, `docs/execution/checkpoints/han-43-44-superqa.md`, carries the
 routing inventory, the six dispositions, and the measurement tables.
+
+## Acceptance criteria, checked against the issues themselves
+
+The issues were read directly only after implementation; the work was built
+against the patch plan's summary of them. Re-checked afterwards, line by line.
+
+**HAN-44** — all four required updates are met.
+
+| Required update | Evidence |
+| --- | --- |
+| 1. Independent post-build smokes continue after one fails | Per-step `!cancelled() && steps.X.outcome == 'success'`; five scenario replays in `tests/test_ci_workflows.py`; no `continue-on-error` anywhere, asserted |
+| 2. Diagnostics retained on a failed job | `hanly-diagnostics-<platform>` uploads on `!cancelled()` with every report the issue lists, plus PyInstaller `warn-*`/`xref-*` and both smokes' captured stdout/stderr. Release products stay success-only |
+| 3. Compact cross-platform host fingerprint | `tools/native_host_fingerprint.py`, persisted for all three platforms. Every field the issue names is present |
+| 4. `stage_started` persisted before native work | Flushed marker per stage; the failure line is `current_stage: ocr; exit: ILLEGAL_INSTRUCTION (0xC000001D)`; completed-stage timings unchanged on success |
+
+Two fields the issue names were missing on the first pass and were added in
+`1f8354a`: the frozen/not-frozen context, and the Windows `OSArchitecture` the
+CIM query already selected and then discarded.
+
+**HAN-43** — every stated goal is met, with one scope note.
+
+Shared portable tests stay shared; native tests sit under OS suites; packaging
+smoke is split where behaviour differs; contracts are tested once and adapters
+per platform; no `sys.platform` branching was introduced; no suite is duplicated
+per OS; build and fast CI are separate; native jobs run in parallel with no
+`needs` and `fail-fast: false`.
+
+Of the six pain areas the issue says to start with, five are routed: frozen
+packaging smoke, Control Center lifecycle, subprocess/process probes, Qt/native
+dependencies, and updater handoff. **Hotkeys are the exception, and not because
+they were skipped**: `test_hotkeys.py` and `test_hotkeys_darwin.py` drive
+doubles (`_Listener`, `_FakeCarbon`, a patched `sys.platform`) and never touch a
+real registration, so they are correctly portable and there was nothing to
+route. The gap is that **no native hotkey coverage exists at all** — no test
+registers a real Carbon hotkey on macOS or a real pynput one on Windows or
+Linux. Writing that is new coverage rather than restructuring, so it was not
+done here.
+
+`tests/native/linux/` is also absent: no case is Linux-only today. The issue
+names Linux-specific suites, so this is a deliberate reading of "avoid
+duplicating the entire test suite per OS" plus "do not create empty suites", and
+is worth a second opinion.
 
 ## Known limitations / intentionally unvalidated areas
 

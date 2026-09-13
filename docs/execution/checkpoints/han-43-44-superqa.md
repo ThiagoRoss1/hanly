@@ -10,9 +10,11 @@
   `packaging/release-constraints.txt`, outside the repository. It is the interpreter
   `build.yml` uses, not `.venv`.
 - Scope: HAN-44, HAN-43, SUPERQA-001–006
-- Linear: not reachable from this session (the MCP Linear server is unauthenticated).
-  No issue state was changed and no comment was posted. Status progression for HAN-43
-  and HAN-44 is pending human action.
+- Linear: connected mid-session. HAN-43 and HAN-44 were read directly only after
+  implementation — the work was built against the patch plan's summary of them. Both
+  were re-checked against their real acceptance criteria afterwards; the two fields
+  that were missing are closed in `1f8354a`, and the one scope note (no native hotkey
+  coverage exists to route) is in the handoff.
 
 ## Checkpoints
 | Patch | State | Main changes | Check and result | Commit |
@@ -96,6 +98,8 @@ idle retirement, or any change to the `LookupPreload` default.
 | `worker close` became a reported stage, and `window host` another | A crash while releasing native handles used to be attributed to the last provider stage, and a Qt WebEngine import failure to no stage at all | Implemented. The worker report carries one extra stage and the UI report one more | If a consumer parses the stage list positionally |
 | `torch.backends.cpu.get_cpu_capability()` reports `DEFAULT` on this host | Local fingerprint run, macOS arm64 | Observation only; it is the field the Windows `ILLEGAL_INSTRUCTION` hypothesis needs from the real runners | When a Windows runner produces a fingerprint alongside a crash |
 | The benchmark RSS fallback read macOS bytes as kibibytes | `getrusage` reports `ru_maxrss` in KiB on Linux and in bytes on the BSDs; the first idle sample read 39 MiB as 39 GiB | Fixed now, with a focused test. Developer instrumentation only; nothing in `packages/` uses it | If `psutil` becomes a declared dependency and the fallback stops being reached |
+| No native hotkey coverage exists to route | HAN-43 names hotkeys as a pain area, but `test_hotkeys.py` and `test_hotkeys_darwin.py` drive doubles and never register a real hotkey | Reported, not written: new coverage rather than restructuring | If a hotkey regression reaches a release again |
+| `tests/native/linux/` is absent | No case is Linux-only; an empty suite is a gate that asked nothing | Deliberate. HAN-43 names Linux-specific suites, so this reading is worth a second opinion | When a genuinely Linux-only case appears |
 | The manual-session idle retirement (60 s) was not timed live | Process-level retirement is proven by the real spawned child; the 60 s expiry is covered by `tests/test_manual_lookup.py` with an injected scheduler | Deferred to a human desktop session | The manual pass below |
 
 ## Native evidence still owed to a human session
