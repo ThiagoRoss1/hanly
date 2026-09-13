@@ -82,6 +82,18 @@ def _spin(milliseconds: int) -> None:
     loop.exec()
 
 
+def _settle() -> None:
+    """Deliver what a movement posted, without spending any of the grace.
+
+    A wall-clock wait bounds itself from below only. Before a checkpoint that
+    asserts nothing has happened yet, that is the wrong instrument: a loaded
+    runner stretched a 20 ms spin past the 120 ms transfer grace and observed
+    the expiry the checkpoint exists to rule out.
+    """
+
+    QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
+
+
 def _runtime(cleared: list[int]) -> tuple[HoverLookupRuntime, _Listeners, _Capture]:
     listeners = _Listeners()
     capture = _Capture()
@@ -133,7 +145,7 @@ def test_a_crossing_to_the_popup_outlives_the_dwell_it_shares_the_moment_with(
     try:
         runtime.retain(RetainedTarget(1, _WORD, _POPUP))
         listeners.listeners[0].on_move(220, 110)
-        _spin(20)
+        _settle()
 
         assert cleared == []
         assert runtime.retained_target is not None
