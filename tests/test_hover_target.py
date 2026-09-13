@@ -10,6 +10,7 @@ schedulers the test fires by hand.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from time import monotonic, sleep
 
 import pytest
 from hanly import (
@@ -177,7 +178,25 @@ class _Hover:
     def start(self) -> None:
         self.runtime.start()
         assert self.controller.wait_until_ready(timeout=2)
-        self.drain()
+        self._drain_until_observing()
+
+    def _drain_until_observing(self) -> None:
+        """Wait for the readiness hand-back, not merely for the worker.
+
+        ``wait_until_ready`` says the executor finished building providers.
+        The runtime only starts observing movement once its readiness thread
+        posts back through the dispatcher, and a single drain can run before
+        that post lands: the hover controller then stays paused, and every
+        later movement schedules no dwell at all.
+        """
+
+        deadline = monotonic() + 5.0
+        while True:
+            self.drain()
+            if self.runtime._hover.running:
+                return
+            assert monotonic() < deadline, "the hover runtime never started observing"
+            sleep(0.005)
 
     def drain(self) -> None:
         while self.dispatcher.pending:
