@@ -137,6 +137,14 @@ WINDOWS_FATAL_STATUS = {
 #: and must not depend on the source package it is checking.
 LOCAL_KRDICT_VARIABLE = "HANLY_KRDICT_DB"
 
+#: The self-check writes one flushed JSON line per stage boundary on stderr.
+#: Named here for the same reason as the variable above. A process killed by a
+#: native fault prints no report, and these lines are the only account of how
+#: far it got.
+STAGE_MARKER_PREFIX = "hanly-self-check:"
+STAGE_STARTED = "stage_started"
+STAGE_COMPLETED = "stage_completed"
+
 
 @dataclass(frozen=True, slots=True)
 class BundleInventory:
@@ -251,8 +259,70 @@ def run_packaged_self_check(
     report = _parse_report(stdout)
     report["exit_code"] = status
     report["exit_timeout"] = timed_out
+    # Progress is read from the whole stream, before the tail is cut: the
+    # markers a long-running check wrote first are exactly the ones a 4000
+    # character tail would drop.
+    report["progress"] = read_progress(stderr)
     report["stderr"] = stderr[-4000:]
     return report
+
+
+def read_progress(stderr: str) -> dict[str, object]:
+    """Reconstruct how far the self-check got from the markers it flushed.
+
+    The current stage is the most recent one started and not completed, which
+    is the innermost of any nested probes. A run that printed no marker at all
+    leaves it unknown rather than guessing at the last stage that passed.
+    """
+
+    started: list[str] = []
+    completed: list[dict[str, object]] = []
+    open_stages: list[str] = []
+    for event in _iter_markers(stderr):
+        name = event.get("stage")
+        if not isinstance(name, str):
+            continue
+        if event.get("event") == STAGE_STARTED:
+            started.append(name)
+            open_stages.append(name)
+        elif event.get("event") == STAGE_COMPLETED:
+            completed.append({key: value for key, value in event.items() if key != "event"})
+            if name in open_stages:
+                open_stages.remove(name)
+
+    return {
+        "started": started,
+        "completed": completed,
+        "current_stage": open_stages[-1] if open_stages else None,
+    }
+
+
+def _iter_markers(stderr: str) -> Iterator[dict[str, Any]]:
+    """Read the marker lines, ignoring whatever native noise sits around them."""
+
+    for line in stderr.splitlines():
+        payload = _marker_payload(line)
+        if payload is None:
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def _marker_payload(line: str) -> str | None:
+    """Return the JSON a marker line carries, wherever the line starts.
+
+    A native library can write a partial line without a newline, so a marker
+    is located inside the line rather than required to begin it.
+    """
+
+    start = line.find(STAGE_MARKER_PREFIX)
+    if start < 0:
+        return None
+    return line[start + len(STAGE_MARKER_PREFIX) :].strip()
 
 
 def _collection_roots(root: Path) -> tuple[Path, ...]:
@@ -546,19 +616,39 @@ def _iter_failures(report: Mapping[str, object]) -> Iterator[str]:
 
 
 def _describe_exit(report: Mapping[str, object]) -> str:
-    """Describe how the process ended, naming a signal rather than a number."""
+    """Say which stage was running and how the process ended, in that order.
+
+    "exited with status 3221225501" names no suspect. The stage the markers
+    left open does, and the two together are the whole diagnosis a crashed
+    packaging run can offer.
+    """
+
+    return f"current_stage: {_current_stage(report)}; exit: {_exit_summary(report)}"
+
+
+def _current_stage(report: Mapping[str, object]) -> str:
+    progress = report.get("progress")
+    if isinstance(progress, Mapping):
+        stage = progress.get("current_stage")
+        if isinstance(stage, str) and stage:
+            return stage
+    return "unknown"
+
+
+def _exit_summary(report: Mapping[str, object]) -> str:
+    """Name how the process ended, as a signal or fault rather than a number."""
 
     if report.get("exit_timeout"):
-        return "the self-check did not exit before the deadline"
+        return "did not exit before the deadline"
 
     status = report.get("exit_code")
     if isinstance(status, int) and status < 0:
-        return f"the self-check was killed by {_signal_name(-status)} before reporting a stage"
+        return _signal_name(-status)
     if isinstance(status, int):
         fatal = _windows_fault(status)
         if fatal is not None:
-            return f"the self-check died on {fatal} before reporting a stage"
-    return f"the self-check reported no stage and exited with status {status}"
+            return fatal
+    return f"status {status}"
 
 
 def _signal_name(number: int) -> str:
@@ -593,7 +683,13 @@ def _output_tail(report: Mapping[str, object]) -> str | None:
         text = report.get(key)
         if not isinstance(text, str):
             continue
-        lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+        # Progress markers are reported on their own; leaving them here would
+        # push the fault handler's traceback out of a bounded tail.
+        lines = [
+            line.rstrip()
+            for line in text.splitlines()
+            if line.strip() and _marker_payload(line) is None
+        ]
         if lines:
             return "\n".join(lines[-OUTPUT_TAIL_LINES:])
     return None
@@ -676,42 +772,82 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="check collected dependencies without running the executable",
     )
+    parser.add_argument(
+        "--reconstruct-only",
+        action="store_true",
+        help=(
+            "unpack --from-archive and report where the application landed, "
+            "without inspecting it; the checks that follow are separate steps "
+            "so one of them failing cannot suppress the others"
+        ),
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Report the bundle's inventory and, unless skipped, its self-check."""
+    """Check whichever published products this invocation was given."""
 
     args = _build_parser().parse_args(None if argv is None else list(argv))
-    if (args.application_directory is None) == (args.from_archive is None):
-        print(
-            "Hanly smoke: name either an application directory or --from-archive",
-            file=sys.stderr,
-        )
+    problem = _argument_problem(args)
+    if problem is not None:
+        print(f"Hanly smoke: {problem}", file=sys.stderr)
         return 2
 
     output: dict[str, object] = {}
     reconstruction: tempfile.TemporaryDirectory[str] | None = None
     try:
+        if args.disk_image is not None:
+            output["disk_image"] = verify_disk_image(args.disk_image)
+
         application = args.application_directory
         if args.from_archive is not None:
-            if args.reconstruct_into is None:
+            destination = args.reconstruct_into
+            if destination is None:
                 reconstruction = tempfile.TemporaryDirectory(prefix="hanly-reconstruct-")
                 destination = Path(reconstruction.name) / "app"
-            else:
-                destination = args.reconstruct_into
             application = reconstruct_application(args.from_archive, destination)
             output["reconstructed"] = {
                 "archive": Path(args.from_archive).name,
                 "application": str(application),
             }
-        if args.disk_image is not None:
-            output["disk_image"] = verify_disk_image(args.disk_image)
 
-        return _report(args, application, output)
+        if application is None or args.reconstruct_only:
+            print(json.dumps(output, indent=2))
+            return _unusable_disk_image(output)
+        return max(_report(args, application, output), _unusable_disk_image(output))
     finally:
         if reconstruction is not None:
             reconstruction.cleanup()
+
+
+def _argument_problem(args: argparse.Namespace) -> str | None:
+    """Reject an invocation that names no subject, or two of them."""
+
+    if args.application_directory is not None and args.from_archive is not None:
+        return "name either an application directory or --from-archive, not both"
+    subjects = (args.application_directory, args.from_archive, args.disk_image)
+    if all(subject is None for subject in subjects):
+        return "name an application directory, --from-archive, or --disk-image"
+    if args.reconstruct_only and args.from_archive is None:
+        return "--reconstruct-only needs --from-archive"
+    return None
+
+
+def _unusable_disk_image(output: Mapping[str, object]) -> int:
+    """Fail on a disk image that mounted without the application inside it.
+
+    Mounting is not the check. A DMG that opens onto the wrong contents is
+    exactly the published product a person would download and find empty.
+    """
+
+    report = output.get("disk_image")
+    if isinstance(report, Mapping) and report.get("ok") is not True:
+        print(
+            f"Hanly smoke: {report.get('image')} does not contain {report.get('application')}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 def _report(
@@ -798,12 +934,16 @@ __all__ = [
     "REQUIRED_EXTENSION_STEM",
     "REQUIRED_MODEL_FILES",
     "REQUIRED_PACKAGES",
+    "STAGE_COMPLETED",
+    "STAGE_MARKER_PREFIX",
+    "STAGE_STARTED",
     "UI_TIMEOUT_SECONDS",
     "WINDOWS_FATAL_STATUS",
     "BundleInventory",
     "inspect_bundle",
     "isolated_environment",
     "main",
+    "read_progress",
     "reconstruct_application",
     "run_packaged_self_check",
     "verify_disk_image",

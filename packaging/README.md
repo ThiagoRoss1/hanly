@@ -162,17 +162,22 @@ belongs to no bundle and no artifact; the released dictionary is still the
 independently published resource a real first run downloads.
 
 On macOS the checks run against the application unpacked back out of the
-published ZIP, not the build directory it was made from, and the disk image is
-mounted read-only and reported on beside it:
+published ZIP, not the build directory it was made from. Reconstruction and the
+disk image are separate invocations, because they check separate published
+products and a ZIP that will not unpack says nothing about the DMG:
 
 ```bash
 python tools/smoke_packaged_runtime.py \
     --from-archive dist/hanly-desktop-macos.zip \
     --reconstruct-into dist/reconstructed \
-    --disk-image dist/hanly-desktop-macos.dmg \
-    --inventory-only
+    --reconstruct-only
+python tools/smoke_packaged_runtime.py --disk-image dist/hanly-desktop-macos.dmg
+python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --inventory-only
 python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --window-only
 ```
+
+Mounting is not the disk-image check: a DMG that opens onto something other
+than `Hanly.app` fails, because that is the download a person would find empty.
 
 The inventory also names the two build inputs a frozen bundle cannot fetch:
 `certifi/cacert.pem` and both EasyOCR weights. A bundle missing them has
@@ -182,6 +187,44 @@ working code and no way to verify a certificate or read a word.
 uses the platform's build output (`dist/<platform>/hanly-desktop`, or
 `dist/macos/Hanly.app`) by default, or the bundle named by
 `HANLY_PACKAGED_APP`.
+
+## What a failed run leaves behind
+
+A native fault ends the frozen process before it prints its report, so the exit
+status used to be the whole account — and `3221225501` names no suspect. Two
+things now survive that.
+
+The self-check writes one flushed JSON line per stage boundary on **stderr**,
+which the harness reads before it truncates anything. The stage that was
+started and never completed is reported as `current_stage`, so a failed run
+says `current_stage: ocr; exit: ILLEGAL_INSTRUCTION (0xC000001D)` rather than a
+number. A crash before the first marker stays `current_stage: unknown`; naming
+the last stage that passed would invent a diagnosis. Provider construction,
+OCR, morphology, dictionary, closing the worker, the Qt WebEngine import, the
+window itself, and each page probe all carry a marker.
+
+`tools/native_host_fingerprint.py` records what the machine actually is —
+operating system and build, CPU model and vendor, core counts, the build
+interpreter — before the first install, so a run that dies later still says
+which host it died on. `--with-torch` adds what Torch reports about the CPU
+from a subprocess of its own, since importing Torch is one of the things that
+ends a packaging run. A field the host will not answer for carries the reason;
+nothing is filled in with a plausible default, and neither environment
+variables nor process inventories are collected.
+
+```bash
+python tools/native_host_fingerprint.py --context "before install" \
+    --output dist/reports/hanly-host-macos.json
+```
+
+In CI every check states the product it needs, so one failure no longer skips
+the rest. A failed worker smoke still leaves the window smoke, the archive
+checks, and the artifact identity; a failed reconstruction still leaves the
+disk-image evidence. The `hanly-diagnostics-<platform>` artifact is uploaded
+whether or not the run succeeded, and carries `dist/reports/` — every JSON
+report, the captured stdout and stderr of each smoke, and the host
+fingerprints — plus PyInstaller's warning and cross-reference output. It is
+never a release product, and a required failure still fails the job.
 
 ## Artifact and resource conventions
 

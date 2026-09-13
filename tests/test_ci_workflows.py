@@ -7,6 +7,7 @@ change does not fail and a semantic regression does not pass unnoticed.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -240,11 +241,7 @@ def test_linux_build_uses_the_cpu_only_ocr_runtime() -> None:
 
 
 def test_build_retains_the_release_archive_and_its_evidence() -> None:
-    upload = next(
-        step
-        for step in _steps(_workflow("build.yml"), "build")
-        if "upload-artifact" in step.get("uses", "")
-    )
+    upload = _step(_workflow("build.yml"), "build", name="Retain platform artifact")
     paths = [line.strip() for line in upload["with"]["path"].splitlines() if line.strip()]
 
     assert upload["with"]["name"] == "hanly-desktop-${{ matrix.platform }}"
@@ -271,14 +268,14 @@ def test_every_native_build_proves_the_frozen_runtime_before_retaining_it() -> N
     inventory = names.index("Check the frozen bundle inventory")
     smoke = names.index("Smoke the frozen lookup runtime")
     build = names.index("Build application package")
-    retain = next(
-        index for index, step in enumerate(steps) if "upload-artifact" in step.get("uses", "")
-    )
+    retain = names.index("Retain platform artifact")
 
     assert build < inventory < smoke < retain
     for index in (inventory, smoke):
         assert "smoke_packaged_runtime.py" in steps[index]["run"]
-        assert "if" not in steps[index], "the frozen gates run on every platform"
+        assert "matrix.platform" not in str(
+            steps[index].get("if", "")
+        ), "the frozen gates run on every platform"
     # A real image, so the frozen OCR stack has to read Korean rather than
     # merely import.
     assert "korean_reading_roi.png" in steps[smoke]["run"]
@@ -296,7 +293,9 @@ def test_the_frozen_smoke_installs_a_dictionary_built_on_the_runner() -> None:
 
     assert build_dictionary < smoke
     for index in (build_dictionary, smoke):
-        assert "if" not in steps[index], "every platform needs the dictionary"
+        assert "matrix.platform" not in str(
+            steps[index].get("if", "")
+        ), "every platform needs the dictionary"
     # The runner's own temporary space: it is never an artifact, never part of
     # the bundle, and disappears with the job.
     assert _uses_shell_variable(steps[build_dictionary]["run"], "RUNNER_TEMP")
@@ -312,19 +311,191 @@ def test_every_native_build_opens_the_frozen_window_it_is_about_to_ship() -> Non
     steps = _steps(_workflow("build.yml"), "build")
     names = [step.get("name", "") for step in steps]
     window = names.index("Smoke the frozen Control Center")
-    retain = next(
-        index for index, step in enumerate(steps) if "upload-artifact" in step.get("uses", "")
-    )
+    retain = names.index("Retain platform artifact")
 
     assert names.index("Build application package") < window < retain
     assert "--window-only" in steps[window]["run"]
-    assert "if" not in steps[window], "the window check runs on every platform"
+    assert "matrix.platform" not in str(
+        steps[window].get("if", "")
+    ), "the window check runs on every platform"
     # A hosted Linux runner has no display of its own.
     assert "xvfb-run" in steps[window]["run"]
     # All three are gates now. macOS and Linux were recorded-only for one
     # release while their frozen windows were unproven; a smoke that cannot
     # fail the build gates nothing, and a release must not be cut from a red one.
     assert "continue-on-error" not in steps[window]
+
+
+# --- What one failed packaging step is still allowed to prove -----------------
+#
+# A default GitHub step runs only while every step before it succeeded, so one
+# failed smoke used to skip every later check and the artifact upload with
+# them: a red run produced a single line of evidence. Each step below states
+# the product it actually needs, and the scenarios prove what survives.
+
+#: The step conditions these workflows use, evaluated the way Actions does.
+_STATUS_TERMS = {"always()": True, "!cancelled()": True, "cancelled()": False}
+
+_STEP_OUTCOME = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outcome\s*==\s*'(\w+)'")
+_MATRIX_PLATFORM = re.compile(r"matrix\.platform\s*==\s*'(\w+)'")
+
+
+def _step_key(step: dict[str, Any]) -> str:
+    return str(step.get("id") or step.get("name", ""))
+
+
+def _term_holds(term: str, outcomes: dict[str, str], platform: str, failed: bool) -> bool:
+    """Decide one ``&&``-separated term, refusing to guess at an unknown one."""
+
+    if term in _STATUS_TERMS:
+        return _STATUS_TERMS[term]
+    if term == "success()":
+        return not failed
+    outcome = _STEP_OUTCOME.fullmatch(term)
+    if outcome is not None:
+        return outcomes.get(outcome.group(1)) == outcome.group(2)
+    matrix = _MATRIX_PLATFORM.fullmatch(term)
+    if matrix is not None:
+        return platform == matrix.group(1)
+    if term.startswith("startsWith(github.ref"):
+        return False
+    raise AssertionError(f"unmodelled step condition: {term!r}")
+
+
+def _condition_holds(
+    condition: str, outcomes: dict[str, str], platform: str, failed: bool
+) -> bool:
+    expression = condition.strip().removeprefix("${{").removesuffix("}}").strip()
+    return all(
+        _term_holds(term.strip(), outcomes, platform, failed)
+        for term in expression.split("&&")
+    )
+
+
+def _run_plan(
+    job: str, *, platform: str, failing: Sequence[str] = ()
+) -> dict[str, str]:
+    """Replay the job, returning what each step's outcome would have been.
+
+    A step that states no condition of its own inherits ``success()``, which is
+    exactly the default that made one failure hide every later check.
+    """
+
+    outcomes: dict[str, str] = {}
+    failed = False
+    for step in _steps(_workflow("build.yml"), job):
+        key = _step_key(step)
+        condition = step.get("if")
+        runs = (
+            not failed
+            if condition is None
+            else _condition_holds(str(condition), outcomes, platform, failed)
+        )
+        outcomes[key] = ("failure" if key in failing else "success") if runs else "skipped"
+        failed = failed or outcomes[key] == "failure"
+    return outcomes
+
+
+RELEASE_UPLOAD = "Retain platform artifact"
+DIAGNOSTIC_UPLOAD = "Retain build diagnostics"
+
+
+def test_a_failed_worker_smoke_still_proves_the_window_and_the_products() -> None:
+    outcomes = _run_plan("build", platform="macos", failing=["worker_smoke"])
+
+    assert outcomes["ui_smoke"] == "success"
+    assert outcomes["disk_image"] == "success"
+    assert outcomes["archives"] == "success"
+    assert outcomes["identity"] == "success"
+    assert outcomes[DIAGNOSTIC_UPLOAD] == "success"
+    # The failure is still the job's failure; nothing is published from it.
+    assert outcomes[RELEASE_UPLOAD] == "skipped"
+
+
+def test_a_missing_dictionary_skips_the_worker_and_leaves_the_window() -> None:
+    """The window opens no provider, so it never needed the dictionary."""
+
+    outcomes = _run_plan("build", platform="linux", failing=["dictionary"])
+
+    assert outcomes["worker_smoke"] == "skipped"
+    assert outcomes["ui_smoke"] == "success"
+    assert outcomes[DIAGNOSTIC_UPLOAD] == "success"
+
+
+def test_a_zip_that_will_not_reconstruct_still_leaves_disk_image_evidence() -> None:
+    outcomes = _run_plan("build", platform="macos", failing=["resolve"])
+
+    assert outcomes["disk_image"] == "success"
+    assert outcomes["archives"] == "success"
+    for dependent in ("inventory", "worker_smoke", "ui_smoke"):
+        assert outcomes[dependent] == "skipped"
+
+
+def test_a_failed_build_suppresses_every_check_of_what_it_did_not_make() -> None:
+    """A freeze that failed produced no application; smoking one would report
+    a second, invented failure on top of the real one."""
+
+    outcomes = _run_plan("build", platform="windows", failing=["build"])
+
+    for dependent in ("resolve", "inventory", "dictionary", "worker_smoke", "ui_smoke"):
+        assert outcomes[dependent] == "skipped"
+    assert outcomes["archives"] == "skipped"
+    # The host fingerprint and any PyInstaller output still travel.
+    assert outcomes[DIAGNOSTIC_UPLOAD] == "success"
+
+
+def test_a_run_where_everything_passes_publishes_its_artifact() -> None:
+    outcomes = _run_plan("build", platform="macos")
+
+    assert outcomes[RELEASE_UPLOAD] == "success"
+    assert outcomes[DIAGNOSTIC_UPLOAD] == "success"
+
+
+def test_no_packaging_step_is_allowed_to_fail_quietly() -> None:
+    """`continue-on-error` keeps a run green; these steps are the gates."""
+
+    for step in _steps(_workflow("build.yml"), "build"):
+        assert "continue-on-error" not in step, step.get("name")
+
+
+def test_the_diagnostic_upload_is_never_a_release_product() -> None:
+    workflow = _workflow("build.yml")
+    diagnostics = _step(workflow, "build", name=DIAGNOSTIC_UPLOAD)
+    release = _step(workflow, "build", name=RELEASE_UPLOAD)
+
+    assert diagnostics["with"]["if-no-files-found"] == "ignore"
+    # `release.yml` collects `hanly-desktop-*`; a diagnostic bundle that matched
+    # that pattern would be downloaded as a platform build.
+    assert not diagnostics["with"]["name"].startswith("hanly-desktop-")
+    assert release["with"]["name"].startswith("hanly-desktop-")
+    assert "if" not in release
+
+
+def test_the_host_is_fingerprinted_before_anything_can_crash_on_it() -> None:
+    """An illegal instruction is a CPU the build had no record of."""
+
+    steps = _steps(_workflow("build.yml"), "build")
+    names = [step.get("name", "") for step in steps]
+    fingerprint = names.index("Record the host fingerprint")
+    runtime = names.index("Record what the installed runtime reports")
+
+    assert fingerprint < names.index("Install development dependencies")
+    assert names.index("Install packages") < runtime < names.index("Build application package")
+    # Torch is only asked once it exists, and in a child that may not survive.
+    assert "--with-torch" not in steps[fingerprint]["run"]
+    assert "--with-torch" in steps[runtime]["run"]
+
+
+def test_each_smoke_keeps_the_output_of_a_harness_that_never_reported() -> None:
+    """A JSON report is written only if the harness lived to write one, and a
+    step whose evidence exists only in the log cannot be uploaded."""
+
+    for step_id in ("worker_smoke", "ui_smoke"):
+        step = _step(_workflow("build.yml"), "build", step_id=step_id)
+        code = _shell_code(step["run"])
+
+        assert '> "$report.json" 2> "$report.err"' in code
+        assert 'exit "$status"' in code
 
 
 def test_each_artifact_records_the_identity_it_was_built_from() -> None:

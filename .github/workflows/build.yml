@@ -47,6 +47,17 @@ jobs:
         with:
           node-version: "22"
 
+      # Written before the first install, so a run that dies later still says
+      # which machine it died on. The crash this exists for is a native library
+      # meeting a CPU that does not implement what it was compiled to use.
+      - name: Record the host fingerprint
+        id: fingerprint
+        shell: bash
+        run: >
+          python tools/native_host_fingerprint.py
+          --context "before install"
+          --output "dist/reports/hanly-host-${{ matrix.platform }}.json"
+
       - name: Install Linux packaging dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -73,6 +84,17 @@ jobs:
         run: |
           python -m pip install --editable packages/hanly
           python -m pip install --editable "packages/hanly-app[runtime]" -c packaging/release-constraints.txt
+
+      # Torch is probed only once it exists, and in a child of its own: the
+      # import is one of the things that ends a packaging run outright.
+      - name: Record what the installed runtime reports
+        id: runtime_fingerprint
+        shell: bash
+        run: >
+          python tools/native_host_fingerprint.py
+          --context "installed runtime"
+          --with-torch
+          --output "dist/reports/hanly-host-runtime-${{ matrix.platform }}.json"
 
       # A tag push is the release identity, so the tag and the product
       # version must agree before any artifact is produced under that name.
@@ -101,11 +123,17 @@ jobs:
         run: python tools/prepare_easyocr_models.py
 
       - name: Build application package
+        id: build
         env:
           PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR: "1"
         run: python tools/build_package.py --platform ${{ matrix.platform }}
 
+      # Every check below states the product it actually needs. A failed worker
+      # smoke used to skip the window smoke, the archive checks, and the whole
+      # diagnostic upload, so one failure produced one line of evidence.
       - name: Resolve the frozen application to smoke
+        id: resolve
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         env:
           RUNNER_PLATFORM: ${{ matrix.platform }}
@@ -116,46 +144,91 @@ jobs:
             python tools/smoke_packaged_runtime.py \
               --from-archive dist/hanly-desktop-macos.zip \
               --reconstruct-into dist/reconstructed \
-              --disk-image dist/hanly-desktop-macos.dmg \
-              --inventory-only \
+              --reconstruct-only \
               | tee "dist/reports/hanly-products-macos.json"
             echo "SMOKE_APP=dist/reconstructed/Hanly.app" >> "$GITHUB_ENV"
           else
             echo "SMOKE_APP=dist/$RUNNER_PLATFORM/hanly-desktop" >> "$GITHUB_ENV"
           fi
 
-      - name: Check the frozen bundle inventory
-        shell: bash
-        run: python tools/smoke_packaged_runtime.py "$SMOKE_APP" --inventory-only
-
-      - name: Build the dictionary the frozen smoke installs
-        shell: bash
-        run: python tools/build_smoke_krdict.py "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3"
-
-      - name: Smoke the frozen lookup runtime
+      # The disk image is its own published product, made from the same build
+      # as the ZIP. A ZIP that will not reconstruct says nothing about it.
+      - name: Inspect the published disk image
+        id: disk_image
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.platform == 'macos' }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/reports
           python tools/smoke_packaged_runtime.py \
-            "$SMOKE_APP" \
-            --image tests/hanly_fixtures/assets/korean_reading_roi.png \
-            --krdict "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3" \
-            | tee "dist/reports/hanly-smoke-${{ matrix.platform }}.json"
+            --disk-image dist/hanly-desktop-macos.dmg \
+            | tee "dist/reports/hanly-diskimage-macos.json"
 
-      - name: Smoke the frozen Control Center
+      - name: Check the frozen bundle inventory
+        id: inventory
+        if: ${{ !cancelled() && steps.resolve.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/reports
+          python tools/smoke_packaged_runtime.py "$SMOKE_APP" --inventory-only \
+            | tee "dist/reports/hanly-inventory-${{ matrix.platform }}.json"
+
+      - name: Build the dictionary the frozen smoke installs
+        id: dictionary
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: python tools/build_smoke_krdict.py "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3"
+
+      # Both streams are captured to files rather than piped: a harness that
+      # dies before printing its report leaves the reason on stderr, and a
+      # failed step whose evidence lives only in the log cannot be uploaded.
+      - name: Smoke the frozen lookup runtime
+        id: worker_smoke
+        if: >-
+          ${{ !cancelled() && steps.resolve.outcome == 'success'
+          && steps.dictionary.outcome == 'success' }}
+        shell: bash
+        env:
+          RUNNER_PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -uo pipefail
+          mkdir -p dist/reports
+          report="dist/reports/hanly-smoke-$RUNNER_PLATFORM"
+          status=0
+          python tools/smoke_packaged_runtime.py \
+            "$SMOKE_APP" \
+            --image tests/hanly_fixtures/assets/korean_reading_roi.png \
+            --krdict "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3" \
+            > "$report.json" 2> "$report.err" || status=$?
+          cat "$report.json"
+          tail -c 200000 "$report.err" >&2
+          exit "$status"
+
+      - name: Smoke the frozen Control Center
+        id: ui_smoke
+        if: ${{ !cancelled() && steps.resolve.outcome == 'success' }}
+        shell: bash
+        env:
+          RUNNER_PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -uo pipefail
+          mkdir -p dist/reports
           display=""
-          if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
+          if [ "$RUNNER_PLATFORM" = "linux" ]; then display="xvfb-run -a"; fi
+          report="dist/reports/hanly-window-$RUNNER_PLATFORM"
+          status=0
           $display python tools/smoke_packaged_runtime.py \
             "$SMOKE_APP" \
             --window-only \
-            | tee "dist/reports/hanly-window-${{ matrix.platform }}.json"
+            > "$report.json" 2> "$report.err" || status=$?
+          cat "$report.json"
+          tail -c 200000 "$report.err" >&2
+          exit "$status"
 
       - name: Verify the release archive exists
+        id: archives
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         env:
           RUNNER_PLATFORM: ${{ matrix.platform }}
@@ -179,6 +252,8 @@ jobs:
           done
 
       - name: Record the artifact identity
+        id: identity
+        if: ${{ !cancelled() && steps.archives.outcome == 'success' }}
         shell: bash
         env:
           RUNNER_PLATFORM: ${{ matrix.platform }}
@@ -221,6 +296,20 @@ jobs:
               indent=2,
           )
           PY
+
+      # Never a release product: this is what a failed run leaves behind, and
+      # it has to survive the failure that produced it.
+      - name: Retain build diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hanly-diagnostics-${{ matrix.platform }}
+          path: |
+            dist/reports/
+            dist/.pyinstaller/${{ matrix.platform }}/**/warn-*.txt
+            dist/.pyinstaller/${{ matrix.platform }}/**/xref-*.html
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Only the archive is retained. The uncompressed onedir tree beside it is
       # the same payload again, and PyInstaller's work cache is not releasable.
