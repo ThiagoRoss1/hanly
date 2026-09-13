@@ -115,6 +115,23 @@ HEADLESS_SELF_CHECK_MODES = ("worker",)
 #: handler traceback is why this is measured in lines rather than in one.
 OUTPUT_TAIL_LINES = 20
 
+#: Fatal Windows exceptions, which arrive as the raw NTSTATUS a process died
+#: on rather than as a signal. Reported by name because the bare number says
+#: nothing: 3221225501 is an illegal instruction, which is a native library
+#: meeting a CPU that does not implement what it was compiled to use.
+WINDOWS_FATAL_STATUS = {
+    0xC0000005: "ACCESS_VIOLATION",
+    0xC000001D: "ILLEGAL_INSTRUCTION",
+    0xC0000094: "INTEGER_DIVIDE_BY_ZERO",
+    0xC0000135: "DLL_NOT_FOUND",
+    0xC0000139: "ENTRYPOINT_NOT_FOUND",
+    0xC0000142: "DLL_INIT_FAILED",
+    0xC000013A: "CONTROL_C_EXIT",
+    0xC0000374: "HEAP_CORRUPTION",
+    0xC00000FD: "STACK_OVERFLOW",
+    0xC0000409: "STACK_BUFFER_OVERRUN",
+}
+
 #: How first-run provisioning is pointed at an already-built dictionary.
 #: Named here rather than imported: this harness runs against a frozen bundle
 #: and must not depend on the source package it is checking.
@@ -537,6 +554,10 @@ def _describe_exit(report: Mapping[str, object]) -> str:
     status = report.get("exit_code")
     if isinstance(status, int) and status < 0:
         return f"the self-check was killed by {_signal_name(-status)} before reporting a stage"
+    if isinstance(status, int):
+        fatal = _windows_fault(status)
+        if fatal is not None:
+            return f"the self-check died on {fatal} before reporting a stage"
     return f"the self-check reported no stage and exited with status {status}"
 
 
@@ -545,6 +566,20 @@ def _signal_name(number: int) -> str:
         return signal.Signals(number).name
     except ValueError:
         return f"signal {number}"
+
+
+def _windows_fault(status: int) -> str | None:
+    """Name a fatal Windows exception, which is not reported as a signal.
+
+    Windows hands back the NTSTATUS the process died on, unsigned and in the
+    range reserved for errors. Anything below that is an ordinary exit code a
+    program chose for itself.
+    """
+
+    if not 0xC0000000 <= status <= 0xFFFFFFFF:
+        return None
+    named = WINDOWS_FATAL_STATUS.get(status)
+    return f"{named} (0x{status:08X})" if named else f"Windows exception 0x{status:08X}"
 
 
 def _output_tail(report: Mapping[str, object]) -> str | None:
@@ -764,6 +799,7 @@ __all__ = [
     "REQUIRED_MODEL_FILES",
     "REQUIRED_PACKAGES",
     "UI_TIMEOUT_SECONDS",
+    "WINDOWS_FATAL_STATUS",
     "BundleInventory",
     "inspect_bundle",
     "isolated_environment",

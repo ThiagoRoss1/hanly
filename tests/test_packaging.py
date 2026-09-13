@@ -296,6 +296,36 @@ def test_the_frozen_smoke_names_a_signal_when_no_stage_survived() -> None:
     assert "Could not load the Qt platform plugin" in failures[1]
 
 
+def test_the_frozen_smoke_names_a_fatal_windows_exception() -> None:
+    """Windows reports a fatal fault as the raw NTSTATUS, not as a signal, and
+    "exited with status 3221225501" is not a diagnosis anyone can act on."""
+
+    failures = list(
+        _iter_failures(
+            {
+                "ok": False,
+                "stages": [],
+                "stdout": "",
+                "exit_code": 0xC000001D,
+                "exit_timeout": False,
+                "stderr": "Windows fatal exception: code 0xc000001d",
+            }
+        )
+    )
+
+    assert "ILLEGAL_INSTRUCTION" in failures[0]
+    assert "0xC000001D" in failures[0]
+
+
+def test_an_ordinary_windows_exit_status_is_not_read_as_a_fault() -> None:
+    """The fault range starts at 0xC0000000; a small status is a program's own
+    chosen exit code and naming it an exception would invent a crash."""
+
+    failures = list(_iter_failures({"stages": [], "exit_code": 2, "stderr": ""}))
+
+    assert "exited with status 2" in failures[0]
+
+
 def test_the_frozen_smoke_reports_a_failed_stage_rather_than_the_exit() -> None:
     """A stage that failed is the diagnosis; the status adds nothing to it."""
 
