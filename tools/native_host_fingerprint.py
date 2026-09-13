@@ -235,6 +235,9 @@ def windows_facts(run: TextRunner) -> tuple[Facts, Facts]:
     operating_system.record("name", field_of("os", "Caption"))
     operating_system.record("product_version", field_of("os", "Version"))
     operating_system.record("build", field_of("os", "BuildNumber"))
+    # The operating system's own bitness, which is not the processor's:
+    # ``cpu.architecture`` answers that one.
+    operating_system.record("architecture", field_of("os", "OSArchitecture"))
 
     cpu = _portable_cpu()
     cpu.record("model", field_of("cpu", "Name"))
@@ -299,6 +302,9 @@ def _build_interpreter() -> dict[str, object]:
         "version": platform.python_version(),
         "implementation": platform.python_implementation(),
         "executable": sys.executable,
+        # Always false in a packaging job, and stated rather than assumed: the
+        # frozen side of the comparison is the self-check's own report.
+        "frozen": bool(getattr(sys, "frozen", False)),
     }
 
 

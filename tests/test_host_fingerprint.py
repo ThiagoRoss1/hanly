@@ -42,6 +42,7 @@ WINDOWS_RECORDS = {
         "Caption": "Microsoft Windows Server 2022 Datacenter",
         "Version": "10.0.20348",
         "BuildNumber": "20348",
+        "OSArchitecture": "64-bit",
     },
     "cpu": {
         "Name": "AMD EPYC 7763 64-Core Processor",
@@ -125,6 +126,10 @@ def test_windows_reads_one_cim_query_for_both_groups() -> None:
     operating_system, cpu = windows_facts(lambda _: json.dumps(WINDOWS_RECORDS))
 
     assert operating_system.values["build"] == "20348"
+    # The OS bitness and the processor architecture are different questions,
+    # and a heterogeneous runner fleet can disagree on both.
+    assert operating_system.values["architecture"] == "64-bit"
+    assert cpu.values["architecture"]
     assert cpu.values["model"] == "AMD EPYC 7763 64-Core Processor"
     assert cpu.values["vendor"] == "AuthenticAMD"
     assert cpu.values["physical_cores"] == 2
@@ -208,6 +213,9 @@ def test_this_host_reports_the_fields_a_crash_report_needs() -> None:
     assert group("build_interpreter")["version"] == ".".join(
         str(part) for part in sys.version_info[:3]
     )
+    # The frozen/not-frozen context is stated rather than left to be assumed:
+    # this tool runs from source, and the self-check answers for the bundle.
+    assert group("build_interpreter")["frozen"] is False
     assert "torch" not in document
 
 
