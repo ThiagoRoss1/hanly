@@ -27,6 +27,7 @@ from tools.release_build import (
     expected_release_assets,
     find_application_run,
     main,
+    previous_release_tag,
     release_protocol,
     resolve_tag_commit,
     unique_semver_tag,
@@ -614,3 +615,40 @@ def test_something_that_is_not_an_update_package_derives_no_asset_set(
 
     with pytest.raises(ReleaseStateError, match="not a usable update package"):
         expected_release_assets(broken, "krdict-2026-01-01.sqlite3.zst")
+
+
+def test_the_predecessor_is_the_highest_published_version_below_this_one() -> None:
+    api = _Releases(
+        [
+            {"tag_name": "v0.4.9"},
+            {"tag_name": "v0.5.1"},
+            {"tag_name": "v0.5.2"},
+            {"tag_name": "v0.6.0"},
+            {"tag_name": "v0.5.3-rc1", "prerelease": True},
+            {"tag_name": "v0.5.2-draft", "draft": True},
+            {"tag_name": "nightly"},
+        ]
+    )
+
+    assert previous_release_tag(api, "owner/repo", "0.5.3") == "v0.5.2"
+    assert previous_release_tag(api, "owner/repo", "0.5.0") == "v0.4.9"
+    assert previous_release_tag(api, "owner/repo", "0.4.0") is None
+
+
+def test_a_version_no_release_is_cut_from_has_no_predecessor() -> None:
+    with pytest.raises(ReleaseStateError, match="not a version"):
+        previous_release_tag(_Releases([]), "owner/repo", "latest")
+
+
+class _Releases:
+    """Every release a repository has published, and nothing else."""
+
+    def __init__(self, releases: list[dict[str, Any]]) -> None:
+        self._releases = releases
+
+    def get(self, path: str, **parameters: str) -> Any:
+        raise AssertionError("resolving a predecessor lists releases rather than fetching one")
+
+    def get_all(self, path: str, **parameters: str) -> list[Any]:
+        assert path.endswith("/releases")
+        return list(self._releases)

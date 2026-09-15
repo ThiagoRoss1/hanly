@@ -49,12 +49,15 @@ from tools.smoke_packaged_runtime import (
     _executable_in,
     _iter_failures,
     _ProfileContext,
+    compare_to_manifest,
     inspect_bundle,
     isolated_environment,
     reconstruct_application,
+    reconstruct_from_disk_image,
     run_packaged_self_check,
     verify_disk_image,
 )
+from tools.smoke_packaged_runtime import main as smoke_main
 
 ROOT = Path(__file__).parents[1]
 SPEC = ROOT / "packaging" / "hanly-desktop.spec"
@@ -1363,3 +1366,87 @@ def test_an_identity_check_that_never_runs_the_executable_is_refused(
 
     assert status == 2
     assert "runs the executable" in capsys.readouterr().err
+
+
+def test_the_disk_image_is_the_product_a_client_reconstructs_from(
+    tmp_path: Path,
+) -> None:
+    """A HUP client downloads the disk image, so that is what gets smoked."""
+
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"disk image")
+    tools = _NativeTool()
+
+    def native(command: list[str], **options: object) -> object:
+        tools.commands.append(command)
+        if command[0].endswith("hdiutil") and command[1] == "attach":
+            program = Path(command[-1]) / SMOKE_BUNDLE_NAME / "Contents" / "MacOS"
+            program.mkdir(parents=True)
+            (program / APPLICATION_STEM).write_bytes(b"program")
+        if command[0].endswith("ditto"):
+            import shutil
+
+            shutil.copytree(command[-2], command[-1])
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    application = reconstruct_from_disk_image(image, tmp_path / "out", runner=native)
+
+    assert application == (tmp_path / "out" / SMOKE_BUNDLE_NAME)
+    assert _executable_in(application).is_file()
+    assert tools.commands[-1][:2] == ["/usr/bin/hdiutil", "detach"]
+
+
+def test_a_disk_image_without_the_application_leaves_nothing_mounted(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"disk image")
+    tools = _NativeTool()
+
+    with pytest.raises(FileNotFoundError, match=SMOKE_BUNDLE_NAME):
+        reconstruct_from_disk_image(image, tmp_path / "out", runner=tools)
+
+    assert tools.commands[-1][:2] == ["/usr/bin/hdiutil", "detach"]
+
+
+def test_a_reconstructed_product_is_held_to_the_manifest_its_release_publishes(
+    tmp_path: Path,
+) -> None:
+    from tests.hanly_fixtures.update_tree import LINUX, manifest_for, write_tree
+
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest_for(root, LINUX).to_json(), encoding="utf-8")
+
+    report = compare_to_manifest(root, manifest_path)
+    assert report["ok"] is True
+    assert report["entries"] == len(manifest_for(root, LINUX))
+
+    (root / "hanly-desktop").write_bytes(b"a different program entirely")
+    mismatched = compare_to_manifest(root, manifest_path)
+    assert mismatched["ok"] is False
+    assert mismatched["differing"] == ["hanly-desktop"]
+
+
+def test_a_product_that_is_not_the_published_build_fails_the_smoke(
+    tmp_path: Path,
+) -> None:
+    from tests.hanly_fixtures.update_tree import LINUX, manifest_for, write_tree
+
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest_for(root, LINUX).to_json(), encoding="utf-8")
+    (root / "stowaway").write_bytes(b"not in the release")
+
+    status = smoke_main(
+        [str(root), "--inventory-only", "--against-manifest", str(manifest_path)]
+    )
+
+    assert status == 1
+
+
+def test_naming_two_subjects_to_reconstruct_is_refused() -> None:
+    assert smoke_main(
+        ["--from-archive", "a.zip", "--from-disk-image", "b.dmg", "--reconstruct-only"]
+    ) == 2
+    assert smoke_main(["--against-manifest", "m.json", "--disk-image", "b.dmg"]) == 2

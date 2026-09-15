@@ -277,6 +277,40 @@ def find_application_run(
     return verify_application_run(newest, repository=repository, tag=tag, commit=commit)
 
 
+def previous_release_tag(api: ReadOnlyAPI, repository: str, version: str) -> str | None:
+    """The published release a build of ``version`` diffs against, or None.
+
+    The highest stable version below this one, resolved once and given to every
+    platform job, so three jobs cannot pick three different predecessors while
+    a release is being published. Drafts and prereleases are not candidates:
+    nobody has one installed.
+    """
+
+    target = _version_parts(version)
+    if target is None:
+        raise ReleaseStateError(f"{version!r} is not a version a release is cut from")
+
+    candidates: list[tuple[tuple[int, int, int], str]] = []
+    for release in api.get_all(f"repos/{repository}/releases"):
+        if not isinstance(release, Mapping) or release.get("draft") or release.get("prerelease"):
+            continue
+        tag = release.get("tag_name")
+        if not isinstance(tag, str) or not RELEASE_TAG.match(tag):
+            continue
+        parts = _version_parts(tag[1:])
+        if parts is not None and parts < target:
+            candidates.append((parts, tag))
+    return max(candidates)[1] if candidates else None
+
+
+def _version_parts(value: str) -> tuple[int, int, int] | None:
+    pieces = value.split(".")
+    if len(pieces) != 3 or not all(piece.isdigit() for piece in pieces):
+        return None
+    major, minor, patch = pieces
+    return int(major), int(minor), int(patch)
+
+
 def release_protocol(names: Sequence[str]) -> str:
     """Which generation of the update protocol a set of assets belongs to."""
 
@@ -488,7 +522,7 @@ def _release_for_tag(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["resolve", "classify", "assets"])
+    parser.add_argument("mode", choices=["resolve", "classify", "assets", "predecessor"])
     parser.add_argument("--repository")
     parser.add_argument("--tag")
     parser.add_argument("--event", default="workflow_dispatch")
@@ -503,6 +537,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--resource", help="assets mode: the one KRDICT asset this release publishes"
+    )
+    parser.add_argument(
+        "--version", help="predecessor mode: the version this build is being cut for"
     )
     return parser
 
@@ -519,6 +556,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ReleaseStateError("assets mode requires --package and --resource")
             for name in expected_release_assets(args.package, args.resource):
                 print(name)
+            return 0
+
+        if args.mode == "predecessor":
+            if not args.repository or not args.version:
+                raise ReleaseStateError("predecessor mode requires --repository and --version")
+            previous = previous_release_tag(
+                _api(os.environ.get("GH_TOKEN")), args.repository, args.version
+            )
+            print(f"tag={previous or ''}")
+            print(f"available={'true' if previous else 'false'}")
             return 0
 
         if not args.repository or not args.tag:
@@ -566,6 +613,7 @@ __all__ = [
     "PROTOCOL_PACKAGE",
     "TREE_DELTA_ASSET",
     "expected_release_assets",
+    "previous_release_tag",
     "release_protocol",
     "FIXED_RELEASE_ASSETS",
     "ReadOnlyAPI",

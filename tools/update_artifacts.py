@@ -773,18 +773,32 @@ def assemble_update_package(
 
 
 def _require_published(products: Path, release: PlatformRelease) -> None:
-    """Prove every asset one platform advertises is the file it describes."""
+    """Prove every asset one platform advertises is the file it describes.
+
+    A delta is written beside its own descriptor and a whole product is not, so
+    both places are looked in - and the file has to be in one of them, with the
+    size and digest that descriptor claims.
+    """
 
     advertised = [release.full]
     if release.delta is not None:
         advertised.append(release.delta.payload)
     for asset in advertised:
-        path = products / asset.name
-        if not path.is_file():
-            raise ArtifactError(f"{release.manifest.platform} advertises {asset.name}, which "
-                                f"this run did not produce")
+        path = _produced(products, release.directory, asset.name)
+        if path is None:
+            raise ArtifactError(
+                f"{release.manifest.platform} advertises {asset.name}, "
+                "which this run did not produce"
+            )
         if path.stat().st_size != asset.size or _file_digest(path) != asset.sha256:
             raise ArtifactError(f"{asset.name} is not the file its descriptor describes")
+
+
+def _produced(products: Path, directory: Path, name: str) -> Path | None:
+    for candidate in (products / name, directory / name):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _release_asset(path: Path, format_name: str) -> ReleaseAsset:

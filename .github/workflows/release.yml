@@ -163,6 +163,18 @@ jobs:
           path: release-inputs/app
           merge-multiple: false
 
+      # From the same successful run as the products it indexes: a package
+      # assembled from one build and products from another describes a release
+      # that was never produced.
+      - name: Download the update package that run assembled
+        if: steps.preflight.outputs.action != 'noop' && inputs.validate_only != true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.application.outputs.run_id }}
+          name: hanly-update-package
+          path: release-inputs/package
+
       - name: Validate application assets
         if: steps.preflight.outputs.action != 'noop' && inputs.validate_only != true
         shell: bash
@@ -203,9 +215,9 @@ jobs:
             cp "${matches[0]}" "release-output/$expected"
           done
 
-          # Windows is the only platform that installs differentially, so it is
-          # the only one with metadata. The manifest and update metadata are
-          # required with it; the delta is optional and there is at most one.
+          # Compatibility metadata a client from before update packages still
+          # reads. Both are required; that generation's own delta is not
+          # published any more, and one turning up is a producer defect.
           for expected in hanly-desktop-windows.manifest.json hanly-desktop-windows.update.json; do
             mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
             ((${#matches[@]} == 1)) || {
@@ -214,16 +226,29 @@ jobs:
             }
             cp "${matches[0]}" "release-output/$expected"
           done
-          mapfile -t deltas < <(
-            find release-inputs/app -type f -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+          mapfile -t legacy_deltas < <(
+            find release-inputs/app -type f -name 'hanly-desktop-windows-from-*.delta.zip' -print
           )
-          if ((${#deltas[@]} > 1)); then
-            echo "a release publishes at most one Windows delta; found ${#deltas[@]}" >&2
+          ((${#legacy_deltas[@]} == 0)) || {
+            echo "a release with an update package publishes no separate Windows delta" >&2
             exit 1
-          fi
-          if ((${#deltas[@]} == 1)); then
-            cp "${deltas[0]}" "release-output/$(basename "${deltas[0]}")"
-          fi
+          }
+
+          # The one update package, and exactly the deltas assembled beside it.
+          mapfile -t packages < <(
+            find release-inputs/package -type f -name 'Hanly-v*.hup' -print | sort
+          )
+          ((${#packages[@]} == 1)) || {
+            echo "expected exactly one Hanly update package; found ${#packages[@]}" >&2
+            exit 1
+          }
+          cp "${packages[0]}" "release-output/$(basename "${packages[0]}")"
+          mapfile -t deltas < <(
+            find release-inputs/package -type f -name '*.delta.zip' -print | sort
+          )
+          for delta in ${deltas[@]+"${deltas[@]}"}; do
+            cp "$delta" "release-output/$(basename "$delta")"
+          done
 
       - name: Carry the previous release resource into a new draft
         id: carried
@@ -307,13 +332,14 @@ jobs:
               exit 1
             }
           done
-          # At most one, and legitimately none: the first manifest-aware build
-          # has no published predecessor to diff against.
-          mapfile -t staged_deltas < <(
+          # The package always; its deltas only where a published predecessor
+          # existed to diff against, which the first package-aware release has
+          # by definition not got.
+          mapfile -t staged_metadata < <(
             find release-output -maxdepth 1 -type f \
-              -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+              \( -name 'Hanly-v*.hup' -o -name '*.delta.zip' \) -print | sort
           )
-          upload+=("${staged_deltas[@]}")
+          upload+=("${staged_metadata[@]}")
           if [[ "$PREFLIGHT_ACTION" == "create" && "$CARRIED" == "true" ]]; then
             upload+=(
               release-output/hanly-resources.json
@@ -443,6 +469,14 @@ jobs:
           path: release-inputs/app
           merge-multiple: false
 
+      - name: Download the update package that run assembled
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.application.outputs.run_id }}
+          name: hanly-update-package
+          path: release-inputs/package
+
       - name: Validate application assets
         shell: bash
         run: |
@@ -482,9 +516,9 @@ jobs:
             cp "${matches[0]}" "release-output/$expected"
           done
 
-          # Windows is the only platform that installs differentially, so it is
-          # the only one with metadata. The manifest and update metadata are
-          # required with it; the delta is optional and there is at most one.
+          # Compatibility metadata a client from before update packages still
+          # reads. Both are required; that generation's own delta is not
+          # published any more, and one turning up is a producer defect.
           for expected in hanly-desktop-windows.manifest.json hanly-desktop-windows.update.json; do
             mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
             ((${#matches[@]} == 1)) || {
@@ -493,16 +527,29 @@ jobs:
             }
             cp "${matches[0]}" "release-output/$expected"
           done
-          mapfile -t deltas < <(
-            find release-inputs/app -type f -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+          mapfile -t legacy_deltas < <(
+            find release-inputs/app -type f -name 'hanly-desktop-windows-from-*.delta.zip' -print
           )
-          if ((${#deltas[@]} > 1)); then
-            echo "a release publishes at most one Windows delta; found ${#deltas[@]}" >&2
+          ((${#legacy_deltas[@]} == 0)) || {
+            echo "a release with an update package publishes no separate Windows delta" >&2
             exit 1
-          fi
-          if ((${#deltas[@]} == 1)); then
-            cp "${deltas[0]}" "release-output/$(basename "${deltas[0]}")"
-          fi
+          }
+
+          # The one update package, and exactly the deltas assembled beside it.
+          mapfile -t packages < <(
+            find release-inputs/package -type f -name 'Hanly-v*.hup' -print | sort
+          )
+          ((${#packages[@]} == 1)) || {
+            echo "expected exactly one Hanly update package; found ${#packages[@]}" >&2
+            exit 1
+          }
+          cp "${packages[0]}" "release-output/$(basename "${packages[0]}")"
+          mapfile -t deltas < <(
+            find release-inputs/package -type f -name '*.delta.zip' -print | sort
+          )
+          for delta in ${deltas[@]+"${deltas[@]}"}; do
+            cp "$delta" "release-output/$(basename "$delta")"
+          done
 
       - name: Take the KRDICT pair from the draft
         id: resources
@@ -529,27 +576,20 @@ jobs:
             exit 1
           }
 
-          # The delta's name carries the two versions it spans, so it is the one
-          # asset matched by shape rather than by name - and still at most one.
-          mapfile -t draft_deltas < <(
-            printf '%s\n' "${draft_assets[@]}" \
-              | grep -E '^hanly-desktop-windows-from-[0-9.]+-to-[0-9.]+\.delta\.zip$' || true
+          # What this release publishes is a consequence of the package it
+          # publishes, not a list kept beside it: the package names its own
+          # products and deltas, and the compatibility assets are added because
+          # policy keeps them.
+          mapfile -t packages < <(
+            find release-output -maxdepth 1 -type f -name 'Hanly-v*.hup' -print | sort
           )
-          ((${#draft_deltas[@]} <= 1)) || {
-            echo "the draft holds more than one Windows delta" >&2
+          ((${#packages[@]} == 1)) || {
+            echo "expected exactly one Hanly update package; found ${#packages[@]}" >&2
             exit 1
           }
-          allowed=(
-            hanly-desktop-windows.zip
-            hanly-desktop-macos.zip
-            hanly-desktop-macos.dmg
-            hanly-desktop-linux.tar.gz
-            hanly-desktop-windows.manifest.json
-            hanly-desktop-windows.update.json
-            "${draft_deltas[@]}"
-            "$resource_asset_name"
-            hanly-resources.json
-            SHA256SUMS
+          mapfile -t allowed < <(
+            python tools/release_build.py assets \
+              --package "${packages[0]}" --resource "$resource_asset_name"
           )
           for asset in "${draft_assets[@]}"; do
             printf '%s\n' "${allowed[@]}" | grep -qx -- "$asset" || {
@@ -557,7 +597,11 @@ jobs:
               exit 1
             }
           done
-          printf 'delta_asset_name=%s\n' "${draft_deltas[0]-}" >> "$GITHUB_OUTPUT"
+          {
+            printf 'package_asset_name=%s\n' "$(basename "${packages[0]}")"
+            printf 'expected_assets<<HANLY_ASSETS\n%s\nHANLY_ASSETS\n' \
+              "$(printf '%s\n' "${allowed[@]}")"
+          } >> "$GITHUB_OUTPUT"
 
           gh release download "$RELEASE_TAG" --pattern "$resource_asset_name" \
             --dir release-inputs/resources --clobber
@@ -682,11 +726,11 @@ jobs:
             "release-output/$RESOURCE_ASSET_NAME"
             release-output/hanly-resources.json
           )
-          mapfile -t checksum_deltas < <(
+          mapfile -t checksum_metadata < <(
             find release-output -maxdepth 1 -type f \
-              -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+              \( -name 'Hanly-v*.hup' -o -name '*.delta.zip' \) -print | sort
           )
-          checksummed+=("${checksum_deltas[@]}")
+          checksummed+=("${checksum_metadata[@]}")
           for asset in "${checksummed[@]}"; do
             (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")")
           done > release-output/SHA256SUMS
@@ -708,25 +752,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
-          RESOURCE_ASSET_NAME: ${{ steps.resources.outputs.asset_name }}
-          DELTA_ASSET_NAME: ${{ steps.resources.outputs.delta_asset_name }}
+          EXPECTED_ASSETS: ${{ steps.resources.outputs.expected_assets }}
         shell: bash
         run: |
           set -euo pipefail
-          expected_assets=(
-            hanly-desktop-windows.zip
-            hanly-desktop-macos.zip
-            hanly-desktop-macos.dmg
-            hanly-desktop-linux.tar.gz
-            hanly-desktop-windows.manifest.json
-            hanly-desktop-windows.update.json
-            "$RESOURCE_ASSET_NAME"
-            hanly-resources.json
-            SHA256SUMS
-          )
-          if [[ -n "$DELTA_ASSET_NAME" ]]; then
-            expected_assets+=("$DELTA_ASSET_NAME")
-          fi
+          # Derived from the validated package, not restated here: the two
+          # lists could otherwise disagree about what this release is.
+          mapfile -t expected_assets <<< "$EXPECTED_ASSETS"
+          ((${#expected_assets[@]} > 0)) || {
+            echo "the draft validation produced no expected asset set" >&2
+            exit 1
+          }
           for asset in "${expected_assets[@]}"; do
             [[ -f "release-output/$asset" ]] || {
               echo "missing staged release asset $asset" >&2
@@ -739,8 +775,8 @@ jobs:
           actual_assets_file="$RUNNER_TEMP/actual-release-assets"
           gh api "repos/$REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort > "$actual_assets_file"
           mapfile -t actual_assets < "$actual_assets_file"
-          # The expected set is not a fixed count: the Windows delta is present
-          # only when a published predecessor existed to diff against.
+          # The expected set is not a fixed count: a delta is present only for
+          # a platform whose published predecessor existed to diff against.
           if [[ ${#actual_assets[@]} -ne ${#expected_assets[@]} ]]; then
             echo "partial draft: expected exactly ${#expected_assets[@]} release assets, found ${#actual_assets[@]}" >&2
             exit 1
