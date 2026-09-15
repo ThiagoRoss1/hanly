@@ -817,8 +817,13 @@ def test_every_producer_and_consumer_names_the_same_release_products() -> None:
     """The builder, the release contract, and the updater must not drift apart."""
 
     from hanly_app import app_update
+    from hanly_app.app_manifest import (
+        MANIFEST_ASSET,
+        UPDATE_METADATA_ASSET,
+        delta_asset_name,
+    )
 
-    from tools.release_build import FIXED_RELEASE_ASSETS
+    from tools.release_build import DELTA_ASSET, FIXED_RELEASE_ASSETS
 
     root = Path("/repo")
     produced = set()
@@ -834,9 +839,21 @@ def test_every_producer_and_consumer_names_the_same_release_products() -> None:
         "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
     }
-    # The release publishes exactly those four, plus the manifest and the sums.
+    # The release publishes exactly those four, plus the Windows update
+    # metadata, the resource manifest, and the sums. The metadata names come
+    # from the producer's own constants, so a rename fails here rather than in
+    # a release run.
     assert produced < FIXED_RELEASE_ASSETS
-    assert FIXED_RELEASE_ASSETS - produced == {"hanly-resources.json", "SHA256SUMS"}
+    assert FIXED_RELEASE_ASSETS - produced == {
+        MANIFEST_ASSET,
+        UPDATE_METADATA_ASSET,
+        "hanly-resources.json",
+        "SHA256SUMS",
+    }
+    # The delta is the one asset named by shape rather than spelled out, so the
+    # release contract's pattern has to match what the builder actually writes.
+    assert DELTA_ASSET.fullmatch(delta_asset_name("0.5.1", "0.5.2")) is not None
+    assert not any(DELTA_ASSET.fullmatch(name) for name in FIXED_RELEASE_ASSETS)
 
     installed = {
         layout.asset_name for layout in app_update._PLATFORM_LAYOUTS.values()
