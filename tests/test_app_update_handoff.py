@@ -33,6 +33,7 @@ from hanly_app.app_update_handoff import (
     clear_native_pending,
     handoff_arguments,
     install_native_helper,
+    native_helper_is_running,
     native_pending,
     read_descriptor,
     read_native_result,
@@ -365,3 +366,26 @@ def test_the_shell_waits_until_the_helper_genuinely_holds_the_lock(
 
     with pytest.raises(HandoffError, match="did not start"):
         await_native_claim(lock, timeout=0.5)
+
+
+@pytest.mark.skipif(sys.platform.startswith("win32"), reason="POSIX advisory locking")
+def test_a_live_helper_is_observed_through_the_lock_it_actually_holds(
+    tmp_path: Path,
+) -> None:
+    """Settlement asks this before starting a recovery helper, so it has to
+    answer from the lock itself rather than from anything a helper wrote."""
+
+    import fcntl
+
+    lock = tmp_path / "native-lock"
+
+    assert not native_helper_is_running(lock)
+
+    handle = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert native_helper_is_running(lock)
+    finally:
+        os.close(handle)
+
+    assert not native_helper_is_running(lock)

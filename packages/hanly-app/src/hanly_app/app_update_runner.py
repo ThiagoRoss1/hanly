@@ -32,6 +32,7 @@ from .app_update_handoff import (
     NativeTransaction,
     await_native_claim,
     clear_native_pending,
+    native_helper_is_running,
     native_pending,
     read_descriptor,
     read_native_result,
@@ -451,6 +452,12 @@ def _recover_native(
     report: Reporter | None,
 ) -> SettledUpdate:
     """Restart the helper for a transaction that never reached an outcome."""
+
+    if native_helper_is_running(transaction.lock_path):
+        return SettledUpdate(
+            outcome=RECOVERY_REQUIRED,
+            detail="An update is being applied.",
+        )
 
     helper = store.directory / NATIVE_HELPER_NAME
     if not helper.is_file():

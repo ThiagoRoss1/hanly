@@ -205,6 +205,23 @@ def test_an_interruption_after_both_renames_rolls_the_new_build_back(
     assert (transaction.staging / "rejected" / "marker").read_text(encoding="utf-8") == "new"
 
 
+def test_recovery_keeps_an_exactly_acknowledged_candidate_when_result_was_not_written(
+    helper: Path, tmp_path: Path
+) -> None:
+    transaction = _Transaction(tmp_path)
+    plan = transaction.transaction()
+    os.rename(transaction.install, transaction.staging / "previous")
+    os.rename(transaction.candidate, transaction.install)
+    plan.ack_path.write_bytes(EXPECTED.encode("utf-8"))
+
+    status = _run(helper, transaction.descriptor_path, recover=True)
+
+    assert status == 0
+    assert transaction.result()[0] == "committed"
+    assert transaction.marker() == "new"
+    assert (transaction.staging / "previous" / "marker").read_text(encoding="utf-8") == "old"
+
+
 def test_recovery_works_with_no_installation_to_run_it_from(
     helper: Path, tmp_path: Path
 ) -> None:

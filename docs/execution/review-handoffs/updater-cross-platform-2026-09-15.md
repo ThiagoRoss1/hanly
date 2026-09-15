@@ -192,4 +192,40 @@ products. The workflows are held only by `tests/test_ci_workflows.py`.
 5. `tools/release_build.py::verify_published_assets` — the boundary between two
    generations of the release contract.
 
+## 6. Codex's follow-up, reviewed
+
+Codex resumed this branch after `58efb50`, made two functional changes, and
+recorded them in
+[`updater-cross-platform-codex-resumption-2026-09-15.md`](../reports/updater-cross-platform-codex-resumption-2026-09-15.md).
+Both are correct and are kept:
+
+- **A candidate's own startup no longer launches a recovery helper while the
+  helper that installed it is still waiting.** The candidate reaches
+  `settle_native_update` before it writes its acknowledgement, so settlement
+  saw an unsettled transaction and started a second contender. The advisory
+  lock meant it could not mutate anything, but the launch was pointless and
+  the session log reported an interruption that had not happened. This now
+  mirrors what the Windows path already did.
+- **Recovery keeps a candidate that provably answered.** `installed + backup +
+  no result` was always rolled back, but that state also occurs when the
+  candidate wrote the exact transaction-bound answer and the helper died before
+  its result became durable. Rolling back there turns a failed bookkeeping
+  write into a product rollback. Recovery now retains the tree only when both
+  independent checks hold - the installed directory's device and inode are the
+  staged candidate's (a rename preserves the inode, so this really does prove
+  identity) and the acknowledgement matches the descriptor byte for byte, which
+  is nonce- and build-bound. Missing, stale, or wrong answers still roll back.
+
+One gap in that follow-up, closed here: the Python regression monkeypatched
+`native_helper_is_running` rather than exercising it, leaving the new function
+itself untested. `tests/test_app_update_handoff.py` now takes a real `flock` and
+asserts the function reports it, before and after.
+
+Codex's one deferred item - `move_directory` ignoring the return of its parent
+directory flushes - is deferred correctly. Once `rename` has returned, reporting
+the move as failed would send recovery down a branch for something that did
+happen; the right fix needs an explicit post-rename state transition and
+injected `fsync` failures, not an error check. Revisit before a production
+updater release.
+
 Phase B has not been authorized and has not started.

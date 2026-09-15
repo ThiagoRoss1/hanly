@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 from hanly_app.app_build_identity import ReceiptStore, receipt_for
 from hanly_app.app_inventory import read_tree
-from hanly_app.app_update_handoff import read_descriptor
+from hanly_app.app_update_handoff import read_descriptor, record_native_pending
 from hanly_app.app_update_install import (
     DifferentialUpdateError,
     PosixTreeStaging,
@@ -34,7 +34,7 @@ from hanly_app.app_update_plan import (
     OWNERSHIP_RECEIPT,
     OwnershipUnknown,
 )
-from hanly_app.app_update_runner import TreeUpdateRunner
+from hanly_app.app_update_runner import TreeUpdateRunner, settle_native_update
 
 from tests.hanly_fixtures.update_release import PublishedRelease, ReleaseChannel
 from tests.hanly_fixtures.update_tree import (
@@ -552,6 +552,32 @@ def test_abandoning_a_staged_posix_update_puts_the_receipt_back(tmp_path: Path) 
     assert current is not None and current.identity.version == "0.5.2"
     assert not store.pending_path.exists()
     assert not staged.transaction.directory.exists()
+
+
+def test_the_build_a_live_posix_helper_launched_does_not_start_a_recovery_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    installer = _posix_installer(base, channel, install, store)
+    staged = installer.stage(installer.prepare("0.5.3"))
+    transaction = staged.transaction
+    record_native_pending(store.directory, transaction.descriptor_path)
+    started: list[object] = []
+
+    monkeypatch.setattr(
+        "hanly_app.app_update_runner.native_helper_is_running", lambda _path: True
+    )
+    monkeypatch.setattr(
+        "hanly_app.app_update_runner.start_native_helper",
+        lambda *args, **kwargs: started.append((args, kwargs)),
+    )
+
+    settled = settle_native_update(store)
+
+    assert settled is not None
+    assert settled.detail == "An update is being applied."
+    assert started == []
+    assert transaction.directory.exists()
 
 
 def test_the_answer_and_the_expected_bytes_are_compared_as_bytes(

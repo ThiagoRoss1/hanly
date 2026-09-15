@@ -729,6 +729,18 @@ def await_native_claim(
     raise HandoffError("the update helper did not start; nothing has been changed")
 
 
+def native_helper_is_running(lock_path: Path) -> bool:
+    """Whether a POSIX helper currently owns this installation's update lock.
+
+    The candidate launched by that helper enters normal startup before it
+    writes its acknowledgement. Settlement must leave the live owner alone;
+    starting a recovery helper in that window creates a second contender for
+    the same transaction and reports an interruption that did not happen.
+    """
+
+    return not _lock_is_free(lock_path)
+
+
 def read_native_result(path: Path) -> tuple[str, str] | None:
     """What the helper settled on, if it has settled on anything yet."""
 
@@ -839,6 +851,7 @@ __all__ = [
     "native_pending",
     "install_native_helper",
     "launch_mode",
+    "native_helper_is_running",
     "read_descriptor",
     "read_native_result",
     "record_native_pending",

@@ -763,6 +763,17 @@ static int recover_update(const struct descriptor *plan)
         return EXIT_FAILED;
     }
     if (installed && backed_up) {
+        /* The candidate may have acknowledged successfully just before this
+         * helper died while persisting the result.  Its exact inode and exact
+         * transaction-bound answer are enough to retain it; rolling it back
+         * here would turn a diagnostic-write failure into a product rollback. */
+        if (identity_matches(plan->fields[FIELD_INSTALL],
+                             field_number(plan, FIELD_CANDIDATE_DEVICE),
+                             field_number(plan, FIELD_CANDIDATE_INODE)) &&
+            acknowledgement_matches(plan)) {
+            write_result(plan, RESULT_COMMITTED, "the new version started");
+            return EXIT_OK;
+        }
         return roll_back(plan, "an interrupted update was undone");
     }
 
