@@ -173,7 +173,11 @@ def test_the_packaged_gate_cannot_pass_by_skipping_itself() -> None:
     step = _step(_workflow("build.yml"), "build", step_id="packaged_tests")
 
     assert step["env"]["HANLY_REQUIRE_PACKAGED"] == "1"
-    assert step["env"]["HANLY_PACKAGED_APP"] == "${{ env.SMOKE_APP }}"
+    # Read from the shell rather than the workflow env context: the resolve
+    # step wrote it through $GITHUB_ENV, which a static check of the file
+    # cannot see declared, and warns about.
+    assert 'export HANLY_PACKAGED_APP="$SMOKE_APP"' in _shell_code(step["run"])
+    assert "HANLY_PACKAGED_APP" not in step["env"]
     assert "xvfb-run" in step["run"], "the frozen window needs a display on Linux"
 
 
@@ -613,9 +617,9 @@ def test_build_context_values_are_env_backed_in_shell_commands() -> None:
     "name", ["release.yml", "build.yml"]
 )
 def test_release_lane_actions_are_pinned_to_immutable_commits(name: str) -> None:
-    """A floating major tag is mutable and its owner can move it. These three
-    workflows build and publish what users download, so each action they run is
-    pinned to a commit, with the release it belongs to named beside it."""
+    """A floating major tag is mutable and its owner can move it. These are the
+    workflows that build and publish what users download, so each action they
+    run is pinned to a commit, with the release it belongs to named beside it."""
 
     text = (WORKFLOWS / name).read_text(encoding="utf-8")
     references = re.findall(r"uses:\s*(\S+)(.*)", text)

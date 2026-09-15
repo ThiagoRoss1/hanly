@@ -1,10 +1,9 @@
 name: CI
 
-# Two owners, deliberately separated. `quality` proves the portable contracts
-# across every supported Python on a machine with none of the desktop runtime;
-# the `native` jobs prove the real Qt, child-process, and OS-adapter behavior
-# on the three platforms that can actually run it. `build.yml` owns the frozen
-# product and no longer repeats either of these.
+# `quality` proves the portable contracts on every supported Python with none
+# of the desktop runtime installed; `native` proves the real Qt, child-process
+# and OS-adapter behavior on the three platforms that can run it. The frozen
+# product is `build.yml`'s, and neither of these is repeated there.
 on:
   push:
   pull_request:
@@ -71,8 +70,8 @@ jobs:
         with:
           node-version: "22"
 
-      # The same libraries Qt's xcb plugin is linked against, plus the display
-      # the real windows open in. A hosted Linux runner has neither.
+      # What Qt's xcb plugin is linked against, plus the display the real
+      # windows open in. A hosted Linux runner has neither.
       - name: Install Linux desktop dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -100,9 +99,8 @@ jobs:
           python -m pip install --editable packages/hanly
           python -m pip install --editable "packages/hanly-app[runtime]"
 
-      # The real lookup child reads both. Neither is in the repository: the
-      # weights are fetched and verified, and the dictionary is built here so
-      # the run never reaches the public release channel for one.
+      # The real lookup child reads both, and neither is in the repository.
+      # Building the dictionary here keeps the run off the release channel.
       - name: Prepare the EasyOCR weights
         run: python tools/prepare_easyocr_models.py
 

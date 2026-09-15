@@ -329,6 +329,9 @@ def test_the_rusage_fallback_reads_this_platform_s_own_maxrss_unit() -> None:
     assert probes._MAXRSS_BYTES_PER_UNIT == expected
 
 
+@pytest.mark.skipif(
+    probes._resource is None, reason="the rusage fallback needs the POSIX resource module"
+)
 def test_the_fallback_sample_is_a_believable_resident_size() -> None:
     """Whatever the unit, the answer has to be this process's own memory."""
 
@@ -338,3 +341,15 @@ def test_the_fallback_sample_is_a_believable_resident_size() -> None:
 
     assert rss is not None
     assert 1 << 20 < rss < 8 * (1 << 30), rss
+
+
+def test_a_host_without_the_resource_module_reports_no_size_rather_than_zero() -> None:
+    """Windows has no ``getrusage``, and a fabricated zero would read as a
+    measurement of a process that used no memory."""
+
+    sampler = ProcessSampler(io.StringIO(), process=None)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(probes, "_resource", None)
+
+        assert sampler._read_sample(None) == (None, None)

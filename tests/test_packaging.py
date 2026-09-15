@@ -377,11 +377,11 @@ def test_the_worker_check_is_the_one_that_runs_without_a_display(
     monkeypatch.delenv(QT_PLATFORM_VARIABLE, raising=False)
     launched: dict[str, str] = {}
 
-    def run(*args: object, **kwargs: object) -> SimpleNamespace:
+    def popen(*args: object, **kwargs: object) -> SimpleNamespace:
         launched.update(cast("dict[str, str]", kwargs["env"]))
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(pid=0, wait=lambda timeout=None: 0)
 
-    monkeypatch.setattr(smoke_packaged_runtime.subprocess, "run", run)
+    monkeypatch.setattr(smoke_packaged_runtime.subprocess, "Popen", popen)
 
     run_packaged_self_check(tmp_path / "hanly-desktop", mode=mode)
 
@@ -1121,6 +1121,25 @@ def test_a_hanging_run_names_its_stage_and_the_deadline(tmp_path: Path) -> None:
     assert failure == "current_stage: main window; exit: did not exit before the deadline"
 
 
+def test_a_timed_out_run_takes_the_processes_it_started_with_it(tmp_path: Path) -> None:
+    """Killing only the launched process leaves its children holding the run's
+    own output files, so the working directory cannot be removed and an
+    abandoned bundle keeps running. The frozen desktop always has children, and
+    on Windows the launcher itself is one more."""
+
+    profile = tmp_path / "profile"
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _HANGING_PROGRAM),
+        profile=profile,
+        timeout=5,
+    )
+
+    assert report["exit_timeout"] is True
+    # Deleting the file is the assertion: a surviving child still holds the
+    # handle it inherited, and Windows refuses the unlink while it does.
+    (profile / "work" / "self-check.err").unlink()
+
+
 def test_a_crash_before_any_marker_stays_explicitly_unknown() -> None:
     """Naming the last stage that passed would invent a diagnosis."""
 
@@ -1164,6 +1183,15 @@ def test_marker_lines_are_kept_out_of_the_reported_output_tail() -> None:
     tail = smoke_packaged_runtime._output_tail({"stderr": stderr})
 
     assert tail == "Fatal Python error: Aborted"
+
+
+def test_both_sides_of_the_marker_seam_agree_on_what_a_marker_looks_like() -> None:
+    """The harness deliberately does not import the package it checks, so the
+    two copies of these constants are held apart by nothing but this. Renaming
+    one side would cost every crashed run its stage without failing a test."""
+
+    for name in ("STAGE_MARKER_PREFIX", "STAGE_STARTED", "STAGE_COMPLETED"):
+        assert getattr(smoke_packaged_runtime, name) == getattr(self_check, name), name
 
 
 def test_the_self_check_flushes_a_start_marker_before_the_work_it_names() -> None:

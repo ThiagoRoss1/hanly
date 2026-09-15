@@ -1,8 +1,7 @@
 name: Build Desktop Artifacts
 
-# Each job installs the full desktop runtime and freezes a multi-gigabyte
-# onedir package, so artifact production is deliberate rather than automatic.
-# Correctness on every push stays with the ci.yml Python matrix.
+# Freezing a multi-gigabyte onedir package is deliberate, never automatic.
+# Correctness on every push stays with the ci.yml matrix.
 on:
   workflow_dispatch:
   push:
@@ -19,9 +18,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One entry per platform. Declaring `platform` and `runner` under
-        # `include` alongside a separate matrix vector would collapse every
-        # entry into a single job instead of expanding to three.
+        # A matrix vector declared beside `include` would collapse these
+        # three entries into a single job.
         include:
           - platform: windows
             runner: windows-latest
@@ -47,9 +45,8 @@ jobs:
         with:
           node-version: "22"
 
-      # Written before the first install, so a run that dies later still says
-      # which machine it died on. The crash this exists for is a native library
-      # meeting a CPU that does not implement what it was compiled to use.
+      # Written before the first install, so a run that dies later still names
+      # the machine it died on.
       - name: Record the host fingerprint
         shell: bash
         run: >
@@ -84,8 +81,8 @@ jobs:
           python -m pip install --editable packages/hanly
           python -m pip install --editable "packages/hanly-app[runtime]" -c packaging/release-constraints.txt
 
-      # Torch is probed only once it exists, and in a child of its own: the
-      # import is one of the things that ends a packaging run outright.
+      # In a child of its own: importing Torch is one of the things that ends
+      # a packaging run outright.
       - name: Record what the installed runtime reports
         shell: bash
         run: >
@@ -94,15 +91,14 @@ jobs:
           --with-torch
           --output "dist/reports/hanly-host-runtime-${{ matrix.platform }}.json"
 
-      # What every product of this run has to report for itself afterwards.
-      # A bundle that works and cannot name the source that produced it is not
-      # release evidence, however green the rest of the job is.
+      # What every product of this run has to report for itself afterwards: a
+      # bundle that cannot name its source is not release evidence.
       - name: Resolve the product version this build must carry
         shell: bash
         run: echo "SOURCE_VERSION=$(python tools/release_version.py)" >> "$GITHUB_ENV"
 
-      # A tag push is the release identity, so the tag and the product
-      # version must agree before any artifact is produced under that name.
+      # The tag is the release identity, so it must agree with the product
+      # version before any artifact is produced under that name.
       - name: Verify the tag matches the product version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -124,9 +120,8 @@ jobs:
           PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR: "1"
         run: python tools/build_package.py --platform ${{ matrix.platform }}
 
-      # Every check below states the product it actually needs. A failed worker
-      # smoke used to skip the window smoke, the archive checks, and the whole
-      # diagnostic upload, so one failure produced one line of evidence.
+      # Every check below states the product it actually needs, so one failed
+      # smoke cannot skip the rest and leave a red run with no evidence.
       - name: Resolve the frozen application to smoke
         id: resolve
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -147,8 +142,8 @@ jobs:
             echo "SMOKE_APP=dist/$RUNNER_PLATFORM/hanly-desktop" >> "$GITHUB_ENV"
           fi
 
-      # The disk image is its own published product, made from the same build
-      # as the ZIP. A ZIP that will not reconstruct says nothing about it.
+      # Its own published product: a ZIP that will not reconstruct says
+      # nothing about the disk image beside it.
       - name: Inspect the published disk image
         id: disk_image
         if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.platform == 'macos' }}
@@ -176,9 +171,8 @@ jobs:
         shell: bash
         run: python tools/build_smoke_krdict.py "$RUNNER_TEMP/hanly-smoke-krdict/krdict.sqlite3"
 
-      # Both streams are captured to files rather than piped: a harness that
-      # dies before printing its report leaves the reason on stderr, and a
-      # failed step whose evidence lives only in the log cannot be uploaded.
+      # Captured to files rather than piped: evidence that lives only in the
+      # step log cannot be uploaded when the harness dies before reporting.
       - name: Smoke the frozen lookup runtime
         id: worker_smoke
         if: >-
@@ -223,8 +217,7 @@ jobs:
           tail -c 200000 "$report.err" >&2
           exit "$status"
 
-      # The gate as a test, against the bundle this job just froze. Nothing
-      # here may skip: the artifact it needs is the thing being produced.
+      # Nothing here may skip: the artifact it needs is the one being produced.
       - name: Run the packaged tests
         id: packaged_tests
         if: >-
@@ -234,11 +227,14 @@ jobs:
         env:
           RUNNER_PLATFORM: ${{ matrix.platform }}
           HANLY_REQUIRE_PACKAGED: "1"
-          HANLY_PACKAGED_APP: ${{ env.SMOKE_APP }}
         run: |
           set -euo pipefail
           display=""
           if [ "$RUNNER_PLATFORM" = "linux" ]; then display="xvfb-run -a"; fi
+          # Read as a shell variable rather than through the workflow env
+          # context: the resolve step wrote it via $GITHUB_ENV, where no
+          # static check of this file can see it declared.
+          export HANLY_PACKAGED_APP="$SMOKE_APP"
           $display python -m pytest --suite packaged
 
       - name: Verify the release archive exists
@@ -317,8 +313,8 @@ jobs:
           )
           PY
 
-      # Never a release product: this is what a failed run leaves behind, and
-      # it has to survive the failure that produced it.
+      # Never a release product: what a failed run leaves behind has to
+      # survive the failure that produced it.
       - name: Retain build diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -331,8 +327,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # Only the archive is retained. The uncompressed onedir tree beside it is
-      # the same payload again, and PyInstaller's work cache is not releasable.
+      # Only the archive: the onedir tree beside it is the same payload again,
+      # and PyInstaller's work cache is not releasable.
       - name: Retain platform artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

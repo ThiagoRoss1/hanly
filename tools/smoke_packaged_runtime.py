@@ -88,6 +88,10 @@ DEFAULT_TIMEOUT_SECONDS = 1200
 #: timeouts here before the same check ran in under a second warm.
 UI_TIMEOUT_SECONDS = 600
 
+#: How long the timed-out process tree is given to actually die. Reaping has
+#: already failed by this point, so this bounds the cleanup rather than the run.
+TREE_KILL_SECONDS = 30
+
 #: Where EasyOCR looks for its recognition models, in the order it asks. All
 #: of them are redirected into the temporary profile, so a developer cache can
 #: never be what makes a frozen run succeed.
@@ -244,21 +248,18 @@ def run_packaged_self_check(
         status: int | None = None
         timed_out = False
         with output.open("w", encoding="utf-8") as out, errors.open("w", encoding="utf-8") as err:
+            child = subprocess.Popen(
+                command, stdout=out, stderr=err, env=environment, cwd=working_directory
+            )
             try:
-                status = subprocess.run(
-                    command,
-                    stdout=out,
-                    stderr=err,
-                    timeout=timeout,
-                    env=environment,
-                    cwd=working_directory,
-                ).returncode
+                status = child.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 # The report is written before the process winds Qt down, so a
                 # run that stops exiting still says whether the check itself
                 # passed. Reporting both keeps "the window is broken" separate
                 # from "the window worked and the process did not leave".
                 timed_out = True
+                _terminate_tree(child)
         stdout = output.read_text(encoding="utf-8", errors="replace")
         stderr = errors.read_text(encoding="utf-8", errors="replace")
 
@@ -271,6 +272,35 @@ def run_packaged_self_check(
     report["progress"] = read_progress(stderr)
     report["stderr"] = stderr[-4000:]
     return report
+
+
+def _terminate_tree(child: subprocess.Popen[bytes]) -> None:
+    """Kill the timed-out process and everything it started.
+
+    Killing only the process that was launched leaves its children holding the
+    inherited output files, so the run's own working directory cannot be
+    removed and an abandoned bundle keeps running. The frozen desktop spawns
+    both the lookup child and Qt WebEngine's helpers, and on Windows the
+    launcher itself is a further process.
+    """
+
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(child.pid)],
+                capture_output=True,
+                timeout=TREE_KILL_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            child.kill()
+    else:
+        child.kill()
+
+    try:
+        child.wait(timeout=TREE_KILL_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def read_progress(stderr: str) -> dict[str, object]:
@@ -433,7 +463,12 @@ class _ProfileContext:
 
     def __enter__(self) -> tuple[dict[str, str], Path]:
         if self._profile is None:
-            self._temporary = tempfile.TemporaryDirectory(prefix="hanly-smoke-")
+            # Errors ignored: a bundle that had to be killed can leave a handle
+            # open on Windows, and losing a temporary directory must not be
+            # what destroys the report explaining why it was killed.
+            self._temporary = tempfile.TemporaryDirectory(
+                prefix="hanly-smoke-", ignore_cleanup_errors=True
+            )
             root = Path(self._temporary.name)
         else:
             root = self._profile
@@ -990,6 +1025,7 @@ __all__ = [
     "STAGE_COMPLETED",
     "STAGE_MARKER_PREFIX",
     "STAGE_STARTED",
+    "TREE_KILL_SECONDS",
     "UI_TIMEOUT_SECONDS",
     "WINDOWS_FATAL_STATUS",
     "BundleInventory",

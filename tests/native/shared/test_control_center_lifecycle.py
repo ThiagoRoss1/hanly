@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -94,8 +95,11 @@ def descendants():
             owned.append(child)
             frontier.append(child)
     ignored = ("resource_tracker", "ps -axo")
+    # Each survivor is named, not counted. "[3192]" cannot say whether a
+    # Chromium helper outlived the window process or the window process itself
+    # is still winding down, and those are different defects.
     return [
-        pid
+        {"pid": pid, "command": commands.get(pid, "")}
         for pid in owned
         if not any(marker in commands.get(pid, "") for marker in ignored)
     ]
@@ -234,6 +238,32 @@ def _require_a_desktop() -> None:
     require_display()
 
 
+def _assert_nothing_survived(report: dict[str, Any], field: str) -> None:
+    """Fail naming the surviving processes, and what the manager said it did.
+
+    A bare pid identifies nothing. Whether a Chromium helper outlived the
+    window process or the window process was killed before it could retire one
+    is the whole difference between the two defects this can be.
+    """
+
+    survivors = report[field]
+    if not survivors:
+        return
+
+    named = [f"  pid {entry['pid']}: {entry['command']}" for entry in survivors]
+    reported = [f"  {note}" for note in report["diagnostics"]] or ["  (none)"]
+    raise AssertionError(
+        "\n".join(
+            [
+                f"{field} still holds {len(survivors)} process(es):",
+                *named,
+                "what the manager reported:",
+                *reported,
+            ]
+        )
+    )
+
+
 def _require_inspection(report: dict[str, object]) -> None:
     """A host that will not say what is running has proved no retirement.
 
@@ -286,8 +316,8 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     # The window and its Chromium helpers are real processes: a manager that
     # says they are gone while they are still running is the leak.
     assert report["descendants_while_open"], "the window process was never owned"
-    assert report["descendants_after_close"] == []
-    assert report["descendants_after_shutdown"] == []
+    _assert_nothing_survived(report, "descendants_after_close")
+    _assert_nothing_survived(report, "descendants_after_shutdown")
 
     assert report["heavy_modules_in_the_shell"] == []
     recorded = "\n".join(report["diagnostics"]) + child.stderr

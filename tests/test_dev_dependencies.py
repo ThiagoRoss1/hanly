@@ -36,7 +36,6 @@ _IMPORT_NAMES = {
     "pillow": "PIL",
     "pyyaml": "yaml",
     "pywebview": "webview",
-    "hanly": "hanly",
 }
 
 #: Installed by the runtime extra as transitive dependencies, and imported by
@@ -212,18 +211,17 @@ def _needs_the_runtime(path: Path) -> bool:
     return any(suite == path or suite in path.parents for suite in RUNTIME_SUITES)
 
 
-def test_a_portable_module_may_not_reach_the_desktop_runtime() -> None:
+def test_the_dev_group_does_not_quietly_carry_the_desktop_runtime() -> None:
     """This is the rule the portable matrix exists to keep: four Python
-    versions on a machine with no Qt, no Torch, and no display."""
+    versions on a machine with no Qt, no Torch, and no display. What each
+    module may reach is asserted above; this is what the group itself installs.
+    """
 
     declared = _declared_modules()
 
     assert "PyQt6" not in declared
     assert "torch" not in declared
-    for path in _test_modules():
-        if _needs_the_runtime(path):
-            continue
-        assert not _undeclared_modules(path.read_text(encoding="utf-8"), declared)
+    assert "webview" not in declared
 
 
 def test_an_importorskip_below_an_import_does_not_excuse_it() -> None:

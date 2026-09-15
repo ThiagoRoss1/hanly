@@ -263,10 +263,14 @@ def prepare_handoff(
     )
 
 
-#: Ten minutes is the right bound for a frozen build on a cold start and the
-#: wrong one for a test, so the two waits are shortened in the copy that runs
-#: here. Their presence in the shipped body is asserted by the portable suite.
 def _script(tmp_path: Path, *, executable: str, platform: str) -> Path:
+    """Render the shipped script, with only its two waits shortened.
+
+    Ten minutes is the right bound for a frozen build on a cold start and the
+    wrong one for a test. That the shipped body carries them is asserted by the
+    portable suite instead.
+    """
+
     body = render_handoff_script(executable=executable, platform=platform)
     for bound in (EXIT_WAIT_SECONDS, READY_WAIT_SECONDS):
         assert body.count(str(bound)) == 1, body
@@ -290,10 +294,8 @@ def run_handoff(handoff: Handoff, *, expect_status: int) -> Handoff:
         if handoff.script.suffix == ".ps1"
         else ["/bin/sh"]
     )
-    arguments = handoff_arguments(handoff.transaction)
-    arguments[0] = _dead_pid()
     finished = subprocess.run(
-        [*launcher, str(handoff.script), *arguments],
+        [*launcher, str(handoff.script), *with_dead_pid(handoff)],
         check=False,
         capture_output=True,
         timeout=180,
@@ -374,12 +376,12 @@ def assert_identity(handoff: Handoff, expected: str) -> None:
 
 
 __all__ = [
+    "COMPILER",
     "HANDOFF_VARIANTS",
     "LAUNCH_WAIT_SECONDS",
     "MACOS_PROGRAM",
     "NEW_VERSION",
     "PROBE_SOURCE",
-    "COMPILER",
     "PROGRAM_SUFFIX",
     "Handoff",
     "assert_identity",

@@ -320,7 +320,7 @@ def _emit_marker(event: str, name: str, **fields: object) -> None:
     except (OSError, ValueError):
         # A frozen Windows build can be launched with no usable stderr at all;
         # losing progress evidence must not lose the check itself.
-        return
+        pass
 
 
 def _collected_versions() -> dict[str, str]:

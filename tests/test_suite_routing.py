@@ -128,19 +128,23 @@ def test_the_packaged_suite_is_only_the_frozen_product(tmp_path: Path) -> None:
     assert all(node.startswith("tests/packaged/") for node in report["collected"])
 
 
-def test_another_platform_s_adapters_are_never_imported_on_this_host() -> None:
+def test_another_platform_s_adapters_are_never_collected_on_this_host(
+    tmp_path: Path,
+) -> None:
     """A marker cannot do this: deselection happens after the import, and these
     modules import the adapter of an operating system that is not here."""
 
     foreign = [
-        directory
+        directory.name
         for directory in NATIVE_ROOT.iterdir()
         if directory.is_dir() and directory.name not in ("shared", _host_directory(), "__pycache__")
     ]
-
     assert foreign, "no other platform's directory to check against"
-    for directory in foreign:
-        assert list(directory.glob("test_*.py")), f"{directory.name} holds no cases"
+
+    collected = _collect(tmp_path, "native")["collected"]
+
+    for name in foreign:
+        assert not any(node.startswith(f"tests/native/{name}/") for node in collected), name
 
 
 def test_every_native_directory_that_exists_holds_cases() -> None:

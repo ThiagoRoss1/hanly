@@ -23,8 +23,6 @@ class ProcessInspectionUnavailable(RuntimeError):
 
 
 def process_rows():
-    import json
-    import subprocess
     import sys
 
     if sys.platform != "win32":

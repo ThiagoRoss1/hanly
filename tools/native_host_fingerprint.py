@@ -61,7 +61,7 @@ else:
     ):
         try:
             report[name] = accessor()
-        except BaseException as error:
+        except BaseException:
             report[name] = None
 print(json.dumps(report))
 """
@@ -214,10 +214,11 @@ def linux_facts(read: TextReader) -> tuple[Facts, Facts]:
 def windows_facts(run: TextRunner) -> tuple[Facts, Facts]:
     """Read one CIM query covering both the operating system and the CPU."""
 
+    records: dict[str, dict[str, object]] | None = None
+    reason = ""
     try:
         records = _windows_records(run)
     except ProbeError as error:
-        records = None
         reason = str(error)
 
     def field_of(group: str, name: str) -> Callable[[], object]:
