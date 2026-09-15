@@ -117,6 +117,7 @@ MACOS = Product(
         "Contents/Info.plist": info_plist("0.0.0"),
         "Contents/MacOS": None,
         "Contents/MacOS/hanly-desktop": b"mac program",
+        "Contents/MacOS/hanly-update-posix": b"the native update helper",
         "Contents/Frameworks": None,
         "Contents/Frameworks/Qt.framework": None,
         "Contents/Frameworks/Qt.framework/Versions": None,
@@ -136,6 +137,7 @@ LINUX = Product(
     executable="hanly-desktop",
     files={
         "hanly-desktop": b"linux program",
+        "hanly-update-posix": b"the native update helper",
         "_internal": None,
         "_internal/libpython.so.1.0": b"interpreter",
         "_internal/libpython.so": Link("libpython.so.1.0"),
@@ -145,7 +147,7 @@ LINUX = Product(
 PRODUCTS = {product.platform: product for product in (WINDOWS, MACOS, LINUX)}
 
 #: Which entries a build marks executable. Everything else keeps 0o644.
-_EXECUTABLE_SUFFIXES = ("hanly-desktop", "hanly-desktop.exe", "/Qt")
+_EXECUTABLE_SUFFIXES = ("hanly-desktop", "hanly-desktop.exe", "hanly-update-posix", "/Qt")
 
 
 def write_tree(

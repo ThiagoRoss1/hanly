@@ -1,5 +1,9 @@
 """What the update handoff script says, before any shell is asked to run it.
 
+Schema 2 adds the descriptor the native POSIX helper reads instead of a
+script. It is a fixed binary record, so its round trip and its refusals are
+checked here; running the real helper against it is native behavior.
+
 These are the decisions the renderer makes -- which program each platform
 relaunches, how the previous build outlives the swap, which waits are bounded,
 how paths travel -- and every one of them is checked by reading the rendered
@@ -16,13 +20,26 @@ from pathlib import Path
 import pytest
 from hanly_app.app_update import APPLICATION_STEM
 from hanly_app.app_update_handoff import (
+    DESCRIPTOR_MAGIC,
     EXIT_WAIT_SECONDS,
+    LAUNCH_EXEC,
+    MAX_FIELD_BYTES,
     READY_ARGUMENT,
     READY_WAIT_SECONDS,
+    HandoffError,
+    NativeTransaction,
     _write_handoff_script,
+    await_native_claim,
+    clear_native_pending,
     handoff_arguments,
+    install_native_helper,
+    native_pending,
+    read_descriptor,
+    read_native_result,
+    record_native_pending,
     render_handoff_script,
     start_handoff,
+    write_descriptor,
 )
 
 from tests.hanly_fixtures.update_handoff import (
@@ -218,3 +235,133 @@ def test_the_script_is_written_outside_the_directory_it_removes(tmp_path: Path) 
     assert transaction.directory not in script.parents
     assert directory == script.parent
     assert command[-7:] == handoff_arguments(transaction)
+
+
+# --------------------------------------------------------------------------
+# Schema 2: the descriptor the native helper reads
+# --------------------------------------------------------------------------
+
+
+def _native(tmp_path: Path, **overrides: object) -> NativeTransaction:
+    values: dict[str, object] = {
+        "transaction_id": "t1",
+        "lock_path": tmp_path / "state" / "native-lock",
+        "install_path": tmp_path / "apps" / "hanly-desktop",
+        "staging_path": tmp_path / "apps" / ".hanly-update-t1",
+        "candidate_path": tmp_path / "apps" / ".hanly-update-t1" / "candidate",
+        "backup_path": tmp_path / "apps" / ".hanly-update-t1" / "previous",
+        "rejected_path": tmp_path / "apps" / ".hanly-update-t1" / "rejected",
+        "result_path": tmp_path / "apps" / ".hanly-update-t1" / "result",
+        "ack_path": tmp_path / "state" / "challenge-t1.ack",
+        "challenge_path": tmp_path / "state" / "challenge-t1.json",
+        "expected": "HANLY-READY-2\nt1\ndeadbeef\n",
+        "executable": "hanly-desktop",
+        "launch": LAUNCH_EXEC,
+        "parent_pid": 4321,
+        "exit_timeout": 120,
+        "ready_timeout": 600,
+        "install_device": 16777232,
+        "install_inode": 991122,
+        "candidate_device": 16777232,
+        "candidate_inode": 991123,
+    }
+    values.update(overrides)
+    return NativeTransaction(**values)  # type: ignore[arg-type]
+
+
+def test_a_descriptor_round_trips_through_the_bytes_the_helper_reads(
+    tmp_path: Path,
+) -> None:
+    transaction = _native(tmp_path)
+
+    payload = transaction.to_bytes()
+
+    assert payload.startswith(DESCRIPTOR_MAGIC)
+    assert NativeTransaction.from_bytes(payload) == transaction
+
+
+def test_a_descriptor_that_is_not_exactly_this_format_is_refused(tmp_path: Path) -> None:
+    payload = _native(tmp_path).to_bytes()
+
+    for mutation, expected in (
+        (payload[:-1], "ends inside a field"),
+        (payload + b"extra", "trailing data"),
+        (b"OTHERPKG" + payload[8:], "not one of ours"),
+        (payload[:8] + (9).to_bytes(4, "big") + payload[12:], "different Hanly"),
+    ):
+        with pytest.raises(HandoffError, match=expected):
+            NativeTransaction.from_bytes(mutation)
+
+
+def test_a_field_too_long_for_the_helper_is_refused_before_it_is_written(
+    tmp_path: Path,
+) -> None:
+    transaction = _native(tmp_path, executable="x" * (MAX_FIELD_BYTES + 1))
+
+    with pytest.raises(HandoffError, match="longer than an update descriptor carries"):
+        transaction.to_bytes()
+
+
+def test_a_descriptor_is_written_privately_and_read_back(tmp_path: Path) -> None:
+    transaction = _native(tmp_path)
+    path = tmp_path / "descriptor"
+
+    write_descriptor(path, transaction)
+
+    assert read_descriptor(path) == transaction
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_the_helper_is_copied_outside_the_installation_and_proved(tmp_path: Path) -> None:
+    source = tmp_path / "install" / "hanly-update-posix"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"a native program")
+
+    copy = install_native_helper(source, tmp_path / "state" / "hanly-update-posix")
+
+    assert copy.read_bytes() == b"a native program"
+    assert copy.stat().st_mode & 0o777 == 0o700
+    assert copy.parent != source.parent
+
+
+def test_the_pointer_a_recovery_run_follows_survives_the_installation(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    descriptor = tmp_path / "apps" / ".hanly-update-t1" / "descriptor"
+
+    record_native_pending(state, descriptor)
+
+    assert native_pending(state) == descriptor
+    clear_native_pending(state)
+    assert native_pending(state) is None
+
+
+def test_a_result_the_helper_never_wrote_reads_as_no_result(tmp_path: Path) -> None:
+    result = tmp_path / "result"
+
+    assert read_native_result(result) is None
+
+    result.write_text("something else\n", encoding="utf-8")
+    assert read_native_result(result) is None
+
+    result.write_text("committed\nHanly 0.5.3 started.\n", encoding="utf-8")
+    assert read_native_result(result) == ("committed", "Hanly 0.5.3 started.")
+
+
+@pytest.mark.skipif(sys.platform.startswith("win32"), reason="POSIX advisory locking")
+def test_the_shell_waits_until_the_helper_genuinely_holds_the_lock(
+    tmp_path: Path,
+) -> None:
+    import fcntl
+
+    lock = tmp_path / "native-lock"
+    handle = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        await_native_claim(lock, timeout=1.0)
+    finally:
+        os.close(handle)
+
+    with pytest.raises(HandoffError, match="did not start"):
+        await_native_claim(lock, timeout=0.5)

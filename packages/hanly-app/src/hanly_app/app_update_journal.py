@@ -393,8 +393,11 @@ class InstallLock:
     because of it would make a crash permanent.
     """
 
-    def __init__(self, install_root: Path) -> None:
-        self._path = working_root(install_root) / LOCK_NAME
+    def __init__(self, install_root: Path, *, directory: Path | None = None) -> None:
+        # POSIX never writes inside an installation, so its lock lives in the
+        # per-user update directory instead of in the tree being replaced.
+        root = working_root(install_root) if directory is None else Path(directory)
+        self._path = root / LOCK_NAME
         self._held = False
 
     @property

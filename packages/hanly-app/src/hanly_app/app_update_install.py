@@ -69,6 +69,16 @@ from .app_manifest import (
     parse_checksums,
     require_safe_relative_path,
 )
+from .app_update_handoff import (
+    EXIT_WAIT_SECONDS,
+    NATIVE_HELPER_NAME,
+    READY_WAIT_SECONDS,
+    HandoffError,
+    NativeTransaction,
+    install_native_helper,
+    launch_mode,
+    write_descriptor,
+)
 from .app_update_journal import (
     RECORD_POSIX_TREE,
     RECORD_WINDOWS_FILES,
@@ -77,6 +87,7 @@ from .app_update_journal import (
     TransactionPlan,
     UpdateChallenge,
     UpdateJournal,
+    acknowledgement_path,
     new_challenge,
     operations_for,
     tree_operations_for,
@@ -1387,9 +1398,37 @@ def _payload_members(
 #: swap that follows is a rename on one filesystem.
 TRANSACTION_PREFIX = ".hanly-update-"
 
+#: What the native helper reads, writes, and locks. All three live where the
+#: installation's absence cannot reach them.
+NATIVE_DESCRIPTOR_NAME = "descriptor"
+NATIVE_RESULT_NAME = "result"
+NATIVE_LOCK_NAME = "native-lock"
+
 #: A macOS install that lives here is a copy the system made to run it from a
 #: quarantined location. Replacing that copy would change nothing a user sees.
 _TRANSLOCATED = "/AppTranslocation/"
+
+
+def native_helper_entry(manifest: TreeManifest) -> str | None:
+    """Where one build keeps its update helper, as that build's manifest says.
+
+    Read rather than assumed: a freezer decides where a collected binary lands,
+    and that has changed between its own versions. A build describing two of
+    them describes something this updater did not produce.
+    """
+
+    found = [
+        entry.path
+        for entry in manifest.files
+        if entry.path.split("/")[-1] == NATIVE_HELPER_NAME
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _platform_launch(platform: str) -> str:
+    """The ``sys.platform`` value a manifest platform name corresponds to."""
+
+    return "darwin" if platform == PLATFORM_MACOS else "linux"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1400,6 +1439,9 @@ class StagedPosixTransaction:
     candidate: BuiltCandidate
     challenge: UpdateChallenge
     install_root: Path
+    descriptor_path: Path
+    helper_path: Path
+    lock_path: Path
 
     @property
     def previous_path(self) -> Path:
@@ -1506,12 +1548,86 @@ class PosixTreeStaging:
             self._install_root,
         )
         self._record(directory, prepared, challenge)
+        helper = self._verified_helper(prepared)
+        descriptor = self._descriptor(directory, prepared, challenge)
         return StagedPosixTransaction(
             directory=directory,
             candidate=candidate,
             challenge=challenge,
             install_root=self._install_root,
+            descriptor_path=descriptor,
+            helper_path=helper,
+            lock_path=self._store.directory / NATIVE_LOCK_NAME,
         )
+
+    def _verified_helper(self, prepared: PreparedTreeUpdate) -> Path:
+        """Keep a proved copy of the native helper outside the installation.
+
+        The installation is briefly absent between the two renames, so the
+        program doing the renaming cannot be inside it.
+        """
+
+        relative = native_helper_entry(prepared.base)
+        source = (
+            None if relative is None else self._install_root.joinpath(*relative.split("/"))
+        )
+        if source is None or source.is_symlink() or not source.is_file():
+            raise DifferentialUpdateError(
+                "this installation does not carry the update helper, so it cannot replace "
+                "itself. Install the new version by hand."
+            )
+        try:
+            return install_native_helper(source, self._store.directory / NATIVE_HELPER_NAME)
+        except HandoffError as error:
+            raise DifferentialUpdateError(str(error)) from error
+
+    def _descriptor(
+        self, directory: Path, prepared: PreparedTreeUpdate, challenge: UpdateChallenge
+    ) -> Path:
+        """Write the one input the native helper reads, and nothing else.
+
+        Device and inode numbers for both roots go in as well as their paths:
+        the helper checks them again before it moves anything, because a path
+        is exactly what can be made to point somewhere else in between.
+        """
+
+        candidate = directory / CANDIDATE_NAME
+        try:
+            install = os.stat(self._install_root)
+            staged = os.stat(candidate)
+        except OSError as error:
+            raise DifferentialUpdateError(
+                f"could not identify the installation: {error}"
+            ) from error
+
+        transaction = NativeTransaction(
+            transaction_id=challenge.transaction_id,
+            lock_path=self._store.directory / NATIVE_LOCK_NAME,
+            install_path=self._install_root,
+            staging_path=directory,
+            candidate_path=candidate,
+            backup_path=directory / PREVIOUS_NAME,
+            rejected_path=directory / REJECTED_NAME,
+            result_path=directory / NATIVE_RESULT_NAME,
+            ack_path=acknowledgement_path(
+                self._store.directory / f"challenge-{challenge.transaction_id}.json"
+            ),
+            challenge_path=self._store.directory / f"challenge-{challenge.transaction_id}.json",
+            expected=challenge.expected(),
+            executable=prepared.target.layout.executable,
+            launch=launch_mode(_platform_launch(self._platform)),
+            parent_pid=os.getpid(),
+            exit_timeout=EXIT_WAIT_SECONDS,
+            ready_timeout=READY_WAIT_SECONDS,
+            install_device=install.st_dev,
+            install_inode=install.st_ino,
+            candidate_device=staged.st_dev,
+            candidate_inode=staged.st_ino,
+        )
+        try:
+            return write_descriptor(directory / NATIVE_DESCRIPTOR_NAME, transaction)
+        except HandoffError as error:
+            raise DifferentialUpdateError(str(error)) from error
 
     def _reconstruct(
         self,
@@ -1664,6 +1780,9 @@ __all__ = [
     "PreparedUpdate",
     "ReleaseAssetRecord",
     "ReleaseSnapshot",
+    "NATIVE_DESCRIPTOR_NAME",
+    "NATIVE_LOCK_NAME",
+    "NATIVE_RESULT_NAME",
     "TRANSACTION_PREFIX",
     "PosixTreeStaging",
     "StagedPosixTransaction",

@@ -10,6 +10,7 @@ the packaged process receives its path through ``--runtime-config``.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,13 @@ BUNDLE_VOLUME_NAME = "Hanly"
 #: the built application.
 DITTO = "/usr/bin/ditto"
 HDIUTIL = "/usr/bin/hdiutil"
+
+#: The native updater, and how it is built. Warnings are errors: it runs when
+#: the application it is repairing cannot, so a compiler diagnostic in it is
+#: not something to notice later.
+NATIVE_HELPER_NAME = "hanly-update-posix"
+NATIVE_HELPER_SOURCE = Path("packaging") / "updater" / f"{NATIVE_HELPER_NAME}.c"
+NATIVE_HELPER_FLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-O2")
 
 CommandRunner = Callable[..., Any]
 
@@ -141,6 +149,12 @@ class PackageLayout:
         """
 
         return self.repo_root / "dist"
+
+    @property
+    def native_helper(self) -> Path:
+        """Where the POSIX update helper is compiled before the build runs."""
+
+        return self.repo_root / "dist" / ".native" / self.platform_name / NATIVE_HELPER_NAME
 
     @property
     def work_root(self) -> Path:
@@ -285,6 +299,33 @@ def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None
         raise PackagingError(f"{failure}: {detail.strip() or command[0]}")
 
 
+def build_native_helper(
+    repo_root: Path,
+    destination: Path,
+    *,
+    compiler: str | None = None,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Compile the POSIX update helper into a finished build.
+
+    It goes beside the executable so it is inside the macOS bundle before that
+    bundle is signed: a binary added afterwards would break the seal. Windows
+    has its own helper and needs none of this.
+    """
+
+    source = Path(repo_root) / NATIVE_HELPER_SOURCE
+    if not source.is_file():
+        raise PackagingError(f"the update helper source is missing: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _run_native(
+        runner,
+        [compiler or "cc", *NATIVE_HELPER_FLAGS, "-o", str(destination), str(source)],
+        "could not build the update helper",
+    )
+    destination.chmod(0o755)
+    return destination
+
+
 def product_version() -> str:
     """The version the build carries, read the way the application reads it."""
 
@@ -328,11 +369,24 @@ def run_build(
     command = build_command(
         layout, python_executable=python_executable, clean=clean, noconfirm=noconfirm
     )
-    completed = subprocess.run(command, cwd=layout.repo_root, check=False)
+    environment = dict(os.environ)
+    windows = layout.platform_name == "windows"
+    if not windows:
+        # Before PyInstaller, not after: macOS signs the bundle as it builds
+        # it, and a binary added to a sealed bundle is one that no longer
+        # verifies. Windows has its own helper and needs none of this.
+        try:
+            environment["HANLY_UPDATE_HELPER"] = str(
+                build_native_helper(layout.repo_root, layout.native_helper)
+            )
+        except (OSError, PackagingError) as error:
+            print(f"Hanly packaging: {error}", file=sys.stderr)
+            return 1
+
+    completed = subprocess.run(command, cwd=layout.repo_root, check=False, env=environment)
     if completed.returncode != 0:
         return completed.returncode
 
-    windows = layout.platform_name == "windows"
     try:
         if windows:
             # Before archiving: the inventory belongs inside the build, so a

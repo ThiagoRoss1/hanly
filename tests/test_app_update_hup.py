@@ -9,11 +9,16 @@ it is gets established rather than assumed.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from hanly_app.app_build_identity import ReceiptStore, receipt_for
+from hanly_app.app_inventory import read_tree
+from hanly_app.app_update_handoff import read_descriptor
 from hanly_app.app_update_install import (
     DifferentialUpdateError,
+    PosixTreeStaging,
+    StagedPosixTransaction,
     TreeUpdateInstaller,
     UnsupportedPlatform,
     UpdateBlocked,
@@ -29,9 +34,16 @@ from hanly_app.app_update_plan import (
     OWNERSHIP_RECEIPT,
     OwnershipUnknown,
 )
+from hanly_app.app_update_runner import TreeUpdateRunner
 
 from tests.hanly_fixtures.update_release import PublishedRelease, ReleaseChannel
-from tests.hanly_fixtures.update_tree import LINUX, SOURCE_COMMIT, WINDOWS, Product
+from tests.hanly_fixtures.update_tree import (
+    LINUX,
+    MACOS,
+    SOURCE_COMMIT,
+    WINDOWS,
+    Product,
+)
 
 TARGET_CHANGES = {
     "hanly-desktop.exe": b"windows program, revised",
@@ -374,3 +386,168 @@ def test_the_staged_receipt_is_adopted_only_by_the_build_that_was_installed(
         staged.transaction.challenge.expected(), staged.transaction.challenge
     )
     assert not acknowledgement_matches("0.5.3\n", staged.transaction.challenge)
+
+
+# --------------------------------------------------------------------------
+# macOS and Linux: staging a whole-tree swap
+# --------------------------------------------------------------------------
+
+
+def _posix(
+    tmp_path: Path, product: Product = LINUX, *, changes: dict[str, bytes] | None = None
+) -> tuple[PublishedRelease, PublishedRelease, ReleaseChannel, Path, ReceiptStore]:
+    base, target, channel = _published(
+        tmp_path, product, changes=changes if changes is not None else LINUX_CHANGES
+    )
+    install = base.install(tmp_path / "apps" / product.root)
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    return base, target, channel, install, store
+
+
+def _posix_installer(
+    base: PublishedRelease,
+    channel: ReleaseChannel,
+    install: Path,
+    store: ReceiptStore,
+    *,
+    platform: str = "linux",
+) -> TreeUpdateInstaller:
+    return TreeUpdateInstaller(
+        channel,
+        channel.release_source,
+        stamp=base.stamp,
+        install_root=install,
+        store=store,
+        strategy=PosixTreeStaging(
+            install_root=install,
+            platform=platform,
+            store=store,
+            source_commit=SOURCE_COMMIT,
+            runner=_accepting_runner,
+        ),
+        tagged_release_source=channel.tagged_release_source,
+    )
+
+
+def _accepting_runner(command: list[str], **_options: object) -> SimpleNamespace:
+    """macOS's own tools, standing still. The macOS lane runs the real ones."""
+
+    return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+
+def test_a_posix_update_leaves_a_proved_candidate_and_a_descriptor(tmp_path: Path) -> None:
+    base, target, channel, install, store = _posix(tmp_path)
+    installer = _posix_installer(base, channel, install, store)
+
+    staged = installer.stage(installer.prepare("0.5.3"))
+    transaction = staged.transaction
+
+    assert isinstance(transaction, StagedPosixTransaction)
+    assert transaction.candidate.root.is_dir()
+    assert transaction.candidate.reused_bytes > 0
+    descriptor = read_descriptor(transaction.descriptor_path)
+    assert descriptor.install_path == install
+    assert descriptor.candidate_path == transaction.candidate.root
+    assert descriptor.expected == transaction.challenge.expected()
+    assert descriptor.launch == "exec"
+
+
+def test_the_installation_is_untouched_until_the_helper_owns_the_transaction(
+    tmp_path: Path,
+) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    before = read_tree(install, "linux")
+    installer = _posix_installer(base, channel, install, store)
+
+    installer.stage(installer.prepare("0.5.3"))
+
+    assert read_tree(install, "linux").entries == before.entries
+
+
+def test_the_helper_is_kept_outside_the_installation_it_will_replace(
+    tmp_path: Path,
+) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    installer = _posix_installer(base, channel, install, store)
+
+    staged = installer.stage(installer.prepare("0.5.3"))
+    transaction = staged.transaction
+
+    assert isinstance(transaction, StagedPosixTransaction)
+    assert transaction.helper_path.parent == store.directory
+    assert transaction.helper_path.read_bytes() == (install / "hanly-update-posix").read_bytes()
+
+
+def test_an_installation_carrying_no_update_helper_says_so_rather_than_trying(
+    tmp_path: Path,
+) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    # The receipt still says what this installation is, so the update is
+    # planned; what is gone is the one program that could apply it.
+    (install / "hanly-update-posix").unlink()
+    installer = _posix_installer(base, channel, install, store)
+    prepared = installer.prepare("0.5.3")
+
+    with pytest.raises(DifferentialUpdateError, match="does not carry the update helper"):
+        installer.stage(prepared)
+
+
+def test_extra_files_are_carried_into_the_new_linux_installation(tmp_path: Path) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    (install / "my-notes.txt").write_bytes(b"mine")
+    installer = _posix_installer(base, channel, install, store)
+
+    staged = installer.stage(installer.prepare("0.5.3"))
+    transaction = staged.transaction
+
+    assert isinstance(transaction, StagedPosixTransaction)
+    assert transaction.candidate.preserved == ("my-notes.txt",)
+    assert (transaction.candidate.root / "my-notes.txt").read_bytes() == b"mine"
+
+
+def test_a_bundle_containing_something_hanly_did_not_install_is_not_updated(
+    tmp_path: Path,
+) -> None:
+    base, _target, channel, install, store = _posix(
+        tmp_path, MACOS, changes={"Contents/Info.plist": b"replaced later"}
+    )
+    (install / "Contents" / "mine.txt").write_bytes(b"mine")
+    installer = _posix_installer(base, channel, install, store, platform="macos")
+
+    with pytest.raises(UpdateBlocked, match="files Hanly did not install"):
+        installer.prepare("0.5.3")
+
+
+def test_hanly_running_from_a_translocated_copy_is_told_to_move_first(
+    tmp_path: Path,
+) -> None:
+    translocated = tmp_path / "private" / "AppTranslocation" / "abc"
+    translocated.mkdir(parents=True)
+    base, _target, channel = _published(tmp_path, MACOS, changes={"Contents/mine": b"x"})
+    install = base.install(translocated / MACOS.root)
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    installer = _posix_installer(base, channel, install, store, platform="macos")
+
+    with pytest.raises(UpdateBlocked, match="copy macOS made"):
+        installer.prepare("0.5.3")
+
+
+def test_abandoning_a_staged_posix_update_puts_the_receipt_back(tmp_path: Path) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    runner = TreeUpdateRunner(
+        _posix_installer(base, channel, install, store),
+        store=store,
+        recovery_root=tmp_path / "recovery",
+    )
+    prepared = runner.prepare("0.5.3")
+    staged = runner._installer.stage(prepared)
+    runner._staged = staged
+
+    runner.abandon()
+
+    current = store.read_receipt()
+    assert current is not None and current.identity.version == "0.5.2"
+    assert not store.pending_path.exists()
+    assert not staged.transaction.directory.exists()
