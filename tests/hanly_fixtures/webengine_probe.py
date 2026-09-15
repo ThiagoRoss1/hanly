@@ -1,29 +1,23 @@
-"""Real-process proof that Qt WebEngine starts through the shared application.
+"""The child that starts Qt WebEngine for real, and how to run it.
 
-Every other Control Center test injects a fake webview, so none of them ever
-initializes Chromium. This one does: it launches a bounded subprocess that
-builds the production ``QApplication`` and loads a document in a real
-``QWebEngineView``. Surviving a few seconds is not the assertion -- the child
-must report a finished load and exit cleanly.
+Shared rather than duplicated: the successful contract is every platform's,
+and the Windows abort it guards against is asserted against the same child.
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 #: Printed by the child only after ``loadFinished(True)``.
 LOADED_MARKER = "WEBENGINE_LOADED"
 
 #: Generous enough for a cold Chromium start on a loaded CI runner, short
 #: enough that a hung child fails the run instead of stalling it.
-_CHILD_TIMEOUT_SECONDS = 300
+CHILD_TIMEOUT_SECONDS = 300
 
-_CHILD_PROGRAM = '''
+CHILD_PROGRAM = '''
 import sys
 
 MARKER = "WEBENGINE_LOADED"
@@ -88,47 +82,23 @@ if __name__ == "__main__":
 '''
 
 
-def _skip_without_a_desktop() -> None:
-    pytest.importorskip("PyQt6.QtWebEngineWidgets")
-    if sys.platform.startswith("linux") and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
-        pytest.skip("Qt WebEngine startup needs a real display session")
+def run_webengine_child(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
+    """Run the probe in a bounded child, in the mode the caller is checking."""
 
-
-def _run_child(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
     program = tmp_path / "webengine_child.py"
-    program.write_text(_CHILD_PROGRAM, encoding="utf-8")
+    program.write_text(CHILD_PROGRAM, encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(program), mode],
         capture_output=True,
         text=True,
-        timeout=_CHILD_TIMEOUT_SECONDS,
+        timeout=CHILD_TIMEOUT_SECONDS,
         cwd=tmp_path,
     )
 
 
-def test_the_shared_application_loads_a_document_in_qt_webengine(tmp_path: Path) -> None:
-    _skip_without_a_desktop()
-
-    child = _run_child(tmp_path, "shared")
-
-    assert child.returncode == 0, f"stdout={child.stdout!r} stderr={child.stderr!r}"
-    assert LOADED_MARKER in child.stdout, f"stderr={child.stderr!r}"
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="the abort code is Windows-specific")
-def test_an_empty_argument_list_still_aborts_chromium_on_windows(tmp_path: Path) -> None:
-    """The defect this fix exists for, kept executable rather than anecdotal.
-
-    Only the Windows abort code is asserted here; every other platform asserts
-    the successful contract above instead of a native exception number.
-    """
-
-    _skip_without_a_desktop()
-
-    child = _run_child(tmp_path, "empty-argv")
-
-    assert child.returncode != 0
-    assert LOADED_MARKER not in child.stdout
-    assert "the program name is not passed" in child.stderr
+__all__ = [
+    "CHILD_PROGRAM",
+    "CHILD_TIMEOUT_SECONDS",
+    "LOADED_MARKER",
+    "run_webengine_child",
+]

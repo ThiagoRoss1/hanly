@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import pytest
 from hanly import LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 
-pytest.importorskip("PyQt6.QtWidgets")
+from tests.hanly_fixtures.capabilities import require_modules
+
+require_modules("PyQt6.QtWidgets", module_level=True)
 
 from hanly_app.capture import CaptureResult, ScreenRect  # noqa: E402
 from hanly_app.hover_lookup import HoverLookupRuntime  # noqa: E402
@@ -28,14 +29,6 @@ _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
 _WORD = ScreenRect(100, 100, 40, 20)
 _POPUP = ScreenRect(300, 100, 320, 180)
 _DWELL_MS = 80
-
-
-@pytest.fixture(scope="module")
-def application() -> QApplication:
-    existing = QCoreApplication.instance()
-    if isinstance(existing, QApplication):
-        return existing
-    return QApplication([])
 
 
 class _Listener:
@@ -113,12 +106,12 @@ def _runtime(cleared: list[int]) -> tuple[HoverLookupRuntime, _Listeners, _Captu
 
 
 def test_leaving_a_retained_word_dismisses_it_on_the_real_qt_scheduler(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
     """The measured failure: no dismissal at all, because the dwell scheduled
     on the way out replaced the exit's callback on the one shared timer."""
 
-    del application
+    del qt_application
     cleared: list[int] = []
     runtime, listeners, _capture = _runtime(cleared)
     try:
@@ -137,9 +130,9 @@ def test_leaving_a_retained_word_dismisses_it_on_the_real_qt_scheduler(
 
 
 def test_a_crossing_to_the_popup_outlives_the_dwell_it_shares_the_moment_with(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
-    del application
+    del qt_application
     cleared: list[int] = []
     runtime, listeners, capture = _runtime(cleared)
     try:

@@ -23,7 +23,11 @@ from .control_center import (
     prepare_control_center_qt,
 )
 from .diagnostics import DiagnosticLog, StartupTimeline
-from .qt_bootstrap import ensure_qt_application, install_qt_thread_invoker
+from .qt_bootstrap import (
+    ensure_qt_application,
+    install_qt_thread_invoker,
+    verify_primary_screen,
+)
 
 #: The backend module Hanly's single-Qt design requires. pywebview falls back
 #: to Cocoa, GTK, or WinForms when Qt cannot load, which would silently mix two
@@ -346,6 +350,9 @@ class ControlCenterHost:
         # argument zero, before any Qt object exists in this process.
         prepare_control_center_qt()
         ensure_qt_application(diagnostics=self._diagnostics)
+        # Between the two: pywebview reads the primary screen's geometry while
+        # creating the window, and a session with none reaches that call.
+        verify_primary_screen()
         try:
             import webview
         except ImportError as error:

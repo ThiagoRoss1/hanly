@@ -26,7 +26,7 @@ import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 #: Packages the desktop imports by name at runtime. Their absence is exactly
 #: the defect that shipped in v0.1.0: readiness waits on morphology forever.
@@ -88,6 +88,10 @@ DEFAULT_TIMEOUT_SECONDS = 1200
 #: timeouts here before the same check ran in under a second warm.
 UI_TIMEOUT_SECONDS = 600
 
+#: How long the timed-out process tree is given to actually die. Reaping has
+#: already failed by this point, so this bounds the cleanup rather than the run.
+TREE_KILL_SECONDS = 30
+
 #: Where EasyOCR looks for its recognition models, in the order it asks. All
 #: of them are redirected into the temporary profile, so a developer cache can
 #: never be what makes a frozen run succeed.
@@ -136,6 +140,20 @@ WINDOWS_FATAL_STATUS = {
 #: Named here rather than imported: this harness runs against a frozen bundle
 #: and must not depend on the source package it is checking.
 LOCAL_KRDICT_VARIABLE = "HANLY_KRDICT_DB"
+
+#: The packages a frozen bundle has to be able to name itself by. A build that
+#: works and cannot say which source produced it is not release evidence: one
+#: tested bundle reported 0.1.3 while the tree it was compared against was
+#: 0.5.0, and nothing in the run said so.
+IDENTITY_PACKAGES = ("hanly", "hanly-app")
+
+#: The self-check writes one flushed JSON line per stage boundary on stderr.
+#: Named here for the same reason as the variable above. A process killed by a
+#: native fault prints no report, and these lines are the only account of how
+#: far it got.
+STAGE_MARKER_PREFIX = "hanly-self-check:"
+STAGE_STARTED = "stage_started"
+STAGE_COMPLETED = "stage_completed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,29 +248,144 @@ def run_packaged_self_check(
         status: int | None = None
         timed_out = False
         with output.open("w", encoding="utf-8") as out, errors.open("w", encoding="utf-8") as err:
+            child = subprocess.Popen(
+                command, stdout=out, stderr=err, env=environment, cwd=working_directory
+            )
             try:
-                status = subprocess.run(
-                    command,
-                    stdout=out,
-                    stderr=err,
-                    timeout=timeout,
-                    env=environment,
-                    cwd=working_directory,
-                ).returncode
+                status = child.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 # The report is written before the process winds Qt down, so a
                 # run that stops exiting still says whether the check itself
                 # passed. Reporting both keeps "the window is broken" separate
                 # from "the window worked and the process did not leave".
                 timed_out = True
+                _terminate_tree(child)
         stdout = output.read_text(encoding="utf-8", errors="replace")
         stderr = errors.read_text(encoding="utf-8", errors="replace")
 
     report = _parse_report(stdout)
     report["exit_code"] = status
     report["exit_timeout"] = timed_out
+    # Progress is read from the whole stream, before the tail is cut: the
+    # markers a long-running check wrote first are exactly the ones a 4000
+    # character tail would drop.
+    report["progress"] = read_progress(stderr)
     report["stderr"] = stderr[-4000:]
     return report
+
+
+def _terminate_tree(child: subprocess.Popen[bytes]) -> None:
+    """Kill the timed-out process and everything it started.
+
+    Killing only the process that was launched leaves its children holding the
+    inherited output files, so the run's own working directory cannot be
+    removed and an abandoned bundle keeps running. The frozen desktop spawns
+    both the lookup child and Qt WebEngine's helpers, and on Windows the
+    launcher itself is a further process.
+    """
+
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(child.pid)],
+                capture_output=True,
+                timeout=TREE_KILL_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            child.kill()
+    else:
+        child.kill()
+
+    try:
+        child.wait(timeout=TREE_KILL_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def read_progress(stderr: str) -> dict[str, object]:
+    """Reconstruct how far the self-check got from the markers it flushed.
+
+    The current stage is the most recent one started and not completed, which
+    is the innermost of any nested probes. A run that printed no marker at all
+    leaves it unknown rather than guessing at the last stage that passed.
+    """
+
+    started: list[str] = []
+    completed: list[dict[str, object]] = []
+    open_stages: list[str] = []
+    for event in _iter_markers(stderr):
+        name = event.get("stage")
+        if not isinstance(name, str):
+            continue
+        if event.get("event") == STAGE_STARTED:
+            started.append(name)
+            open_stages.append(name)
+        elif event.get("event") == STAGE_COMPLETED:
+            completed.append({key: value for key, value in event.items() if key != "event"})
+            if name in open_stages:
+                open_stages.remove(name)
+
+    return {
+        "started": started,
+        "completed": completed,
+        "current_stage": open_stages[-1] if open_stages else None,
+    }
+
+
+def _iter_markers(stderr: str) -> Iterator[dict[str, Any]]:
+    """Read the marker lines, ignoring whatever native noise sits around them."""
+
+    for line in stderr.splitlines():
+        payload = _marker_payload(line)
+        if payload is None:
+            continue
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def _marker_payload(line: str) -> str | None:
+    """Return the JSON a marker line carries, wherever the line starts.
+
+    A native library can write a partial line without a newline, so a marker
+    is located inside the line rather than required to begin it.
+    """
+
+    start = line.find(STAGE_MARKER_PREFIX)
+    if start < 0:
+        return None
+    return line[start + len(STAGE_MARKER_PREFIX) :].strip()
+
+
+def verify_frozen_identity(
+    report: Mapping[str, object], expected: str
+) -> dict[str, object]:
+    """Compare the versions a frozen bundle reports with the one it claims.
+
+    The bundle answers for itself, from the metadata its own interpreter
+    collected. A missing version is a failure rather than an absence: a report
+    that cannot name its packages proves nothing about which build it came
+    from.
+    """
+
+    versions = report.get("versions")
+    collected = versions if isinstance(versions, Mapping) else {}
+    packages = {name: collected.get(name) for name in IDENTITY_PACKAGES}
+    problems = [
+        f"the frozen bundle reports {name} {value!r}, expected {expected!r}"
+        for name, value in packages.items()
+        if value != expected
+    ]
+    return {
+        "expected": expected,
+        "packages": packages,
+        "ok": not problems,
+        "problems": problems,
+    }
 
 
 def _collection_roots(root: Path) -> tuple[Path, ...]:
@@ -330,7 +463,12 @@ class _ProfileContext:
 
     def __enter__(self) -> tuple[dict[str, str], Path]:
         if self._profile is None:
-            self._temporary = tempfile.TemporaryDirectory(prefix="hanly-smoke-")
+            # Errors ignored: a bundle that had to be killed can leave a handle
+            # open on Windows, and losing a temporary directory must not be
+            # what destroys the report explaining why it was killed.
+            self._temporary = tempfile.TemporaryDirectory(
+                prefix="hanly-smoke-", ignore_cleanup_errors=True
+            )
             root = Path(self._temporary.name)
         else:
             root = self._profile
@@ -546,19 +684,39 @@ def _iter_failures(report: Mapping[str, object]) -> Iterator[str]:
 
 
 def _describe_exit(report: Mapping[str, object]) -> str:
-    """Describe how the process ended, naming a signal rather than a number."""
+    """Say which stage was running and how the process ended, in that order.
+
+    "exited with status 3221225501" names no suspect. The stage the markers
+    left open does, and the two together are the whole diagnosis a crashed
+    packaging run can offer.
+    """
+
+    return f"current_stage: {_current_stage(report)}; exit: {_exit_summary(report)}"
+
+
+def _current_stage(report: Mapping[str, object]) -> str:
+    progress = report.get("progress")
+    if isinstance(progress, Mapping):
+        stage = progress.get("current_stage")
+        if isinstance(stage, str) and stage:
+            return stage
+    return "unknown"
+
+
+def _exit_summary(report: Mapping[str, object]) -> str:
+    """Name how the process ended, as a signal or fault rather than a number."""
 
     if report.get("exit_timeout"):
-        return "the self-check did not exit before the deadline"
+        return "did not exit before the deadline"
 
     status = report.get("exit_code")
     if isinstance(status, int) and status < 0:
-        return f"the self-check was killed by {_signal_name(-status)} before reporting a stage"
+        return _signal_name(-status)
     if isinstance(status, int):
         fatal = _windows_fault(status)
         if fatal is not None:
-            return f"the self-check died on {fatal} before reporting a stage"
-    return f"the self-check reported no stage and exited with status {status}"
+            return fatal
+    return f"status {status}"
 
 
 def _signal_name(number: int) -> str:
@@ -593,7 +751,13 @@ def _output_tail(report: Mapping[str, object]) -> str | None:
         text = report.get(key)
         if not isinstance(text, str):
             continue
-        lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+        # Progress markers are reported on their own; leaving them here would
+        # push the fault handler's traceback out of a bounded tail.
+        lines = [
+            line.rstrip()
+            for line in text.splitlines()
+            if line.strip() and _marker_payload(line) is None
+        ]
         if lines:
             return "\n".join(lines[-OUTPUT_TAIL_LINES:])
     return None
@@ -676,42 +840,93 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="check collected dependencies without running the executable",
     )
+    parser.add_argument(
+        "--expect-version",
+        help=(
+            "the product version this bundle must report for both packages; "
+            "a mismatch or a missing version fails the check"
+        ),
+    )
+    parser.add_argument(
+        "--reconstruct-only",
+        action="store_true",
+        help=(
+            "unpack --from-archive and report where the application landed, "
+            "without inspecting it; the checks that follow are separate steps "
+            "so one of them failing cannot suppress the others"
+        ),
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Report the bundle's inventory and, unless skipped, its self-check."""
+    """Check whichever published products this invocation was given."""
 
     args = _build_parser().parse_args(None if argv is None else list(argv))
-    if (args.application_directory is None) == (args.from_archive is None):
-        print(
-            "Hanly smoke: name either an application directory or --from-archive",
-            file=sys.stderr,
-        )
+    problem = _argument_problem(args)
+    if problem is not None:
+        print(f"Hanly smoke: {problem}", file=sys.stderr)
         return 2
 
     output: dict[str, object] = {}
     reconstruction: tempfile.TemporaryDirectory[str] | None = None
     try:
+        if args.disk_image is not None:
+            output["disk_image"] = verify_disk_image(args.disk_image)
+
         application = args.application_directory
         if args.from_archive is not None:
-            if args.reconstruct_into is None:
+            destination = args.reconstruct_into
+            if destination is None:
                 reconstruction = tempfile.TemporaryDirectory(prefix="hanly-reconstruct-")
                 destination = Path(reconstruction.name) / "app"
-            else:
-                destination = args.reconstruct_into
             application = reconstruct_application(args.from_archive, destination)
             output["reconstructed"] = {
                 "archive": Path(args.from_archive).name,
                 "application": str(application),
             }
-        if args.disk_image is not None:
-            output["disk_image"] = verify_disk_image(args.disk_image)
 
-        return _report(args, application, output)
+        if application is None or args.reconstruct_only:
+            print(json.dumps(output, indent=2))
+            return _unusable_disk_image(output)
+        return max(_report(args, application, output), _unusable_disk_image(output))
     finally:
         if reconstruction is not None:
             reconstruction.cleanup()
+
+
+def _argument_problem(args: argparse.Namespace) -> str | None:
+    """Reject an invocation that names no subject, or two of them."""
+
+    if args.application_directory is not None and args.from_archive is not None:
+        return "name either an application directory or --from-archive, not both"
+    subjects = (args.application_directory, args.from_archive, args.disk_image)
+    if all(subject is None for subject in subjects):
+        return "name an application directory, --from-archive, or --disk-image"
+    if args.reconstruct_only and args.from_archive is None:
+        return "--reconstruct-only needs --from-archive"
+    if args.expect_version is not None and (args.inventory_only or args.reconstruct_only):
+        # The bundle answers for its own version by running; a check that does
+        # not run it would report an identity it never asked for.
+        return "--expect-version needs a check that runs the executable"
+    return None
+
+
+def _unusable_disk_image(output: Mapping[str, object]) -> int:
+    """Fail on a disk image that mounted without the application inside it.
+
+    Mounting is not the check. A DMG that opens onto the wrong contents is
+    exactly the published product a person would download and find empty.
+    """
+
+    report = output.get("disk_image")
+    if isinstance(report, Mapping) and report.get("ok") is not True:
+        print(
+            f"Hanly smoke: {report.get('image')} does not contain {report.get('application')}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 def _report(
@@ -755,8 +970,16 @@ def _report(
             timeout=args.timeout,
         )
     output["self_check"] = report
+    identity: dict[str, object] | None = None
+    if args.expect_version is not None:
+        identity = verify_frozen_identity(report, args.expect_version)
+        output["identity"] = identity
     print(json.dumps(output, indent=2))
 
+    if identity is not None and not identity["ok"]:
+        for problem in cast(list[str], identity["problems"]):
+            print(f"Hanly smoke: {problem}", file=sys.stderr)
+        return 1
     if report.get("ok") is True and report.get("exit_code") == 0:
         return 0
     for failure in _iter_failures(report):
@@ -792,19 +1015,26 @@ __all__ = [
     "HEADLESS_QT_PLATFORM",
     "HEADLESS_SELF_CHECK_MODES",
     "HOME_VARIABLES",
+    "IDENTITY_PACKAGES",
     "LOCAL_KRDICT_VARIABLE",
     "QT_PLATFORM_VARIABLE",
     "REQUIRED_DATA_FILES",
     "REQUIRED_EXTENSION_STEM",
     "REQUIRED_MODEL_FILES",
     "REQUIRED_PACKAGES",
+    "STAGE_COMPLETED",
+    "STAGE_MARKER_PREFIX",
+    "STAGE_STARTED",
+    "TREE_KILL_SECONDS",
     "UI_TIMEOUT_SECONDS",
     "WINDOWS_FATAL_STATUS",
     "BundleInventory",
     "inspect_bundle",
     "isolated_environment",
     "main",
+    "read_progress",
     "reconstruct_application",
     "run_packaged_self_check",
     "verify_disk_image",
+    "verify_frozen_identity",
 ]

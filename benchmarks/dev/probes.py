@@ -12,6 +12,7 @@ import functools
 import json
 import math
 import os
+import sys
 import time
 from collections.abc import Callable, Mapping, MutableSequence, Sequence
 from datetime import datetime, timezone
@@ -317,6 +318,12 @@ class StageProbe:
     run = __call__
 
 
+#: ``getrusage`` does not agree with itself across platforms: Linux reports
+#: ``ru_maxrss`` in KiB and the BSDs, macOS included, report it in bytes.
+#: Assuming KiB everywhere read 39 MiB of resident memory as 39 GiB.
+_MAXRSS_BYTES_PER_UNIT = 1 if sys.platform == "darwin" else 1024
+
+
 class ProcessSampler:
     """Write bounded process CPU/RSS observations to a CSV stream or path."""
 
@@ -367,8 +374,7 @@ class ProcessSampler:
             if _resource is None:
                 return None, None
             usage = _resource.getrusage(_resource.RUSAGE_SELF)
-            # Unix reports KiB; keep the field name honest for the fallback.
-            return None, int(usage.ru_maxrss) * 1024
+            return None, int(usage.ru_maxrss) * _MAXRSS_BYTES_PER_UNIT
         except Exception:
             return None, None
 

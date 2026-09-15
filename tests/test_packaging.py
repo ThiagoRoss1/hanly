@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import signal
 import sys
 from pathlib import Path
@@ -323,7 +324,7 @@ def test_an_ordinary_windows_exit_status_is_not_read_as_a_fault() -> None:
 
     failures = list(_iter_failures({"stages": [], "exit_code": 2, "stderr": ""}))
 
-    assert "exited with status 2" in failures[0]
+    assert failures[0].endswith("exit: status 2")
 
 
 def test_the_frozen_smoke_reports_a_failed_stage_rather_than_the_exit() -> None:
@@ -376,11 +377,11 @@ def test_the_worker_check_is_the_one_that_runs_without_a_display(
     monkeypatch.delenv(QT_PLATFORM_VARIABLE, raising=False)
     launched: dict[str, str] = {}
 
-    def run(*args: object, **kwargs: object) -> SimpleNamespace:
+    def popen(*args: object, **kwargs: object) -> SimpleNamespace:
         launched.update(cast("dict[str, str]", kwargs["env"]))
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(pid=0, wait=lambda timeout=None: 0)
 
-    monkeypatch.setattr(smoke_packaged_runtime.subprocess, "run", run)
+    monkeypatch.setattr(smoke_packaged_runtime.subprocess, "Popen", popen)
 
     run_packaged_self_check(tmp_path / "hanly-desktop", mode=mode)
 
@@ -997,3 +998,351 @@ def test_the_shell_s_bootstrap_carries_neither_heavy_runtime() -> None:
     assert "QtWebEngine" not in application
     assert "preload_ocr_runtime" not in application
     assert "prepare_control_center_qt" not in application
+
+
+# --- progress markers, which are all a killed frozen run leaves behind -------
+
+#: A run that reaches the report. Two stages complete, and the JSON the harness
+#: parses is printed last, exactly as the real check prints it.
+_COMPLETED_PROGRAM = """
+import json
+
+from hanly_app import self_check
+
+stages = []
+self_check._stage(stages, "runtime", lambda: "loaded")
+self_check._stage(stages, "dictionary", lambda: "1 entry")
+report = self_check.SelfCheckReport(mode="worker", stages=tuple(stages), versions={})
+print(json.dumps(report.to_dict(), indent=2), flush=True)
+"""
+
+#: A run killed inside a stage. ``os._exit`` rather than a real fault: the
+#: point is that no report and no completion marker is written, which is what a
+#: native abort looks like from outside, without a crash report to collect.
+_KILLED_PROGRAM = """
+import os
+
+from hanly_app import self_check
+
+stages = []
+self_check._stage(stages, "runtime", lambda: "loaded")
+self_check._stage(stages, "ocr", lambda: os._exit(134))
+"""
+
+#: A run that starts a stage and never leaves it.
+_HANGING_PROGRAM = """
+import time
+
+from hanly_app import self_check
+
+self_check._emit_marker(self_check.STAGE_STARTED, "main window")
+time.sleep(120)
+"""
+
+
+def _self_check_program(directory: Path, program: str) -> Path:
+    """Write a stand-in the harness launches the way it launches a bundle.
+
+    A launcher rather than the program itself, because the harness runs one
+    executable path and Windows does not run a ``.py`` file as one.
+    """
+
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / "self_check_program.py"
+    script.write_text(program, encoding="utf-8")
+
+    if sys.platform == "win32":
+        launcher = directory / "hanly-desktop.bat"
+        launcher.write_text(
+            f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding="utf-8"
+        )
+        return launcher
+
+    launcher = directory / "hanly-desktop"
+    launcher.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8"
+    )
+    launcher.chmod(0o755)
+    return launcher
+
+
+def test_a_completed_run_still_parses_and_keeps_its_stage_timings(
+    tmp_path: Path,
+) -> None:
+    """Markers travel on stderr, so the report on stdout is untouched by them."""
+
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _COMPLETED_PROGRAM), timeout=60
+    )
+
+    assert report["ok"] is True
+    assert report["exit_code"] == 0
+    stages = cast(list[dict[str, object]], report["stages"])
+    assert [stage["name"] for stage in stages] == ["runtime", "dictionary"]
+    assert all(isinstance(stage["duration_ms"], float) for stage in stages)
+
+    progress = cast(dict[str, object], report["progress"])
+    assert progress["started"] == ["runtime", "dictionary"]
+    assert [stage["stage"] for stage in cast(list[dict], progress["completed"])] == [
+        "runtime",
+        "dictionary",
+    ]
+    # Nothing is still open, so nothing is blamed.
+    assert progress["current_stage"] is None
+
+
+def test_a_killed_run_names_the_stage_it_was_inside(tmp_path: Path) -> None:
+    """The stage that never completed is the only suspect a crash leaves."""
+
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _KILLED_PROGRAM), timeout=60
+    )
+
+    progress = cast(dict[str, object], report["progress"])
+    assert progress["current_stage"] == "ocr"
+    assert progress["started"] == ["runtime", "ocr"]
+    # The stage that did finish keeps its evidence; the crash is not its fault.
+    assert [stage["stage"] for stage in cast(list[dict], progress["completed"])] == [
+        "runtime"
+    ]
+
+    failure = next(_iter_failures(report))
+    assert "current_stage: ocr" in failure
+    assert "status 134" in failure
+
+
+def test_a_hanging_run_names_its_stage_and_the_deadline(tmp_path: Path) -> None:
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _HANGING_PROGRAM), timeout=5
+    )
+
+    assert report["exit_timeout"] is True
+    failure = next(_iter_failures(report))
+    assert failure == "current_stage: main window; exit: did not exit before the deadline"
+
+
+def test_a_timed_out_run_takes_the_processes_it_started_with_it(tmp_path: Path) -> None:
+    """Killing only the launched process leaves its children holding the run's
+    own output files, so the working directory cannot be removed and an
+    abandoned bundle keeps running. The frozen desktop always has children, and
+    on Windows the launcher itself is one more."""
+
+    profile = tmp_path / "profile"
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _HANGING_PROGRAM),
+        profile=profile,
+        timeout=5,
+    )
+
+    assert report["exit_timeout"] is True
+    # Deleting the file is the assertion: a surviving child still holds the
+    # handle it inherited, and Windows refuses the unlink while it does.
+    (profile / "work" / "self-check.err").unlink()
+
+
+def test_a_crash_before_any_marker_stays_explicitly_unknown() -> None:
+    """Naming the last stage that passed would invent a diagnosis."""
+
+    failures = list(
+        _iter_failures(
+            {
+                "ok": False,
+                "stages": [],
+                "progress": {"started": [], "completed": [], "current_stage": None},
+                "exit_code": 0xC000001D,
+                "stderr": "",
+            }
+        )
+    )
+
+    assert failures[0] == "current_stage: unknown; exit: ILLEGAL_INSTRUCTION (0xC000001D)"
+
+
+def test_progress_is_read_before_the_stderr_tail_is_cut() -> None:
+    """A long run's first markers are exactly what a bounded tail would lose."""
+
+    markers = "\n".join(
+        f'{smoke_packaged_runtime.STAGE_MARKER_PREFIX} '
+        f'{{"event": "stage_started", "stage": "runtime"}}'
+        for _ in range(1)
+    )
+    stderr = markers + "\n" + "x" * 8000
+
+    progress = smoke_packaged_runtime.read_progress(stderr)
+
+    assert progress["current_stage"] == "runtime"
+    assert len(stderr[-4000:]) == 4000
+
+
+def test_marker_lines_are_kept_out_of_the_reported_output_tail() -> None:
+    """Twenty lines of progress would push the fault traceback out of view."""
+
+    marker = f'{smoke_packaged_runtime.STAGE_MARKER_PREFIX} {{"event": "x", "stage": "y"}}'
+    stderr = "\n".join([marker] * 40 + ["Fatal Python error: Aborted"])
+
+    tail = smoke_packaged_runtime._output_tail({"stderr": stderr})
+
+    assert tail == "Fatal Python error: Aborted"
+
+
+def test_both_sides_of_the_marker_seam_agree_on_what_a_marker_looks_like() -> None:
+    """The harness deliberately does not import the package it checks, so the
+    two copies of these constants are held apart by nothing but this. Renaming
+    one side would cost every crashed run its stage without failing a test."""
+
+    for name in ("STAGE_MARKER_PREFIX", "STAGE_STARTED", "STAGE_COMPLETED"):
+        assert getattr(smoke_packaged_runtime, name) == getattr(self_check, name), name
+
+
+def test_the_self_check_flushes_a_start_marker_before_the_work_it_names() -> None:
+    """A marker written after the action would never survive the action."""
+
+    source = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "self_check.py"
+    ).read_text(encoding="utf-8")
+    body = source.split("def _stage(", 1)[1]
+
+    assert body.index("_emit_marker(STAGE_STARTED") < body.index("value = action()")
+    assert "flush=True" in source
+
+
+def test_closing_the_worker_is_a_stage_of_its_own() -> None:
+    """Releasing native handles can crash; blaming the dictionary for it is a
+    diagnosis that sends the next person to the wrong provider."""
+
+    assert '_stage(stages, "worker close", worker.close)' in (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "self_check.py"
+    ).read_text(encoding="utf-8")
+
+
+# --- the products a run checks, each independently of the others -------------
+
+
+def test_reconstructing_an_archive_can_stop_before_inspecting_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reconstruction and inspection are separate steps, so a bundle that
+    cannot be inspected still says whether the published ZIP unpacked."""
+
+    archive = tmp_path / "hanly-desktop-macos.zip"
+    archive.write_bytes(b"archive")
+    destination = tmp_path / "out"
+
+    def unpack(source: Path, target: Path) -> Path:
+        application = Path(target) / SMOKE_BUNDLE_NAME
+        application.joinpath("Contents", "MacOS").mkdir(parents=True)
+        application.joinpath("Contents", "MacOS", "hanly-desktop").write_bytes(b"")
+        return application
+
+    monkeypatch.setattr(smoke_packaged_runtime, "reconstruct_application", unpack)
+    status = smoke_packaged_runtime.main(
+        [
+            "--from-archive",
+            str(archive),
+            "--reconstruct-into",
+            str(destination),
+            "--reconstruct-only",
+        ]
+    )
+
+    assert status == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["reconstructed"]["archive"] == archive.name
+    assert "inventory" not in report
+
+
+def test_a_disk_image_is_checked_without_an_application_to_smoke(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ZIP that will not reconstruct says nothing about the disk image."""
+
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"image")
+    monkeypatch.setattr(
+        smoke_packaged_runtime,
+        "verify_disk_image",
+        lambda path: {"image": Path(path).name, "application": SMOKE_BUNDLE_NAME, "ok": True},
+    )
+
+    assert smoke_packaged_runtime.main(["--disk-image", str(image)]) == 0
+    assert json.loads(capsys.readouterr().out)["disk_image"]["ok"] is True
+
+
+def test_a_disk_image_without_the_application_fails_the_step(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mounting is not the check: a DMG a person opens onto nothing is broken."""
+
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"image")
+    monkeypatch.setattr(
+        smoke_packaged_runtime,
+        "verify_disk_image",
+        lambda path: {"image": Path(path).name, "application": SMOKE_BUNDLE_NAME, "ok": False},
+    )
+
+    assert smoke_packaged_runtime.main(["--disk-image", str(image)]) == 1
+    assert "does not contain" in capsys.readouterr().err
+
+
+def test_an_invocation_that_names_no_product_is_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert smoke_packaged_runtime.main([]) == 2
+    assert "name an application directory" in capsys.readouterr().err
+
+
+# --- which source a frozen bundle says it came from --------------------------
+
+
+def test_a_frozen_bundle_that_reports_another_version_is_not_this_build() -> None:
+    """A stale artifact passes every check it ever passed. Only its own
+    reported version says which source produced it, and one tested bundle
+    reported 0.1.3 beside a 0.5.0 checkout with nothing in the run saying so."""
+
+    identity = smoke_packaged_runtime.verify_frozen_identity(
+        {"versions": {"hanly": "0.1.3", "hanly-app": "0.1.3"}}, "0.5.0"
+    )
+
+    assert identity["ok"] is False
+    assert len(cast(list[str], identity["problems"])) == 2
+    assert "expected '0.5.0'" in cast(list[str], identity["problems"])[0]
+
+
+def test_a_report_that_names_no_version_is_a_failure_not_an_absence() -> None:
+    """Missing identity proves nothing about the build, which is the same
+    position a mismatch leaves the release in."""
+
+    identity = smoke_packaged_runtime.verify_frozen_identity({}, "0.5.0")
+
+    assert identity["ok"] is False
+    assert cast(dict[str, object], identity["packages"]) == {
+        "hanly": None,
+        "hanly-app": None,
+    }
+
+
+def test_both_packages_agreeing_with_the_source_is_the_whole_check() -> None:
+    identity = smoke_packaged_runtime.verify_frozen_identity(
+        {"versions": {"hanly": "0.5.0", "hanly-app": "0.5.0", "torch": "2.4.1"}}, "0.5.0"
+    )
+
+    assert identity["ok"] is True
+    assert identity["problems"] == []
+
+
+def test_an_identity_check_that_never_runs_the_executable_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An inventory reads files. The version comes from the bundle's own
+    interpreter, so a check that does not start one has nothing to compare."""
+
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+
+    status = smoke_packaged_runtime.main(
+        [str(bundle), "--inventory-only", "--expect-version", "0.5.0"]
+    )
+
+    assert status == 2
+    assert "runs the executable" in capsys.readouterr().err

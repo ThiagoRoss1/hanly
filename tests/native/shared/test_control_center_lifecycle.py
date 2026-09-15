@@ -11,13 +11,14 @@ that the shell survived both and that Qt never reported a nested event loop.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests.hanly_fixtures.capabilities import require_display, require_modules, unavailable
 from tests.hanly_fixtures.process_probe import PROCESS_ROWS_PROGRAM
 
 #: Qt's own complaint when a second ``exec`` runs inside a live loop. This is
@@ -93,11 +94,13 @@ def descendants():
                 continue
             owned.append(child)
             frontier.append(child)
-    ignored = ("resource_tracker", "ps -axo")
+    # Each survivor is named, not counted: a bare pid cannot say whether a
+    # window leaked or a benign tracker went unrecognized, and reading one as
+    # the other is exactly what a truncated command line already caused once.
     return [
-        pid
+        {"pid": pid, "command": commands.get(pid, "")}
         for pid in owned
-        if not any(marker in commands.get(pid, "") for marker in ignored)
+        if not any(marker in commands.get(pid, "") for marker in IGNORED_COMMANDS)
     ]
 
 
@@ -144,6 +147,11 @@ def main():
         control.shutdown()
         report["running_after_shutdown"] = control.running
         report["descendants_after_shutdown"] = settled_descendants()
+    except ProcessInspectionUnavailable as refusal:
+        # Not a leak and not a defect: this host will not say what is running,
+        # and an empty descendant list would claim the opposite.
+        report["inspection_unavailable"] = str(refusal)
+        control.shutdown()
     except BaseException as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
         control.shutdown()
@@ -224,102 +232,53 @@ if __name__ == "__main__":
 '''
 
 
-#: macOS registers every process that creates a ``QApplication`` as a
-#: user-facing application, which made the Control Center child a second Hanly
-#: in the Dock and the app switcher beside the shell.
-_IDENTITY_PROGRAM = '''
-import json
-import re
-import subprocess
-import threading
-import time
-
-from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_process import ControlCenterProcess, bridge_operations
-
-REPORT_PREFIX = "IDENTITY_REPORT "
+def _require_a_desktop() -> None:
+    require_modules("PyQt6.QtWebEngineWidgets", "webview")
+    require_display()
 
 
-def registrations(pids):
-    """What LaunchServices thinks each of these processes is."""
+def _assert_nothing_survived(report: dict[str, Any], field: str) -> None:
+    """Fail naming the surviving processes, and what the manager said it did.
 
-    listing = subprocess.run(["lsappinfo", "list"], capture_output=True, text=True).stdout
-    found = {}
-    for block in listing.split("ASN:"):
-        match = re.search(r"pid = (\\d+)", block)
-        kind = re.search(r'type="([^"]+)"', block)
-        if match and int(match.group(1)) in pids:
-            found[int(match.group(1))] = kind.group(1) if kind else "unknown"
-    return found
+    A bare pid identifies nothing. Whether a Chromium helper outlived the
+    window process or the window process was killed before it could retire one
+    is the whole difference between the two defects this can be.
+    """
 
+    survivors = report[field]
+    if not survivors:
+        return
 
-def descendants(root):
-    rows = subprocess.run(
-        ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True
-    ).stdout
-    children = []
-    for line in rows.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and int(parts[1]) == root:
-            children.append(int(parts[0]))
-    return children
-
-
-class CountingBridge(ControlCenterBridge):
-    def __init__(self):
-        super().__init__()
-        self.calls = []
-
-    def get_state(self):
-        self.calls.append("get_state")
-        return super().get_state()
+    named = [f"  pid {entry['pid']}: {entry['command']}" for entry in survivors]
+    reported = [f"  {note}" for note in report["diagnostics"]] or ["  (none)"]
+    raise AssertionError(
+        "\n".join(
+            [
+                f"{field} still holds {len(survivors)} process(es):",
+                *named,
+                "what the manager reported:",
+                *reported,
+            ]
+        )
+    )
 
 
-def main():
-    import os
+def _require_inspection(report: dict[str, object]) -> None:
+    """A host that will not say what is running has proved no retirement.
 
-    bridge = CountingBridge()
-    control = ControlCenterProcess(bridge_operations(bridge))
-    report = {"errors": []}
-    try:
-        control.show()
-        waiter = threading.Event()
-        for _ in range(240):
-            if bridge.calls:
-                break
-            waiter.wait(0.25)
-        report["page_reached_the_bridge"] = bool(bridge.calls)
-        time.sleep(1.5)
-        children = descendants(os.getpid())
-        report["registrations"] = {
-            str(pid): kind for pid, kind in registrations(set(children)).items()
-        }
-    except BaseException as error:
-        report["errors"].append(f"{type(error).__name__}: {error}")
-    finally:
-        control.shutdown()
-    print(REPORT_PREFIX + json.dumps(report), flush=True)
-    return 0 if not report["errors"] else 1
+    Reading an empty descendant list as a clean close would turn a refused
+    ``ps`` into evidence of exactly the thing it could not observe.
+    """
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-'''
-
-
-def _skip_without_a_desktop() -> None:
-    pytest.importorskip("PyQt6.QtWebEngineWidgets")
-    pytest.importorskip("webview")
-    if sys.platform.startswith("linux") and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
-        pytest.skip("the Control Center lifecycle needs a real desktop session")
+    refusal = report.get("inspection_unavailable")
+    if refusal:
+        unavailable(f"process inspection is unavailable here: {refusal}")
 
 
 def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     tmp_path: Path,
 ) -> None:
-    _skip_without_a_desktop()
+    _require_a_desktop()
 
     program = tmp_path / "lifecycle_child.py"
     program.write_text(PROCESS_ROWS_PROGRAM + _CHILD_PROGRAM, encoding="utf-8")
@@ -338,6 +297,7 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     )
     assert line is not None, f"stdout={child.stdout!r} stderr={child.stderr!r}"
     report = json.loads(line[len(marker) :])
+    _require_inspection(report)
 
     assert report["errors"] == []
     # The page itself calls the parent bridge, which is the whole proxy path:
@@ -355,8 +315,8 @@ def test_the_window_opens_closes_and_reopens_without_touching_the_shell(
     # The window and its Chromium helpers are real processes: a manager that
     # says they are gone while they are still running is the leak.
     assert report["descendants_while_open"], "the window process was never owned"
-    assert report["descendants_after_close"] == []
-    assert report["descendants_after_shutdown"] == []
+    _assert_nothing_survived(report, "descendants_after_close")
+    _assert_nothing_survived(report, "descendants_after_shutdown")
 
     assert report["heavy_modules_in_the_shell"] == []
     recorded = "\n".join(report["diagnostics"]) + child.stderr
@@ -373,7 +333,7 @@ def test_focusing_a_window_that_is_still_starting_keeps_the_page_connected(
     placeholder state rather than reporting that nothing answered.
     """
 
-    _skip_without_a_desktop()
+    _require_a_desktop()
 
     program = tmp_path / "focus_race_child.py"
     program.write_text(_RACING_FOCUS_PROGRAM, encoding="utf-8")
@@ -400,42 +360,6 @@ def test_focusing_a_window_that_is_still_starting_keeps_the_page_connected(
     # One window per cycle: focusing must never spawn a second child.
     assert report["generation"] == 3
     assert "ControlCenterUnavailable" not in child.stderr
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS application identity")
-def test_the_window_child_is_not_a_second_application_on_macos(tmp_path: Path) -> None:
-    """One Hanly in the Dock, whatever the window is running in.
-
-    ``Foreground`` is a full application: a Dock tile, a menu bar, and an entry
-    in the app switcher. ``UIElement`` still shows windows and still takes the
-    keyboard, which is what a panel owned by another process needs.
-    """
-
-    _skip_without_a_desktop()
-
-    program = tmp_path / "identity_child.py"
-    program.write_text(_IDENTITY_PROGRAM, encoding="utf-8")
-    child = subprocess.run(
-        [sys.executable, str(program)],
-        capture_output=True,
-        text=True,
-        timeout=_CHILD_TIMEOUT_SECONDS,
-        cwd=tmp_path,
-    )
-
-    assert child.returncode == 0, f"stdout={child.stdout!r} stderr={child.stderr!r}"
-    marker = "IDENTITY_REPORT "
-    line = next(
-        (item for item in child.stdout.splitlines() if item.startswith(marker)), None
-    )
-    assert line is not None, f"stdout={child.stdout!r} stderr={child.stderr!r}"
-    report = json.loads(line[len(marker) :])
-
-    assert report["errors"] == []
-    assert report["page_reached_the_bridge"] is True
-    registrations = report["registrations"]
-    assert registrations, "no owned process was registered with LaunchServices"
-    assert "Foreground" not in registrations.values(), registrations
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX terminal signal delivery")

@@ -5,21 +5,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-import pytest
+from tests.hanly_fixtures.capabilities import require_modules
 
-pytest.importorskip("PyQt6.QtWidgets")
+require_modules("PyQt6.QtWidgets", module_level=True)
 
 from hanly_app.qt_hover_scheduler import QtHoverScheduler  # noqa: E402
-from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer  # noqa: E402
+from PyQt6.QtCore import QEventLoop, QTimer  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def application() -> QApplication:
-    existing = QCoreApplication.instance()
-    if isinstance(existing, QApplication):
-        return existing
-    return QApplication([])
 
 
 def _spin(milliseconds: int) -> None:
@@ -55,7 +47,7 @@ def _spin_until(ready: Callable[[], bool], *, timeout_ms: int = 5000) -> bool:
 
 
 def test_scheduled_callback_runs_on_the_qt_thread_without_a_timer_thread(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
     scheduler = QtHoverScheduler()
     fired: list[int] = []
@@ -68,7 +60,7 @@ def test_scheduled_callback_runs_on_the_qt_thread_without_a_timer_thread(
     assert threading.active_count() == before
 
 
-def test_cancelled_delay_never_fires(application: QApplication) -> None:
+def test_cancelled_delay_never_fires(qt_application: QApplication) -> None:
     scheduler = QtHoverScheduler()
     fired: list[str] = []
 
@@ -80,7 +72,7 @@ def test_cancelled_delay_never_fires(application: QApplication) -> None:
 
 
 def test_rescheduling_replaces_the_pending_delay_and_reuses_one_timer(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
     """Cursor movement reschedules on every event, so the scheduler must
     replace the pending delay rather than accumulate timers."""
@@ -101,7 +93,7 @@ def test_rescheduling_replaces_the_pending_delay_and_reuses_one_timer(
 
 
 def test_cancelling_a_superseded_handle_leaves_the_newer_delay_pending(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
     scheduler = QtHoverScheduler()
     fired: list[str] = []
@@ -115,7 +107,7 @@ def test_cancelling_a_superseded_handle_leaves_the_newer_delay_pending(
 
 
 def test_a_dwell_and_a_popup_crossing_do_not_take_each_others_timer(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
     """The production defect: one ``QtHoverScheduler`` is one ``QTimer``.
 
@@ -124,7 +116,7 @@ def test_a_dwell_and_a_popup_crossing_do_not_take_each_others_timer(
     answer on screen was never dismissed. Two schedulers are two timers.
     """
 
-    del application
+    del qt_application
     dwell = QtHoverScheduler()
     crossing = QtHoverScheduler()
     fired: list[str] = []
@@ -137,11 +129,11 @@ def test_a_dwell_and_a_popup_crossing_do_not_take_each_others_timer(
 
 
 def test_one_scheduler_still_replaces_its_own_pending_delay(
-    application: QApplication,
+    qt_application: QApplication,
 ) -> None:
     """Which is exactly why the exit cannot share the dwell's scheduler."""
 
-    del application
+    del qt_application
     scheduler = QtHoverScheduler()
     fired: list[str] = []
 

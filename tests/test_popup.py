@@ -233,3 +233,14 @@ def test_clear_hides_the_popup_and_drops_the_result_it_was_showing() -> None:
     assert controller.visible is False
     assert controller.result is None
     assert [name for name, _, _ in events][-1] == "hide"
+
+
+def test_a_widget_with_no_native_window_is_reported_rather_than_crashing() -> None:
+    """The adapter answers for a pointer of zero without loading a runtime, so
+    a caller that ran before the native window existed gets a value, not an
+    Objective-C message to nothing."""
+
+    from hanly_app.popup_darwin import hides_when_inactive, keep_visible_when_inactive
+
+    assert keep_visible_when_inactive(0) is False
+    assert hides_when_inactive(0) is None

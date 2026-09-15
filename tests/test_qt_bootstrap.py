@@ -233,3 +233,16 @@ def test_the_platform_plugin_is_checked_before_the_application_exists(
     qt_bootstrap.ensure_qt_application()
 
     assert order == ["verify", "qapplication"]
+
+
+def test_a_session_with_no_screen_is_reported_rather_than_reached_into() -> None:
+    """pywebview reads the primary screen's geometry while creating its window
+    and never checks that there is one, so the failure arrives from inside that
+    library with Qt's fatal "no screens available" above it."""
+
+    with pytest.raises(ControlCenterUnavailable, match="no usable screen"):
+        qt_bootstrap.verify_primary_screen(lambda: None)
+
+
+def test_an_ordinary_screen_is_accepted_without_comment() -> None:
+    qt_bootstrap.verify_primary_screen(lambda: object())

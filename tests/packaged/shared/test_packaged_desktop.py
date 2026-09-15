@@ -4,36 +4,37 @@ This is the only test that runs the produced artifact. It refuses every
 developer fallback -- no repository, no virtual environment, no developer
 model cache -- so a bundle that passes here is one a user could actually run.
 
-It skips when no bundle has been built, and a skip is not a pass: the native
-acceptance matrix in the review handoff records where it really ran.
+It skips when no bundle has been built, and a skip is not a pass -- so the
+build job that exists to run it sets ``HANLY_REQUIRE_PACKAGED`` and turns every
+one of those reasons into a failure.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-import pytest
 from hanly_app.self_check import SELF_CHECK_MODES
 
+from tests.hanly_fixtures import FIXTURE_ASSETS, REPO_ROOT
+from tests.hanly_fixtures.capabilities import REQUIRE_PACKAGED, require_display, unavailable
 from tools.build_package import PackageLayout, host_platform
 from tools.build_smoke_krdict import build_smoke_krdict
+from tools.release_version import product_version
 from tools.smoke_packaged_runtime import (
     UI_TIMEOUT_SECONDS,
     _executable_in,
     inspect_bundle,
     run_packaged_self_check,
+    verify_frozen_identity,
 )
-
-ROOT = Path(__file__).parents[2]
 
 #: Points the gate at a bundle outside ``dist/``, such as an extracted release.
 BUNDLE_VARIABLE = "HANLY_PACKAGED_APP"
 
 #: The Korean fixture the frozen OCR stack must actually read.
-FIXTURE_IMAGE = ROOT / "tests" / "hanly_fixtures" / "assets" / "korean_reading_roi.png"
+FIXTURE_IMAGE = FIXTURE_ASSETS / "korean_reading_roi.png"
 
 #: The same bound the harness uses, rather than a second, smaller number: a
 #: cold or memory-pressured machine can take minutes to start Chromium, and a
@@ -45,15 +46,16 @@ def _bundle() -> Path:
     configured = os.environ.get(BUNDLE_VARIABLE)
     if configured:
         return Path(configured).expanduser().resolve()
-    return PackageLayout.for_platform(ROOT, host_platform()).application_directory
+    return PackageLayout.for_platform(REPO_ROOT, host_platform()).application_directory
 
 
 def _require_bundle() -> Path:
     bundle = _bundle()
     if not bundle.is_dir():
-        pytest.skip(
+        unavailable(
             f"no frozen bundle at {bundle}; build one with tools/build_package.py "
-            f"or set {BUNDLE_VARIABLE}"
+            f"or set {BUNDLE_VARIABLE}",
+            required_by=REQUIRE_PACKAGED,
         )
     return bundle
 
@@ -85,7 +87,7 @@ def _executable() -> Path:
     try:
         return _executable_in(bundle)
     except FileNotFoundError:
-        pytest.skip(f"no Hanly executable in {bundle}")
+        unavailable(f"no Hanly executable in {bundle}", required_by=REQUIRE_PACKAGED)
 
 
 def _failures(report: Mapping[str, object]) -> tuple[list[Mapping[str, object]], str]:
@@ -129,6 +131,13 @@ def test_the_frozen_worker_becomes_ready_on_an_isolated_profile(tmp_path: Path) 
         "dictionary",
     }
 
+    # The same run says which source produced it. A stale bundle passes every
+    # functional check it ever passed, so working is not evidence of being
+    # this tree's build: one tested artifact reported 0.1.3 beside a 0.5.0
+    # checkout and nothing in the run said so.
+    identity = verify_frozen_identity(report, product_version())
+    assert identity["ok"], identity["problems"]
+
 
 def test_the_frozen_control_center_opens_and_answers_its_own_page(
     tmp_path: Path,
@@ -137,10 +146,7 @@ def test_the_frozen_control_center_opens_and_answers_its_own_page(
 
     # A removed mode must fail here rather than quietly become a stale bundle.
     assert "ui" in SELF_CHECK_MODES
-    if sys.platform.startswith("linux") and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
-        pytest.skip("the frozen window needs a real display session")
+    require_display(required_by=REQUIRE_PACKAGED)
 
     report = run_packaged_self_check(
         _executable(),
@@ -149,15 +155,19 @@ def test_the_frozen_control_center_opens_and_answers_its_own_page(
         timeout=_WINDOW_TIMEOUT_SECONDS,
     )
     if _predates_the_window_check(report):
-        pytest.skip(
+        unavailable(
             f"the bundle at {_bundle()} was built before --self-check ui; "
-            "rebuild it with tools/build_package.py"
+            "rebuild it with tools/build_package.py",
+            required_by=REQUIRE_PACKAGED,
         )
 
     recorded, failures = _failures(report)
 
     assert report.get("ok") is True, failures or str(report)
     assert {stage.get("name") for stage in recorded} == {
+        # Importing Qt WebEngine is its own stage: a frozen build can die there
+        # before a window exists at all.
+        "window host",
         "main window",
         "document",
         "controls",

@@ -44,6 +44,14 @@ python -m ruff check packages packaging tests tools benchmarks
 python -m mypy packages packaging tests tools benchmarks
 ```
 
+`python -m pytest` remains the full local gate. The suite is also selectable by
+the machine a case needs: `--suite portable` (no Qt, no Torch, no display),
+`--suite native` (`tests/native/`, the real desktop runtime and a window
+server), `--suite packaged` (`tests/packaged/`, a frozen bundle). Selection
+excludes a suite before its modules import, so a portable run never loads Qt and
+one platform's adapters are never imported on another. `packaging/README.md`
+carries the details.
+
 Run the desktop the way a user does:
 
 ```bash

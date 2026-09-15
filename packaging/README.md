@@ -162,26 +162,141 @@ belongs to no bundle and no artifact; the released dictionary is still the
 independently published resource a real first run downloads.
 
 On macOS the checks run against the application unpacked back out of the
-published ZIP, not the build directory it was made from, and the disk image is
-mounted read-only and reported on beside it:
+published ZIP, not the build directory it was made from. Reconstruction and the
+disk image are separate invocations, because they check separate published
+products and a ZIP that will not unpack says nothing about the DMG:
 
 ```bash
 python tools/smoke_packaged_runtime.py \
     --from-archive dist/hanly-desktop-macos.zip \
     --reconstruct-into dist/reconstructed \
-    --disk-image dist/hanly-desktop-macos.dmg \
-    --inventory-only
+    --reconstruct-only
+python tools/smoke_packaged_runtime.py --disk-image dist/hanly-desktop-macos.dmg
+python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --inventory-only
 python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --window-only
 ```
+
+Mounting is not the disk-image check: a DMG that opens onto something other
+than `Hanly.app` fails, because that is the download a person would find empty.
+
+### Which source the bundle came from
+
+A stale bundle passes every check it ever passed. Working is therefore not
+evidence that an artifact is this tree's build, and one tested bundle reported
+`0.1.3` beside a `0.5.0` checkout with nothing in the run saying so.
+
+`--expect-version` makes the bundle answer for itself, from the metadata its
+own interpreter collected:
+
+```bash
+python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop \
+    --image tests/hanly_fixtures/assets/korean_reading_roi.png \
+    --krdict /tmp/hanly-smoke/krdict.sqlite3 \
+    --expect-version "$(python tools/release_version.py)"
+```
+
+Both `hanly` and `hanly-app` must report that version. A mismatch fails, and so
+does a report that names no version at all — a missing identity leaves the
+release in the same position a wrong one does. The option is refused alongside
+`--inventory-only` and `--reconstruct-only`: neither starts the executable, so
+neither has anything to compare. `dist/reports/hanly-artifact-<platform>.json`
+records the build commit and the source version beside the archive hashes,
+because a hash says two downloads are the same file, not which source made it.
 
 The inventory also names the two build inputs a frozen bundle cannot fetch:
 `certifi/cacert.pem` and both EasyOCR weights. A bundle missing them has
 working code and no way to verify a certificate or read a word.
 
-`tests/integration/test_packaged_desktop.py` is the same gate as a test. It
+`tests/packaged/shared/test_packaged_desktop.py` is the same gate as a test. It
 uses the platform's build output (`dist/<platform>/hanly-desktop`, or
 `dist/macos/Hanly.app`) by default, or the bundle named by
-`HANLY_PACKAGED_APP`.
+`HANLY_PACKAGED_APP`:
+
+```bash
+python -m pytest --suite packaged
+```
+
+## Three suites, three machines
+
+`python -m pytest` runs everything and stays the full local gate. Each suite is
+also selectable on its own, because each needs a different machine:
+
+```bash
+python -m pytest --suite portable   # no Qt, no Torch, no display
+python -m pytest --suite native     # the desktop runtime and a window server
+python -m pytest --suite packaged   # a frozen bundle
+```
+
+| Suite | Where it lives | What it needs |
+| --- | --- | --- |
+| portable | everything outside the two below | the root `dev` group only |
+| native | `tests/native/shared/`, plus `tests/native/<os>/` for this host | `hanly-app[runtime]`, a display, the EasyOCR weights, a KRDICT database |
+| packaged | `tests/packaged/` | a built bundle |
+
+Selection excludes a suite **before its modules are imported**, so a portable
+run never loads Qt, pywebview, or the OCR stack, and one platform's adapters
+are never imported on another. A marker cannot do that: deselection by marker
+happens after the import.
+
+`ci.yml` owns the first two — a Python matrix for the portable suite plus one
+native job per platform, each installing the runtime and building the
+dictionary its cases read. `build.yml` owns the third and no longer repeats the
+portable suite, the lint, or the type check.
+
+A capability a developer's machine lacks is a skip with a reason. In the jobs
+that exist to exercise it, `HANLY_REQUIRE_NATIVE=1` and
+`HANLY_REQUIRE_PACKAGED=1` turn every one of those reasons into a failure: a
+native gate that skipped everything would be a green run proving nothing.
+
+## What a failed run leaves behind
+
+A native fault ends the frozen process before it prints its report, so the exit
+status used to be the whole account — and `3221225501` names no suspect. Two
+things now survive that.
+
+The self-check writes one flushed JSON line per stage boundary on **stderr**,
+which the harness reads before it truncates anything. The stage that was
+started and never completed is reported as `current_stage`, so a failed run
+says `current_stage: ocr; exit: ILLEGAL_INSTRUCTION (0xC000001D)` rather than a
+number. A crash before the first marker stays `current_stage: unknown`; naming
+the last stage that passed would invent a diagnosis. Provider construction,
+OCR, morphology, dictionary, closing the worker, the Qt WebEngine import, the
+window itself, and each page probe all carry a marker.
+
+Two native boundaries now say what they could not do instead of reaching into
+it. The Control Center checks for a usable primary screen after Qt
+initializes and before pywebview creates its window: pywebview reads the
+primary screen's geometry there without checking that there is one, so a
+screenless session used to fail from inside that library, under Qt's own fatal
+"no screens available". The check runs after the `QApplication` exists, so it
+cannot prevent an abort inside the constructor — that case stays with the
+stage markers above. And the process inventory the native smokes embed raises
+rather than returning nothing when the host refuses to answer: a denied `ps`
+and an empty child list look identical and mean opposite things, and only one
+of them is a retired child.
+
+`tools/native_host_fingerprint.py` records what the machine actually is —
+operating system and build, CPU model and vendor, core counts, the build
+interpreter — before the first install, so a run that dies later still says
+which host it died on. `--with-torch` adds what Torch reports about the CPU
+from a subprocess of its own, since importing Torch is one of the things that
+ends a packaging run. A field the host will not answer for carries the reason;
+nothing is filled in with a plausible default, and neither environment
+variables nor process inventories are collected.
+
+```bash
+python tools/native_host_fingerprint.py --context "before install" \
+    --output dist/reports/hanly-host-macos.json
+```
+
+In CI every check states the product it needs, so one failure no longer skips
+the rest. A failed worker smoke still leaves the window smoke, the archive
+checks, and the artifact identity; a failed reconstruction still leaves the
+disk-image evidence. The `hanly-diagnostics-<platform>` artifact is uploaded
+whether or not the run succeeded, and carries `dist/reports/` — every JSON
+report, the captured stdout and stderr of each smoke, and the host
+fingerprints — plus PyInstaller's warning and cross-reference output. It is
+never a release product, and a required failure still fails the job.
 
 ## Artifact and resource conventions
 

@@ -5,12 +5,14 @@ from __future__ import annotations
 import csv
 import io
 import json
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from benchmarks.dev import probes
 from benchmarks.dev.package_composition import analyze_package
 from benchmarks.dev.probes import (
     ProcessSampler,
@@ -315,3 +317,39 @@ def test_package_analyzer_keeps_posix_symlink_targets_out_of_tree_totals(
 
     assert report["file_count"] == 1
     assert report["total_bytes"] == len(b"target")
+
+
+def test_the_rusage_fallback_reads_this_platform_s_own_maxrss_unit() -> None:
+    """``getrusage`` does not agree with itself: Linux reports ``ru_maxrss`` in
+    KiB and macOS in bytes. Assuming KiB on macOS read 39 MiB as 39 GiB, which
+    is a plausible-looking number in a CSV nobody reads twice."""
+
+    expected = 1 if sys.platform == "darwin" else 1024
+
+    assert probes._MAXRSS_BYTES_PER_UNIT == expected
+
+
+@pytest.mark.skipif(
+    probes._resource is None, reason="the rusage fallback needs the POSIX resource module"
+)
+def test_the_fallback_sample_is_a_believable_resident_size() -> None:
+    """Whatever the unit, the answer has to be this process's own memory."""
+
+    sampler = ProcessSampler(io.StringIO(), process=None)
+
+    _cpu, rss = sampler._read_sample(None)
+
+    assert rss is not None
+    assert 1 << 20 < rss < 8 * (1 << 30), rss
+
+
+def test_a_host_without_the_resource_module_reports_no_size_rather_than_zero() -> None:
+    """Windows has no ``getrusage``, and a fabricated zero would read as a
+    measurement of a process that used no memory."""
+
+    sampler = ProcessSampler(io.StringIO(), process=None)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(probes, "_resource", None)
+
+        assert sampler._read_sample(None) == (None, None)

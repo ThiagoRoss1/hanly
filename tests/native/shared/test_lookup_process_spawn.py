@@ -14,11 +14,10 @@ import json
 import os
 import subprocess
 import sys
-from importlib.util import find_spec
 from pathlib import Path
 
-import pytest
-
+from tests.hanly_fixtures import FIXTURE_ASSETS, REPO_ROOT
+from tests.hanly_fixtures.capabilities import require_modules, unavailable
 from tests.hanly_fixtures.process_probe import PROCESS_ROWS_PROGRAM
 
 #: What the shell must never load. Memory a library does not return can only
@@ -61,7 +60,7 @@ def owned_children():
         parts = line.split(None, 2)
         if len(parts) < 3 or int(parts[1]) != mine:
             continue
-        if "resource_tracker" in parts[2] or "ps -axo" in parts[2]:
+        if any(marker in parts[2] for marker in IGNORED_COMMANDS):
             continue
         found.append(int(parts[0]))
     return found
@@ -128,12 +127,17 @@ def main(krdict, models, fixture):
         )
         report["status_after_wake"] = again.status.value
         report["generation_after_wake"] = engine.generation
+    except ProcessInspectionUnavailable as refusal:
+        # Not a leak and not a defect: this host will not say what is running,
+        # and an empty child list would claim the opposite.
+        report["inspection_unavailable"] = str(refusal)
     except BaseException as error:
         report["errors"].append(f"{type(error).__name__}: {error}")
     finally:
         engine.close()
         report["state_after_close"] = engine.state
-        report["children_after_close"] = settled_children()
+        if "inspection_unavailable" not in report:
+            report["children_after_close"] = settled_children()
 
     report["heavy_modules_in_the_shell"] = [
         name for name in HEAVY_MODULES if name in sys.modules
@@ -149,13 +153,7 @@ if __name__ == "__main__":
 
 def _existing_models() -> Path | None:
     candidates = [
-        Path(__file__).parents[2]
-        / "packages"
-        / "hanly-app"
-        / "src"
-        / "hanly_app"
-        / "assets"
-        / "easyocr_models",
+        REPO_ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "assets" / "easyocr_models",
         Path.home() / ".EasyOCR" / "model",
     ]
     return next(
@@ -171,7 +169,7 @@ def _existing_models() -> Path | None:
 def _existing_dictionary() -> Path | None:
     configured = os.environ.get("HANLY_KRDICT_DB")
     candidates = [Path(configured)] if configured else []
-    candidates.append(Path(__file__).parents[2] / "data" / "generated" / "krdict.sqlite3")
+    candidates.append(REPO_ROOT / "data" / "generated" / "krdict.sqlite3")
     return next((path for path in candidates if path.is_file()), None)
 
 
@@ -179,19 +177,29 @@ def _requirements() -> tuple[Path, Path, Path]:
     # Presence, not an import: loading the runtime to decide whether to run
     # would put the very libraries this test says the shell never imports into
     # the process running it.
-    missing = [name for name in ("easyocr", "kiwipiepy", "PIL") if find_spec(name) is None]
-    if missing:
-        pytest.skip(f"the lookup runtime is not installed: {', '.join(missing)}")
+    require_modules("easyocr", "kiwipiepy", "PIL")
     dictionary = _existing_dictionary()
     if dictionary is None:
-        pytest.skip("no built KRDICT database; see data/README.md")
+        unavailable("no built KRDICT database; see data/README.md")
     models = _existing_models()
     if models is None:
-        pytest.skip("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
-    fixture = Path(__file__).parents[1] / "hanly_fixtures" / "assets" / "korean_reading_roi.png"
+        unavailable("no prepared EasyOCR weights; see tools/prepare_easyocr_models.py")
+    fixture = FIXTURE_ASSETS / "korean_reading_roi.png"
     if not fixture.is_file():
-        pytest.skip("the Korean reading fixture is not available")
+        unavailable("the Korean reading fixture is not available")
     return dictionary, models, fixture
+
+
+def _require_inspection(report: dict[str, object]) -> None:
+    """A host that will not say what is running has proved no retirement.
+
+    Reading an empty child list as a retired engine would turn a refused ``ps``
+    into evidence of exactly the thing it could not observe.
+    """
+
+    refusal = report.get("inspection_unavailable")
+    if refusal:
+        unavailable(f"process inspection is unavailable here: {refusal}")
 
 
 def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Path) -> None:
@@ -220,6 +228,7 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     )
     assert line is not None, f"stdout={child.stdout!r} stderr={child.stderr[-3000:]!r}"
     report = json.loads(line[len(marker) :])
+    _require_inspection(report)
 
     assert report["errors"] == []
     assert report["state_after_attach"] == "ready"

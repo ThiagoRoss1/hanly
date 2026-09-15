@@ -13,14 +13,18 @@ from __future__ import annotations
 import faulthandler
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter, sleep
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .diagnostics import runtime_versions
 from .runtime import HanlyRuntime, load_runtime
+
+if TYPE_CHECKING:
+    from .control_center_host import ControlCenterHost
 
 #: What ``--self-check`` accepts. ``worker`` proves the lookup runtime and
 #: ``ui`` proves the main window: a frozen build can fail at either one alone.
@@ -42,6 +46,13 @@ UI_READY_TIMEOUT_SECONDS = 60.0
 #: that cannot handle them is broken rather than unlucky.
 MORPHOLOGY_PROBE = "한국어"
 DICTIONARY_PROBE = "한국어"
+
+#: Progress markers go on stderr, one flushed JSON line each, because the
+#: report on stdout is written last and a native abort destroys it. The
+#: harness reads these to say which stage a killed process was inside.
+STAGE_MARKER_PREFIX = "hanly-self-check:"
+STAGE_STARTED = "stage_started"
+STAGE_COMPLETED = "stage_completed"
 
 StageValueT = TypeVar("StageValueT")
 
@@ -117,9 +128,11 @@ def run_self_check(
         _stage(stages, "morphology", _analyze)
         _stage(stages, "dictionary", lambda: _lookup(runtime))
         if worker is not None:
-            worker.close()
+            # Closing releases native handles the providers opened, so it is a
+            # stage of its own: a crash here is not the dictionary's fault.
+            _stage(stages, "worker close", worker.close)
 
-    return SelfCheckReport(mode=mode, stages=tuple(stages), versions=runtime_versions())
+    return SelfCheckReport(mode=mode, stages=tuple(stages), versions=_collected_versions())
 
 
 def report_self_check(
@@ -156,12 +169,14 @@ def _trace_native_crashes() -> None:
 def _run_ui_check() -> SelfCheckReport:
     """Open the real main window and drive it the way the desktop does."""
 
-    from .control_center import ControlCenterBridge
-    from .control_center_host import ControlCenterHost
-
-    host = ControlCenterHost(ControlCenterBridge())
     opened: list[StageResult] = []
     probes: list[StageResult] = []
+
+    # Importing Qt WebEngine is where a frozen build dies before a window ever
+    # exists, so the import is its own stage rather than the window's preamble.
+    host = _stage(opened, "window host", _create_window_host)
+    if host is None:
+        return SelfCheckReport(mode="ui", stages=tuple(opened), versions=_collected_versions())
 
     def drive() -> None:
         try:
@@ -176,8 +191,17 @@ def _run_ui_check() -> SelfCheckReport:
     # separately and reported after the window they were taken through.
     _stage(opened, "main window", lambda: _run_window(host, drive))
     return SelfCheckReport(
-        mode="ui", stages=(*opened, *probes), versions=runtime_versions()
+        mode="ui", stages=(*opened, *probes), versions=_collected_versions()
     )
+
+
+def _create_window_host() -> ControlCenterHost:
+    """Import the window's own stack and build the host that will run it."""
+
+    from .control_center import ControlCenterBridge
+    from .control_center_host import ControlCenterHost
+
+    return ControlCenterHost(ControlCenterBridge())
 
 
 def _run_window(host: object, drive: Callable[[], None]) -> str:
@@ -253,16 +277,57 @@ def _stage(
     """Run one step, recording its outcome instead of raising out of the check."""
 
     started = perf_counter()
+    _emit_marker(STAGE_STARTED, name)
     try:
         value = action()
     except BaseException as error:
-        stages.append(
-            StageResult(name, False, f"{type(error).__name__}: {error}", _elapsed_ms(started))
+        result = StageResult(
+            name, False, f"{type(error).__name__}: {error}", _elapsed_ms(started)
         )
+        stages.append(result)
+        _emit_marker(STAGE_COMPLETED, name, ok=False, duration_ms=result.duration_ms)
         return None
     detail = value if isinstance(value, str) else ""
-    stages.append(StageResult(name, True, detail, _elapsed_ms(started)))
+    result = StageResult(name, True, detail, _elapsed_ms(started))
+    stages.append(result)
+    _emit_marker(STAGE_COMPLETED, name, ok=True, duration_ms=result.duration_ms)
     return value
+
+
+@contextmanager
+def _marked(name: str) -> Iterator[None]:
+    """Bracket work that is worth naming but does not belong in the report."""
+
+    _emit_marker(STAGE_STARTED, name)
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        _emit_marker(STAGE_COMPLETED, name, duration_ms=round(_elapsed_ms(started), 1))
+
+
+def _emit_marker(event: str, name: str, **fields: object) -> None:
+    """Write one flushed progress line, on the stream the report does not use.
+
+    A fatal native error never returns, so the harness cannot be told which
+    stage was running after the fact. Each marker is written and flushed before
+    the work it names, which is what survives an abort.
+    """
+
+    payload = {"event": event, "stage": name, **fields}
+    try:
+        print(f"{STAGE_MARKER_PREFIX} {json.dumps(payload)}", file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        # A frozen Windows build can be launched with no usable stderr at all;
+        # losing progress evidence must not lose the check itself.
+        pass
+
+
+def _collected_versions() -> dict[str, str]:
+    """Read the identities the report carries, under a marker of its own."""
+
+    with _marked("versions"):
+        return runtime_versions()
 
 
 def _recognize(runtime: HanlyRuntime, image_path: Path) -> str:
@@ -321,6 +386,9 @@ __all__ = [
     "MORPHOLOGY_PROBE",
     "RUNTIME_SELF_CHECK_MODES",
     "SELF_CHECK_MODES",
+    "STAGE_COMPLETED",
+    "STAGE_MARKER_PREFIX",
+    "STAGE_STARTED",
     "UI_PROBE_ELEMENTS",
     "SelfCheckReport",
     "StageResult",

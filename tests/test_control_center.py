@@ -269,20 +269,6 @@ def test_bridge_validates_region_and_monitor_target_choices(tmp_path: Path) -> N
         bridge.set_region({"left": 0, "top": 0, "width": 0, "height": 600})
 
 
-def test_qt_webengine_is_prepared_before_qapplication_creation() -> None:
-    """The shared pywebview backend must load before Qt creates its app."""
-
-    pytest.importorskip("PyQt6")
-    import hanly_app.control_center as control_center
-
-    assert hasattr(control_center, "prepare_control_center_qt")
-    control_center.prepare_control_center_qt()
-
-    from PyQt6.QtWidgets import QApplication
-
-    assert QApplication.instance() is None
-
-
 def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None:
     assets = load_control_center_assets()
 

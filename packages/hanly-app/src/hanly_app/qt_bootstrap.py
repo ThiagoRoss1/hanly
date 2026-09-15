@@ -73,6 +73,37 @@ def ensure_qt_application(
     return _application
 
 
+#: How the primary screen is asked for. Injectable because the answer, not the
+#: Qt call, is what the decision below is made from.
+ScreenProbe = Callable[[], object | None]
+
+
+def verify_primary_screen(probe: ScreenProbe | None = None) -> None:
+    """Fail before a library reads the geometry of a screen that is not there.
+
+    Qt initializes in a session with no screen and only says so fatally later.
+    pywebview then asks the primary screen for its geometry while creating the
+    window, without checking that there is one, and the failure surfaces from
+    inside that library rather than from Hanly.
+
+    This runs after the application exists, so it cannot prevent an abort
+    inside ``QApplication`` itself; that case stays with the packaging
+    self-check's stage markers and Qt's own message handler.
+    """
+
+    screen = (_primary_screen if probe is None else probe)()
+    if screen is None:
+        raise ControlCenterUnavailable(
+            "this session has no usable screen; the Control Center needs a desktop"
+        )
+
+
+def _primary_screen() -> object | None:
+    from PyQt6.QtGui import QGuiApplication
+
+    return QGuiApplication.primaryScreen()
+
+
 def verify_platform_plugin(environment: Mapping[str, str] | None = None) -> None:
     """Fail with an exception where Qt would abort the process instead.
 
@@ -194,4 +225,5 @@ __all__ = [
     "install_qt_thread_invoker",
     "qt_application",
     "verify_platform_plugin",
+    "verify_primary_screen",
 ]

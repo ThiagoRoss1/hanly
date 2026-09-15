@@ -1,10 +1,13 @@
-"""The test suite must run in the environment CI actually builds.
+"""Each suite must run in the environment its own CI job actually builds.
 
-CI installs the root ``dev`` dependency group and the two packages without
-extras, while a developer machine carries the whole desktop runtime. A test
-that reaches a library present only locally passes here and fails there, so
-every third-party module the suite touches is either declared in that group
-or acquired through a ``pytest.importorskip`` that precedes it.
+The portable job installs the root ``dev`` dependency group and the two
+packages without extras, while a developer machine carries the whole desktop
+runtime. A portable test that reaches a library present only locally passes
+here and fails there, so every third-party module it touches is either declared
+in that group or acquired through a ``pytest.importorskip`` that precedes it.
+
+The native and packaged jobs install the ``runtime`` extra on purpose, so their
+cases may reach it -- and nothing beyond it.
 """
 
 from __future__ import annotations
@@ -19,8 +22,25 @@ import pytest
 ROOT = Path(__file__).parents[1]
 TEST_ROOTS = (ROOT / "tests", ROOT / "benchmarks" / "dev" / "tests")
 
+#: The suites whose own job installs the desktop runtime extra.
+RUNTIME_SUITES = (ROOT / "tests" / "native", ROOT / "tests" / "packaged")
+
+#: Where the extra those jobs install is declared.
+_APP_PYPROJECT = ROOT / "packages" / "hanly-app" / "pyproject.toml"
+
+#: Locates ``runtime = [...]`` in the app project, read the same way.
+_RUNTIME_EXTRA = re.compile(r"^runtime\s*=\s*(\[.*?^\])", re.DOTALL | re.MULTILINE)
+
 #: Distributions whose importable name differs from the name pip installs.
-_IMPORT_NAMES = {"pillow": "PIL", "pyyaml": "yaml"}
+_IMPORT_NAMES = {
+    "pillow": "PIL",
+    "pyyaml": "yaml",
+    "pywebview": "webview",
+}
+
+#: Installed by the runtime extra as transitive dependencies, and imported by
+#: name rather than through the distribution that pulls them in.
+_RUNTIME_TRANSITIVE = frozenset({"easyocr", "kiwipiepy", "torch", "numpy"})
 
 #: Reached through the repository root on pytest's ``pythonpath``, not pip.
 _FIRST_PARTY = frozenset({"benchmarks", "hanly", "hanly_app", "tests", "tools"})
@@ -61,7 +81,22 @@ def _dev_requirements() -> list[str]:
 def _declared_modules() -> set[str]:
     """Import names the root dev dependency group makes available."""
 
-    names = (re.split(r"[<>=!~\[;\s]", line, maxsplit=1)[0] for line in _dev_requirements())
+    return _import_names(_dev_requirements())
+
+
+def _runtime_modules() -> set[str]:
+    """Import names the desktop runtime extra makes available."""
+
+    block = _RUNTIME_EXTRA.search(_APP_PYPROJECT.read_text(encoding="utf-8"))
+    assert block is not None, "hanly-app declares no runtime extra"
+    requirements = ast.literal_eval(block.group(1))
+
+    assert requirements, "the runtime extra is empty"
+    return _import_names(requirements) | set(_RUNTIME_TRANSITIVE)
+
+
+def _import_names(requirements: list[str]) -> set[str]:
+    names = (re.split(r"[<>=!~\[;\s]", line, maxsplit=1)[0] for line in requirements)
     return {_IMPORT_NAMES.get(name.lower(), name) for name in names if name}
 
 
@@ -158,14 +193,35 @@ def _test_modules() -> list[Path]:
 
 def test_every_library_the_suite_reaches_is_declared_or_skippable() -> None:
     declared = _declared_modules()
+    with_runtime = declared | _runtime_modules()
 
     for path in _test_modules():
-        undeclared = _undeclared_modules(path.read_text(encoding="utf-8"), declared)
+        available = with_runtime if _needs_the_runtime(path) else declared
+        undeclared = _undeclared_modules(path.read_text(encoding="utf-8"), available)
         assert not undeclared, (
-            f"{path.relative_to(ROOT)} reaches {sorted(undeclared)}, which CI does "
-            "not install; add it to the root dev dependency group or acquire it "
-            "with pytest.importorskip"
+            f"{path.relative_to(ROOT)} reaches {sorted(undeclared)}, which its CI "
+            "job does not install; add it to the root dev dependency group or "
+            "acquire it with pytest.importorskip"
         )
+
+
+def _needs_the_runtime(path: Path) -> bool:
+    """Whether this module belongs to a suite whose job installs the extra."""
+
+    return any(suite == path or suite in path.parents for suite in RUNTIME_SUITES)
+
+
+def test_the_dev_group_does_not_quietly_carry_the_desktop_runtime() -> None:
+    """This is the rule the portable matrix exists to keep: four Python
+    versions on a machine with no Qt, no Torch, and no display. What each
+    module may reach is asserted above; this is what the group itself installs.
+    """
+
+    declared = _declared_modules()
+
+    assert "PyQt6" not in declared
+    assert "torch" not in declared
+    assert "webview" not in declared
 
 
 def test_an_importorskip_below_an_import_does_not_excuse_it() -> None:
