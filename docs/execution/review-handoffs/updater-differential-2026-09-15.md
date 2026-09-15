@@ -296,11 +296,12 @@ build's content on *this* machine.
 compact form is the obvious next reduction and is deliberately not in this
 bundle — three orders of magnitude were already the point.
 
-One earlier full run showed eight transient failures in
-`test_app_update_differential.py`; it overlapped a native-suite background run
-on a host with under 2 GB free disk, and the module passes in isolation and in
-two consecutive clean full runs since. Recorded here rather than left out, but
-treated as resource contention rather than an ordering defect.
+Two full runs during the session showed eight failures in
+`test_app_update_differential.py`. I first recorded these as resource
+contention; that was wrong. **They were the disk preflight refusing to stage**,
+correctly, on a host that had fallen to 130 MB free — the feature working, seen
+from the wrong end. Its arithmetic is over-conservative (see the plan's
+*Updates*), and these cases need a few hundred megabytes free to run.
 
 ### Native cases added
 
@@ -472,7 +473,22 @@ none of which any product code called.
 
 ---
 
-## 9. Status
+## 9. Platform scope
+
+Windows only, per the plan's §1. Section 7 of the plan now records what macOS
+and Linux *should* do and why neither was changed here: Linux wants the same
+design and is simpler (no bundle signing, and POSIX renames over a running
+binary), while macOS must keep whole-bundle replacement because the signature
+seals the bundle, and wants its download made differential against an APFS
+clone. Both are the next bundle, not defects in this one.
+
+Two defects found after this handoff was written were **deliberately left in
+place** at the human's instruction, since they came from unrequested work. They
+are listed in the plan's *Updates*: a Cancel action offered on the whole-bundle
+path where nothing observes it, and a disk preflight that counts backups as new
+space.
+
+## 10. Status
 
 Phase A is complete and stops here. **Nothing is committed, pushed, merged,
 tagged, or published**, and no publishing workflow was triggered. HAN-42 is

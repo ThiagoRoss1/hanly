@@ -420,6 +420,107 @@ The first manifest-aware build becomes the baseline for ordinary N-1 deltas.
 Legacy installs without trustworthy file ownership do not get guessed deletion
 lists. Their migration establishes the inventory before differential updates.
 
+## 7. Platform strategy: is macOS and Linux doing the right thing?
+
+Asked after Phase A: are the macOS and Linux paths the best available, and is
+what they do what Apple and the ecosystem recommend? Short answer: **Linux is
+not, macOS is half right, and neither was changed because §1 bounded this
+bundle to Windows.** That was a written scope decision, not an oversight.
+
+### macOS
+
+Apple publishes **no** auto-update mechanism for directly distributed apps; the
+App Store updates store apps and that is the whole of Apple's provision. What
+Apple *does* impose is the constraint that matters here: an app is signed and
+notarized **as a bundle**. `Contents/_CodeSignature/CodeResources` seals every
+file with its digest, and the notarization ticket is stapled to the bundle.
+
+**So patching files inside an installed `.app` is wrong on macOS.** It breaks
+the seal, `codesign --verify` fails, and Gatekeeper refuses to launch what is
+left. Our whole-bundle replacement is therefore the *correct* half, and must
+stay.
+
+What is not optimal is the *download*. Sparkle - the de-facto standard, used by
+most directly distributed Mac apps - ships binary **delta** updates: a patch
+between two published versions is applied to a staged copy, producing a bundle
+byte-identical to the new signed one, which is then swapped in atomically with
+`NSFileManager.replaceItemAt`. The seal survives because the patched result *is*
+the signed build.
+
+The right macOS design, then:
+
+1. Publish a delta between two published bundles, as Windows now does.
+2. Clone the installed bundle into staging. On APFS `clonefile` makes this
+   nearly free in space and time, so the copy this strategy needs is not the
+   cost it would have been on HFS+.
+3. Apply the changed files into the clone.
+4. Verify the result's signature **before** anything is swapped.
+5. Atomically replace the whole bundle, exactly as today.
+
+That keeps every existing guarantee and removes the full download. It is more
+work than Linux and should not be attempted without the signing question
+settled first.
+
+### Linux
+
+Ours is **not** the best available, and Linux is the easier of the two.
+
+There is no bundle-signing constraint, and POSIX lets a running program's file
+be renamed over - the running inode survives - so per-file replacement needs
+neither the locked-file dance nor the stop-the-app step Windows requires. The
+Windows design in §3 applies almost unchanged, and is simpler there.
+
+What the ecosystem does, for reference: Flatpak/OSTree is the modern answer
+(content-addressed, file-level dedup, true deltas), AppImage uses zsync for
+block-level delta downloads, and Snap ships xdelta3 deltas. If Hanly keeps its
+plain tarball rather than adopting one of those, the file-manifest design is
+the correct thing to build.
+
+### Recommendation
+
+| Platform | Today | Should be | Effort |
+|---|---|---|---|
+| Windows | file-level, in place | done | - |
+| Linux | full archive, directory swap | the same design as Windows | small; no signing, no locked files |
+| macOS | full archive, bundle swap | delta applied to an APFS clone, signature verified, bundle swapped | larger; signing must be settled first |
+
+Neither is a defect in what shipped. Both are the next bundle.
+
+## 8. Updates
+
+**2026-09-15 — Phase A complete, Windows only.** Handoff at
+`review-handoffs/updater-differential-2026-09-15.md`. Two defects fixed that
+each independently prevented the reported update: `cli._leave` crashing on a
+windowed build's absent streams, and `spawn_detached` passing
+`DETACHED_PROCESS`, under which PowerShell exits zero having run none of its
+script. Measured on a real frozen 0.5.1 to 0.5.2 update: 1,062,979 bytes
+downloaded against 648,557,160, and 17 files written against 6,118.
+
+**Known outstanding, in priority order.**
+
+1. **Linux differential update.** As above. The design already exists.
+2. **macOS differential download.** As above, behind the signing question.
+3. **The packaged worker check fails** loading `torch/lib/c10.dll`
+   (WinError 1114), deterministically, on this host. Not attributed to this
+   work - nothing in the diff touches the spec, constraints, hooks, or any
+   import torch depends on - and not claimed to pass. Needs a machine with
+   room, ideally against a build from before the branch.
+4. **Two defects found after the handoff and deliberately left in place**, at
+   the human's instruction, because they were found by unrequested work:
+   - the Control Center offers a Cancel action on the whole-bundle path, where
+     no installer observes it, so the click does nothing while the download
+     continues. macOS and Linux only.
+   - the disk preflight counts backups as new space. Moving an original aside
+     is a rename on the installation's own volume and costs nothing, so the
+     requirement is inflated by the size of every replaced file on top of a
+     fixed 256 MB margin. It refuses some updates a volume could hold.
+5. **The helper's progress window and the new Control Center panel have never
+   been looked at.** Every native run passes `-Quiet`, and the UI tests assert
+   on asset contents rather than a rendered page. The logic is exercised; the
+   pixels are not.
+6. **CI has not run this diff** and cannot while it is uncommitted. The Linux
+   and macOS release lanes are NOT RUN.
+
 ## Completion checklist
 
 - [ ] Same Windows install path; changed/added/deleted managed files only.
