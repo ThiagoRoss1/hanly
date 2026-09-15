@@ -91,6 +91,11 @@ how a client from before update packages reaches one.
 | `8f62d7a` | `feat: build and publish the cross-platform release contract` | Phase 5 (lanes) |
 | `7b3f305` | `fix: stop a packaging test stub writing a file named after a flag` | Defect found in passing |
 | `e97118a` | `docs: describe the cross-platform updater as implemented` | Phase 6 |
+| `8c7e2ee` | `test: ask the build stamp question of a package, not of this checkout` | Test coupling |
+| `971b66f` | `fix: write an update acknowledgement as exact bytes` | Windows-blocking defect |
+| `cb2d437` | `fix: keep an installation's receipt when an update staged nothing` | Ownership defect |
+| `0b875df` | `fix: let a POSIX update commit while the build it started keeps running` | Three defects the real pair exposed |
+| `33048ba` | `docs: record the real macOS release pair and what it exposed` | Evidence |
 
 ## Decisions and deviations
 

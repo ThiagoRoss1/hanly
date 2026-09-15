@@ -152,8 +152,8 @@ the executable — which is why its location is read from the manifest.
 Convergence gates on this host, all green:
 
 ```text
-python -m pytest --suite portable   1539 passed, 1 skipped
-python -m pytest --suite native       50 passed
+python -m pytest --suite portable     1539 passed, 1 skipped
+python -m pytest --suite native         51 passed
 python -m ruff check packages packaging tests tools benchmarks
 python -m mypy  packages packaging tests tools benchmarks   244 files
 cc -std=c11 -Wall -Wextra -Werror -O2 packaging/updater/hanly-update-posix.c
