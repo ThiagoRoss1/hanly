@@ -10,19 +10,24 @@ from __future__ import annotations
 import json
 import urllib.request
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tools.release_build import (
     COMMIT_MARKER,
+    FIXED_RELEASE_ASSETS,
+    PROTOCOL_LEGACY,
     GitHubAPI,
     ReleaseStateError,
     _next_page,
     _release_for_tag,
     classify_release,
+    expected_release_assets,
     find_application_run,
     main,
+    release_protocol,
     resolve_tag_commit,
     unique_semver_tag,
     verify_application_run,
@@ -508,3 +513,104 @@ def test_a_paginated_tag_listing_reaches_the_semver_tag_on_a_later_page(
     monkeypatch.setattr(urllib.request, "urlopen", _paged_opener(pages, []))
 
     assert unique_semver_tag(GitHubAPI("token"), "o/r", COMMIT) == TAG
+
+
+# --------------------------------------------------------------------------
+# Two generations of the release contract
+# --------------------------------------------------------------------------
+
+_LEGACY_RELEASE = sorted(
+    FIXED_RELEASE_ASSETS | {"krdict-2026-01-01.sqlite3.zst"}
+)
+_PACKAGE_RELEASE = sorted(
+    FIXED_RELEASE_ASSETS
+    | {"krdict-2026-01-01.sqlite3.zst", "Hanly-v0.5.3.hup"}
+)
+
+
+def test_a_release_published_before_update_packages_is_classified_not_failed() -> None:
+    assert release_protocol(_LEGACY_RELEASE) == PROTOCOL_LEGACY
+    assert verify_published_assets(_LEGACY_RELEASE) == "krdict-2026-01-01.sqlite3.zst"
+
+
+def test_a_release_being_made_now_has_to_publish_an_update_package() -> None:
+    with pytest.raises(ReleaseStateError, match="exactly one Hanly update package"):
+        verify_published_assets(_LEGACY_RELEASE, require_package=True)
+
+    assert verify_published_assets(_PACKAGE_RELEASE, require_package=True) == (
+        "krdict-2026-01-01.sqlite3.zst"
+    )
+
+
+def test_a_package_release_publishes_one_delta_for_each_platform_at_most() -> None:
+    deltas = [
+        "hanly-desktop-windows-x86_64-from-0.5.2-to-0.5.3.delta.zip",
+        "hanly-desktop-macos-arm64-from-0.5.2-to-0.5.3.delta.zip",
+        "hanly-desktop-linux-x86_64-from-0.5.2-to-0.5.3.delta.zip",
+    ]
+
+    assert verify_published_assets([*_PACKAGE_RELEASE, *deltas], require_package=True)
+
+    with pytest.raises(ReleaseStateError, match="at most one delta per platform"):
+        verify_published_assets(
+            [
+                *_PACKAGE_RELEASE,
+                *deltas,
+                "hanly-desktop-linux-x86_64-from-0.5.1-to-0.5.3.delta.zip",
+            ],
+            require_package=True,
+        )
+
+
+def test_a_package_release_publishes_no_separate_windows_delta() -> None:
+    with pytest.raises(ReleaseStateError, match="no separate Windows delta"):
+        verify_published_assets(
+            [*_PACKAGE_RELEASE, "hanly-desktop-windows-from-0.5.2-to-0.5.3.delta.zip"],
+            require_package=True,
+        )
+
+
+def test_a_legacy_release_carrying_platform_deltas_is_not_a_release_set() -> None:
+    with pytest.raises(ReleaseStateError, match="deltas but no update package"):
+        verify_published_assets(
+            [*_LEGACY_RELEASE, "hanly-desktop-linux-x86_64-from-0.5.2-to-0.5.3.delta.zip"]
+        )
+
+
+def test_a_release_holding_two_packages_is_not_a_release_set() -> None:
+    with pytest.raises(ReleaseStateError, match="exactly one update package"):
+        verify_published_assets([*_PACKAGE_RELEASE, "Hanly-v0.5.4.hup"], require_package=True)
+
+
+def test_the_expected_asset_set_is_derived_from_the_package_it_publishes(
+    tmp_path: Path,
+) -> None:
+    from tests.hanly_fixtures.update_release import PublishedRelease
+    from tests.hanly_fixtures.update_tree import LINUX
+
+    base = PublishedRelease(tmp_path / "r1", LINUX, version="0.5.2", build_id="build-zero")
+    target = PublishedRelease(
+        tmp_path / "r2",
+        LINUX,
+        version="0.5.3",
+        build_id="build-one",
+        changes={"_internal/added.so": b"new"},
+        previous=base,
+    )
+
+    names = expected_release_assets(target.package, "krdict-2026-01-01.sqlite3.zst")
+
+    assert target.package.name in names
+    assert "hanly-desktop-linux-x86_64-from-0.5.2-to-0.5.3.delta.zip" in names
+    assert set(FIXED_RELEASE_ASSETS) <= set(names)
+    assert "hanly-desktop-macos-arm64-from-0.5.2-to-0.5.3.delta.zip" not in names
+
+
+def test_something_that_is_not_an_update_package_derives_no_asset_set(
+    tmp_path: Path,
+) -> None:
+    broken = tmp_path / "Hanly-v0.5.3.hup"
+    broken.write_bytes(b"not an archive at all")
+
+    with pytest.raises(ReleaseStateError, match="not a usable update package"):
+        expected_release_assets(broken, "krdict-2026-01-01.sqlite3.zst")

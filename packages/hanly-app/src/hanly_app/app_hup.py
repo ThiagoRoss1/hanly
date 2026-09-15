@@ -478,7 +478,11 @@ def read_package(path: Path) -> UpdatePackage:
     """
 
     _require_readable_container(path)
-    with zipfile.ZipFile(path) as package:
+    try:
+        opened = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile) as error:
+        raise HupError(f"the update package is unreadable: {error}") from error
+    with opened as package:
         members = _checked_members(package)
         index = HupIndex.from_json(
             _member_text(package, members[INDEX_MEMBER], MAX_INDEX_BYTES, INDEX_MEMBER)

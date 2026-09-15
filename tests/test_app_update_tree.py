@@ -27,10 +27,10 @@ from hanly_app.app_update_tree import (
 )
 
 from tests.hanly_fixtures.update_release import PublishedRelease
-from tests.hanly_fixtures.update_tree import LINUX, MACOS, Product
+from tests.hanly_fixtures.update_tree import LINUX, MACOS, Product, program_bytes
 
 LINUX_CHANGES = {
-    "hanly-desktop": b"linux program, revised",
+    "hanly-desktop": program_bytes("linux", "x86_64", b"revised"),
     "_internal/added.so": b"a library the new build adds",
 }
 

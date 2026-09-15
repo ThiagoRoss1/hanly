@@ -43,14 +43,15 @@ from tests.hanly_fixtures.update_tree import (
     SOURCE_COMMIT,
     WINDOWS,
     Product,
+    program_bytes,
 )
 
 TARGET_CHANGES = {
-    "hanly-desktop.exe": b"windows program, revised",
+    "hanly-desktop.exe": program_bytes("windows", "x86_64", b"revised"),
     "_internal/added.dat": b"a file the new build adds",
 }
 LINUX_CHANGES = {
-    "hanly-desktop": b"linux program, revised",
+    "hanly-desktop": program_bytes("linux", "x86_64", b"revised"),
     "_internal/added.so": b"a library the new build adds",
 }
 

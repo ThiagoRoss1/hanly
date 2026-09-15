@@ -34,6 +34,29 @@ from hanly_app.app_manifest import BuildIdentity, TreeEntry, TreeLayout, TreeMan
 BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
 
 
+def program_bytes(platform: str, architecture: str, marker: bytes = b"") -> bytes:
+    """A program whose header really says what machine it is built for.
+
+    The producer reads that header rather than trusting the runner's label, so
+    a stand-in built out of plain text would be refused - correctly - and the
+    cases about it would never run.
+    """
+
+    if platform == "linux":
+        machine = {"x86_64": 0x3E, "arm64": 0xB7}[architecture]
+        header = b"\x7fELF\x02\x01\x01" + bytes(9)
+        header += (2).to_bytes(2, "little") + machine.to_bytes(2, "little")
+        return header + marker
+    if platform == "macos":
+        cpu = {"x86_64": 0x01000007, "arm64": 0x0100000C}[architecture]
+        return b"\xcf\xfa\xed\xfe" + cpu.to_bytes(4, "little") + bytes(12) + marker
+    machine = {"x86_64": 0x8664, "arm64": 0xAA64}[architecture]
+    portable = bytearray(b"MZ" + bytes(0x3E))
+    portable[0x3C:0x40] = (0x40).to_bytes(4, "little")
+    portable += b"PE\x00\x00" + machine.to_bytes(2, "little")
+    return bytes(portable) + marker
+
+
 def info_plist(version: str) -> bytes:
     """The real property list a macOS bundle check reads, for one version."""
 
@@ -99,7 +122,7 @@ WINDOWS = Product(
     root="hanly-desktop",
     executable="hanly-desktop.exe",
     files={
-        "hanly-desktop.exe": b"windows program",
+        "hanly-desktop.exe": program_bytes("windows", "x86_64"),
         "_internal": None,
         "_internal/base_library.zip": b"library bytes",
         "_internal/PyQt6": None,
@@ -116,7 +139,7 @@ MACOS = Product(
         "Contents": None,
         "Contents/Info.plist": info_plist("0.0.0"),
         "Contents/MacOS": None,
-        "Contents/MacOS/hanly-desktop": b"mac program",
+        "Contents/MacOS/hanly-desktop": program_bytes("macos", "arm64"),
         "Contents/MacOS/hanly-update-posix": b"the native update helper",
         "Contents/Frameworks": None,
         "Contents/Frameworks/Qt.framework": None,
@@ -136,7 +159,7 @@ LINUX = Product(
     root="hanly-desktop",
     executable="hanly-desktop",
     files={
-        "hanly-desktop": b"linux program",
+        "hanly-desktop": program_bytes("linux", "x86_64"),
         "hanly-update-posix": b"the native update helper",
         "_internal": None,
         "_internal/libpython.so.1.0": b"interpreter",
@@ -303,6 +326,7 @@ __all__ = [
     "asset_for",
     "delta_descriptor",
     "info_plist",
+    "program_bytes",
     "entry_at",
     "manifest_for",
     "manifest_member",

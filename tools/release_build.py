@@ -21,7 +21,10 @@ import urllib.parse
 import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
+
+from hanly_app.app_hup import HupError, read_package
 
 API_ROOT = "https://api.github.com"
 APPLICATION_WORKFLOW = ".github/workflows/build.yml"
@@ -48,9 +51,29 @@ FIXED_RELEASE_ASSETS = frozenset(
 )
 RESOURCE_ASSET = re.compile(r"^krdict-[A-Za-z0-9._-]+\.sqlite3\.zst$")
 
-#: Optional, and at most one: the first manifest-aware build has no published
-#: predecessor to diff against, so a complete release may carry no delta.
+#: A release from before cross-platform updates could publish one Windows
+#: delta. A release that publishes an update package never does: its
+#: differential updates travel through the package instead.
 DELTA_ASSET = re.compile(r"^hanly-desktop-windows-from-[0-9.]+-to-[0-9.]+\.delta\.zip$")
+
+#: The one metadata package a HUP-era release publishes, and the per-platform
+#: deltas it may index. At most one per platform tuple, and only where a
+#: verified predecessor existed.
+HUP_ASSET = re.compile(r"^Hanly-v[0-9]+\.[0-9]+\.[0-9]+\.hup$")
+TREE_DELTA_ASSET = re.compile(
+    r"^hanly-desktop-(?:windows|macos|linux)-(?:x86_64|arm64)"
+    r"-from-[0-9.]+-to-[0-9.]+\.delta\.zip$"
+)
+
+#: Which generation of the update protocol a published release belongs to.
+#: Releases published before this one existed are classified, not failed: a
+#: no-op validation of release history must not demand a package that could
+#: not have been produced at the time.
+PROTOCOL_LEGACY = "legacy"
+PROTOCOL_PACKAGE = "package"
+
+#: The most platform tuples one release publishes a delta for.
+MAX_PLATFORM_DELTAS = 3
 
 SEMVER_TAG = re.compile(r"^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$")
 RELEASE_TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
@@ -254,31 +277,42 @@ def find_application_run(
     return verify_application_run(newest, repository=repository, tag=tag, commit=commit)
 
 
-def verify_published_assets(names: Sequence[str]) -> str:
+def release_protocol(names: Sequence[str]) -> str:
+    """Which generation of the update protocol a set of assets belongs to."""
+
+    return PROTOCOL_PACKAGE if any(HUP_ASSET.fullmatch(name) for name in names) else PROTOCOL_LEGACY
+
+
+def verify_published_assets(names: Sequence[str], *, require_package: bool = False) -> str:
     """Return the resource asset name, once ``names`` is exactly a release set.
 
-    A partial or foreign public release must not be mistaken for a finished one,
-    so the names are checked rather than counted -- the more so because the
-    optional Windows delta makes the count itself not fixed.
+    A partial or foreign public release must not be mistaken for a finished
+    one, so the names are checked rather than counted - the more so because the
+    optional deltas make the count itself not fixed.
+
+    ``require_package`` is what a release being made passes. Without it an
+    already-published release from before update packages existed still
+    validates as what it is; with it, a new release cannot pass by looking like
+    one of those.
     """
 
     unique = set(names)
     if len(unique) != len(names):
         raise ReleaseStateError("the published release lists a duplicate asset name")
 
-    resources = sorted(name for name in unique if RESOURCE_ASSET.fullmatch(name))
-    if len(resources) != 1:
-        raise ReleaseStateError(
-            f"the published release must hold exactly one KRDICT asset; found {len(resources)}"
-        )
+    protocol = release_protocol(names)
+    if require_package and protocol != PROTOCOL_PACKAGE:
+        raise ReleaseStateError("a release must publish exactly one Hanly update package")
 
-    deltas = sorted(name for name in unique if DELTA_ASSET.fullmatch(name))
-    if len(deltas) > 1:
+    resource = _single_resource(unique)
+    packages = sorted(name for name in unique if HUP_ASSET.fullmatch(name))
+    if len(packages) > 1:
         raise ReleaseStateError(
-            f"a release publishes at most one Windows delta; found {len(deltas)}"
+            f"a release publishes exactly one update package; found {len(packages)}"
         )
+    deltas = _release_deltas(unique, protocol)
 
-    remainder = unique - {resources[0]} - set(deltas)
+    remainder = unique - {resource} - set(packages) - set(deltas)
     if remainder != FIXED_RELEASE_ASSETS:
         missing = sorted(FIXED_RELEASE_ASSETS - remainder)
         unexpected = sorted(remainder - FIXED_RELEASE_ASSETS)
@@ -286,7 +320,82 @@ def verify_published_assets(names: Sequence[str]) -> str:
             f"the published release is not the exact asset set; missing {missing}, "
             f"unexpected {unexpected}"
         )
+    return resource
+
+
+def _single_resource(names: set[str]) -> str:
+    resources = sorted(name for name in names if RESOURCE_ASSET.fullmatch(name))
+    if len(resources) != 1:
+        raise ReleaseStateError(
+            f"the published release must hold exactly one KRDICT asset; found {len(resources)}"
+        )
     return resources[0]
+
+
+def _release_deltas(names: set[str], protocol: str) -> list[str]:
+    """The deltas this generation of the protocol allows, and no others.
+
+    A package-era release publishes its differentials per platform tuple and
+    never the legacy Windows one: that document is full-only from the bridge
+    release on, and a second delta beside it would be a second contract to keep
+    correct for the rest of the older generation's life.
+    """
+
+    legacy = sorted(name for name in names if DELTA_ASSET.fullmatch(name))
+    tree = sorted(
+        name for name in names if TREE_DELTA_ASSET.fullmatch(name) and name not in legacy
+    )
+
+    if protocol == PROTOCOL_LEGACY:
+        if tree:
+            raise ReleaseStateError("this release publishes deltas but no update package")
+        if len(legacy) > 1:
+            raise ReleaseStateError(
+                f"a release publishes at most one Windows delta; found {len(legacy)}"
+            )
+        return legacy
+
+    if legacy:
+        raise ReleaseStateError(
+            "a release with an update package publishes no separate Windows delta"
+        )
+    if len({_delta_tuple(name) for name in tree}) != len(tree):
+        raise ReleaseStateError("a release publishes at most one delta per platform")
+    if len(tree) > MAX_PLATFORM_DELTAS:
+        raise ReleaseStateError(
+            f"a release publishes at most {MAX_PLATFORM_DELTAS} deltas; found {len(tree)}"
+        )
+    return tree
+
+
+def _delta_tuple(name: str) -> str:
+    """Which platform and architecture one delta belongs to."""
+
+    return "-".join(name.split("-")[2:4])
+
+
+def expected_release_assets(package: Path, resource_asset: str) -> list[str]:
+    """Derive exactly what a release publishes, from the package it published.
+
+    The package names the products and deltas it indexes, so the release's
+    asset set is a consequence of it rather than a list kept beside it. The
+    compatibility assets are added because policy keeps them, not because
+    anything in the package refers to them.
+    """
+
+    try:
+        read = read_package(package)
+    except HupError as error:
+        raise ReleaseStateError(
+            f"{package.name} is not a usable update package: {error}"
+        ) from error
+
+    names = set(FIXED_RELEASE_ASSETS)
+    names.add(package.name)
+    names.add(resource_asset)
+    names.update(read.asset_names())
+    verify_published_assets(sorted(names), require_package=True)
+    return sorted(names)
 
 
 def _asset_names(release: Mapping[str, Any]) -> list[str]:
@@ -379,15 +488,21 @@ def _release_for_tag(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["resolve", "classify"])
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--tag", required=True)
+    parser.add_argument("mode", choices=["resolve", "classify", "assets"])
+    parser.add_argument("--repository")
+    parser.add_argument("--tag")
     parser.add_argument("--event", default="workflow_dispatch")
     parser.add_argument("--commit", default=None, help="classify mode: the resolved tag commit")
     parser.add_argument(
         "--run-id",
         default=None,
         help="resolve mode: verify this exact build run instead of searching for one",
+    )
+    parser.add_argument(
+        "--package", type=Path, help="assets mode: the update package this release publishes"
+    )
+    parser.add_argument(
+        "--resource", help="assets mode: the one KRDICT asset this release publishes"
     )
     return parser
 
@@ -397,6 +512,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _parser().parse_args(argv)
     try:
+        if args.mode == "assets":
+            # No API and no token: the answer is a consequence of the package
+            # this run produced, not of anything GitHub has been told yet.
+            if args.package is None or not args.resource:
+                raise ReleaseStateError("assets mode requires --package and --resource")
+            for name in expected_release_assets(args.package, args.resource):
+                print(name)
+            return 0
+
+        if not args.repository or not args.tag:
+            raise ReleaseStateError(f"{args.mode} mode requires --repository and --tag")
         api = _api(os.environ.get("GH_TOKEN"))
         if args.mode == "resolve":
             build = _resolve(api, args.repository, args.tag, args.run_id)
@@ -434,6 +560,13 @@ if __name__ == "__main__":
 __all__ = [
     "APPLICATION_WORKFLOW",
     "DELTA_ASSET",
+    "HUP_ASSET",
+    "MAX_PLATFORM_DELTAS",
+    "PROTOCOL_LEGACY",
+    "PROTOCOL_PACKAGE",
+    "TREE_DELTA_ASSET",
+    "expected_release_assets",
+    "release_protocol",
     "FIXED_RELEASE_ASSETS",
     "ReadOnlyAPI",
     "COMMIT_MARKER",
