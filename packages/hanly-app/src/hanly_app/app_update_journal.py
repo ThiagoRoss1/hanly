@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 from collections.abc import Iterator, Mapping
@@ -554,6 +555,11 @@ ACK_FIELDS = (
 #: would commit to whatever wrote the file first.
 NONCE_BITS = 256
 
+#: A transaction is named by the directory holding it, which the system's own
+#: temporary-name alphabet may spell with an underscore.
+_TRANSACTION_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+_NONCE = re.compile(r"^[0-9a-f]{32,128}$")
+
 #: Both documents are one small record; a larger file is not one of ours.
 MAX_CHALLENGE_BYTES = 64 * 1024
 
@@ -583,9 +589,10 @@ class UpdateChallenge:
     install_root: str
 
     def __post_init__(self) -> None:
-        for name, value in (("transaction", self.transaction_id), ("nonce", self.nonce)):
-            if not value or not value.isalnum():
-                raise AcknowledgementError(f"an update challenge needs a plain {name}")
+        if not _TRANSACTION_ID.match(self.transaction_id):
+            raise AcknowledgementError("an update challenge needs a plain transaction name")
+        if not _NONCE.match(self.nonce):
+            raise AcknowledgementError("an update challenge needs a random hexadecimal nonce")
         if len(self.manifest_sha256) != 64:
             raise AcknowledgementError("an update challenge names its manifest by SHA-256")
 
@@ -725,15 +732,18 @@ def _acknowledgement_text(
 def tree_operations_for(plan: TreePlan) -> tuple[JournalOperation, ...]:
     """Number a schema-2 plan's file changes into the order they are applied.
 
-    Only files appear: directories are created by the move that needs them, and
-    a build that reached a release carrying an empty directory or a link on
-    Windows was refused by the producer long before this.
+    Only files whose bytes actually change appear, plus the deletions:
+    directories are created by the move that needs them, and a build that
+    reached a release carrying an empty directory or a link on Windows was
+    refused by the producer long before this.
     """
 
     operations: list[JournalOperation] = []
     for item in plan.operations:
         entry = item.target if item.target is not None else item.current
         if entry is None or not entry.is_file:
+            continue
+        if item.kind != DELETE and not item.needs_bytes:
             continue
         operations.append(
             JournalOperation(

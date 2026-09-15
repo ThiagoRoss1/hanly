@@ -10,6 +10,7 @@ written out literally would not prove.
 from __future__ import annotations
 
 import hashlib
+import plistlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,20 @@ from hanly_app.app_inventory import read_tree, write_xattr
 from hanly_app.app_manifest import BuildIdentity, TreeEntry, TreeLayout, TreeManifest
 
 BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
+
+
+def info_plist(version: str) -> bytes:
+    """The real property list a macOS bundle check reads, for one version."""
+
+    return plistlib.dumps(
+        {
+            "CFBundleIdentifier": BUNDLE_IDENTIFIER,
+            "CFBundleName": "Hanly",
+            "CFBundleExecutable": "hanly-desktop",
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
+        }
+    )
 
 #: A commit hash shaped like a real one, for documents that must carry one.
 SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -99,7 +114,7 @@ MACOS = Product(
     executable="Contents/MacOS/hanly-desktop",
     files={
         "Contents": None,
-        "Contents/Info.plist": b"<plist/>",
+        "Contents/Info.plist": info_plist("0.0.0"),
         "Contents/MacOS": None,
         "Contents/MacOS/hanly-desktop": b"mac program",
         "Contents/Frameworks": None,
@@ -285,6 +300,7 @@ __all__ = [
     "Product",
     "asset_for",
     "delta_descriptor",
+    "info_plist",
     "entry_at",
     "manifest_for",
     "manifest_member",

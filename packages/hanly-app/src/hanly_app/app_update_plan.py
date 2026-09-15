@@ -344,11 +344,16 @@ class TreeOperation:
     def needs_bytes(self) -> bool:
         """Whether a payload has to supply this operation's content.
 
-        Directories, links, and permission bits all come from the manifest, so
-        only a file that is not already correct on disk needs anything sent.
+        Directories, links, permission bits and macOS signature attributes all
+        come from the manifest, so a file whose bytes are already right on disk
+        needs nothing sent even though it is changing.
         """
 
-        return self.kind in (ADD, REPLACE) and self.target is not None and self.target.is_file
+        target = self.target
+        if self.kind not in (ADD, REPLACE) or target is None or not target.is_file:
+            return False
+        current = self.current
+        return current is None or not current.is_file or current.sha256 != target.sha256
 
     @property
     def size(self) -> int:

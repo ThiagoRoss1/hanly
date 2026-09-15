@@ -26,8 +26,10 @@ from tests.hanly_fixtures.update_tree import (
     Product,
     asset_for,
     delta_descriptor,
+    info_plist,
     manifest_for,
     platform_entry,
+    sign_entry,
     write_hup,
     write_tree,
 )
@@ -64,13 +66,37 @@ class PublishedRelease:
         self.assets = root / "assets"
         self.assets.mkdir(parents=True, exist_ok=True)
 
-        self.build = write_tree(root / "build", product, changes=changes)
+        self.build = write_tree(root / "build", product, changes=self._contents(changes))
+        self._sign()
         self.manifest = manifest_for(self.build, product, version=version, build_id=build_id)
         self.stamp = product.stamp(version, build_id)
         self.full = self._archive_product()
         self.delta = self._delta(previous)
         self.package = self._package(previous)
         self.checksums = self._checksums()
+
+    def _sign(self) -> None:
+        """Give a macOS build the signature material a published one carries.
+
+        Per version, so the attribute really changes between two releases: an
+        update that dropped it would produce a bundle that no longer verifies,
+        and a case built on an unsigned tree would never notice.
+        """
+
+        if self.product.platform != "macos":
+            return
+        sign_entry(
+            self.build.joinpath(*self.product.executable.split("/")),
+            f"signature for {self.version}".encode(),
+        )
+
+    def _contents(self, changes: Mapping[str, object] | None) -> dict[str, object]:
+        """A macOS bundle's plist names its own version, so it is built per release."""
+
+        contents: dict[str, object] = dict(changes or {})
+        if self.product.platform == "macos":
+            contents.setdefault("Contents/Info.plist", info_plist(self.version))
+        return contents
 
     def payload(self) -> dict[str, Any]:
         """The release payload a GitHub adapter would hand the updater."""

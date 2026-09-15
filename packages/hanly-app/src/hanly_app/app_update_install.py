@@ -24,6 +24,7 @@ step that cannot happen while Hanly is running.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import tempfile
 import time
@@ -35,6 +36,7 @@ from typing import Any, Protocol
 
 from .app_build_identity import BuildStamp, ReceiptStore, receipt_for
 from .app_hup import (
+    FORMAT_DMG,
     HupError,
     PlatformEntry,
     ReleaseAsset,
@@ -57,6 +59,7 @@ from .app_inventory import (
 from .app_manifest import (
     MANIFEST_ASSET,
     MAX_MANIFEST_ENTRIES,
+    PLATFORM_MACOS,
     UPDATE_METADATA_ASSET,
     AssetReference,
     InstallManifest,
@@ -67,6 +70,7 @@ from .app_manifest import (
     require_safe_relative_path,
 )
 from .app_update_journal import (
+    RECORD_POSIX_TREE,
     RECORD_WINDOWS_FILES,
     JournalError,
     JournalOperation,
@@ -79,6 +83,12 @@ from .app_update_journal import (
     working_root,
     write_challenge,
 )
+from .app_update_macos import (
+    BundleError,
+    acquire_disk_image,
+    require_bundle_identity,
+    require_valid_signature,
+)
 from .app_update_plan import (
     FROM_DELTA,
     FROM_FULL,
@@ -90,6 +100,18 @@ from .app_update_plan import (
     UpdatePlan,
     plan_tree_update,
     plan_update,
+)
+from .app_update_tree import (
+    CANDIDATE_NAME,
+    PREVIOUS_NAME,
+    REJECTED_NAME,
+    BuiltCandidate,
+    CandidateCancelled,
+    CandidateError,
+    assemble_candidate,
+    copy_preserved,
+    extract_full_product,
+    verify_candidate,
 )
 from .update_service import (
     DownloadProgress,
@@ -1356,6 +1378,278 @@ def _payload_members(
         found[relative] = member
     return found
 
+
+# --------------------------------------------------------------------------
+# macOS and Linux: build the whole new installation, then swap it
+# --------------------------------------------------------------------------
+
+#: The private directory one POSIX update owns, beside the installation so the
+#: swap that follows is a rename on one filesystem.
+TRANSACTION_PREFIX = ".hanly-update-"
+
+#: A macOS install that lives here is a copy the system made to run it from a
+#: quarantined location. Replacing that copy would change nothing a user sees.
+_TRANSLOCATED = "/AppTranslocation/"
+
+
+@dataclass(frozen=True, slots=True)
+class StagedPosixTransaction:
+    """A whole new installation, built and proved, waiting to be swapped in."""
+
+    directory: Path
+    candidate: BuiltCandidate
+    challenge: UpdateChallenge
+    install_root: Path
+
+    @property
+    def previous_path(self) -> Path:
+        return self.directory / PREVIOUS_NAME
+
+    @property
+    def rejected_path(self) -> Path:
+        return self.directory / REJECTED_NAME
+
+
+class PosixTreeStaging:
+    """Reconstruct the published build beside the installation, then prove it.
+
+    macOS and Linux share this because they share the reason for it: a bundle
+    is signed as a whole and a onedir's libraries are opened long after start,
+    so an installation caught between two builds is worse than one replaced in
+    a single step. What differs is only what each platform allows to be in an
+    installation that is not the product.
+    """
+
+    label = "posix-tree"
+
+    def __init__(
+        self,
+        *,
+        install_root: Path,
+        platform: str,
+        store: ReceiptStore,
+        source_commit: str,
+        runner: Any = None,
+    ) -> None:
+        self._install_root = Path(install_root).resolve()
+        self._platform = platform
+        self._store = store
+        self._source_commit = source_commit
+        self._runner = runner
+
+    def precheck(self, prepared: PreparedTreeUpdate) -> None:
+        """Refuse before anything is fetched what cannot be installed at all."""
+
+        self._require_writable_location()
+        if self._platform == PLATFORM_MACOS and prepared.plan.preserved:
+            raise UpdateBlocked(
+                "this application contains files Hanly did not install "
+                f"({', '.join(prepared.plan.preserved[:3])}). Move them out, or install the "
+                "new version by hand and keep this one until you have."
+            )
+
+    def required_bytes(self, plan: TreePlan) -> int:
+        """Payload, the whole new copy, the extras kept, records, and headroom.
+
+        The old installation is renamed aside rather than copied, so it is
+        already allocated and is deliberately not counted again.
+        """
+
+        return (
+            plan.download_bytes
+            + plan.candidate_bytes
+            + _preserved_bytes(self._install_root, plan.preserved)
+            + METADATA_MARGIN_BYTES
+            + DISK_MARGIN_BYTES
+        )
+
+    def assemble(
+        self,
+        prepared: PreparedTreeUpdate,
+        payload: Path,
+        *,
+        on_progress: ProgressCallback | None = None,
+        should_cancel: CancelHook | None = None,
+    ) -> StagedPosixTransaction:
+        """Build the whole candidate, prove it, and leave it ready to swap."""
+
+        directory = self._open_transaction()
+        try:
+            return self._build(directory, prepared, payload, on_progress, should_cancel)
+        except BaseException:
+            _remove(directory)
+            raise
+
+    def _build(
+        self,
+        directory: Path,
+        prepared: PreparedTreeUpdate,
+        payload: Path,
+        on_progress: ProgressCallback | None,
+        should_cancel: CancelHook | None,
+    ) -> StagedPosixTransaction:
+        plan = prepared.plan
+        root = directory / CANDIDATE_NAME
+        candidate = self._reconstruct(root, prepared, payload, on_progress, should_cancel)
+
+        if plan.preserved:
+            candidate = copy_preserved(candidate, self._install_root, plan.preserved)
+
+        _emit(on_progress, "validating-bundle")
+        verify_candidate(candidate)
+        self._require_launchable(candidate)
+
+        challenge = new_challenge(
+            directory.name.removeprefix(TRANSACTION_PREFIX),
+            plan.identity,
+            prepared.target.digest(),
+            self._install_root,
+        )
+        self._record(directory, prepared, challenge)
+        return StagedPosixTransaction(
+            directory=directory,
+            candidate=candidate,
+            challenge=challenge,
+            install_root=self._install_root,
+        )
+
+    def _reconstruct(
+        self,
+        root: Path,
+        prepared: PreparedTreeUpdate,
+        payload: Path,
+        on_progress: ProgressCallback | None,
+        should_cancel: CancelHook | None,
+    ) -> BuiltCandidate:
+        """Produce the candidate, from changed bytes or from a whole product."""
+
+        def relay(phase: str, completed: int, total: int) -> None:
+            _emit(on_progress, phase, completed, total)
+
+        _emit(on_progress, "reconstructing")
+        try:
+            if prepared.plan.source == FROM_DELTA:
+                return assemble_candidate(
+                    root,
+                    prepared.target,
+                    source_root=self._install_root,
+                    reusable=prepared.plan.reusable_paths,
+                    payload=payload,
+                    on_progress=relay,
+                    should_cancel=should_cancel,
+                )
+            if prepared.entry.full.format == FORMAT_DMG:
+                return acquire_disk_image(
+                    root, payload, prepared.target, **self._native()
+                )
+            return extract_full_product(
+                root, payload, prepared.target, on_progress=relay, should_cancel=should_cancel
+            )
+        except CandidateCancelled as error:
+            raise UpdateCancelled(str(error)) from error
+        except CandidateError as error:
+            raise DifferentialUpdateError(str(error)) from error
+
+    def _require_launchable(self, candidate: BuiltCandidate) -> None:
+        """Hold the finished candidate to what macOS needs before it will run."""
+
+        if self._platform != PLATFORM_MACOS:
+            return
+        try:
+            require_bundle_identity(
+                candidate.root,
+                version=candidate.manifest.identity.version,
+                executable=candidate.manifest.layout.executable,
+            )
+            require_valid_signature(candidate.root, **self._native())
+        except BundleError as error:
+            raise DifferentialUpdateError(str(error)) from error
+
+    def _record(
+        self, directory: Path, prepared: PreparedTreeUpdate, challenge: UpdateChallenge
+    ) -> None:
+        """Write what a helper and a later recovery run read, before either exists."""
+
+        transaction = TransactionPlan(
+            transaction_id=challenge.transaction_id,
+            install_root=self._install_root,
+            executable=prepared.target.layout.executable,
+            target=prepared.plan.identity,
+            base=prepared.plan.base_identity,
+            operations=(),
+            recovery_root=self._store.directory,
+            created=time.time(),
+            record=RECORD_POSIX_TREE,
+            manifest_sha256=prepared.target.digest(),
+            challenge_path=write_challenge(
+                self._store.directory / f"challenge-{challenge.transaction_id}.json", challenge
+            ),
+            receipt_path=self._store.receipt_path,
+        )
+        journal = UpdateJournal(directory)
+        journal.prepare(transaction)
+        journal.expected_path.write_text(challenge.expected(), encoding="utf-8", newline="\n")
+
+        self._store.store_manifest(prepared.target)
+        self._store.stage_receipt(
+            receipt_for(
+                self._install_root,
+                prepared.target,
+                release_tag=prepared.snapshot.tag,
+                source_commit=self._source_commit,
+                preserved_paths=prepared.plan.preserved,
+            )
+        )
+
+    def _open_transaction(self) -> Path:
+        """Claim a private directory on the installation's own volume."""
+
+        try:
+            return Path(
+                tempfile.mkdtemp(prefix=TRANSACTION_PREFIX, dir=self._install_root.parent)
+            )
+        except OSError as error:
+            raise DifferentialUpdateError(
+                f"could not prepare an update beside {self._install_root}: {error}"
+            ) from error
+
+    def _require_writable_location(self) -> None:
+        """Refuse a place an update could not put a new installation into."""
+
+        parent = self._install_root.parent
+        if _TRANSLOCATED in str(self._install_root):
+            raise UpdateBlocked(
+                "Hanly is running from a copy macOS made to open it safely. Move Hanly into "
+                "your Applications folder and open it from there, then update."
+            )
+        if not os.access(parent, os.W_OK | os.X_OK) or _is_read_only(parent):
+            raise UpdateBlocked(
+                f"Hanly cannot update itself where it is installed ({parent} cannot be "
+                "written to). Move it somewhere you own, then update."
+            )
+
+    def _native(self) -> dict[str, Any]:
+        """The command runner, passed only when a caller supplied one."""
+
+        return {} if self._runner is None else {"runner": self._runner}
+
+
+def _preserved_bytes(install_root: Path, paths: tuple[str, ...]) -> int:
+    total = 0
+    for relative in paths:
+        try:
+            total += os.lstat(install_root.joinpath(*relative.split("/"))).st_size
+        except OSError:
+            continue
+    return total
+
+
+def _is_read_only(path: Path) -> bool:
+    try:
+        return bool(os.statvfs(path).f_flag & os.ST_RDONLY)
+    except (OSError, AttributeError):
+        return False
+
 __all__ = [
     "ARCHIVE_ROOT",
     "CHECKSUM_ASSET",
@@ -1370,6 +1664,9 @@ __all__ = [
     "PreparedUpdate",
     "ReleaseAssetRecord",
     "ReleaseSnapshot",
+    "TRANSACTION_PREFIX",
+    "PosixTreeStaging",
+    "StagedPosixTransaction",
     "StagedTreeUpdate",
     "StagedUpdate",
     "StagedWindowsTransaction",
