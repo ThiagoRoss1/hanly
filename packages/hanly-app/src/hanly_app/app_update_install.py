@@ -93,6 +93,7 @@ from .app_update_journal import (
     tree_operations_for,
     working_root,
     write_challenge,
+    write_exact_bytes,
 )
 from .app_update_macos import (
     BundleError,
@@ -1265,7 +1266,7 @@ class WindowsFileStaging:
             receipt_path=self._store.receipt_path,
         )
         journal.prepare(transaction)
-        journal.expected_path.write_text(challenge.expected(), encoding="utf-8", newline="\n")
+        write_exact_bytes(journal.expected_path, challenge.expected().encode("utf-8"))
 
         _emit(on_progress, "unpacking", 0, len(operations))
         _unpack_payload(payload, journal, operations, on_progress, should_cancel)
@@ -1704,7 +1705,7 @@ class PosixTreeStaging:
         )
         journal = UpdateJournal(directory)
         journal.prepare(transaction)
-        journal.expected_path.write_text(challenge.expected(), encoding="utf-8", newline="\n")
+        write_exact_bytes(journal.expected_path, challenge.expected().encode("utf-8"))
 
         self._store.store_manifest(prepared.target)
         self._store.stage_receipt(

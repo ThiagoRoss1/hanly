@@ -26,7 +26,7 @@ from hanly_app.app_update_install import (
     WindowsFileStaging,
     snapshot_release,
 )
-from hanly_app.app_update_journal import acknowledgement_matches
+from hanly_app.app_update_journal import acknowledgement_matches, write_acknowledgement
 from hanly_app.app_update_plan import (
     FROM_DELTA,
     FROM_FULL,
@@ -552,3 +552,25 @@ def test_abandoning_a_staged_posix_update_puts_the_receipt_back(tmp_path: Path) 
     assert current is not None and current.identity.version == "0.5.2"
     assert not store.pending_path.exists()
     assert not staged.transaction.directory.exists()
+
+
+def test_the_answer_and_the_expected_bytes_are_compared_as_bytes(
+    tmp_path: Path,
+) -> None:
+    """A helper compares two files byte for byte, so neither may be written in
+    a mode that rewrites a newline on the way to disk."""
+
+    base, _target, channel = _published(tmp_path)
+    install = base.install(tmp_path / "install")
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    installer = _installer(tmp_path, base, channel, install=install, store=store)
+    staged = installer.stage(installer.prepare("0.5.3"))
+    challenge = staged.transaction.challenge
+
+    answer = tmp_path / "answer.ack"
+    write_acknowledgement(answer, challenge, challenge.identity)
+
+    expected = staged.transaction.journal.expected_path.read_bytes()
+    assert answer.read_bytes() == expected
+    assert b"\r" not in expected

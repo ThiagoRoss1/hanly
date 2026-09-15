@@ -699,7 +699,25 @@ def write_acknowledgement(
         identity=identity,
         manifest_sha256=challenge.manifest_sha256,
     )
-    _write_atomic(path, text)
+    # Bytes, not text: a helper compares this file to the expected answer byte
+    # for byte, and Windows would otherwise translate every newline in it.
+    write_exact_bytes(path, text.encode("utf-8"))
+    return path
+
+
+def write_exact_bytes(path: Path, payload: bytes) -> Path:
+    """Write exactly these bytes, whole or not at all, and make them durable."""
+
+    temporary = path.with_name(f"{path.name}.partial")
+    try:
+        with temporary.open("wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        raise JournalError(f"could not write {path}: {error}") from error
     return path
 
 
@@ -799,6 +817,7 @@ __all__ = [
     "acknowledgement_matches",
     "acknowledgement_path",
     "journals_in",
+    "write_exact_bytes",
     "new_challenge",
     "operations_for",
     "read_challenge",
