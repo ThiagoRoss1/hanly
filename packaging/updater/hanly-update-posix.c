@@ -523,63 +523,87 @@ static void stop_processes_under(const char *root)
 
 /* ---------------------------------------------------------------- launch -- */
 
-static bool launch_candidate(const struct descriptor *plan)
+/*
+ * Start Hanly and come straight back.
+ *
+ * Two forks, not one. The grandchild becomes the application and is reparented
+ * away, so nothing here waits on a program that is meant to keep running: what
+ * this helper waits for is the acknowledgement, and a single fork would leave
+ * it blocked in waitpid until the user quit Hanly instead.
+ */
+static void redirect_standard_streams(void)
+{
+    int null = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (null < 0) {
+        return;
+    }
+    dup2(null, STDIN_FILENO);
+    dup2(null, STDOUT_FILENO);
+    dup2(null, STDERR_FILENO);
+    if (null > STDERR_FILENO) {
+        close(null);
+    }
+}
+
+static bool launch_detached(const struct descriptor *plan, bool acknowledging)
 {
     char program[PATH_MAX];
-    const char *mode = plan->fields[FIELD_LAUNCH];
 
     pid_t child = fork();
     if (child < 0) {
-        note("could not start the new installation", NULL);
+        note("could not start the installation", NULL);
         return false;
     }
     if (child > 0) {
+        /* The middle child exits at once; reaping it leaves no zombie. */
         int status = 0;
         waitpid(child, &status, 0);
         return true;
     }
 
     setsid();
-    if (strcmp(mode, LAUNCH_OPEN) == 0) {
+    if (fork() != 0) {
+        _exit(EXIT_OK);
+    }
+
+    /* The application keeps running for as long as the user keeps it open, and
+     * would otherwise hold this helper's streams - and whatever started the
+     * helper - open for exactly that long. */
+    redirect_standard_streams();
+
+    if (strcmp(plan->fields[FIELD_LAUNCH], LAUNCH_OPEN) == 0) {
         /* ``open -n`` asks LaunchServices for a new instance, which is what
          * makes the relaunched build a real application with a Dock entry.
          * Running the program inside the bundle directly does not. */
-        execl(OPEN_TOOL, OPEN_TOOL, "-n", plan->fields[FIELD_INSTALL], "--args",
-              "--update-ready-v2", plan->fields[FIELD_CHALLENGE], (char *)NULL);
+        if (acknowledging) {
+            execl(OPEN_TOOL, OPEN_TOOL, "-n", plan->fields[FIELD_INSTALL], "--args",
+                  "--update-ready-v2", plan->fields[FIELD_CHALLENGE], (char *)NULL);
+        } else {
+            execl(OPEN_TOOL, OPEN_TOOL, "-n", plan->fields[FIELD_INSTALL], (char *)NULL);
+        }
     } else {
         int written = snprintf(program, sizeof(program), "%s/%s", plan->fields[FIELD_INSTALL],
                                plan->fields[FIELD_EXECUTABLE]);
         if (written > 0 && (size_t)written < sizeof(program)) {
-            execl(program, program, "--update-ready-v2", plan->fields[FIELD_CHALLENGE],
-                  (char *)NULL);
+            if (acknowledging) {
+                execl(program, program, "--update-ready-v2", plan->fields[FIELD_CHALLENGE],
+                      (char *)NULL);
+            } else {
+                execl(program, program, (char *)NULL);
+            }
         }
     }
     _exit(EXIT_FAILED);
 }
 
+static bool launch_candidate(const struct descriptor *plan)
+{
+    return launch_detached(plan, true);
+}
+
 static void launch_restored(const struct descriptor *plan)
 {
-    char program[PATH_MAX];
-    pid_t child = fork();
-    if (child < 0) {
-        return;
-    }
-    if (child > 0) {
-        int status = 0;
-        waitpid(child, &status, 0);
-        return;
-    }
-    setsid();
-    if (strcmp(plan->fields[FIELD_LAUNCH], LAUNCH_OPEN) == 0) {
-        execl(OPEN_TOOL, OPEN_TOOL, "-n", plan->fields[FIELD_INSTALL], (char *)NULL);
-    } else {
-        int written = snprintf(program, sizeof(program), "%s/%s", plan->fields[FIELD_INSTALL],
-                               plan->fields[FIELD_EXECUTABLE]);
-        if (written > 0 && (size_t)written < sizeof(program)) {
-            execl(program, program, (char *)NULL);
-        }
-    }
-    _exit(EXIT_FAILED);
+    launch_detached(plan, false);
 }
 
 /* ------------------------------------------------------- acknowledgement -- */

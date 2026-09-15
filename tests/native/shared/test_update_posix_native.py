@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -49,7 +50,9 @@ def helper(tmp_path_factory: pytest.TempPathFactory) -> Path:
 class _Transaction:
     """One disposable installation, and the swap that would replace it."""
 
-    def __init__(self, tmp_path: Path, *, answers: bool = True) -> None:
+    def __init__(
+        self, tmp_path: Path, *, answers: bool = True, keeps_running: bool = False
+    ) -> None:
         self.root = tmp_path
         self.install = tmp_path / "apps" / "hanly-desktop"
         self.staging = tmp_path / "apps" / ".hanly-update-t1"
@@ -61,7 +64,12 @@ class _Transaction:
         (self.install / "marker").write_text("old", encoding="utf-8")
         (self.candidate / "marker").write_text("new", encoding="utf-8")
         _write_program(self.install / "hanly-desktop", answers=False, expected="")
-        _write_program(self.candidate / "hanly-desktop", answers=answers, expected=EXPECTED)
+        _write_program(
+            self.candidate / "hanly-desktop",
+            answers=answers,
+            expected=EXPECTED,
+            keeps_running=keeps_running,
+        )
 
         self.descriptor_path = self.staging / "descriptor"
         write_descriptor(self.descriptor_path, self.transaction())
@@ -100,8 +108,14 @@ class _Transaction:
         return (self.install / "marker").read_text(encoding="utf-8")
 
 
-def _write_program(path: Path, *, answers: bool, expected: str) -> None:
-    """A stand-in for Hanly that either answers its challenge or does not."""
+def _write_program(
+    path: Path, *, answers: bool, expected: str, keeps_running: bool = False
+) -> None:
+    """A stand-in for Hanly that either answers its challenge or does not.
+
+    ``keeps_running`` is what a real build does: it answers and then goes on
+    running for as long as the user keeps it open.
+    """
 
     body = "#!/bin/sh\n"
     if answers:
@@ -111,7 +125,7 @@ def _write_program(path: Path, *, answers: bool, expected: str) -> None:
             "$EXPECTED", expected.replace("\n", "\\n")
         )
         body = body.replace("printf %s", "printf '%b'")
-    body += "exit 0\n"
+    body += "sleep 120\n" if keeps_running else "exit 0\n"
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
 
@@ -267,3 +281,23 @@ def test_the_descriptor_round_trips_between_the_two_readers(tmp_path: Path) -> N
     transaction = _Transaction(tmp_path)
 
     assert read_descriptor(transaction.descriptor_path) == transaction.transaction()
+
+
+def test_the_helper_waits_for_the_answer_and_not_for_hanly_to_be_closed(
+    helper: Path, tmp_path: Path
+) -> None:
+    """A real build answers and then keeps running for as long as the user
+    keeps it open. A helper that waited on the program it started would hold
+    the backup - and the whole update - open for the rest of the session."""
+
+    transaction = _Transaction(tmp_path, keeps_running=True)
+
+    started = time.monotonic()
+    status = _run(helper, transaction.descriptor_path)
+    elapsed = time.monotonic() - started
+
+    assert status == 0
+    assert transaction.result()[0] == "committed"
+    assert transaction.marker() == "new"
+    # The stand-in stays up for two minutes; committing must not wait for it.
+    assert elapsed < 60

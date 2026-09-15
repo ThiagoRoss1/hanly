@@ -515,7 +515,7 @@ def plan_tree_update(
         reusable_paths=_reusable(target, inventory, required),
         collisions=collisions,
         transitions=_transitions(target, base),
-        preserved=tuple(path for path in sorted(inventory.entries) if path not in target),
+        preserved=_preserved(target, inventory, base),
         fallback_reason="" if usable is not None else reason,
     )
 
@@ -568,6 +568,24 @@ def _tree_removals(
     ]
     removals.sort(key=lambda item: item.path.count("/"), reverse=True)
     return removals
+
+
+def _preserved(
+    target: TreeManifest, inventory: TreeInventory, base: TreeManifest
+) -> tuple[str, ...]:
+    """What is in the installation that no build of Hanly ever described.
+
+    A path the previous build owned and this one drops is not somebody's file:
+    it is this update's deletion, and the plan already accounts for it. Counting
+    it as an extra would make every release that removes a file look like an
+    installation somebody had been editing.
+    """
+
+    return tuple(
+        path
+        for path in sorted(inventory.entries)
+        if path not in target and path not in base
+    )
 
 
 def _reusable(

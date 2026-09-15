@@ -574,3 +574,41 @@ def test_the_answer_and_the_expected_bytes_are_compared_as_bytes(
     expected = staged.transaction.journal.expected_path.read_bytes()
     assert answer.read_bytes() == expected
     assert b"\r" not in expected
+
+
+def test_a_release_that_drops_a_file_is_not_mistaken_for_an_edited_bundle(
+    tmp_path: Path,
+) -> None:
+    """A path the previous build owned and this one drops is this update's
+    deletion, not somebody's file. Counting it as an extra would block every
+    macOS release that removes anything."""
+
+    base = PublishedRelease(
+        tmp_path / "release-0.5.2",
+        MACOS,
+        version="0.5.2",
+        build_id="build-zero",
+        changes={"Contents/Resources": None, "Contents/Resources/retired.dat": b"dropped later"},
+    )
+    target = PublishedRelease(
+        tmp_path / "release-0.5.3",
+        MACOS,
+        version="0.5.3",
+        build_id="build-one",
+        previous=base,
+    )
+    channel = ReleaseChannel(base, target)
+    install = base.install(tmp_path / "apps" / MACOS.root)
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    installer = _posix_installer(base, channel, install, store, platform="macos")
+
+    prepared = installer.prepare("0.5.3")
+
+    assert "Contents/Resources/retired.dat" not in prepared.plan.preserved
+    assert "Contents/Resources/retired.dat" in [item.path for item in prepared.plan.deletions]
+    assert prepared.plan.preserved == ()
+
+    staged = installer.stage(prepared)
+    candidate = staged.transaction.candidate
+    assert not (candidate.root / "Contents" / "Resources" / "retired.dat").exists()
