@@ -302,10 +302,14 @@ class ReceiptStore:
     def restore_previous(self) -> None:
         """Put back the receipt from before an update that did not commit.
 
+        An update that never staged one has nothing to undo, and clearing the
+        receipt then would cost this installation the ownership it already had.
         A build that never had one is left without one rather than given a
         borrowed identity.
         """
 
+        if not self.pending_path.is_file():
+            return
         previous = self._read(self.previous_path)
         if previous is None:
             self.clear_receipt()

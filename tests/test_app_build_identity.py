@@ -219,3 +219,61 @@ def test_clearing_a_receipt_leaves_the_manifests_it_referred_to(tmp_path: Path) 
 def test_a_receipt_read_from_a_foreign_document_is_not_accepted() -> None:
     with pytest.raises(BuildIdentityError):
         InstalledReceipt.from_payload(["not", "an", "object"])
+
+
+def test_abandoning_an_update_that_staged_nothing_keeps_the_receipt(
+    tmp_path: Path,
+) -> None:
+    """Abandoning runs whenever an update stops, including before it staged
+    anything. Clearing the receipt then would cost this installation the
+    ownership it already had, and its next update would have to bootstrap."""
+
+    root = write_tree(tmp_path / "install", LINUX)
+    manifest = manifest_for(root, LINUX)
+    store = ReceiptStore(tmp_path / "state")
+    store.write_receipt(
+        receipt_for(root, manifest, release_tag="v0.5.3", source_commit=SOURCE_COMMIT, now=0.0)
+    )
+
+    store.restore_previous()
+
+    current = store.read_receipt()
+    assert current is not None and current.identity.version == "0.5.3"
+
+
+def test_abandoning_an_update_that_did_stage_one_puts_the_previous_one_back(
+    tmp_path: Path,
+) -> None:
+    root = write_tree(tmp_path / "install", LINUX)
+    installed = manifest_for(root, LINUX, version="0.5.2", build_id="build-zero")
+    staged = manifest_for(root, LINUX, version="0.5.3", build_id="build-one")
+    store = ReceiptStore(tmp_path / "state")
+    store.write_receipt(
+        receipt_for(root, installed, release_tag="v0.5.2", source_commit=SOURCE_COMMIT, now=0.0)
+    )
+    store.stage_receipt(
+        receipt_for(root, staged, release_tag="v0.5.3", source_commit=SOURCE_COMMIT, now=0.0)
+    )
+
+    store.restore_previous()
+
+    current = store.read_receipt()
+    assert current is not None and current.identity.version == "0.5.2"
+    assert not store.pending_path.exists()
+    assert not store.previous_path.exists()
+
+
+def test_a_first_installation_that_never_had_a_receipt_is_left_without_one(
+    tmp_path: Path,
+) -> None:
+    root = write_tree(tmp_path / "install", LINUX)
+    staged = manifest_for(root, LINUX, version="0.5.3", build_id="build-one")
+    store = ReceiptStore(tmp_path / "state")
+    store.stage_receipt(
+        receipt_for(root, staged, release_tag="v0.5.3", source_commit=SOURCE_COMMIT, now=0.0)
+    )
+
+    store.restore_previous()
+
+    assert store.read_receipt() is None
+    assert not store.pending_path.exists()
