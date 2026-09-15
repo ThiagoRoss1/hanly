@@ -20,9 +20,9 @@ the branch untouched. Only this wave's files are staged in its commits.
 
 ## Status
 
-Phases 1-6 implemented. Convergence gates run; native evidence in progress at
-the time of writing and recorded below. Nothing has been pushed, merged, tagged
-or published.
+Phases 1-6 complete. Convergence gates green, and one real macOS
+build-to-update pair exercised end to end on this host. Nothing has been
+pushed, merged, tagged or published.
 
 ## Completed capabilities
 
@@ -131,6 +131,45 @@ how a client from before update packages reaches one.
 
 ## Validation
 
+### One real macOS release pair, end to end
+
+Two **independently frozen and ad-hoc-signed** builds were made on this host,
+0.5.2 and 0.5.3, each through `tools/build_package.py` exactly as the build lane
+runs it. This is the evidence the plan asks for under §12: a pair that exposes
+real signature churn rather than controlled edits to one tree.
+
+| | |
+|---|---|
+| Entries per build | 7,325 — 1,063 directories, 4,725 files, **1,537 symlinks** |
+| Product size | 1.30 GB; disk image 630 MB |
+| Update package | **270 KB** for the whole release |
+| Delta payload | **49.3 MB** — 92.2% smaller than the whole product |
+| Files needing bytes | 20; **4,705 reused from the installation** (1.24 GB copied) |
+| Paths the release drops | 19, correctly planned as deletions and not as a person's files |
+| Inspect the installation | 1.7 s |
+| Reconstruct the candidate | 3.5 s |
+| Prove it (whole tree + `codesign --verify --deep --strict`) | 3.1 s |
+
+The candidate reconstructed from the 0.5.2 installation plus the 49 MB delta is
+**exactly** the published 0.5.3 build — every entry, mode, link target and
+digest — and it passes nested-code signature verification. The Qt framework's
+`Versions/Current/...` link chains reconstruct correctly, which is the case a
+schema-1 file list could not have described at all.
+
+Both published macOS products were also held to the one published manifest: the
+bundle copied out of the **disk image** and the bundle unpacked from the
+compatibility **ZIP** each match it exactly, which is what proves the two are
+one application. `require_no_unsupported_metadata` found no ACLs.
+
+The frozen bundle put the native helper at `Contents/Frameworks/hanly-update-posix`,
+not beside the executable — which is why its location is read from the manifest
+rather than assumed.
+
+Products left in `dist/`: both disk images' successor, the compatibility ZIP,
+`dist/release/macos/` and `dist/package/`. The disposable candidate was removed.
+
+### Gates
+
 At convergence, on this macOS arm64 host:
 
 ```text
@@ -162,8 +201,25 @@ malformed descriptors.
 |---|---|---|
 | Windows build, packaged suite, native helper cases | **NOT RUN** | No Windows host in this session. Release blocker for Windows until run there. |
 | Linux build, packaged suite, native POSIX swap on Linux | **NOT RUN** | No Linux host in this session. The POSIX helper's `/proc` process-identity branch is compiled but unexercised. Release blocker for Linux until run there. |
-| A real frozen old-to-target update on any OS | **NOT RUN** | Needs two independently frozen builds and a published release pair. |
+| A real frozen old-to-target update **through the native helper** | **NOT RUN** | The candidate was built and proved from real artifacts; the swap itself was exercised only against disposable directories, because performing it would replace this checkout's own products. |
 | The build and release workflows end to end | **NOT RUN** | Needs GitHub Actions; the lanes are held by `tests/test_ci_workflows.py` only. |
+
+### Defects found by the real pair
+
+Three defects were found after the synthetic suites were green, each fixed with
+a regression case. Two of them only a real pair could expose:
+
+- **A path the previous build dropped was counted as a file somebody had
+  added**, which would have blocked *every* macOS update that removes anything.
+  The synthetic fixtures never dropped a file on macOS; the real 0.5.2-to-0.5.3
+  pair drops 19.
+- **The native helper forked once**, so it waited on the application it had
+  launched rather than on that application's acknowledgement. A stand-in that
+  exits immediately hides this; a real build runs until the user closes it, and
+  the update would have held its backup open for the whole session.
+- **The launched application inherited the helper's streams.** Redirecting them
+  took the POSIX native suite from 145 s to 25 s, which is the same defect seen
+  from the outside.
 
 ### Environment note
 
@@ -171,6 +227,14 @@ The checkout's editable installs were stale (`hanly-app` metadata reported
 0.5.0 against a declared 0.5.2), which failed
 `tests/test_release_version.py::test_installed_metadata_matches_the_declared_source_of_truth`
 before any change in this wave. Reinstalling both packages editable fixed it.
+
+The two builds above required the product version to be 0.5.2 and then 0.5.3,
+because a macOS bundle's `Info.plist` versions come from installed metadata and
+a delta between two builds of one version is deliberately not produced. Both
+`pyproject.toml` files were bumped, the packages reinstalled, and **both
+reverted afterwards**; `git diff` over them is empty, and the generated build
+stamp (which is gitignored) was removed. This host runs Python 3.13, while the
+release matrix is 3.10.
 
 ## Outstanding
 

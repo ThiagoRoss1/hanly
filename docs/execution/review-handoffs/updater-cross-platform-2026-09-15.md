@@ -106,6 +106,11 @@ reviewer. Recorded here because each was a real defect, not a refactor.
 | The update challenge required an alphanumeric transaction name, but `tempfile` names can contain `_`. It failed intermittently, which is the worst way for it to fail. | **Fixed now** — a plain-identifier pattern, with the suite run repeatedly to confirm. |
 | `GitHubReleaseFetcher._json` read a release payload with no bound. | **Fixed now** — bounded at 1 MiB while reading. |
 | A macOS packaging test double took every command's last argument for a path, so `hdiutil detach <mount> -force` wrote a file called `-force` into the repository root. | **Fixed now**, with a case for it. Found because a new case ended in that flag. |
+| The acknowledgement was written through text mode, so Windows would have rewritten every newline in it and no update could ever have committed. | **Fixed now** — written as exact bytes, with a case asserting the two files are byte-identical and carry no CR. |
+| Abandoning an update that had staged nothing cleared the installation's receipt, costing it the ownership its next update reads. Abandon runs on every failure path, including before staging. | **Fixed now** — restoring is a no-op when nothing was staged. |
+| A path the previous build owned and the new one drops was counted as a file somebody had added, which would have blocked **every** macOS update that removes anything. | **Fixed now** — found by the real release pair in §4; the synthetic fixtures never dropped a file on macOS. |
+| The native helper forked once, so it waited on the application it launched instead of on that application's acknowledgement — holding the backup open for the whole session on Linux. | **Fixed now** — double fork, with a native case whose stand-in keeps running after answering. |
+| The launched application inherited the helper's streams and held them open for as long as it ran. | **Fixed now** — the grandchild's stdio goes to `/dev/null`. Visible from outside as the POSIX native suite dropping from 145 s to 25 s. |
 | The Windows PowerShell helper cannot use PowerShell 7's ternary operator. | **Fixed now** before it was written to disk; the rendered body is asserted free of one. |
 | PyInstaller decides where a collected binary lands, and that has changed between its own versions, so the native helper's path could not be assumed. | **Fixed now** — read from the installed build's own manifest. |
 
@@ -118,10 +123,36 @@ publishes does not separate release-upload compromise from index authorization).
 
 ## 4. Validation
 
+### One real macOS release pair
+
+Two **independently frozen and ad-hoc-signed** builds were made on this host and
+taken through the whole lane. This is the evidence the plan asks for: a pair
+that exposes real signature churn, not controlled edits to one tree.
+
+| | |
+|---|---|
+| Entries per build | 7,325 — 1,063 directories, 4,725 files, **1,537 symlinks** |
+| Product | 1.30 GB; disk image 630 MB |
+| Update package | **270 KB** for the whole release |
+| Delta | **49.3 MB**, 92.2% smaller than the whole product |
+| Files needing bytes | 20; **4,705 reused** from the installation (1.24 GB copied) |
+| Inspect / reconstruct / prove | 1.7 s / 3.5 s / 3.1 s |
+
+The candidate built from the 0.5.2 installation plus that delta is **exactly**
+the published 0.5.3 build — every entry, mode, link target and digest — and it
+passes `codesign --verify --deep --strict`. The bundle copied out of the disk
+image and the bundle unpacked from the compatibility ZIP each match the one
+published manifest, which is what proves the two products are one application.
+
+The frozen bundle put the native helper in `Contents/Frameworks/`, not beside
+the executable — which is why its location is read from the manifest.
+
+### Gates
+
 Convergence gates on this host, all green:
 
 ```text
-python -m pytest --suite portable   1533 passed, 1 skipped
+python -m pytest --suite portable   1539 passed, 1 skipped
 python -m pytest --suite native       50 passed
 python -m ruff check packages packaging tests tools benchmarks
 python -m mypy  packages packaging tests tools benchmarks   244 files
@@ -141,8 +172,9 @@ build from it, with no network and no upload.
 lanes have no host in this session, so the PowerShell helper's schema-2 changes
 and the C helper's `/proc` branch are compiled and unit-covered but not
 exercised on their own platforms. Both are release blockers for those platforms
-until run there. The workflows themselves are held only by
-`tests/test_ci_workflows.py`.
+until run there. The swap itself was exercised only against disposable
+directories — performing it for real would replace this checkout's own
+products. The workflows are held only by `tests/test_ci_workflows.py`.
 
 ---
 
