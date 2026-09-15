@@ -224,6 +224,10 @@ download run the same code.
 
 ## 6a. Updating Hanly itself
 
+The next updater wave is specified in the
+[cross-platform updater/distribution plan](execution/updater-cross-platform-distribution-plan-2026-09-15.md).
+That plan is not implemented yet; this section describes the current code.
+
 A resource is swapped while Hanly keeps running. The application holds the
 executable and the interpreter running from it, so it cannot be.
 
