@@ -36,6 +36,7 @@ from .process_transport import (
 #: exactly these methods and the parent resolves them against this list, so a
 #: message can never name something the UI is not allowed to invoke.
 CONTROL_CENTER_OPERATIONS: tuple[str, ...] = (
+    "cancel_update",
     "check_for_updates",
     "clear_logs",
     "export_diagnostics",
@@ -597,8 +598,11 @@ class ControlCenterProxy:
     def install_update(self, resource_id: object = None) -> object:
         return self._call("install_update", resource_id)
 
-    def install_application_update(self) -> object:
-        return self._call("install_application_update")
+    def install_application_update(self, confirm_full: object = False) -> object:
+        return self._call("install_application_update", confirm_full)
+
+    def cancel_update(self) -> object:
+        return self._call("cancel_update")
 
     def open_release_notes(self) -> object:
         return self._call("open_release_notes")

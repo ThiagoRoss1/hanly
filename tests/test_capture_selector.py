@@ -405,6 +405,37 @@ def test_leaving_terminates_before_it_falls_back_to_exiting(
     assert order == ["terminate 3", "exit 3"]
 
 
+@pytest.mark.parametrize(
+    "stdout, stderr",
+    [
+        (None, None),
+        (None, object()),
+        (object(), None),
+    ],
+)
+def test_a_windowed_build_without_streams_still_ends_its_process(
+    monkeypatch: pytest.MonkeyPatch, stdout: object, stderr: object
+) -> None:
+    """PyInstaller leaves both streams as None with ``console=False``.
+
+    Raising past this function leaves the bootloader holding a modal crash
+    dialog, and an update handoff then waits out its whole exit timeout on a
+    process that is never going to stop.
+    """
+
+    import hanly_app.cli as cli
+
+    order: list[str] = []
+    monkeypatch.setattr(cli.sys, "stdout", stdout)
+    monkeypatch.setattr(cli.sys, "stderr", stderr)
+    monkeypatch.setattr(cli, "_terminate_without_unloading", lambda status: order.append(status))
+    monkeypatch.setattr(cli.os, "_exit", lambda status: order.append(status))
+
+    cli._leave(0)
+
+    assert order == [0, 0]
+
+
 def test_only_a_windows_process_is_terminated(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every other platform leaves through ``os._exit``, which is enough there."""
 

@@ -640,3 +640,190 @@ _INSTALLABLE = ApplicationUpdate(
     message="Hanly 0.2.0 is available.",
     installable=True,
 )
+
+
+class _FakePrepared:
+    """What a differential installer hands back from ``prepare``."""
+
+    def __init__(self, *, requires_confirmation: bool, download_bytes: int) -> None:
+        self.requires_confirmation = requires_confirmation
+        self._download_bytes = download_bytes
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "source": "full" if self.requires_confirmation else "delta",
+            "download_bytes": self._download_bytes,
+            "fallback_reason": "some installed files need repairing"
+            if self.requires_confirmation
+            else "",
+        }
+
+
+class _FakeInstaller:
+    """A differential installer double recording the two-step contract."""
+
+    def __init__(self, *, requires_confirmation: bool = False) -> None:
+        self.prepared: list[str] = []
+        self.installed: list[object] = []
+        self.abandoned = 0
+        self._requires_confirmation = requires_confirmation
+
+    def prepare(
+        self,
+        version: str,
+        *,
+        on_progress: ProgressCallback | None = None,
+        should_cancel: Any = None,
+    ) -> _FakePrepared:
+        self.prepared.append(version)
+        if on_progress is not None:
+            on_progress(DownloadProgress("hanly-desktop", "inspecting", 1, 2))
+        return _FakePrepared(
+            requires_confirmation=self._requires_confirmation, download_bytes=609_000_000
+        )
+
+    def install(
+        self,
+        prepared: object,
+        *,
+        on_progress: ProgressCallback | None = None,
+        should_cancel: Any = None,
+    ) -> None:
+        self.installed.append(prepared)
+        if on_progress is not None:
+            on_progress(DownloadProgress("hanly-desktop", "downloading", 5, 10))
+
+    def abandon(self) -> None:
+        self.abandoned += 1
+
+
+def test_a_differential_install_prepares_then_stages_on_one_click() -> None:
+    """An update whose advertised download applies here needs no second
+    question: its size was already on the button that was clicked."""
+
+    installer = _FakeInstaller()
+    restarts: list[str] = []
+    coordinator = UpdateCoordinator(
+        _FakeService(),
+        application_check=_installable,
+        application_installer=cast(Any, installer),
+        on_restart_required=lambda: restarts.append("quit"),
+    )
+    try:
+        coordinator.check_for_updates()
+        _settle(coordinator)
+
+        coordinator.install_application_update()
+        state = _wait_for(coordinator, "restart")
+
+        assert installer.prepared == ["0.2.0"]
+        assert len(installer.installed) == 1
+        assert restarts == ["quit"]
+        assert state["cancellable"] is False
+        assert [entry["message"] for entry in state["activity"]]
+    finally:
+        coordinator.shutdown()
+
+
+def test_a_download_that_grew_waits_for_a_second_click() -> None:
+    """The user agreed to a small differential download. Discovering that this
+    installation cannot use it changes the bargain, so the payload waits."""
+
+    installer = _FakeInstaller(requires_confirmation=True)
+    coordinator = UpdateCoordinator(
+        _FakeService(),
+        application_check=_installable,
+        application_installer=cast(Any, installer),
+    )
+    try:
+        coordinator.check_for_updates()
+        _settle(coordinator)
+
+        coordinator.install_application_update()
+        state = _wait_for(coordinator, "confirm")
+
+        assert installer.installed == []
+        assert state["awaiting_confirmation"] is True
+        assert state["plan"]["download_bytes"] == 609_000_000
+        assert "repairing" in state["message"]
+
+        coordinator.install_application_update(confirm_full=True)
+        _wait_for(coordinator, "restart")
+
+        # The same decided plan, not a second round of network work.
+        assert installer.prepared == ["0.2.0"]
+        assert len(installer.installed) == 1
+    finally:
+        coordinator.shutdown()
+
+
+def test_cancelling_reports_that_nothing_was_changed() -> None:
+    """The coordinator knows the installer only by its protocol, so it reads a
+    cancellation off the exception rather than recognizing a class name."""
+
+    class _Cancelled(RuntimeError):
+        cancelled = True
+
+    class _Cancelling(_FakeInstaller):
+        def prepare(self, version: str, **kwargs: Any) -> _FakePrepared:
+            raise _Cancelled("the update was cancelled before anything changed")
+
+    installer = _Cancelling()
+    coordinator = UpdateCoordinator(
+        _FakeService(),
+        application_check=_installable,
+        application_installer=cast(Any, installer),
+    )
+    try:
+        coordinator.check_for_updates()
+        _settle(coordinator)
+
+        coordinator.install_application_update()
+        state = _wait_for(coordinator, "cancelled")
+
+        assert "Nothing was changed." in state["message"]
+        assert state["cancellable"] is False
+        assert installer.abandoned == 1
+    finally:
+        coordinator.shutdown()
+
+
+def test_application_phases_are_not_described_as_resource_updates() -> None:
+    """The one label that was wrong before: a person restarting their whole
+    application was told a resource was being verified."""
+
+    assert _progress_message(DownloadProgress("hanly-desktop", "downloading", 0, 1)) == (
+        "Downloading Hanly…"
+    )
+    assert _progress_message(DownloadProgress("krdict", "downloading", 0, 1)) == (
+        "Downloading resource…"
+    )
+    assert _progress_message(DownloadProgress("hanly-desktop", "inspecting", 0, 1)) == (
+        "Checking installed files…"
+    )
+
+
+def test_declining_a_larger_download_releases_the_update_without_installing() -> None:
+    """Nothing is running to interrupt at that point: what is held is a decided
+    plan and the installation's lock, and declining has to release both."""
+
+    installer = _FakeInstaller(requires_confirmation=True)
+    coordinator = UpdateCoordinator(
+        _FakeService(),
+        application_check=_installable,
+        application_installer=cast(Any, installer),
+    )
+    try:
+        coordinator.check_for_updates()
+        _settle(coordinator)
+        coordinator.install_application_update()
+        _wait_for(coordinator, "confirm")
+
+        state = coordinator.cancel_update()
+
+        assert state["awaiting_confirmation"] is False
+        assert state["plan"] is None
+        assert installer.installed == []
+        assert installer.abandoned == 1
+    finally:
+        coordinator.shutdown()

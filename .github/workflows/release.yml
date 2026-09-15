@@ -174,7 +174,8 @@ jobs:
             exit 1
           }
           mapfile -t all_archives < <(
-            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.dmg' \) -print | sort
+            find release-inputs/app -type f -not -name '*.delta.zip' \
+              \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.dmg' \) -print | sort
           )
           if [[ ${#all_archives[@]} -ne 4 ]]; then
             echo "expected exactly four application archives; duplicate, unexpected, or missing files" >&2
@@ -201,6 +202,28 @@ jobs:
             }
             cp "${matches[0]}" "release-output/$expected"
           done
+
+          # Windows is the only platform that installs differentially, so it is
+          # the only one with metadata. The manifest and update metadata are
+          # required with it; the delta is optional and there is at most one.
+          for expected in hanly-desktop-windows.manifest.json hanly-desktop-windows.update.json; do
+            mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
+            ((${#matches[@]} == 1)) || {
+              echo "expected exactly one $expected; duplicate or missing files" >&2
+              exit 1
+            }
+            cp "${matches[0]}" "release-output/$expected"
+          done
+          mapfile -t deltas < <(
+            find release-inputs/app -type f -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+          )
+          if ((${#deltas[@]} > 1)); then
+            echo "a release publishes at most one Windows delta; found ${#deltas[@]}" >&2
+            exit 1
+          fi
+          if ((${#deltas[@]} == 1)); then
+            cp "${deltas[0]}" "release-output/$(basename "${deltas[0]}")"
+          fi
 
       - name: Carry the previous release resource into a new draft
         id: carried
@@ -275,13 +298,22 @@ jobs:
             release-output/hanly-desktop-macos.zip
             release-output/hanly-desktop-macos.dmg
             release-output/hanly-desktop-linux.tar.gz
+            release-output/hanly-desktop-windows.manifest.json
+            release-output/hanly-desktop-windows.update.json
           )
           for asset in "${upload[@]}"; do
             [[ -f "$asset" ]] || {
-              echo "refusing to stage a draft without the four application archives" >&2
+              echo "refusing to stage a draft without every required application asset" >&2
               exit 1
             }
           done
+          # At most one, and legitimately none: the first manifest-aware build
+          # has no published predecessor to diff against.
+          mapfile -t staged_deltas < <(
+            find release-output -maxdepth 1 -type f \
+              -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+          )
+          upload+=("${staged_deltas[@]}")
           if [[ "$PREFLIGHT_ACTION" == "create" && "$CARRIED" == "true" ]]; then
             upload+=(
               release-output/hanly-resources.json
@@ -421,7 +453,8 @@ jobs:
             exit 1
           }
           mapfile -t all_archives < <(
-            find release-inputs/app -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.dmg' \) -print | sort
+            find release-inputs/app -type f -not -name '*.delta.zip' \
+              \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.dmg' \) -print | sort
           )
           if [[ ${#all_archives[@]} -ne 4 ]]; then
             echo "expected exactly four application archives; duplicate, unexpected, or missing files" >&2
@@ -449,6 +482,28 @@ jobs:
             cp "${matches[0]}" "release-output/$expected"
           done
 
+          # Windows is the only platform that installs differentially, so it is
+          # the only one with metadata. The manifest and update metadata are
+          # required with it; the delta is optional and there is at most one.
+          for expected in hanly-desktop-windows.manifest.json hanly-desktop-windows.update.json; do
+            mapfile -t matches < <(find release-inputs/app -type f -name "$expected" -print)
+            ((${#matches[@]} == 1)) || {
+              echo "expected exactly one $expected; duplicate or missing files" >&2
+              exit 1
+            }
+            cp "${matches[0]}" "release-output/$expected"
+          done
+          mapfile -t deltas < <(
+            find release-inputs/app -type f -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+          )
+          if ((${#deltas[@]} > 1)); then
+            echo "a release publishes at most one Windows delta; found ${#deltas[@]}" >&2
+            exit 1
+          fi
+          if ((${#deltas[@]} == 1)); then
+            cp "${deltas[0]}" "release-output/$(basename "${deltas[0]}")"
+          fi
+
       - name: Take the KRDICT pair from the draft
         id: resources
         env:
@@ -474,11 +529,24 @@ jobs:
             exit 1
           }
 
+          # The delta's name carries the two versions it spans, so it is the one
+          # asset matched by shape rather than by name - and still at most one.
+          mapfile -t draft_deltas < <(
+            printf '%s\n' "${draft_assets[@]}" \
+              | grep -E '^hanly-desktop-windows-from-[0-9.]+-to-[0-9.]+\.delta\.zip$' || true
+          )
+          ((${#draft_deltas[@]} <= 1)) || {
+            echo "the draft holds more than one Windows delta" >&2
+            exit 1
+          }
           allowed=(
             hanly-desktop-windows.zip
             hanly-desktop-macos.zip
             hanly-desktop-macos.dmg
             hanly-desktop-linux.tar.gz
+            hanly-desktop-windows.manifest.json
+            hanly-desktop-windows.update.json
+            "${draft_deltas[@]}"
             "$resource_asset_name"
             hanly-resources.json
             SHA256SUMS
@@ -489,6 +557,7 @@ jobs:
               exit 1
             }
           done
+          printf 'delta_asset_name=%s\n' "${draft_deltas[0]-}" >> "$GITHUB_OUTPUT"
 
           gh release download "$RELEASE_TAG" --pattern "$resource_asset_name" \
             --dir release-inputs/resources --clobber
@@ -600,13 +669,25 @@ jobs:
               raise SystemExit(1)
           PY
 
-          for asset in \
-              release-output/hanly-desktop-windows.zip \
-              release-output/hanly-desktop-macos.zip \
-              release-output/hanly-desktop-macos.dmg \
-              release-output/hanly-desktop-linux.tar.gz \
-              "release-output/$RESOURCE_ASSET_NAME" \
-              release-output/hanly-resources.json; do
+          # The manifest and update metadata are covered here for the same
+          # reason every archive is: a client reads them to decide what to
+          # download, so an unverified one chooses the download.
+          checksummed=(
+            release-output/hanly-desktop-windows.zip
+            release-output/hanly-desktop-macos.zip
+            release-output/hanly-desktop-macos.dmg
+            release-output/hanly-desktop-linux.tar.gz
+            release-output/hanly-desktop-windows.manifest.json
+            release-output/hanly-desktop-windows.update.json
+            "release-output/$RESOURCE_ASSET_NAME"
+            release-output/hanly-resources.json
+          )
+          mapfile -t checksum_deltas < <(
+            find release-output -maxdepth 1 -type f \
+              -name 'hanly-desktop-windows-from-*.delta.zip' -print | sort
+          )
+          checksummed+=("${checksum_deltas[@]}")
+          for asset in "${checksummed[@]}"; do
             (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")")
           done > release-output/SHA256SUMS
 
@@ -628,6 +709,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
           RESOURCE_ASSET_NAME: ${{ steps.resources.outputs.asset_name }}
+          DELTA_ASSET_NAME: ${{ steps.resources.outputs.delta_asset_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -636,10 +718,15 @@ jobs:
             hanly-desktop-macos.zip
             hanly-desktop-macos.dmg
             hanly-desktop-linux.tar.gz
+            hanly-desktop-windows.manifest.json
+            hanly-desktop-windows.update.json
             "$RESOURCE_ASSET_NAME"
             hanly-resources.json
             SHA256SUMS
           )
+          if [[ -n "$DELTA_ASSET_NAME" ]]; then
+            expected_assets+=("$DELTA_ASSET_NAME")
+          fi
           for asset in "${expected_assets[@]}"; do
             [[ -f "release-output/$asset" ]] || {
               echo "missing staged release asset $asset" >&2

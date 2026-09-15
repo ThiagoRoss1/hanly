@@ -19,6 +19,10 @@ RUNTIME_CONFIG_NAME = "runtime.json"
 #: platform log location so one profile directory holds the whole session.
 LOG_DIRECTORY_NAME = "logs"
 
+#: Where an in-place update keeps the helper and the pointer that can finish or
+#: undo it. Outside the installation, because that is what may be unstartable.
+RECOVERY_DIRECTORY_NAME = "recovery"
+
 #: Where a macOS program sits inside the application that contains it.
 _BUNDLE_PROGRAM_PARENTS = ("MacOS", "Contents")
 
@@ -63,6 +67,18 @@ def default_runtime_config_path(
     return default_app_config_path(environment).with_name(RUNTIME_CONFIG_NAME)
 
 
+def default_recovery_directory(
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return where an update keeps what it needs to undo itself.
+
+    Deliberately outside the installation: this is what a person reaches for
+    when the installation is the thing that will not start.
+    """
+
+    return default_app_config_path(environment).parent / RECOVERY_DIRECTORY_NAME
+
+
 def default_log_directory(
     environment: Mapping[str, str] | None = None,
 ) -> Path:
@@ -99,9 +115,11 @@ def discover_runtime_config(
 
 __all__ = [
     "LOG_DIRECTORY_NAME",
+    "RECOVERY_DIRECTORY_NAME",
     "RUNTIME_CONFIG_NAME",
     "default_app_config_path",
     "default_log_directory",
+    "default_recovery_directory",
     "default_runtime_config_path",
     "discover_runtime_config",
     "macos_bundle_root",

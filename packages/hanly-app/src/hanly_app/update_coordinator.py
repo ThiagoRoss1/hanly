@@ -16,9 +16,11 @@ says so only once a build is actually staged and its handoff is ready.
 
 from __future__ import annotations
 
+import time
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Protocol
 
 from hanly.resource_manager import ResourceManager
@@ -34,6 +36,14 @@ from .update_service import (
 #: Stage one application build, reporting progress the way a resource does.
 ApplicationInstall = Callable[[ApplicationUpdate, ProgressCallback | None], None]
 
+#: How many activity lines the page can show. Old ones are dropped rather than
+#: accumulated: the snapshot crosses a pipe on every poll.
+ACTIVITY_LIMIT = 120
+
+#: The floor between two progress snapshots. A download reports every megabyte,
+#: which on a fast link is far more often than a person can read.
+PROGRESS_INTERVAL_SECONDS = 0.2
+
 #: Resource availability, the application update, its UI snapshot, and why the
 #: resource half could not answer - each half reports its own failure.
 _CheckOutcome = tuple[
@@ -42,6 +52,36 @@ _CheckOutcome = tuple[
     dict[str, Any] | None,
     str | None,
 ]
+
+
+class ApplicationInstallPort(Protocol):
+    """The two-step application install a differential updater exposes.
+
+    Preparing reaches the network for metadata and reads the installation; it
+    fetches no payload. Installing is what the user authorized once they were
+    shown the real download size, which is why it is a second call.
+    """
+
+    def prepare(
+        self,
+        version: str,
+        *,
+        on_progress: ProgressCallback | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Any:
+        """Return a decided plan, having downloaded nothing but metadata."""
+
+    def install(
+        self,
+        prepared: Any,
+        *,
+        on_progress: ProgressCallback | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> None:
+        """Fetch the planned payload and hand the transaction to the helper."""
+
+    def abandon(self) -> None:
+        """Drop a prepared or staged update that will not be applied."""
 
 
 class UpdateServicePort(Protocol):
@@ -70,6 +110,7 @@ class UpdateCoordinator:
         record_install: Callable[[UpdateResult], None] | None = None,
         application_check: Callable[[], ApplicationUpdate] | None = None,
         application_install: ApplicationInstall | None = None,
+        application_installer: ApplicationInstallPort | None = None,
         on_restart_required: Callable[[], None] | None = None,
     ) -> None:
         if before_install is not None and not callable(before_install):
@@ -96,10 +137,17 @@ class UpdateCoordinator:
         self._record_install = record_install
         self._application_check = application_check
         self._application_install = application_install
+        self._application_installer = application_installer
         self._on_restart_required = on_restart_required
         self._application: ApplicationUpdate | None = None
         self._lock = Lock()
         self._future: Future[Any] | None = None
+        #: The decided plan an install is waiting to be authorized for, when
+        #: preparing it turned up a download the user was not offered.
+        self._prepared: Any | None = None
+        self._cancel = Event()
+        self._activity: deque[dict[str, Any]] = deque(maxlen=ACTIVITY_LIMIT)
+        self._last_progress = 0.0
         #: Set once a build has been handed to the swap script. From then on
         #: this process is on its way out and owns no further update work.
         self._handed_off = False
@@ -112,6 +160,11 @@ class UpdateCoordinator:
             "progress": None,
             "application": None,
             "restart_required": False,
+            "plan": None,
+            "awaiting_confirmation": False,
+            "cancellable": False,
+            "activity": [],
+            "outcome": None,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -161,32 +214,106 @@ class UpdateCoordinator:
             )
             return _copy_snapshot(self._state)
 
-    def install_application_update(self) -> dict[str, Any]:
-        """Schedule the in-app download, verification, and staging of a new build."""
+    def install_application_update(self, confirm_full: object = False) -> dict[str, Any]:
+        """Start installing a new build, or authorize one that grew.
+
+        ``confirm_full`` is the second click, and only the differential path
+        ever asks for it: preparing can discover that the small download this
+        installation was offered cannot be used here, and the full archive is a
+        different bargain from the one the user agreed to.
+        """
 
         with self._lock:
             if self._active_locked():
                 return _copy_snapshot(self._state)
             update = self._application
-            install = self._application_install
-            if install is None or update is None or not update.installable:
+            if update is None or not update.installable:
                 raise ValueError("no installable application update")
-            self._state["status"] = "downloading"
-            self._state["message"] = f"Downloading Hanly {update.latest_version}."
-            self._state["active_resource_id"] = APPLICATION_STEM
-            self._state["restart_required"] = False
-            self._state["progress"] = {
-                "resource_id": APPLICATION_STEM,
-                "phase": "downloading",
-                "completed": 0,
-                "total": None,
-                "fraction": None,
-            }
-            self._submit_locked(
-                lambda: install(update, self._on_progress),
-                self._finish_application_install,
+
+            prepared = self._prepared if confirm_full else None
+            self._prepared = None
+            self._cancel = Event()
+            self._begin_application_locked(update)
+
+            if self._application_installer is not None:
+                self._submit_locked(
+                    lambda: self._install_application(update, prepared),
+                    self._finish_application_install,
+                )
+            elif self._application_install is not None:
+                install = self._application_install
+                self._submit_locked(
+                    lambda: install(update, self._on_progress),
+                    self._finish_application_install,
+                )
+            else:
+                raise ValueError("no installable application update")
+            return _copy_snapshot(self._state)
+
+    def cancel_update(self) -> dict[str, Any]:
+        """Ask the running preparation or download to stop.
+
+        This only ever reaches work that has not changed the installation.
+        Once the helper owns the transaction there is nothing here to cancel,
+        and the snapshot says so by no longer being cancellable.
+        """
+
+        with self._lock:
+            if self._state.get("cancellable"):
+                self._cancel.set()
+                self._state["message"] = "Stopping…"
+                return _copy_snapshot(self._state)
+            waiting = self._state.get("awaiting_confirmation")
+        if not waiting:
+            return self.snapshot()
+
+        # Nothing is running to interrupt: what is held is a decided plan and
+        # the installation's update lock, and declining releases both.
+        installer = self._application_installer
+        if installer is not None:
+            installer.abandon()
+        with self._lock:
+            self._prepared = None
+            self._note_locked("The update was not installed.")
+            self._state.update(
+                status="cancelled",
+                message="The update was not installed. Nothing was changed.",
+                awaiting_confirmation=False,
+                plan=None,
+                progress=None,
             )
             return _copy_snapshot(self._state)
+
+    def _begin_application_locked(self, update: ApplicationUpdate) -> None:
+        self._activity.clear()
+        self._state.update(
+            status="preparing",
+            message=f"Preparing the update to Hanly {update.latest_version}…",
+            active_resource_id=APPLICATION_STEM,
+            restart_required=False,
+            awaiting_confirmation=False,
+            cancellable=True,
+            outcome=None,
+            progress=_progress_dict(DownloadProgress(APPLICATION_STEM, "preparing", 0, None)),
+            activity=[],
+        )
+
+    def _install_application(self, update: ApplicationUpdate, prepared: Any) -> Any:
+        """Prepare, then install unless the download grew without permission."""
+
+        installer = self._application_installer
+        assert installer is not None
+        version = update.latest_version or ""
+        if prepared is None:
+            prepared = installer.prepare(
+                version, on_progress=self._on_progress, should_cancel=self._cancel.is_set
+            )
+            if getattr(prepared, "requires_confirmation", False):
+                return prepared
+        installer.install(
+            prepared, on_progress=self._on_progress, should_cancel=self._cancel.is_set
+        )
+        return None
 
     def shutdown(self, *, wait: bool = False) -> None:
         """Release the coordinator-owned worker when the desktop shuts down."""
@@ -264,10 +391,31 @@ class UpdateCoordinator:
         raise ValueError("no available resource update to install")
 
     def _on_progress(self, progress: DownloadProgress) -> None:
+        """Record one progress report, without rebuilding the page for each.
+
+        A megabyte-by-megabyte download reports far faster than anyone can
+        read, and every snapshot crosses a pipe, so a report that only moves
+        the counters is dropped unless enough time has passed. A change of
+        phase always lands: that is what the page is actually reading.
+        """
+
+        now = time.monotonic()
         with self._lock:
+            changed = self._state.get("status") != progress.phase
+            if changed:
+                self._note_locked(_progress_message(progress))
+            elif now - self._last_progress < PROGRESS_INTERVAL_SECONDS:
+                return
+            self._last_progress = now
             self._state["status"] = progress.phase
             self._state["message"] = _progress_message(progress)
             self._state["progress"] = _progress_dict(progress)
+
+    def _note_locked(self, message: str) -> None:
+        """Add one line to the bounded activity tail the page can expand."""
+
+        self._activity.append({"at": time.time(), "message": message})
+        self._state["activity"] = [dict(item) for item in self._activity]
 
     def _collect_updates(self) -> _CheckOutcome:
         """Check resources and the application itself in one worker pass.
@@ -346,35 +494,83 @@ class UpdateCoordinator:
             )
             self._future = None
 
-    def _finish_application_install(self, future: Future[None]) -> None:
-        """Report a staged build, then ask the desktop to restart into it."""
+    def _finish_application_install(self, future: Future[Any]) -> None:
+        """Report a staged build, then ask the desktop to restart into it.
+
+        A prepared plan coming back instead means the install stopped before
+        its payload: the download is not the one the user was offered, and the
+        page asks again rather than starting it.
+        """
 
         try:
-            future.result()
+            prepared = future.result()
         except Exception as error:
             self._finish_error(error)
             return
+        if prepared is not None:
+            self._await_confirmation(prepared)
+            return
         with self._lock:
             version = self._application.latest_version if self._application else None
+            self._note_locked(f"Hanly {version} is staged.")
             self._state.update(
                 status="restart",
                 message=f"Hanly {version} is staged. Restarting to finish the update.",
                 progress=None,
                 restart_required=True,
+                cancellable=False,
+                awaiting_confirmation=False,
             )
             self._future = None
-            # The swap script is already waiting for this process to exit.
+            # The helper is already waiting for this process to exit.
             self._handed_off = True
         if self._on_restart_required is not None:
             self._on_restart_required()
 
-    def _finish_error(self, error: Exception) -> None:
+    def _await_confirmation(self, prepared: Any) -> None:
+        """Hold a decided plan, and say what the larger download would cost."""
+
+        summary = _plan_summary(prepared)
         with self._lock:
+            self._prepared = prepared
+            reason = str(summary.get("fallback_reason") or "")
+            self._note_locked(reason or "A full download is needed.")
             self._state.update(
-                status="failed",
-                message=f"Update failed: {error}",
+                status="confirm",
+                message=reason or "This installation needs the full download.",
+                plan=summary,
+                awaiting_confirmation=True,
+                cancellable=False,
+                progress=None,
+            )
+            self._future = None
+
+    def _finish_error(self, error: Exception) -> None:
+        # A failed or cancelled application install still holds a transaction
+        # and the installation's lock, and releasing them is the installer's
+        # own work - done outside the lock, because it touches the filesystem.
+        cancelled = bool(getattr(error, "cancelled", False))
+        with self._lock:
+            owns_application = self._state.get("active_resource_id") == APPLICATION_STEM
+        installer = self._application_installer
+        if installer is not None and owns_application:
+            installer.abandon()
+
+        with self._lock:
+            message = (
+                "The update was stopped. Nothing was changed."
+                if cancelled
+                else f"Update failed: {error}"
+            )
+            self._prepared = None
+            self._note_locked(message)
+            self._state.update(
+                status="cancelled" if cancelled else "failed",
+                message=message,
                 progress=None,
                 restart_required=False,
+                awaiting_confirmation=False,
+                cancellable=False,
             )
             self._future = None
 
@@ -394,6 +590,11 @@ def _state(
         "progress": None,
         "application": application,
         "restart_required": False,
+        "plan": None,
+        "awaiting_confirmation": False,
+        "cancellable": False,
+        "activity": [],
+        "outcome": None,
     }
 
 
@@ -445,18 +646,34 @@ def _progress_dict(progress: DownloadProgress) -> dict[str, Any]:
 def _progress_message(progress: DownloadProgress) -> str:
     # Keys are exactly the phases ``UpdateService.install`` emits; a phase
     # without a label here would show the raw phase name to the user.
+    application = progress.resource_id in (APPLICATION_STEM, "hanly-desktop")
     labels = {
-        "downloading": "Downloading resource…",
-        "verifying": "Verifying resource…",
-        "installing": "Installing resource…",
-        "complete": "Resource update complete.",
+        "preparing": "Preparing…",
+        "inspecting": "Checking installed files…",
+        "downloading": "Downloading Hanly…" if application else "Downloading resource…",
+        "verifying": "Verifying the download…" if application else "Verifying resource…",
+        "unpacking": "Preparing files…",
+        "installing": "Installing…" if application else "Installing resource…",
+        "staged": "Ready to restart.",
+        "complete": "Update complete." if application else "Resource update complete.",
     }
-    return labels.get(progress.phase, f"Resource update: {progress.phase}.")
+    return labels.get(progress.phase, f"{progress.phase.capitalize()}…")
+
+
+def _plan_summary(prepared: Any) -> dict[str, Any]:
+    """Read a prepared update's own summary, whatever produced it."""
+
+    summary = getattr(prepared, "summary", None)
+    value = summary() if callable(summary) else None
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _copy_snapshot(value: dict[str, Any]) -> dict[str, Any]:
     result = dict(value)
     result["resources"] = [dict(item) for item in value["resources"]]
+    result["activity"] = [dict(item) for item in value.get("activity", ())]
+    plan = value.get("plan")
+    result["plan"] = None if plan is None else dict(plan)
     progress = value.get("progress")
     result["progress"] = None if progress is None else dict(progress)
     application = value.get("application")
@@ -475,4 +692,11 @@ def _application_check_failure(error: Exception) -> dict[str, Any]:
     }
 
 
-__all__ = ["ApplicationInstall", "UpdateCoordinator", "UpdateServicePort"]
+__all__ = [
+    "ACTIVITY_LIMIT",
+    "PROGRESS_INTERVAL_SECONDS",
+    "ApplicationInstall",
+    "ApplicationInstallPort",
+    "UpdateCoordinator",
+    "UpdateServicePort",
+]

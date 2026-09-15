@@ -25,12 +25,20 @@ from typing import Any, Protocol, cast
 from hanly.resource_manager import ResourceManager
 
 from .app_update import (
+    APPLICATION_STEM,
     ApplicationInstaller,
     ApplicationUpdate,
     ApplicationUpdateError,
     check_application_update,
     confirm_started,
     installation_root,
+)
+from .app_update_install import DifferentialInstaller, DifferentialUpdateError
+from .app_update_runner import (
+    InPlaceUpdateRunner,
+    SettledUpdate,
+    describe_outcome,
+    settle_previous_update,
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
 from .capture_selector import CaptureSelection, select_capture_area
@@ -69,6 +77,7 @@ from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
     default_log_directory,
+    default_recovery_directory,
     default_runtime_config_path,
     discover_runtime_config,
 )
@@ -1060,6 +1069,11 @@ def run_desktop(
         None if runtime_config is None else Path(runtime_config).expanduser().resolve()
     )
 
+    # Before Qt, before settings, before anything is opened: an update that did
+    # not finish may have left this installation part way between two builds,
+    # and what settles it is a program outside this one.
+    settle_pending_update(diagnostics)
+
     # The shell's own application: Qt Widgets, and nothing that would pull in
     # Qt WebEngine or the OCR runtime. Both belong to child processes.
     try:
@@ -1161,6 +1175,31 @@ def cleanup_leftovers(
     )
 
 
+def settle_pending_update(diagnostics: DiagnosticLog) -> SettledUpdate | None:
+    """Finish, undo, or clear away whatever the last update run left behind.
+
+    Runs before the interface exists, because an unsettled transaction means
+    the installation is not yet one build or the other, and the thing that can
+    finish it does not live inside this process.
+    """
+
+    install_root = installation_root()
+    if install_root is None:
+        return None
+    try:
+        settled = settle_previous_update(
+            install_root,
+            default_recovery_directory(),
+            report=lambda area, message: diagnostics.record(area, message),
+        )
+    except OSError as error:
+        diagnostics.report("Update recovery", error)
+        return None
+    if settled is not None:
+        diagnostics.record("Update", describe_outcome(settled))
+    return settled
+
+
 def _update_acknowledgement(
     path: str | Path | None, diagnostics: DiagnosticLog
 ) -> Callable[[], None] | None:
@@ -1253,7 +1292,7 @@ def _update_coordinator(
         return None
     if service is None:
         return None
-    application_check, application_install = _application_updates(service)
+    application_check, application_install, application_installer = _application_updates(service)
     coordinator = UpdateCoordinator(
         service,
         resource_manager=resource_manager,
@@ -1267,6 +1306,7 @@ def _update_coordinator(
         ),
         application_check=application_check,
         application_install=application_install,
+        application_installer=application_installer,
         on_restart_required=on_restart_required,
     )
     # The coordinator is always built, so the Control Center's explicit "Check
@@ -1279,19 +1319,28 @@ def _update_coordinator(
 
 def _application_updates(
     service: UpdateService,
-) -> tuple[Callable[[], ApplicationUpdate] | None, ApplicationInstall | None]:
+) -> tuple[
+    Callable[[], ApplicationUpdate] | None,
+    ApplicationInstall | None,
+    InPlaceUpdateRunner | None,
+]:
     """Return how this installation checks for, and installs, a new Hanly build.
 
     The resource fetcher already reads the release payload and already knows how
-    to download an asset from it, so both halves reuse it rather than opening a
+    to download an asset from it, so every half reuses it rather than opening a
     second channel. An installation that is not a packaged bundle can still be
     told a new build exists; it just has nothing for Hanly to replace.
+
+    Two strategies, one per platform. Windows changes the files that differ,
+    in place. macOS and Linux keep the whole-bundle swap: a ``.app`` is signed
+    as a unit, and neither has the release artifacts a differential update
+    reads.
     """
 
     fetcher = getattr(service, "fetcher", None)
     release_source = getattr(fetcher, "fetch_release", None)
     if fetcher is None or not callable(release_source):
-        return None, None
+        return None, None, None
 
     install_root = installation_root()
 
@@ -1299,16 +1348,42 @@ def _application_updates(
         return check_application_update(release_source, install_root=install_root)
 
     if install_root is None:
-        return check, None
+        return check, None, None
+
+    if sys.platform == "win32":
+        runner = _in_place_runner(fetcher, release_source, install_root)
+        if runner is not None:
+            return check, None, runner
+
     try:
         installer = ApplicationInstaller(fetcher, release_source, install_root=install_root)
     except ApplicationUpdateError:
-        return check, None
+        return check, None, None
 
     def install(update: ApplicationUpdate, on_progress: ProgressCallback | None) -> None:
         installer.apply(installer.stage(update, on_progress=on_progress))
 
-    return check, install
+    return check, install, None
+
+
+def _in_place_runner(
+    fetcher: object, release_source: Callable[[], Any], install_root: Path
+) -> InPlaceUpdateRunner | None:
+    """Build the Windows differential updater for this installation."""
+
+    try:
+        return InPlaceUpdateRunner(
+            DifferentialInstaller(
+                cast(Any, fetcher),
+                release_source,
+                install_root=install_root,
+                executable=f"{APPLICATION_STEM}.exe",
+                recovery_root=default_recovery_directory(),
+            ),
+            recovery_root=default_recovery_directory(),
+        )
+    except (DifferentialUpdateError, OSError):
+        return None
 
 
 class DesktopShuttingDown(DesktopApplicationError):

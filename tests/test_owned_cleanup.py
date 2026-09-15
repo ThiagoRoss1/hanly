@@ -249,11 +249,35 @@ def test_a_rejected_build_is_kept_for_the_same_reason(tmp_path: Path) -> None:
 def test_the_audited_locations_cover_the_staging_and_the_handoff_script(
     tmp_path: Path,
 ) -> None:
-    locations = update_staging_locations(tmp_path / "app" / "Hanly.app", tmp_path / "tmp")
+    install_root = tmp_path / "app" / "Hanly.app"
+    locations = update_staging_locations(install_root, tmp_path / "tmp")
 
-    prefixes = {location.prefix for location in locations}
-    assert prefixes == {"hanly-update.", ".hanly-update-"}
-    assert (tmp_path / "app") in {location.root for location in locations}
+    roots = {location.root for location in locations}
+    assert {location.prefix for location in locations} == {"hanly-update.", ".hanly-update-", ""}
+    assert (tmp_path / "app") in roots
+    # The Windows in-place update works inside the installation, not beside it.
+    assert (install_root / ".hanly-update") in roots
+
+
+def test_an_update_transaction_holding_backups_is_never_reclaimed_for_disk(
+    tmp_path: Path,
+) -> None:
+    """Those backups are the only copy of files the previous build needs, and a
+    transaction with no settled result may still be mid-apply."""
+
+    clock = _Clock()
+    install_root = tmp_path / "app" / "hanly-desktop"
+    transaction = install_root / ".hanly-update" / "t1"
+    (transaction / "backup").mkdir(parents=True)
+    (transaction / "plan.json").write_text("{}", encoding="utf-8")
+    os.utime(transaction, (clock.now - MIN_AGE_SECONDS * 10,) * 2)
+
+    report = sweep_staging(
+        update_staging_locations(install_root, tmp_path / "tmp"), clock=clock
+    )
+
+    assert transaction in report.recovery_required
+    assert transaction.is_dir()
 
 
 def test_nothing_is_swept_when_hanly_is_not_installed(tmp_path: Path) -> None:

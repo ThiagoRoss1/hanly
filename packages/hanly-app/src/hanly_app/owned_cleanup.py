@@ -324,9 +324,11 @@ def update_staging_locations(
 ) -> tuple[StagingLocation, ...]:
     """Name the places an interrupted update leaves work behind.
 
-    The staged build sits beside the installation so the swap is a rename, and
-    the handoff script sits in the system temporary directory so it can delete
-    the transaction it is finishing. Both outlive a process that is killed.
+    Three shapes, because two strategies are in use. The whole-bundle swap
+    macOS and Linux run stages beside the installation so the swap is a rename,
+    and writes its script to the system temporary directory so it can delete
+    the transaction it is finishing. The Windows in-place update works inside
+    ``<installation>/.hanly-update``. All of them outlive a killed process.
     """
 
     locations = [StagingLocation(root=temporary_root, prefix="hanly-update.")]
@@ -336,6 +338,16 @@ def update_staging_locations(
                 root=install_root.parent,
                 prefix=".hanly-update-",
                 keep_if_present=UNRESOLVED_UPDATE_ENTRIES,
+            )
+        )
+        # A transaction holding backups is the only copy of the previous build's
+        # files, and one with no result may still be mid-apply. Both are the
+        # application's recovery path to settle, never this sweep's to reclaim.
+        locations.append(
+            StagingLocation(
+                root=install_root / ".hanly-update",
+                prefix="",
+                keep_if_present=(*UNRESOLVED_UPDATE_ENTRIES, "backup", "plan.json"),
             )
         )
     return tuple(locations)

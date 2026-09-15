@@ -762,14 +762,14 @@ def test_release_rejects_oversized_application_assets_before_mutating_the_draft(
 
 
 def test_staging_needs_no_dictionary_and_no_resource_producer() -> None:
-    """A first release stages four application archives and nothing else, so a
+    """A first release stages the application assets and nothing else, so a
     missing KRDICT pair cannot stop the draft from being created."""
 
     workflow = _release()
     code = _release_code("stage")
     rendered = str(workflow)
 
-    assert "refusing to stage a draft without the four application archives" in code
+    assert "refusing to stage a draft without every required application asset" in code
     # No source archive, no producer run, and no way to ask for either.
     for obsolete in (
         "source_url",
@@ -1094,10 +1094,15 @@ def test_the_tag_is_only_addressed_once_one_release_is_known_to_hold_it(job: str
     assert min(addressed) > classify, (job, addressed, classify)
 
 
-def test_the_release_lane_carries_exactly_the_four_application_products() -> None:
+def test_the_release_lane_carries_exactly_the_application_products() -> None:
     """One name changed in one place would otherwise stage a broken release."""
 
-    build = "\n".join(step.get("run", "") for step in _steps(_workflow("build.yml"), "build"))
+    # The build lane names a product either in a command or in the artifact it
+    # uploads, and the metadata assets only ever appear in the second.
+    build = "\n".join(
+        step.get("run", "") + str(step.get("with", {}).get("path", ""))
+        for step in _steps(_workflow("build.yml"), "build")
+    )
     lanes = (build, _release_code("stage"), _release_code("finalize"))
 
     for name in (
@@ -1105,12 +1110,18 @@ def test_the_release_lane_carries_exactly_the_four_application_products() -> Non
         "hanly-desktop-macos.zip",
         "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
+        # Windows is the only platform that installs differentially, so it is
+        # the only one carrying an inventory and update metadata.
+        "hanly-desktop-windows.manifest.json",
+        "hanly-desktop-windows.update.json",
     ):
         for lane in lanes:
             assert name in lane, name
     # The legacy macOS product is gone from every lane, not merely unused.
     for lane in lanes:
         assert "hanly-desktop-macos.tar.gz" not in lane
-    # The digests cover the six payload assets; SHA256SUMS is not its own.
+    # Every payload asset is covered and SHA256SUMS is not its own. The delta
+    # is matched rather than named, because its name carries two versions.
     sums = _release_code("finalize").split("> release-output/SHA256SUMS")[0]
-    assert sums.count("release-output/hanly-desktop-") == 4
+    assert sums.count("release-output/hanly-desktop-") == 6
+    assert "hanly-desktop-windows-from-*.delta.zip" in sums

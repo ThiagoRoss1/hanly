@@ -146,10 +146,15 @@ def main(argv: Sequence[str] | None = None) -> NoReturn:
 def _leave(status: int) -> NoReturn:
     """End the process now, rather than during interpreter finalization."""
 
+    # PyInstaller leaves both streams as None in a windowed build. Raising past
+    # this function leaves the bootloader holding a modal crash dialog, which is
+    # exactly what an update handoff is waiting for the process to stop doing.
     for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
         try:
             stream.flush()
-        except (OSError, ValueError):
+        except (OSError, ValueError, AttributeError):
             pass
     _terminate_without_unloading(status)
     os._exit(status)

@@ -5,7 +5,7 @@
     app: { state: "new", activity: "preparing", detail: "", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
     config: { hover_delay_ms: 150, hotkey: "ctrl+shift+space", hover_hotkey: "ctrl+shift+f9", capture_hotkey: "ctrl+shift+f10", hover_activation: "push_to_hover", lookup_preload: "when_capture_starts" },
     runtime: { ocr_provider: "—", resources: [], diagnostics: [], log_path: null, status: { phase: "idle", stage: "", message: "" }, engine: { state: "sleeping", message: "" }, hotkeys: {} },
-    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false },
+    updates: { available: false, status: "unavailable", message: "Resource updates are not configured for this runtime.", resources: [], active_resource_id: null, progress: null, application: null, restart_required: false, plan: null, awaiting_confirmation: false, cancellable: false, activity: [], outcome: null },
     permissions: { supported: false, items: [] }
   };
 
@@ -33,7 +33,10 @@
   const ACTIVITY_PENDING = ["preparing", "stopping"];
 
   // Update statuses that mean an update worker is still running.
-  const UPDATE_BUSY_STATUSES = ["checking", "downloading", "verifying", "installing", "validating"];
+  const UPDATE_BUSY_STATUSES = [
+    "checking", "preparing", "inspecting", "downloading", "verifying",
+    "unpacking", "installing", "validating"
+  ];
 
   // How many refreshes to spend watching for a permission the user just went
   // off to grant. Privacy settings are changed outside this window and nothing
@@ -94,22 +97,112 @@
     });
   }
 
-  function renderApplicationUpdate(application, busy) {
+  // Sizes are shown the way a download manager shows them, and always in the
+  // same unit family, so 900 MB and 1.2 GB never appear as 900 and 1.2.
+  function formatBytes(value) {
+    if (typeof value !== "number" || !isFinite(value) || value < 0) return "";
+    if (value >= 1000 * 1000 * 1000) return (value / (1000 * 1000 * 1000)).toFixed(1) + " GB";
+    if (value >= 1000 * 1000) return (value / (1000 * 1000)).toFixed(1) + " MB";
+    if (value >= 1000) return Math.round(value / 1000) + " kB";
+    return value + " B";
+  }
+
+  function describePlan(plan) {
+    if (!plan) return "";
+    const size = formatBytes(plan.download_bytes);
+    const kind = plan.source === "delta" ? "Differential update" : "Full download";
+    const counts = [];
+    if (plan.replace_count) counts.push(plan.replace_count + " replaced");
+    if (plan.add_count) counts.push(plan.add_count + " added");
+    if (plan.delete_count) counts.push(plan.delete_count + " removed");
+    const files = counts.length ? " · " + counts.join(", ") : "";
+    return size ? kind + " · " + size + files : kind + files;
+  }
+
+  // A download that has reached 100% is not a finished update, so the byte
+  // line says what is left and the label says which stage is actually running.
+  function describeTransfer(progress) {
+    if (!progress) return "";
+    const total = progress.total;
+    const done = progress.completed || 0;
+    if (progress.phase === "downloading" && typeof total === "number" && total > 0) {
+      return formatBytes(done) + " / " + formatBytes(total) +
+        " · " + formatBytes(Math.max(0, total - done)) + " remaining";
+    }
+    if (typeof total === "number" && total > 0) return done + " / " + total;
+    return "";
+  }
+
+  function renderActivity(activity) {
+    const details = byId("update-details");
+    const list = byId("update-activity");
+    const entries = activity || [];
+    details.hidden = entries.length === 0;
+    if (entries.length === 0) {
+      list.innerHTML = "";
+      return;
+    }
+    // Rebuilt from a bounded tail rather than appended to, so a long update
+    // never grows the page without limit.
+    list.innerHTML = "";
+    entries.forEach(function (entry) {
+      const item = document.createElement("li");
+      const when = new Date((entry.at || 0) * 1000);
+      item.textContent = when.toLocaleTimeString() + " · " + (entry.message || "");
+      list.appendChild(item);
+    });
+    list.scrollTop = list.scrollHeight;
+  }
+
+  function renderApplicationUpdate(updateState, busy) {
+    const application = updateState.application;
     const message = byId("application-message");
     const update = byId("update-application");
     const notes = byId("release-notes");
+    const plan = byId("update-plan");
+    const confirm = byId("confirm-full-update");
+    const cancel = byId("cancel-update");
+    const panel = byId("application-progress");
+    const bar = byId("application-progress-bar");
+    const label = byId("application-progress-label");
+    const bytes = byId("application-progress-bytes");
+
+    renderActivity(updateState.activity);
+    const awaiting = !!updateState.awaiting_confirmation;
+    const size = formatBytes((updateState.plan || {}).download_bytes);
+    confirm.hidden = !awaiting;
+    confirm.textContent = size ? "Download full update — " + size : "Download full update";
+    cancel.hidden = !updateState.cancellable;
+    plan.hidden = !updateState.plan;
+    plan.textContent = describePlan(updateState.plan);
+
     if (!application) {
       message.textContent = "The installed Hanly version has not been checked yet.";
       update.hidden = true;
       notes.hidden = true;
+      panel.hidden = true;
       return;
     }
-    message.textContent = application.message || "";
+    message.textContent = updateState.message || application.message || "";
     // "Update now" is the whole update; the notes are the one thing Hanly
     // cannot show in its own window, so they stay a secondary action.
-    update.hidden = !application.installable;
+    update.hidden = !application.installable || awaiting;
     update.disabled = busy;
     notes.hidden = !application.release_url;
+
+    const progress = updateState.progress;
+    const owned = updateState.active_resource_id === "hanly-desktop";
+    panel.hidden = !progress || !owned;
+    if (progress && owned) {
+      label.textContent = formatStatus(progress.phase);
+      bytes.textContent = describeTransfer(progress);
+      // An unknown denominator leaves the bar indeterminate rather than
+      // showing a percentage nothing computed.
+      bar.removeAttribute("value");
+      if (progress.fraction !== null && progress.fraction !== undefined) {
+        bar.value = progress.fraction;
+      }
+    }
   }
 
   function updatesBusy(updates) {
@@ -147,9 +240,10 @@
     install.disabled = busy || available.length === 0;
     byId("update-status").textContent = formatStatus(updateState.status || "idle");
     byId("update-message").textContent = updateState.message || fallbackState.updates.message;
-    renderApplicationUpdate(updateState.application, busy);
+    renderApplicationUpdate(updateState, busy);
     const progress = updateState.progress;
-    progressPanel.hidden = !progress || !busy;
+    const resourceProgress = updateState.active_resource_id !== "hanly-desktop";
+    progressPanel.hidden = !progress || !busy || !resourceProgress;
     if (progress) {
       progressLabel.textContent = formatStatus(progress.phase);
       progressBar.removeAttribute("value");
@@ -475,7 +569,9 @@
   byId("hover-activation").addEventListener("change", function (event) { settings({ hover_activation: event.target.value }); });
   byId("lookup-preload").addEventListener("change", function (event) { settings({ lookup_preload: event.target.value }); });
   byId("check-updates").addEventListener("click", function () { invoke("check_for_updates"); });
-  byId("update-application").addEventListener("click", function () { invoke("install_application_update"); });
+  byId("update-application").addEventListener("click", function () { invoke("install_application_update", false); });
+  byId("confirm-full-update").addEventListener("click", function () { invoke("install_application_update", true); });
+  byId("cancel-update").addEventListener("click", function () { invoke("cancel_update"); });
   byId("release-notes").addEventListener("click", function () { invoke("open_release_notes"); });
   byId("install-update").addEventListener("click", function () {
     const resourceId = byId("update-resource").value;

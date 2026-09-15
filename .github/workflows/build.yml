@@ -114,11 +114,49 @@ jobs:
       - name: Prepare the bundled EasyOCR weights
         run: python tools/prepare_easyocr_models.py
 
+      # The delta is diffed against the previous *published* manifest, never a
+      # rebuilt tag: a rebuild is a different tree, and a delta whose base
+      # nobody has installed applies to nothing. A release without one is
+      # normal - the first manifest-aware build has no predecessor - so this
+      # step never fails the build.
+      - name: Fetch the previous published Windows manifest
+        id: base
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          mkdir -p release-base
+          for asset in hanly-desktop-windows.manifest.json SHA256SUMS; do
+            gh release download --repo "$REPOSITORY" --pattern "$asset"               --dir release-base --clobber || true
+          done
+          if [[ -f release-base/hanly-desktop-windows.manifest.json && -f release-base/SHA256SUMS ]]
+          then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "no previous published manifest; this release publishes no delta"
+          fi
+
       - name: Build application package
         id: build
+        shell: bash
         env:
           PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR: "1"
-        run: python tools/build_package.py --platform ${{ matrix.platform }}
+          RUNNER_PLATFORM: ${{ matrix.platform }}
+          BASE_AVAILABLE: ${{ steps.base.outputs.available }}
+        run: |
+          set -euo pipefail
+          arguments=(--platform "$RUNNER_PLATFORM")
+          if [[ "$RUNNER_PLATFORM" == "windows" && "$BASE_AVAILABLE" == "true" ]]; then
+            arguments+=(
+              --base-manifest release-base/hanly-desktop-windows.manifest.json
+              --base-checksums release-base/SHA256SUMS
+            )
+          fi
+          python tools/build_package.py "${arguments[@]}"
 
       # Every check below states the product it actually needs, so one failed
       # smoke cannot skip the rest and leave a red run with no evidence.
@@ -337,6 +375,9 @@ jobs:
             dist/hanly-desktop-${{ matrix.platform }}.zip
             dist/hanly-desktop-${{ matrix.platform }}.dmg
             dist/hanly-desktop-${{ matrix.platform }}.tar.gz
+            dist/hanly-desktop-windows.manifest.json
+            dist/hanly-desktop-windows.update.json
+            dist/hanly-desktop-windows-from-*.delta.zip
             dist/reports/hanly-smoke-${{ matrix.platform }}.json
             dist/reports/hanly-window-${{ matrix.platform }}.json
             dist/reports/hanly-artifact-${{ matrix.platform }}.json

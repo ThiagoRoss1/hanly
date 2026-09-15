@@ -15,8 +15,21 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 from typing import Any
+
+if __package__ in (None, ""):
+    # Run as a plain script rather than ``python -m``, so the repository root
+    # is not on the path and ``tools.update_artifacts`` cannot be imported.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.update_artifacts import (
+    ArtifactError,
+    ReleaseProducts,
+    build_release_products,
+    generate_manifest,
+)
 
 APPLICATION_STEM = "hanly-desktop"
 RESOURCE_ARCHIVE_STEM = "hanly-resources"
@@ -118,6 +131,16 @@ class PackageLayout:
         if self.platform_name != "macos":
             raise ValueError("a disk image is a macOS product only")
         return self.repo_root / "dist" / f"{APPLICATION_STEM}-macos.dmg"
+
+    @property
+    def update_metadata_directory(self) -> Path:
+        """Where the manifest, delta, and update metadata are written.
+
+        Beside the archives, because they are release assets published with
+        them rather than anything the application tree contains.
+        """
+
+        return self.repo_root / "dist"
 
     @property
     def work_root(self) -> Path:
@@ -262,12 +285,43 @@ def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None
         raise PackagingError(f"{failure}: {detail.strip() or command[0]}")
 
 
+def product_version() -> str:
+    """The version the build carries, read the way the application reads it."""
+
+    return metadata.version("hanly-app")
+
+
+def write_update_artifacts(
+    layout: PackageLayout,
+    *,
+    base_manifest: Path | None = None,
+    base_checksums: Path | None = None,
+) -> ReleaseProducts:
+    """Produce the Windows manifest, update metadata, and optional delta.
+
+    Only Windows installs differentially, so only Windows publishes these. The
+    manifest is written into the frozen tree first, so the archive beside it
+    carries the inventory the next update will read from disk.
+    """
+
+    return build_release_products(
+        layout.application_directory,
+        layout.application_archive,
+        product_version(),
+        layout.update_metadata_directory,
+        base_manifest_path=base_manifest,
+        base_checksums_path=base_checksums,
+    )
+
+
 def run_build(
     layout: PackageLayout,
     *,
     python_executable: Path | str | None = None,
     clean: bool = True,
     noconfirm: bool = True,
+    base_manifest: Path | None = None,
+    base_checksums: Path | None = None,
 ) -> int:
     """Run PyInstaller using the selected interpreter and return its status."""
 
@@ -278,13 +332,24 @@ def run_build(
     if completed.returncode != 0:
         return completed.returncode
 
+    windows = layout.platform_name == "windows"
     try:
+        if windows:
+            # Before archiving: the inventory belongs inside the build, so a
+            # fresh installation already knows what it is made of.
+            generate_manifest(layout.application_directory, product_version())
         products = [archive_application(layout)]
         if layout.platform_name == "macos":
             # Two products from one build: the ZIP the updater installs, and
             # the disk image a person downloads.
             products.append(create_disk_image(layout))
-    except (OSError, PackagingError) as error:
+        if windows:
+            products.extend(
+                write_update_artifacts(
+                    layout, base_manifest=base_manifest, base_checksums=base_checksums
+                ).paths()
+            )
+    except (OSError, PackagingError, ArtifactError) as error:
         print(f"Hanly packaging: could not create application archive: {error}", file=sys.stderr)
         return 1
     for product in products:
@@ -318,6 +383,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="allow PyInstaller to ask before replacing an existing artifact",
     )
     parser.add_argument(
+        "--base-manifest",
+        type=Path,
+        help="the previous release's published Windows manifest, to diff against",
+    )
+    parser.add_argument(
+        "--base-checksums",
+        type=Path,
+        help="that release's SHA256SUMS, which proves the manifest is its own",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the platform-aware command without running PyInstaller",
@@ -347,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
         python_executable=args.python_executable,
         clean=not args.no_clean,
         noconfirm=not args.no_noconfirm,
+        base_manifest=args.base_manifest,
+        base_checksums=args.base_checksums,
     )
 
 

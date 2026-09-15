@@ -317,44 +317,139 @@ The **DMG** is made with `hdiutil` from the same application and is what a
 person downloads and drags to Applications. The disk image is never an update
 input, and neither product modifies the built application.
 
-A release therefore holds seven assets: four application products, one
-`krdict-<version>.sqlite3.zst`, `hanly-resources.json`, and `SHA256SUMS`
-(which lists the six payload digests).
+A release holds nine assets, or ten when a Windows delta was produced: four
+application products, the two Windows update documents, an optional Windows
+delta, one `krdict-<version>.sqlite3.zst`, `hanly-resources.json`, and
+`SHA256SUMS` (which lists every payload digest but its own).
 
-### How an in-app update replaces an installation
+| Windows update asset | What it is |
+| --- | --- |
+| `hanly-desktop-windows.manifest.json` | every managed file in the build, with digest, size, and component |
+| `hanly-desktop-windows.update.json` | what a client downloads, and which build the delta starts from |
+| `hanly-desktop-windows-from-<base>-to-<target>.delta.zip` | optional; only the files that changed between those two published builds |
 
-Everything the update writes goes into one uniquely named `.hanly-update-*`
-directory beside the installation: the download, the extracted build, the
-staged copy, the previous installation, and the file the new build answers
-through. A finished or abandoned update is that one directory being removed.
-The swap script itself is written to the system temporary directory and
-deletes itself, so it is never removing the directory it is running from.
+`tools/update_artifacts.py` produces all three from the finished frozen tree.
+`tools/build_package.py` runs it as part of a Windows build and writes the
+inventory into the build itself as `.hanly-manifest.json`, so a fresh
+installation already knows what it is made of. Pass `--base-manifest` and
+`--base-checksums` to diff against the previous release; the build workflow
+downloads both from the latest published release and omits the delta when
+there is none.
 
-The swap runs after Hanly exits, because the installation holds the executable
-and the interpreter running it. It waits for that process, renames the
+The base is the previous **published** manifest, proved against that release's
+`SHA256SUMS`. Rebuilding an old tag produces a different tree, and a delta
+whose base is a build nobody has installed applies to nothing.
+
+### How a Windows update replaces an installation
+
+**The installation path never changes and no second copy of the application is
+made.** Everything the update writes lives under
+`<installation>/.hanly-update/<transaction>/`: the downloaded payload, the
+staged files, the originals moved aside, the journal, and the file the new
+build answers through. A finished or abandoned update is that one directory
+being removed.
+
+An ordinary update runs in two halves, and only the first happens while Hanly
+is still open:
+
+1. **Prepare.** Fetch `SHA256SUMS`, `hanly-desktop-windows.update.json`, and
+   `hanly-desktop-windows.manifest.json` — nothing else. Hash the installation,
+   and decide which files must be added, replaced, and removed. No application
+   payload is downloaded before the user clicks Update now, and none is
+   downloaded here either.
+2. **Stage.** Download the delta the plan chose, verify it against the release's
+   digest, extract only the members the plan named, verify each against the
+   manifest, and write the journal. The running installation is untouched.
+
+Then Hanly hands the transaction to `hanly-update-helper.ps1`, waits for it to
+acknowledge ownership, and quits. The helper waits for every process running an
+executable **inside the installation** to exit — the shell, the Control Center,
+and the lookup child — then applies the plan one file at a time: the original is
+moved into `backup/`, the staged file is moved into place. It relaunches the
+build with `--update-ready` and waits for it to report the version that was
+installed. Only then are the backups discarded. If it does not report within ten
+minutes, every backup goes back and the previous build is relaunched.
+
+Three properties are worth knowing:
+
+- **Only changed files are written.** An unchanged dependency is neither
+  downloaded nor rewritten, which is most of the bundle on a patch release.
+- **Files the installation does not own are never overwritten.** If something
+  occupies a path the new build needs and the previous manifest did not own it,
+  the update stops and reports the path.
+- **Deletions come from ownership.** Only a path the previous build's manifest
+  owned, and the new one dropped, is removed. An installation carrying no
+  inventory deletes nothing.
+
+#### If an update is interrupted
+
+This is not an atomic whole-tree replacement, so a power loss mid-apply leaves a
+mixed tree. Two things make that recoverable:
+
+- Every apply and rollback step decides from what is on disk, not from the
+  record, so it replays to the same result.
+- Before the first file moves, a copy of the helper and a pointer to the
+  transaction are written to `%LOCALAPPDATA%\Hanly\recovery\`, outside the
+  installation, with **`Finish Hanly update.cmd`** beside it. Running that
+  finishes or undoes the transaction using nothing but Windows — no Hanly, no
+  Python, no network. It is the route to use when the installation itself will
+  not start.
+
+When Hanly *can* start, it settles the previous transaction before anything
+else initializes.
+
+### How a macOS or Linux update replaces an installation
+
+Both keep the whole-bundle swap. Everything the update writes goes into one
+uniquely named `.hanly-update-*` directory beside the installation: the
+download, the extracted build, the staged copy, the previous installation, and
+the file the new build answers through. The swap script is written to the
+system temporary directory and deletes itself, so it is never removing the
+directory it is running from.
+
+The swap runs after Hanly exits. It waits for that process, renames the
 installation into the transaction directory, renames the staged build into its
-place, relaunches it, and then **waits for the new build to report its own
-version**. Only then is the previous installation discarded. If the new build
-does not answer within ten minutes — the bound the packaged UI smoke allows a
-frozen build for the same milestone — the previous one goes back and is
-relaunched instead. A restore that itself fails launches nothing and leaves the
-previous installation under `.hanly-update-*/previous`, which is then the only
-working copy: move it back to the installation path by hand.
+place, relaunches it, and **waits for the new build to report its own version**.
+Only then is the previous installation discarded. If it does not answer within
+ten minutes the previous one goes back and is relaunched instead. A restore that
+itself fails launches nothing and leaves the previous installation under
+`.hanly-update-*/previous`, which is then the only working copy: move it back to
+the installation path by hand.
 
-Two limitations are deliberate and known:
+**These downloads are the whole application.** macOS and Linux have no
+differential path in this release, and their published sizes are the full
+archive sizes.
+
+Two limitations are deliberate and known on every platform:
 
 - **Explicit command-line arguments are not carried across an update.** A build
   relaunched by the handoff starts the way a double-click starts it. An
   installation driven with `--runtime-config` or `--app-config` needs those
   passed again after updating.
-- **The handoff is not started under a supervisor.** If the script cannot start
-  at all, Hanly quits without being replaced; the installation is untouched and
-  reopening it works. If the machine loses power mid-swap, the transaction
-  directory is left in place for manual recovery rather than repaired on the
-  next launch.
+- **The handoff is not started under a supervisor.** If it cannot start at all,
+  Hanly quits without being replaced; the installation is untouched and
+  reopening it works.
 
 Per-user settings, diagnostics, and the KRDICT database live outside the
 installation, so an update - and a rollback - never touches them.
+
+### Updating a Windows installation from 0.5.0 or 0.5.1
+
+Those builds carry no inventory, and their own updater cannot exit correctly in
+a windowed build (`cli._leave` raised on absent streams, so the process held a
+modal crash dialog and the handoff waited out its timeout). Publishing a fixed
+build does not repair the updater already installed, so **the first update from
+0.5.0 or 0.5.1 is a manual replacement**, not a differential one:
+
+1. Close Hanly.
+2. Download `hanly-desktop-windows.zip` and unpack it.
+3. Replace the contents of the existing `hanly-desktop` directory with the
+   unpacked ones, keeping the same installation path.
+4. Launch it. Settings, diagnostics, and the KRDICT database are in the
+   per-user profile and are not affected.
+
+That build carries `.hanly-manifest.json`, and every update after it is an
+ordinary differential one.
 
 ### Updating from a 0.1.1 macOS installation
 

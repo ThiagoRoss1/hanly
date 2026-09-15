@@ -123,13 +123,20 @@ def render_handoff_script(*, executable: str, platform: str = sys.platform) -> s
 
 
 def spawn_detached(command: list[str], directory: Path) -> None:
-    """Start the handoff so it outlives the process it is waiting for."""
+    """Start the handoff so it outlives the process it is waiting for.
+
+    Windows gets a new process group, so a console signal sent to Hanly does
+    not reach the script, and no window, so nothing flashes on screen. It does
+    **not** get ``DETACHED_PROCESS``: a PowerShell started with no console at
+    all exits zero having run none of its script, which leaves the update
+    staged, the application closed, and nothing to say why. A process outlives
+    its parent on Windows regardless; detaching the console is not what makes
+    that true.
+    """
 
     if sys.platform.startswith("win32"):
-        flags = (
-            getattr(subprocess, "DETACHED_PROCESS", 0)
-            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess, "CREATE_NO_WINDOW", 0
         )
         subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
         return

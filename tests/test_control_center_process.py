@@ -113,7 +113,8 @@ def test_a_bridge_missing_an_operation_is_a_composition_error() -> None:
         def get_state(self) -> dict[str, object]:
             return {}
 
-    with pytest.raises(TypeError, match="check_for_updates"):
+    # The first name the allowlist reaches that the bridge does not answer.
+    with pytest.raises(TypeError, match="cancel_update"):
         bridge_operations(Partial())
 
 

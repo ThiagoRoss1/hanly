@@ -224,43 +224,79 @@ download run the same code.
 
 ## 6a. Updating Hanly itself
 
-A resource is swapped while Hanly keeps running. The application archive
-contains the executable and the interpreter running from it, so it cannot be.
+A resource is swapped while Hanly keeps running. The application holds the
+executable and the interpreter running from it, so it cannot be.
+
+**Two strategies, one per platform.** Windows changes only the files that
+differ, in place, at the same installation path. macOS and Linux keep the
+whole-bundle swap: a `.app` is signed as a unit, and neither publishes the
+release artifacts a differential update reads.
+
+### Windows: differential, in place
 
 ```
 Control Center "Update now"
-  → update_coordinator.py            one operation at a time, off the UI thread
-  → app_update.py     ApplicationInstaller.stage()
-        download → SHA256SUMS → extract → validate → one transaction directory
-  → app_update.py     ApplicationInstaller.apply()
-  → app_update_handoff.py            a detached native script, then Hanly quits
-        wait for this process to exit
-        rename installation → transaction/previous
-        rename staged build → installation
-        relaunch it with `--update-ready <path>`
-        wait for that path to hold the version it installed
-        ↳ it does      remove the transaction directory, and itself
-        ↳ it does not  put the previous build back and relaunch that instead
+  → update_coordinator.py          one operation at a time, off the UI thread
+  → app_update_runner.py           takes the per-installation lock
+  → app_update_install.py  prepare()
+        SHA256SUMS → update.json → manifest.json     (metadata only, no payload)
+        hash the installation                        app_inventory.py
+        decide what changes                          app_update_plan.py
+    ↳ the delta cannot be used here → show its real size, ask again
+  → app_update_install.py  stage()
+        download the delta (or the full archive, as a source of files)
+        verify it, extract only the members the plan named, verify each
+        write the journal                            app_update_journal.py
+  → app_update_helper.py           a detached PowerShell program, then Hanly quits
+        wait for every process running out of the installation to exit
+        per file: move the original aside, move the staged file in
+        relaunch with `--update-ready <path>`, wait for the expected version
+        ↳ it reports    commit, and remove the transaction
+        ↳ it does not   put every original back and relaunch the old build
 ```
 
-Three rules hold the whole thing together:
+### macOS and Linux: whole-bundle swap
 
-- **The previous build outlives the swap.** It is discarded only once the new
+```
+  → app_update.py          ApplicationInstaller.stage() / .apply()
+  → app_update_handoff.py  rename installation aside, rename the staged build in
+```
+
+Four rules hold the whole thing together:
+
+- **The previous build outlives the update.** It is discarded only once the new
   one has reported the expected version through `--update-ready`, which
   `cli.main` answers from `application.run_desktop` when the window opens. A
   build that installs and then cannot start is rolled back, not shrugged at.
-- **One directory owns everything.** Download, extraction, staged build,
-  backup, and readiness file all live in a uniquely named transaction
-  directory beside the installation, so cleanup is one removal and two
-  attempts cannot collide. The script itself lives outside it.
-- **Each platform relaunches the way that platform launches an application.**
-  macOS goes through `/usr/bin/open` on the `.app`; Windows and Linux run the
-  program at the path the layout names, with no suffix reconstructed.
+- **Correctness comes from the filesystem, not the journal.** Every apply and
+  rollback step reads what is actually there before acting, so a step
+  interrupted between the move and the record of it replays to the same result.
+  The journal bounds the work and drives the progress window.
+- **The helper depends on nothing it is changing.** Windows PowerShell and the
+  .NET Framework, and a verified copy under `%LOCALAPPDATA%/Hanly/recovery`
+  with a `.cmd` beside it, so an installation that will not start can still be
+  repaired.
+- **Ownership decides deletion.** Only a path the previous build's manifest
+  owned, and the new one dropped, is removed. An installation carrying no
+  inventory deletes nothing.
 
 `extract_application_tar` is the application's own extractor: a PyInstaller
 directory build is full of relative links between its bundled libraries, and
 the resource extractor rejects every link outright - correctly, for a resource.
 macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
+
+### What a release publishes for it
+
+| Asset | Read by |
+|---|---|
+| `hanly-desktop-windows.zip` | every client; also the source of files on a fallback |
+| `hanly-desktop-windows.manifest.json` | the inventory of the new build |
+| `hanly-desktop-windows.update.json` | what to download, and which build the delta starts from |
+| `hanly-desktop-windows-from-<base>-to-<target>.delta.zip` | optional; only the changed files |
+
+`tools/update_artifacts.py` produces all three from the finished frozen tree,
+and writes the inventory into the build as `.hanly-manifest.json` so a fresh
+installation already knows what it is made of.
 
 ---
 
@@ -349,8 +385,15 @@ macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
 |---|---|
 | `update_service.py` | Obtains remote *resources*: download, verify, decompress, validate, activate, roll back |
 | `update_coordinator.py` | Runs updates off the UI thread and reports progress; one operation owns it at a time |
-| `app_update.py` | The *application* half: which release is newer, and download → verify → extract → stage into one owned transaction directory |
-| `app_update_handoff.py` | The swap itself: the native script that waits for this process to exit, replaces the installation, relaunches it, and waits to be told the new build started |
+| `app_update.py` | The *application* half: which release is newer, and the whole-bundle download → verify → extract → stage macOS and Linux still use |
+| `app_update_handoff.py` | The whole-bundle swap: the native script that waits for this process to exit, replaces the installation, relaunches it, and waits to be told the new build started |
+| `app_manifest.py` | What a build is made of and what a release offers: the manifest, the update metadata, the delta descriptor, and every path rule |
+| `app_inventory.py` | Hashing a tree into that inventory — the producer's build, and the client's own installation |
+| `app_update_plan.py` | Diffing the target against what is installed: add, replace, delete, collisions, and which payload can supply it |
+| `app_update_install.py` | The Windows differential path: metadata, plan, download, selective extraction, disk preflight |
+| `app_update_journal.py` | The durable record of one in-place update, the paths it owns, and the per-installation lock |
+| `app_update_helper.py` | The Windows PowerShell program that applies and undoes it, depending on nothing inside the installation |
+| `app_update_runner.py` | The desktop's seam: hold the lock, wait for the helper to take over, settle whatever the last run left |
 
 ### Outside the packages
 

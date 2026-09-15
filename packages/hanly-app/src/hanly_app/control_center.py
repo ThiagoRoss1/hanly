@@ -508,15 +508,25 @@ class ControlCenterBridge:
         self._update_coordinator.install_update(resource_id)
         return self.get_state()
 
-    def install_application_update(self) -> dict[str, object]:
+    def install_application_update(self, confirm_full: object = False) -> dict[str, object]:
         """Download, verify, and stage the newer application build inside Hanly.
 
         This is the primary update action. The browser is never part of it.
+        ``confirm_full`` is the page answering the one question this can ask:
+        whether to go ahead when the small download turned out not to apply.
         """
 
         if self._update_coordinator is None:
             raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
-        self._update_coordinator.install_application_update()
+        self._update_coordinator.install_application_update(bool(confirm_full))
+        return self.get_state()
+
+    def cancel_update(self) -> dict[str, object]:
+        """Stop a preparation or download that has changed nothing yet."""
+
+        if self._update_coordinator is None:
+            raise ControlCenterUnavailable(self._UPDATE_STATUS["message"])
+        self._update_coordinator.cancel_update()
         return self.get_state()
 
     def open_release_notes(self) -> dict[str, object]:

@@ -328,6 +328,8 @@ class _StubCoordinator:
     def __init__(self, application: object) -> None:
         self._application = application
         self.application_installs = 0
+        self.confirmed_full = False
+        self.cancels = 0
 
     def snapshot(self) -> dict[str, object]:
         return {
@@ -341,8 +343,13 @@ class _StubCoordinator:
             "restart_required": False,
         }
 
-    def install_application_update(self) -> dict[str, object]:
+    def install_application_update(self, confirm_full: object = False) -> dict[str, object]:
         self.application_installs += 1
+        self.confirmed_full = bool(confirm_full)
+        return self.snapshot()
+
+    def cancel_update(self) -> dict[str, object]:
+        self.cancels += 1
         return self.snapshot()
 
 
@@ -1002,3 +1009,47 @@ def test_the_logs_panel_renders_records_with_text_content_only() -> None:
     body = assets.javascript.split("function renderLogs(", 1)[1].split("function loadLogs", 1)[0]
     assert "textContent" in body
     assert "innerHTML = \"\"" in body
+
+
+def test_the_update_panel_states_what_is_downloaded_and_what_remains() -> None:
+    """A percentage on its own is what made the last update look frozen: the
+    page has to say the size, the bytes left, and which stage is running."""
+
+    assets = load_control_center_assets()
+
+    for element in (
+        'id="update-plan"',
+        'id="application-progress-bytes"',
+        'id="confirm-full-update"',
+        'id="cancel-update"',
+        'id="update-activity"',
+    ):
+        assert element in assets.html, element
+    assert "Download full update" in assets.html
+    # Both are real bridge operations, not page-local state.
+    assert "cancel_update" in assets.javascript
+    assert 'invoke("install_application_update", true)' in assets.javascript
+
+
+def test_a_download_at_one_hundred_percent_is_not_reported_as_finished() -> None:
+    """Explaining the gap is the whole point of the byte line: the payload is
+    in and the files are still being replaced."""
+
+    javascript = load_control_center_assets().javascript
+
+    assert "remaining" in javascript
+    assert "formatBytes" in javascript
+    # Stage labels come from the coordinator's phases, so the page never
+    # invents one smooth percentage across network, unpacking and restart.
+    for phase in ("inspecting", "unpacking", "preparing"):
+        assert phase in javascript, phase
+
+
+def test_the_activity_tail_is_bounded_rather_than_appended_to() -> None:
+    """The snapshot crosses a pipe on every poll, so an ever-growing log would
+    make a long update slower the longer it ran."""
+
+    from hanly_app.update_coordinator import ACTIVITY_LIMIT
+
+    assert ACTIVITY_LIMIT <= 200
+    assert "list.innerHTML = \"\";" in load_control_center_assets().javascript

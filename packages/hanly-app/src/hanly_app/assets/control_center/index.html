@@ -231,6 +231,24 @@
                     View release notes
                   </button>
                 </p>
+                <p class="update-plan" id="update-plan" hidden></p>
+                <div class="update-progress" id="application-progress" hidden>
+                  <progress id="application-progress-bar" max="1" value="0"></progress>
+                  <span id="application-progress-label">Preparing…</span>
+                  <span class="update-bytes" id="application-progress-bytes"></span>
+                </div>
+                <div class="action-row update-button-row" id="application-actions">
+                  <button class="button button-primary" id="confirm-full-update" type="button" hidden>
+                    Download full update
+                  </button>
+                  <button class="button button-quiet" id="cancel-update" type="button" hidden>
+                    Cancel
+                  </button>
+                </div>
+                <details class="update-details" id="update-details" hidden>
+                  <summary>Details</summary>
+                  <ul class="update-activity" id="update-activity"></ul>
+                </details>
               </div>
               <div class="update-actions">
                 <label class="field update-resource-field">
