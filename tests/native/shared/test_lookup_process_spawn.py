@@ -60,7 +60,7 @@ def owned_children():
         parts = line.split(None, 2)
         if len(parts) < 3 or int(parts[1]) != mine:
             continue
-        if "resource_tracker" in parts[2] or "ps -axo" in parts[2]:
+        if any(marker in parts[2] for marker in IGNORED_COMMANDS):
             continue
         found.append(int(parts[0]))
     return found

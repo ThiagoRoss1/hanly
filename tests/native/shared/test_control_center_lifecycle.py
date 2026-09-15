@@ -94,14 +94,13 @@ def descendants():
                 continue
             owned.append(child)
             frontier.append(child)
-    ignored = ("resource_tracker", "ps -axo")
-    # Each survivor is named, not counted. "[3192]" cannot say whether a
-    # Chromium helper outlived the window process or the window process itself
-    # is still winding down, and those are different defects.
+    # Each survivor is named, not counted: a bare pid cannot say whether a
+    # window leaked or a benign tracker went unrecognized, and reading one as
+    # the other is exactly what a truncated command line already caused once.
     return [
         {"pid": pid, "command": commands.get(pid, "")}
         for pid in owned
-        if not any(marker in commands.get(pid, "") for marker in ignored)
+        if not any(marker in commands.get(pid, "") for marker in IGNORED_COMMANDS)
     ]
 
 
