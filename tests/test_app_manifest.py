@@ -7,35 +7,66 @@ cases hold both to the same document.
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 import zipfile
 from pathlib import Path
 
 import pytest
+from hanly_app.app_build_identity import BuildIdentityError
 from hanly_app.app_inventory import (
+    InventoryError,
     build_manifest,
+    compare_tree,
     component_for,
     read_installation,
     read_installed_manifest,
+    read_tree,
 )
 from hanly_app.app_manifest import (
     INSTALLED_MANIFEST_NAME,
+    KIND_DIRECTORY,
+    KIND_FILE,
+    KIND_SYMLINK,
     SCHEMA_VERSION,
+    TREE_SCHEMA_VERSION,
     BuildIdentity,
     FileEntry,
     InstallManifest,
     ManifestError,
+    TreeEntry,
+    TreeLayout,
+    TreeManifest,
     UpdateMetadata,
     parse_checksums,
     require_safe_relative_path,
+    require_tree_path,
+    tree_difference,
 )
 
+from tests.hanly_fixtures.update_tree import (
+    LINUX,
+    MACOS,
+    SOURCE_COMMIT,
+    WINDOWS,
+    Product,
+    entry_at,
+    manifest_for,
+    sign_entry,
+    write_tree,
+)
 from tools.update_artifacts import (
     ArtifactError,
+    assemble_tree_delta,
     build_release_products,
     generate_manifest,
+    generate_tree_manifest,
     host_architecture,
     load_base_manifest,
+    read_build_stamp_file,
+    tree_delta_path,
+    write_build_stamp,
 )
 
 
@@ -331,3 +362,443 @@ def test_update_metadata_round_trips_through_its_published_json(tmp_path: Path) 
     text = products.metadata_path.read_text(encoding="utf-8")
 
     assert UpdateMetadata.from_json(text).to_dict() == json.loads(text)
+
+
+# --------------------------------------------------------------------------
+# Schema 2: the whole tree, on every platform
+# --------------------------------------------------------------------------
+
+
+def _bundle_identity(platform: str = "macos", architecture: str = "arm64") -> BuildIdentity:
+    return BuildIdentity(
+        product="hanly-desktop",
+        platform=platform,
+        architecture=architecture,
+        version="0.5.3",
+        build_id="4e6a2b18-0f2c-4d41-9d0a-7b5c8e1f2a33",
+    )
+
+
+def _bundle_entries(**overrides: TreeEntry) -> list[TreeEntry]:
+    """The smallest bundle-shaped tree the rules all have something to say about."""
+
+    entries = {
+        "Contents": TreeEntry(path="Contents", kind=KIND_DIRECTORY, mode=0o755),
+        "Contents/MacOS": TreeEntry(path="Contents/MacOS", kind=KIND_DIRECTORY, mode=0o755),
+        "Contents/MacOS/hanly-desktop": TreeEntry(
+            path="Contents/MacOS/hanly-desktop",
+            kind=KIND_FILE,
+            sha256="c" * 64,
+            size=120,
+            mode=0o755,
+        ),
+        "Contents/Info.plist": TreeEntry(
+            path="Contents/Info.plist", kind=KIND_FILE, sha256="d" * 64, size=20, mode=0o644
+        ),
+    }
+    entries.update({entry.path: entry for entry in overrides.values()})
+    return list(entries.values())
+
+
+def _bundle_layout() -> TreeLayout:
+    return TreeLayout(root="Hanly.app", executable="Contents/MacOS/hanly-desktop", mode=0o755)
+
+
+def _bundle(*extra: TreeEntry) -> TreeManifest:
+    return TreeManifest.from_entries(
+        _bundle_identity(), _bundle_layout(), [*_bundle_entries(), *extra]
+    )
+
+
+def test_tree_manifest_round_trips_through_its_canonical_bytes() -> None:
+    manifest = _bundle()
+
+    restored = TreeManifest.from_json(manifest.to_json())
+
+    assert restored.digest() == manifest.digest()
+    assert restored.to_json() == manifest.to_json()
+    assert json.loads(manifest.to_json())["schema_version"] == TREE_SCHEMA_VERSION
+
+
+def test_two_manifests_of_one_tree_serialize_identically_whatever_the_order() -> None:
+    entries = _bundle_entries()
+    forward = TreeManifest.from_entries(_bundle_identity(), _bundle_layout(), entries)
+    backward = TreeManifest.from_entries(
+        _bundle_identity(), _bundle_layout(), list(reversed(entries))
+    )
+
+    assert forward.to_json() == backward.to_json()
+
+
+def test_a_framework_reaches_its_binary_through_a_link_to_a_link() -> None:
+    framework = "Contents/Frameworks/Qt.framework"
+    manifest = _bundle(
+        TreeEntry(path="Contents/Frameworks", kind=KIND_DIRECTORY, mode=0o755),
+        TreeEntry(path=framework, kind=KIND_DIRECTORY, mode=0o755),
+        TreeEntry(path=f"{framework}/Versions", kind=KIND_DIRECTORY, mode=0o755),
+        TreeEntry(path=f"{framework}/Versions/A", kind=KIND_DIRECTORY, mode=0o755),
+        TreeEntry(
+            path=f"{framework}/Versions/A/Qt", kind=KIND_FILE, sha256="e" * 64, size=9, mode=0o755
+        ),
+        TreeEntry(path=f"{framework}/Versions/Current", kind=KIND_SYMLINK, link_target="A"),
+        TreeEntry(path=f"{framework}/Qt", kind=KIND_SYMLINK, link_target="Versions/Current/Qt"),
+    )
+
+    assert manifest.get(f"{framework}/Qt") is not None
+
+
+@pytest.mark.parametrize(
+    ("link_target", "expected"),
+    [
+        ("../../../etc/passwd", "outside the installation"),
+        ("/etc/passwd", "outside the installation"),
+        ("Contents/absent", "not in the build"),
+        ("Info.plist/deeper", "which is a file"),
+    ],
+)
+def test_a_link_that_does_not_land_inside_the_build_is_refused(
+    link_target: str, expected: str
+) -> None:
+    with pytest.raises(ManifestError, match=expected):
+        _bundle(TreeEntry(path="Contents/link", kind=KIND_SYMLINK, link_target=link_target))
+
+
+def test_a_loop_of_links_is_refused_rather_than_followed() -> None:
+    with pytest.raises(ManifestError, match="too many links"):
+        _bundle(
+            TreeEntry(path="Contents/one", kind=KIND_SYMLINK, link_target="two"),
+            TreeEntry(path="Contents/two", kind=KIND_SYMLINK, link_target="one"),
+        )
+
+
+def test_an_entry_whose_parent_the_manifest_omits_is_refused() -> None:
+    with pytest.raises(ManifestError, match="which the manifest omits"):
+        _bundle(
+            TreeEntry(
+                path="Contents/Resources/icon.icns",
+                kind=KIND_FILE,
+                sha256="f" * 64,
+                size=4,
+                mode=0o644,
+            )
+        )
+
+
+def test_an_entry_below_something_that_is_not_a_directory_is_refused() -> None:
+    with pytest.raises(ManifestError, match="not a directory"):
+        _bundle(
+            TreeEntry(path="Contents/Helpers", kind=KIND_SYMLINK, link_target="MacOS"),
+            TreeEntry(
+                path="Contents/Helpers/tool", kind=KIND_FILE, sha256="f" * 64, size=1, mode=0o755
+            ),
+        )
+
+
+@pytest.mark.parametrize("platform", ["windows", "macos"])
+def test_two_paths_one_filesystem_would_fold_together_are_refused(platform: str) -> None:
+    identity = _bundle_identity(platform, "x86_64" if platform == "windows" else "arm64")
+    posix = platform != "windows"
+    entries = [
+        TreeEntry(path="app", kind=KIND_DIRECTORY, mode=0o755 if posix else None),
+        TreeEntry(
+            path="app/Main.dat",
+            kind=KIND_FILE,
+            sha256="a" * 64,
+            size=1,
+            mode=0o644 if posix else None,
+        ),
+        TreeEntry(
+            path="app/main.dat",
+            kind=KIND_FILE,
+            sha256="b" * 64,
+            size=1,
+            mode=0o644 if posix else None,
+        ),
+        TreeEntry(
+            path="app/run",
+            kind=KIND_FILE,
+            sha256="c" * 64,
+            size=1,
+            mode=0o755 if posix else None,
+        ),
+    ]
+    layout = TreeLayout(root="hanly-desktop", executable="app/run", mode=0o755 if posix else None)
+
+    with pytest.raises(ManifestError, match="one name on this platform"):
+        TreeManifest.from_entries(identity, layout, entries)
+
+
+def test_linux_keeps_two_paths_that_differ_only_in_case() -> None:
+    identity = _bundle_identity("linux", "x86_64")
+    entries = [
+        TreeEntry(path="app", kind=KIND_DIRECTORY, mode=0o755),
+        TreeEntry(path="app/Main.dat", kind=KIND_FILE, sha256="a" * 64, size=1, mode=0o644),
+        TreeEntry(path="app/main.dat", kind=KIND_FILE, sha256="b" * 64, size=1, mode=0o644),
+        TreeEntry(path="app/run", kind=KIND_FILE, sha256="c" * 64, size=1, mode=0o755),
+    ]
+    layout = TreeLayout(root="hanly-desktop", executable="app/run", mode=0o755)
+
+    assert len(TreeManifest.from_entries(identity, layout, entries)) == 4
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/absolute", "Contents/../escape", "Contents//double", "Contents/./here", ".hanly-update/x"],
+)
+def test_a_path_that_does_not_stay_inside_an_installation_is_refused(path: str) -> None:
+    with pytest.raises(ManifestError):
+        require_tree_path(path, "linux")
+
+
+@pytest.mark.parametrize("path", ["dir/COM1.dll", "dir/name.", "dir/name ", "C:/x", "a/b:stream"])
+def test_windows_refuses_the_names_it_would_rewrite_rather_than_keep(path: str) -> None:
+    with pytest.raises(ManifestError):
+        require_tree_path(path, "windows")
+    require_tree_path(path.replace(":", "-"), "linux")
+
+
+def test_a_manifest_records_only_material_extended_attributes() -> None:
+    signed = TreeEntry(
+        path="Contents/Info.plist",
+        kind=KIND_FILE,
+        sha256="d" * 64,
+        size=20,
+        mode=0o644,
+        xattrs={"com.apple.cs.CodeDirectory": base64.b64encode(b"seal").decode("ascii")},
+    )
+
+    assert entry_at(_bundle_signed(signed), "Contents/Info.plist").xattrs
+
+    with pytest.raises(ManifestError, match="not product content"):
+        TreeEntry(
+            path="Contents/Info.plist",
+            kind=KIND_FILE,
+            sha256="d" * 64,
+            size=20,
+            xattrs={"com.apple.quarantine": "AA=="},
+        )
+
+
+def _bundle_signed(entry: TreeEntry) -> TreeManifest:
+    entries = [item for item in _bundle_entries() if item.path != entry.path]
+    return TreeManifest.from_entries(_bundle_identity(), _bundle_layout(), [*entries, entry])
+
+
+@pytest.mark.parametrize("mode", [0o4755, 0o2755, 0o1777])
+def test_a_manifest_refuses_to_ask_for_a_privileged_permission_bit(mode: int) -> None:
+    with pytest.raises(ManifestError, match="setuid, setgid, or the sticky bit"):
+        TreeEntry(path="run", kind=KIND_FILE, sha256="a" * 64, size=1, mode=mode)
+
+
+def test_each_kind_carries_its_own_fields_and_no_others() -> None:
+    with pytest.raises(ManifestError, match="no digest and size"):
+        TreeEntry(path="a", kind=KIND_FILE)
+    with pytest.raises(ManifestError, match="carries file content"):
+        TreeEntry(path="a", kind=KIND_DIRECTORY, sha256="a" * 64, size=1)
+    with pytest.raises(ManifestError, match="link with no target"):
+        TreeEntry(path="a", kind=KIND_SYMLINK)
+    with pytest.raises(ManifestError, match="link with permission bits"):
+        TreeEntry(path="a", kind=KIND_SYMLINK, link_target="b", mode=0o777)
+
+
+def test_the_legacy_control_file_is_a_windows_entry_and_nothing_else() -> None:
+    identity = _bundle_identity("windows", "x86_64")
+    layout = TreeLayout(root="hanly-desktop", executable="hanly-desktop.exe")
+    entries = [
+        TreeEntry(path="hanly-desktop.exe", kind=KIND_FILE, sha256="a" * 64, size=1),
+        TreeEntry(path=INSTALLED_MANIFEST_NAME, kind=KIND_FILE, sha256="b" * 64, size=1),
+    ]
+
+    assert INSTALLED_MANIFEST_NAME in TreeManifest.from_entries(identity, layout, entries)
+
+    with pytest.raises(ManifestError, match="not a file this build publishes"):
+        TreeManifest.from_entries(
+            _bundle_identity(),
+            _bundle_layout(),
+            [
+                *_bundle_entries(),
+                TreeEntry(path=INSTALLED_MANIFEST_NAME, kind=KIND_FILE, sha256="b" * 64, size=1),
+            ],
+        )
+
+
+def test_a_manifest_must_describe_the_executable_its_layout_names() -> None:
+    entries = [item for item in _bundle_entries() if item.path != "Contents/MacOS/hanly-desktop"]
+
+    with pytest.raises(ManifestError, match="no executable at"):
+        TreeManifest.from_entries(_bundle_identity(), _bundle_layout(), entries)
+
+
+def test_only_a_changed_file_needs_its_bytes_carried() -> None:
+    base = _bundle()
+    retimed = TreeEntry(
+        path="Contents/Info.plist", kind=KIND_FILE, sha256="d" * 64, size=20, mode=0o600
+    )
+    rewritten = TreeEntry(
+        path="Contents/MacOS/hanly-desktop",
+        kind=KIND_FILE,
+        sha256="9" * 64,
+        size=130,
+        mode=0o755,
+    )
+    target = TreeManifest.from_entries(
+        _bundle_identity(),
+        _bundle_layout(),
+        [
+            item
+            for item in _bundle_entries()
+            if item.path not in (retimed.path, rewritten.path)
+        ]
+        + [retimed, rewritten],
+    )
+
+    difference = tree_difference(base, target)
+
+    assert difference.changed_paths == (retimed.path, rewritten.path)
+    assert difference.payload_paths == (rewritten.path,)
+    assert difference.deleted_paths == ()
+
+
+def test_a_dropped_file_is_reported_as_deleted_and_carries_nothing() -> None:
+    base = _bundle(
+        TreeEntry(path="Contents/old.dat", kind=KIND_FILE, sha256="7" * 64, size=3, mode=0o644)
+    )
+
+    difference = tree_difference(base, _bundle())
+
+    assert difference.deleted_paths == ("Contents/old.dat",)
+    assert difference.payload_paths == ()
+
+
+def test_a_real_tree_reads_back_as_the_manifest_that_describes_it(tmp_path: Path) -> None:
+    root = write_tree(tmp_path / "build", MACOS)
+    sign_entry(root / "Contents" / "Info.plist")
+
+    inventory = read_tree(root, "macos")
+    manifest = manifest_for(root, MACOS)
+
+    assert inventory.unsupported == ()
+    assert compare_tree(inventory, manifest).matches
+    assert entry_at(manifest, "Contents/Frameworks/Qt.framework/Qt").link_target == (
+        "Versions/Current/Qt"
+    )
+    assert entry_at(manifest, "Contents/MacOS/hanly-desktop").mode == 0o755
+    assert entry_at(manifest, "Contents/Info.plist").xattrs
+
+
+def test_the_updater_s_own_working_directory_is_never_part_of_a_tree(tmp_path: Path) -> None:
+    root = write_tree(tmp_path / "build", LINUX)
+    (root / ".hanly-update" / "t1" / "payload").mkdir(parents=True)
+    (root / ".hanly-update" / "t1" / "payload" / "0001").write_bytes(b"staged")
+
+    assert not any(path.startswith(".hanly-update") for path in read_tree(root, "linux").entries)
+
+
+def test_a_tree_carrying_something_a_manifest_cannot_describe_says_so(tmp_path: Path) -> None:
+    root = write_tree(tmp_path / "build", LINUX)
+    os.mkfifo(root / "pipe")
+
+    inventory = read_tree(root, "linux")
+
+    assert inventory.unsupported == ("pipe",)
+    with pytest.raises(InventoryError, match="cannot describe"):
+        inventory.manifest(LINUX.identity("0.5.3", "build-one"), LINUX.layout)
+
+
+def test_comparing_a_tree_separates_what_changed_from_what_was_added(tmp_path: Path) -> None:
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest = manifest_for(root, LINUX)
+    (root / "hanly-desktop").write_bytes(b"a different program")
+    (root / "user-notes.txt").write_bytes(b"mine")
+    (root / "_internal" / "libpython.so.1.0").unlink()
+
+    comparison = compare_tree(read_tree(root, "linux"), manifest)
+
+    assert comparison.differing == ("hanly-desktop",)
+    assert comparison.extra == ("user-notes.txt",)
+    assert comparison.missing == ("_internal/libpython.so.1.0",)
+    assert not comparison.matches
+
+
+@pytest.mark.parametrize("product", [WINDOWS, MACOS, LINUX], ids=lambda item: item.platform)
+def test_the_producer_and_a_client_read_one_build_as_one_identity(
+    tmp_path: Path, product: Product
+) -> None:
+    package_root = tmp_path / "package"
+    stamp = write_build_stamp(
+        package_root,
+        platform_name=product.platform,
+        architecture=product.architecture,
+        version="0.5.3",
+        source_commit=SOURCE_COMMIT,
+    )
+    root = write_tree(tmp_path / "build", product)
+
+    published = generate_tree_manifest(root, stamp, product.layout)
+    installed = read_tree(root, product.platform).manifest(stamp.identity, product.layout)
+
+    assert read_build_stamp_file(package_root) == stamp
+    assert published.identity.to_dict() == stamp.identity.to_dict()
+    assert installed.digest() == published.digest()
+    assert compare_tree(read_tree(root, product.platform), published).matches
+
+
+def test_two_freezes_of_one_version_are_two_distinguishable_builds(tmp_path: Path) -> None:
+    first = write_build_stamp(
+        tmp_path / "one",
+        platform_name="linux",
+        architecture="x86_64",
+        version="0.5.3",
+        source_commit=SOURCE_COMMIT,
+    )
+    second = write_build_stamp(
+        tmp_path / "two",
+        platform_name="linux",
+        architecture="x86_64",
+        version="0.5.3",
+        source_commit=SOURCE_COMMIT,
+    )
+
+    assert first.build_id != second.build_id
+
+
+def test_a_build_the_release_matrix_does_not_cover_has_no_stamp(tmp_path: Path) -> None:
+    with pytest.raises(BuildIdentityError):
+        write_build_stamp(
+            tmp_path / "package",
+            platform_name="linux",
+            architecture="riscv64",
+            version="0.5.3",
+            source_commit=SOURCE_COMMIT,
+        )
+
+
+def test_a_delta_payload_carries_changed_bytes_and_nothing_a_manifest_already_says(
+    tmp_path: Path,
+) -> None:
+    base_root = write_tree(tmp_path / "base", MACOS)
+    base = manifest_for(base_root, MACOS, version="0.5.2", build_id="build-zero")
+    target_root = write_tree(
+        tmp_path / "target",
+        MACOS,
+        changes={
+            "Contents/Info.plist": b"<plist>new</plist>",
+            "Contents/Resources": None,
+            "Contents/Resources/icon.icns": b"icon bytes",
+        },
+    )
+    (target_root / "Contents" / "MacOS" / "hanly-desktop").chmod(0o700)
+    target = manifest_for(target_root, MACOS)
+    payload = tree_delta_path(tmp_path / "out", base, target)
+
+    difference = assemble_tree_delta(target_root, target, base, payload)
+
+    with zipfile.ZipFile(payload) as archive:
+        members = sorted(archive.namelist())
+    assert members == [
+        "Contents/Info.plist",
+        "Contents/Resources/icon.icns",
+    ]
+    assert "Contents/MacOS/hanly-desktop" in difference.changed_paths
+    assert "Contents/MacOS/hanly-desktop" not in difference.payload_paths
+    assert payload.name == "hanly-desktop-macos-arm64-from-0.5.2-to-0.5.3.delta.zip"

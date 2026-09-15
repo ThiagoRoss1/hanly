@@ -117,6 +117,9 @@ datas = collect_data_files(
         "assets/control_center/*.css",
         "assets/control_center/*.js",
         "assets/easyocr_models/*.pth",
+        # Written by the release build before this freeze; a source checkout
+        # has none, and one built without it has no schema-2 identity.
+        "assets/hanly-build.json",
     ],
 )
 

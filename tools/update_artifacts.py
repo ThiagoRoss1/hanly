@@ -10,6 +10,13 @@ never modifies it beyond writing the inventory into it. Three products come out:
 ``hanly-desktop-windows.update.json``
     what a client downloads, and which build the delta starts from.
 
+Schema 2 adds the same three products for macOS and Linux, and one more step
+before any of them: the build stamp. A macOS bundle is sealed by its signature,
+so its manifest cannot live inside it and cannot be a hash of its own contents
+either. The identifier goes in as package data before the freeze, the manifest
+is produced from the finished, signed tree afterwards, and the two meet in the
+update package.
+
 The delta is assembled against the *published* previous manifest, verified
 against that release's ``SHA256SUMS``. Rebuilding an old tag and diffing
 against the result would produce a delta whose base is a build nobody has
@@ -24,27 +31,36 @@ import json
 import platform
 import re
 import sys
+import uuid
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
-from hanly_app.app_inventory import build_manifest, write_installed_manifest
+from hanly_app.app_build_identity import BUILD_STAMP_NAME, BuildStamp
+from hanly_app.app_hup import delta_payload_name
+from hanly_app.app_inventory import build_manifest, read_tree, write_installed_manifest
 from hanly_app.app_manifest import (
     MANIFEST_ASSET,
+    PLATFORM_WINDOWS,
     UPDATE_METADATA_ASSET,
     AssetReference,
     BuildIdentity,
     DeltaDescriptor,
     InstallManifest,
     ManifestError,
+    TreeDifference,
+    TreeLayout,
+    TreeManifest,
     UpdateMetadata,
     content_fingerprint,
     delta_asset_name,
+    tree_difference,
 )
 from hanly_app.app_update_plan import delta_contents
 
 PRODUCT = "hanly-desktop"
-PLATFORM = "windows"
+PLATFORM = PLATFORM_WINDOWS
 
 #: A delta carries a handful of files on the ordinary path, so compressing it
 #: costs little and the saving is real for the Python archive and metadata that
@@ -277,6 +293,118 @@ def _published_digests(path: Path) -> dict[str, str]:
         if match is not None:
             digests[match.group(2)] = match.group(1)
     return digests
+
+
+# --------------------------------------------------------------------------
+# Schema 2: the stamp, the tree manifest, and the one delta per platform
+# --------------------------------------------------------------------------
+
+
+def allocate_build_id() -> str:
+    """A fresh identifier for one freeze.
+
+    A new one per build, even for the same tag: two builds of one version are
+    two builds, and a release that could not tell them apart would offer a
+    delta against bytes nobody has.
+    """
+
+    return str(uuid.uuid4())
+
+
+def write_build_stamp(
+    package_root: Path,
+    *,
+    platform_name: str,
+    architecture: str,
+    version: str,
+    source_commit: str,
+    build_id: str | None = None,
+    built_at: str | None = None,
+) -> BuildStamp:
+    """Put this build's identity into the package, before it is frozen.
+
+    Written as ordinary package data so the frozen application reads it the way
+    it reads any other resource, and so nothing has to be appended to a signed
+    bundle afterwards.
+    """
+
+    stamp = BuildStamp(
+        product=PRODUCT,
+        platform=platform_name,
+        architecture=architecture,
+        version=version,
+        build_id=build_id or allocate_build_id(),
+        source_commit=source_commit,
+        built_at=built_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    destination = package_root / "assets" / BUILD_STAMP_NAME
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(stamp.to_json(), encoding="utf-8")
+    return stamp
+
+
+def read_build_stamp_file(package_root: Path) -> BuildStamp:
+    """Read back the stamp a build was frozen with."""
+
+    path = package_root / "assets" / BUILD_STAMP_NAME
+    try:
+        return BuildStamp.from_json(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as error:
+        raise ArtifactError(f"could not read {path}: {error}") from error
+
+
+def generate_tree_manifest(
+    application: Path, stamp: BuildStamp, layout: TreeLayout
+) -> TreeManifest:
+    """Describe a finished, signed build exactly as its release publishes it.
+
+    Run after signing and after every other change to the tree. Nothing is
+    written into the application: the manifest is a release asset, and writing
+    it inside a bundle would change the seal it claims to describe.
+    """
+
+    if not application.is_dir():
+        raise ArtifactError(f"{application} is not a built application directory")
+    inventory = read_tree(application, stamp.platform)
+    if inventory.unsupported:
+        raise ArtifactError(
+            f"{application} carries {len(inventory.unsupported)} entries a manifest cannot "
+            f"describe, starting with {inventory.unsupported[0]}"
+        )
+    return inventory.manifest(stamp.identity, layout)
+
+
+def assemble_tree_delta(
+    application: Path, target: TreeManifest, base: TreeManifest, destination: Path
+) -> TreeDifference:
+    """Write the one payload carrying every changed file's bytes, and nothing else.
+
+    Modes, directories, links, and the allowed macOS attributes all come from
+    the manifests, so the payload is plain regular-file content. A file whose
+    only change is its permission bits contributes no member.
+    """
+
+    difference = tree_difference(base, target)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.unlink(missing_ok=True)
+    with zipfile.ZipFile(destination, "w", compression=_COMPRESSION) as payload:
+        for relative in difference.payload_paths:
+            source = application.joinpath(*relative.split("/"))
+            if source.is_symlink() or not source.is_file():
+                raise ArtifactError(f"the build is missing {relative}, which the delta needs")
+            payload.write(source, arcname=relative)
+    return difference
+
+
+def tree_delta_path(output_directory: Path, base: TreeManifest, target: TreeManifest) -> Path:
+    """Where one platform's delta is written, under the name it publishes."""
+
+    return output_directory / delta_payload_name(
+        target.platform,
+        target.identity.architecture,
+        base.identity.version,
+        target.identity.version,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
