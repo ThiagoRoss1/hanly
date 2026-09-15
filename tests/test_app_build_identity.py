@@ -71,8 +71,28 @@ def test_a_stamp_this_build_could_not_have_produced_is_refused(field: str, value
         _stamp(**{field: value})
 
 
-def test_a_checkout_that_was_never_frozen_carries_no_stamp() -> None:
-    assert read_build_stamp() is None
+def test_a_package_that_was_never_frozen_carries_no_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asked of a bare package rather than this checkout's: a local build
+    writes the stamp into the source tree before freezing, so what the
+    checkout holds depends on whether anyone has built here."""
+
+    package = tmp_path / "unfrozen_product"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    assert read_build_stamp("unfrozen_product") is None
+
+
+def test_the_stamp_is_generated_by_a_build_and_never_checked_in() -> None:
+    """It names one build. A stamp in the repository would name whichever
+    build last happened to be made on somebody's machine."""
+
+    ignored = (Path(__file__).parents[1] / ".gitignore").read_text(encoding="utf-8")
+
+    assert f"assets/{BUILD_STAMP_NAME}" in ignored
 
 
 def test_a_frozen_build_reads_its_stamp_back_out_of_its_own_package(
