@@ -383,6 +383,21 @@ jobs:
           python - "${products[@]}" > "dist/reports/hanly-artifact-${RUNNER_PLATFORM}.json" <<'PY'
           import hashlib, json, os, platform, sys
 
+          def published():
+              """What this build calls itself, as its own release says."""
+              descriptor = os.path.join(
+                  "dist", "release", os.environ["RUNNER_PLATFORM"], "descriptor.json"
+              )
+              with open(descriptor, encoding="utf-8") as stream:
+                  entry = json.load(stream)
+              return {
+                  "build_id": entry["identity"]["build_id"],
+                  "architecture": entry["architecture"],
+                  "manifest_sha256": entry["manifest"]["sha256"],
+                  "delta": None if entry["delta"] is None else entry["delta"]["payload"]["name"],
+                  "delta_omitted_reason": entry.get("delta_omitted_reason", ""),
+              }
+
           def described(path):
               digest = hashlib.sha256()
               with open(path, "rb") as stream:
@@ -398,8 +413,10 @@ jobs:
               {
                   "platform": os.environ["RUNNER_PLATFORM"],
                   # An archive hash says two downloads are the same file. Only
-                  # these say which source the file was made from.
+                  # these say which source the file was made from, and which
+                  # build an update will be offered against.
                   "build_commit": os.environ["BUILD_COMMIT"],
+                  "published": published(),
                   "source_version": os.environ["SOURCE_VERSION"],
                   "runner_os": os.environ["RUNNER_OS_NAME"],
                   "runner_arch": os.environ["RUNNER_ARCHITECTURE"],

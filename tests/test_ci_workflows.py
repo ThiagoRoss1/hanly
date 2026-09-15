@@ -1265,3 +1265,15 @@ def test_every_build_is_held_to_the_manifest_its_release_publishes() -> None:
     inventory = _step(_workflow("build.yml"), "build", step_id="inventory")
 
     assert '--against-manifest "$PUBLISHED_MANIFEST"' in _shell_code(inventory["run"])
+
+
+def test_each_artifact_records_the_build_an_update_will_be_offered_against() -> None:
+    """An archive hash says two downloads are the same file; only the build
+    identity says which build a later release may publish a delta from."""
+
+    identity = _step(_workflow("build.yml"), "build", step_id="identity")
+    code = _shell_code(identity["run"])
+
+    for field in ("build_id", "architecture", "manifest_sha256", "delta_omitted_reason"):
+        assert field in code, field
+    assert "release" in code and "descriptor.json" in code

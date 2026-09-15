@@ -317,28 +317,53 @@ The **DMG** is made with `hdiutil` from the same application and is what a
 person downloads and drags to Applications. The disk image is never an update
 input, and neither product modifies the built application.
 
-A release holds nine assets, or ten when a Windows delta was produced: four
-application products, the two Windows update documents, an optional Windows
-delta, one `krdict-<version>.sqlite3.zst`, `hanly-resources.json`, and
-`SHA256SUMS` (which lists every payload digest but its own).
+A release's asset set is **derived from the update package it publishes**, not
+kept as a list beside it. `python tools/release_build.py assets --package
+<hup> --resource <krdict asset>` prints it, and both the staged draft and the
+approved publish use exactly that.
 
-| Windows update asset | What it is |
+| Asset | What it is |
 | --- | --- |
-| `hanly-desktop-windows.manifest.json` | every managed file in the build, with digest, size, and component |
-| `hanly-desktop-windows.update.json` | what a client downloads, and which build the delta starts from |
-| `hanly-desktop-windows-from-<base>-to-<target>.delta.zip` | optional; only the files that changed between those two published builds |
+| `Hanly-v<version>.hup` | the one update package: an index and one tree manifest per built platform, and no application bytes at all |
+| `hanly-desktop-<platform>-<arch>-from-<base>-to-<target>.delta.zip` | one per platform, only where a verified predecessor existed |
+| `hanly-desktop-windows.manifest.json` | compatibility: every managed file in the Windows build, for clients from before update packages |
+| `hanly-desktop-windows.update.json` | compatibility: what such a client downloads. **Full-only** from the bridge release on |
+| `krdict-<version>.sqlite3.zst`, `hanly-resources.json` | resource delivery, versioned independently of the application |
+| `SHA256SUMS` | every payload's digest but its own, including the package's |
 
-`tools/update_artifacts.py` produces all three from the finished frozen tree.
-`tools/build_package.py` runs it as part of a Windows build and writes the
-inventory into the build itself as `.hanly-manifest.json`, so a fresh
-installation already knows what it is made of. Pass `--base-manifest` and
-`--base-checksums` to diff against the previous release; the build workflow
-downloads both from the latest published release and omits the delta when
-there is none.
+The four application products above are published unchanged. The compatibility
+assets stay on **every** release while clients from before update packages are
+supported: one bridge release cannot teach a client that skips it a new
+protocol, so there is no finite release at which they can be dropped without
+stranding somebody.
 
-The base is the previous **published** manifest, proved against that release's
-`SHA256SUMS`. Rebuilding an old tag produces a different tree, and a delta
-whose base is a build nobody has installed applies to nothing.
+### How a release is produced
+
+Each platform job writes its own products and, into
+`dist/release/<platform>/`, a `manifest.json` and a private `descriptor.json`.
+One later job reads every descriptor, proves each advertised product against
+the file the run actually produced, and assembles the single package. No job
+writes a fragment of the package and no release rebuilds an application.
+
+The order inside one build matters and is the same everywhere:
+
+1. **Stamp.** A fresh UUID, the source commit, and the target architecture go
+   into the package as `hanly_app/assets/hanly-build.json`, *before* the
+   freeze. On macOS it could not be otherwise: a manifest written inside
+   `Hanly.app` after signing would change the seal it describes.
+2. **Compile the POSIX helper**, also before the freeze, so macOS signs it with
+   the bundle rather than breaking the seal by adding it afterwards.
+3. **Freeze**, and on macOS sign.
+4. **Windows only:** write `.hanly-manifest.json` into the tree, so the archive
+   beside it carries what an older client reads.
+5. **Archive** the products.
+6. **Manifest and delta**, read from the finished, signed tree.
+
+The delta's base is the previous **published** package, proved against that
+release's `SHA256SUMS`, and pinned once for all three jobs. Rebuilding an old
+tag produces a different tree, and a delta whose base is a build nobody has
+installed applies to nothing. A release with no usable predecessor publishes no
+delta and says why; that is what the first package-aware release does.
 
 ### How a Windows update replaces an installation
 
@@ -352,9 +377,9 @@ being removed.
 An ordinary update runs in two halves, and only the first happens while Hanly
 is still open:
 
-1. **Prepare.** Fetch `SHA256SUMS`, `hanly-desktop-windows.update.json`, and
-   `hanly-desktop-windows.manifest.json` — nothing else. Hash the installation,
-   and decide which files must be added, replaced, and removed. No application
+1. **Prepare.** Fetch `SHA256SUMS` and `Hanly-v<version>.hup` — nothing else.
+   Find this machine's entry, hash the installation, establish what it is, and
+   decide which files must be added, replaced, and removed. No application
    payload is downloaded before the user clicks Update now, and none is
    downloaded here either.
 2. **Stage.** Download the delta the plan chose, verify it against the release's
@@ -366,20 +391,30 @@ acknowledge ownership, and quits. The helper waits for every process running an
 executable **inside the installation** to exit — the shell, the Control Center,
 and the lookup child — then applies the plan one file at a time: the original is
 moved into `backup/`, the staged file is moved into place. It relaunches the
-build with `--update-ready` and waits for it to report the version that was
-installed. Only then are the backups discarded. If it does not report within ten
+build with `--update-ready-v2` and waits for it to answer that transaction's
+challenge. Only then are the backups discarded. If it does not answer within ten
 minutes, every backup goes back and the previous build is relaunched.
 
-Three properties are worth knowing:
+Four properties are worth knowing:
 
 - **Only changed files are written.** An unchanged dependency is neither
   downloaded nor rewritten, which is most of the bundle on a patch release.
 - **Files the installation does not own are never overwritten.** If something
-  occupies a path the new build needs and the previous manifest did not own it,
-  the update stops and reports the path.
-- **Deletions come from ownership.** Only a path the previous build's manifest
-  owned, and the new one dropped, is removed. An installation carrying no
-  inventory deletes nothing.
+  occupies a path the new build needs and the previous build did not own it,
+  the update stops and reports the path. Equal bytes are not ownership.
+- **Deletions come from ownership.** Only a path the previous build owned, and
+  the new one dropped, is removed.
+- **A version number is not an acknowledgement.** The challenge binds the
+  transaction, a random nonce, the build's own UUID, and the manifest digest.
+  A build of the right version that is not the build this update installed
+  cannot produce it, and neither can a stale file from an earlier attempt.
+
+Ownership comes from a receipt this updater wrote, kept per installation under
+`%LOCALAPPDATA%\Hanly\updates\<key>\`. A fresh manual installation has none,
+so its first update fetches the package of the tag it is already running and
+checks every managed entry by hash before admitting ownership. If that cannot
+be done, the update stops and asks for a manual install rather than guessing
+which files are the product's and which are yours.
 
 #### If an update is interrupted
 
@@ -400,25 +435,69 @@ else initializes.
 
 ### How a macOS or Linux update replaces an installation
 
-Both keep the whole-bundle swap. Everything the update writes goes into one
-uniquely named `.hanly-update-*` directory beside the installation: the
-download, the extracted build, the staged copy, the previous installation, and
-the file the new build answers through. The swap script is written to the
-system temporary directory and deletes itself, so it is never removing the
-directory it is running from.
+Neither changes an installation in place. A whole candidate is reconstructed in
+one uniquely named `.hanly-update-*` directory beside the installation, proved
+to be exactly the published build, and only then swapped in. Two renames are
+cheaper to undo than forty, a rejected candidate is one directory to throw
+away, and macOS gets the one thing it cannot get any other way: a bundle whose
+signature material is reproduced rather than regenerated.
 
-The swap runs after Hanly exits. It waits for that process, renames the
-installation into the transaction directory, renames the staged build into its
-place, relaunches it, and **waits for the new build to report its own version**.
-Only then is the previous installation discarded. If it does not answer within
-ten minutes the previous one goes back and is relaunched instead. A restore that
-itself fails launches nothing and leaves the previous installation under
-`.hanly-update-*/previous`, which is then the only working copy: move it back to
-the installation path by hand.
+**Most of a candidate is not downloaded.** Every file the installation already
+holds with the right content is copied into the candidate; only what changed
+comes over the network. "Reused" means copied, not left alone — the candidate
+is a real second copy, and the disk it needs is the whole product.
 
-**These downloads are the whole application.** macOS and Linux have no
-differential path in this release, and their published sizes are the full
-archive sizes.
+1. **Prepare**, exactly as Windows does: the package, the installation, the
+   plan.
+2. **Reconstruct.** Copy verified local content, write the payload's bytes for
+   everything else, then create directories, permission bits, relative links,
+   and the macOS extended attributes a published signature lives in — all from
+   the manifest. Every file is hashed as it is written, wherever it came from.
+3. **Prove.** Compare the candidate to the manifest entry by entry. On macOS,
+   check the bundle identifier, both plist versions, and run
+   `codesign --verify --deep --strict`. Nothing is ever re-signed locally.
+4. **Hand off** to `hanly-update-posix`, a small C program built from
+   `packaging/updater/hanly-update-posix.c` and linked against nothing but the
+   system. A proved copy of it is kept outside the installation, because the
+   installation path is briefly absent between the two renames.
+
+The helper takes the installation's lock, waits for every process running out
+of the installation to exit, renames the old root aside, renames the candidate
+into place, relaunches it, and waits for it to answer that transaction's
+challenge with the exact bytes the installer decided it would accept. Only then
+is the previous installation discarded. If it does not answer, the candidate is
+moved to `rejected/`, the previous installation goes back, and it is relaunched.
+
+**A whole product is downloaded only when a delta cannot be used**, and Hanly
+asks first, with the real size. On macOS that product is the disk image: it is
+attached read-only at a private mount point, the bundle is copied out with
+`ditto`, and the device this process attached is detached on success, on error,
+and on cancel. Nothing is ever launched from a mounted image.
+
+What each platform allows inside an installation differs, and only there:
+
+- **Linux** carries a person's own files across into the new installation,
+  recorded separately so they never become product content.
+- **macOS** stops rather than installing when `Hanly.app` contains something
+  Hanly did not put there, and lists what it found. A bundle is sealed; an
+  unexplained file in it is not something to carry silently into a new one.
+
+Hanly will not update itself from a translocated copy, a read-only volume, or a
+directory whose parent it cannot write to. It says so and says what to do.
+
+#### If a POSIX update is interrupted
+
+The installation path is briefly absent between the two renames — this is not
+an atomic whole-tree exchange, and the ordinary shortcut will not repair a
+missing executable. Two things make it recoverable:
+
+- Recovery decides from what is actually on disk, not from a record written
+  before a crash, and an interrupted uncommitted swap rolls back rather than
+  retrying a candidate nobody watched start.
+- The verified helper and a pointer to the transaction live under the per-user
+  update directory, outside the installation. Running it with `--recover` and
+  the transaction's descriptor finishes or undoes the transaction with no
+  Hanly, no Python, and no network.
 
 Two limitations are deliberate and known on every platform:
 
@@ -450,6 +529,20 @@ build does not repair the updater already installed, so **the first update from
 
 That build carries `.hanly-manifest.json`, and every update after it is an
 ordinary differential one.
+
+### Reaching a release that publishes an update package
+
+A client from before update packages reads the compatibility assets, which
+every release keeps: it downloads the whole Windows ZIP, the macOS ditto ZIP,
+or the Linux tarball, swaps it in the way it always has, and the new build
+answers its version-text acknowledgement. The build it lands on carries an
+identity stamp but no receipt, so its **next** update fetches the package of
+the tag it is running and checks the tree against it before admitting
+ownership. That first transition costs a whole download, once.
+
+Nothing redirects an unmodified old client: not release notes, not a package,
+not keeping a particular release in the archive. That is why the compatibility
+assets stay on every release rather than on one bridge release.
 
 ### Updating from a 0.1.1 macOS installation
 
