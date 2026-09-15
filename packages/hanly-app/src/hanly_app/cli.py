@@ -91,6 +91,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=argparse.SUPPRESS,
     )
+    # Internal: the same milestone, for a helper that wants the build to prove
+    # which build it is rather than which version. A separate argument so new
+    # intent is never guessed from a file an older helper happened to write.
+    parser.add_argument(
+        "--update-ready-v2",
+        dest="update_challenge",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     # Internal: the packaging harness drives the real runtime through this one
     # entry point rather than through a second application.
     parser.add_argument(
@@ -225,6 +234,7 @@ def _start(
         diagnostics=diagnostics,
         runtime_resolver=runtime_resolver,
         update_ready=getattr(args, "update_ready", None),
+        update_challenge=getattr(args, "update_challenge", None),
     )
 
 

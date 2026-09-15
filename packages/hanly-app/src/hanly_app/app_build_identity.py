@@ -47,6 +47,14 @@ UPDATES_DIRECTORY_NAME = "updates"
 RECEIPT_NAME = "installed-receipt.json"
 MANIFEST_DIRECTORY = "manifests"
 
+#: The receipt an update has staged but not yet earned. It becomes the real one
+#: when the new build has proved it started; a rollback removes it instead.
+PENDING_RECEIPT_NAME = "installed-receipt.pending.json"
+
+#: Where the previous receipt waits while an update is in flight, so a rollback
+#: restores what the installation was known to be rather than clearing it.
+PREVIOUS_RECEIPT_NAME = "installed-receipt.previous.json"
+
 #: Both documents are small by construction; a larger one is not one to parse.
 MAX_RECEIPT_BYTES = 1024 * 1024
 MAX_STORED_MANIFEST_BYTES = 8 * 1024 * 1024
@@ -224,6 +232,14 @@ class ReceiptStore:
     def manifest_root(self) -> Path:
         return self._directory / MANIFEST_DIRECTORY
 
+    @property
+    def pending_path(self) -> Path:
+        return self._directory / PENDING_RECEIPT_NAME
+
+    @property
+    def previous_path(self) -> Path:
+        return self._directory / PREVIOUS_RECEIPT_NAME
+
     def read_receipt(self) -> InstalledReceipt | None:
         """The receipt for this installation, or None when there is none.
 
@@ -231,7 +247,10 @@ class ReceiptStore:
         next step is the same either way, and it is never to assume ownership.
         """
 
-        text = _read_bounded(self.receipt_path, MAX_RECEIPT_BYTES)
+        return self._read(self.receipt_path)
+
+    def _read(self, path: Path) -> InstalledReceipt | None:
+        text = _read_bounded(path, MAX_RECEIPT_BYTES)
         if text is None:
             return None
         try:
@@ -248,6 +267,52 @@ class ReceiptStore:
             self.receipt_path.unlink(missing_ok=True)
         except OSError:
             pass
+
+    def stage_receipt(self, receipt: InstalledReceipt) -> Path:
+        """Write the receipt a successful update will be entitled to.
+
+        The previous one is kept beside it at the same time: a rollback has to
+        put back what the installation was known to be, and by then the update
+        directory is the only place that still knows.
+        """
+
+        current = self.read_receipt()
+        if current is not None:
+            _write_atomic(self.previous_path, current.to_json())
+        else:
+            _remove(self.previous_path)
+        _write_atomic(self.pending_path, receipt.to_json())
+        return self.pending_path
+
+    def promote_pending(self, stamp: BuildStamp) -> InstalledReceipt | None:
+        """Adopt the staged receipt, but only for the build that is running.
+
+        Called by the new build once it has proved its own identity, which is
+        what makes the receipt describe something that actually started.
+        """
+
+        pending = self._read(self.pending_path)
+        if pending is None or not pending.describes(stamp):
+            return None
+        _write_atomic(self.receipt_path, pending.to_json())
+        _remove(self.pending_path)
+        _remove(self.previous_path)
+        return pending
+
+    def restore_previous(self) -> None:
+        """Put back the receipt from before an update that did not commit.
+
+        A build that never had one is left without one rather than given a
+        borrowed identity.
+        """
+
+        previous = self._read(self.previous_path)
+        if previous is None:
+            self.clear_receipt()
+        else:
+            _write_atomic(self.receipt_path, previous.to_json())
+        _remove(self.pending_path)
+        _remove(self.previous_path)
 
     def manifest_path(self, digest: str) -> Path:
         if len(digest) != 64 or any(character not in _HEX for character in digest):
@@ -343,6 +408,13 @@ def receipt_for(
     )
 
 
+def _remove(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _text(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -380,6 +452,8 @@ __all__ = [
     "BUILD_STAMP_NAME",
     "BUILD_STAMP_PACKAGE",
     "MANIFEST_DIRECTORY",
+    "PENDING_RECEIPT_NAME",
+    "PREVIOUS_RECEIPT_NAME",
     "RECEIPT_NAME",
     "UPDATES_DIRECTORY_NAME",
     "BuildIdentityError",

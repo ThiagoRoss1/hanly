@@ -802,3 +802,21 @@ def test_a_delta_payload_carries_changed_bytes_and_nothing_a_manifest_already_sa
     assert "Contents/MacOS/hanly-desktop" in difference.changed_paths
     assert "Contents/MacOS/hanly-desktop" not in difference.payload_paths
     assert payload.name == "hanly-desktop-macos-arm64-from-0.5.2-to-0.5.3.delta.zip"
+
+
+def test_a_windows_build_an_in_place_update_could_not_install_fails_the_producer(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "package"
+    stamp = write_build_stamp(
+        package_root,
+        platform_name="windows",
+        architecture="x86_64",
+        version="0.5.3",
+        source_commit=SOURCE_COMMIT,
+    )
+    root = write_tree(tmp_path / "build", WINDOWS)
+    (root / "_internal" / "plugins").mkdir()
+
+    with pytest.raises(ArtifactError, match="empty directories"):
+        generate_tree_manifest(root, stamp, WINDOWS.layout)

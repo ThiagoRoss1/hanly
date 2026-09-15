@@ -26,8 +26,9 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .app_build_identity import PENDING_RECEIPT_NAME, PREVIOUS_RECEIPT_NAME
 from .app_update_handoff import HandoffError, Spawn, spawn_detached
-from .app_update_journal import HELPER_NAME, UpdateJournal
+from .app_update_journal import EXPECTED_NAME, HELPER_NAME, UpdateJournal
 from .owned_cleanup import _process_alive
 
 #: The helper's own name wherever it is written.
@@ -74,6 +75,9 @@ def render_helper_script() -> str:
         attempts=MOVE_ATTEMPTS,
         ready_wait=READY_WAIT_SECONDS,
         helper_name=HELPER_NAME,
+        expected_name=EXPECTED_NAME,
+        pending_receipt=PENDING_RECEIPT_NAME,
+        previous_receipt=PREVIOUS_RECEIPT_NAME,
     )
 
 
@@ -267,12 +271,31 @@ if ($plan.journal_version -ne 1) {{ exit 2 }}
 $install = $plan.install_root
 $program = Join-Path $install $plan.executable
 $readyPath = Join-Path $Transaction 'ready.txt'
+$expectedPath = Join-Path $Transaction '{expected_name}'
 $progressPath = Join-Path $Transaction 'progress.jsonl'
 $resultPath = Join-Path $Transaction 'result.json'
 $payloadRoot = Join-Path $Transaction 'payload'
 $backupRoot = Join-Path $Transaction 'backup'
 $version = $plan.target.version
 $operations = @($plan.operations)
+
+# A schema-2 transaction names a private challenge the new build answers with
+# its own identity. A transaction staged by an older Hanly names none, and is
+# still committed by the version text it already knows to write.
+function Get-PlanValue {{
+  param([string]$Name)
+
+  $property = $plan.PSObject.Properties[$Name]
+  if ($null -eq $property) {{ return $null }}
+  return $property.Value
+}}
+
+$challengePath = Get-PlanValue 'challenge'
+$receiptPath = Get-PlanValue 'receipt'
+$ackPath = $null
+if ($challengePath) {{
+  $ackPath = [System.IO.Path]::ChangeExtension($challengePath, '.ack')
+}}
 
 # .NET's own UTF8 encoding emits a byte-order mark, which every document here
 # is read back by something that treats one as content.
@@ -613,17 +636,71 @@ function Start-Candidate {{
   }}
 }}
 
+# A schema-2 answer is compared as whole bytes against the file staging wrote,
+# so this script never reassembles the record and never has to agree with the
+# installer about field order. A schema-1 transaction still answers by version,
+# which is all a helper of that generation ever asked for.
+function Test-Started {{
+  if ($ackPath) {{
+    if (-not (Test-Path -LiteralPath $ackPath)) {{ return $false }}
+    if (-not (Test-Path -LiteralPath $expectedPath)) {{ return $false }}
+    try {{
+      $answered = [System.IO.File]::ReadAllText($ackPath)
+      $expected = [System.IO.File]::ReadAllText($expectedPath)
+    }} catch {{
+      return $false
+    }}
+    return $answered -ceq $expected
+  }}
+  if (-not (Test-Path -LiteralPath $readyPath)) {{ return $false }}
+  try {{
+    $reported = (Get-Content -LiteralPath $readyPath -Raw -ErrorAction SilentlyContinue)
+  }} catch {{
+    return $false
+  }}
+  return ($null -ne $reported -and $reported.Trim() -ceq $version)
+}}
+
+function Get-ReadyArguments {{
+  if ($ackPath) {{ return '--update-ready-v2 "' + $challengePath + '"' }}
+  return '--update-ready "' + $readyPath + '"'
+}}
+
+# A stale answer from an earlier attempt would commit this transaction without
+# the new build having started at all.
+function Clear-Acknowledgement {{
+  foreach ($path in @($ackPath, $readyPath)) {{
+    if ($path) {{
+      Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }}
+  }}
+}}
+
+# The new build adopts the staged receipt when it answers. A rollback has to put
+# back the one describing the build going back into place, and drop the one that
+# was never earned.
+function Restore-Receipt {{
+  if (-not $receiptPath) {{ return }}
+  $directory = [System.IO.Path]::GetDirectoryName($receiptPath)
+  if (-not $directory) {{ return }}
+  $previous = Join-Path $directory '{previous_receipt}'
+  $pending = Join-Path $directory '{pending_receipt}'
+  try {{
+    if (Test-Path -LiteralPath $previous) {{
+      Copy-Item -LiteralPath $previous -Destination $receiptPath -Force
+      Remove-Item -LiteralPath $previous -Force -ErrorAction SilentlyContinue
+    }} else {{
+      Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+    }}
+    Remove-Item -LiteralPath $pending -Force -ErrorAction SilentlyContinue
+  }} catch {{
+  }}
+}}
+
 function Wait-ForStartup {{
   $deadline = (Get-Date).AddSeconds({ready_wait})
   while ((Get-Date) -lt $deadline) {{
-    if (Test-Path -LiteralPath $readyPath) {{
-      try {{
-        $reported = (Get-Content -LiteralPath $readyPath -Raw -ErrorAction SilentlyContinue)
-      }} catch {{
-        $reported = $null
-      }}
-      if ($null -ne $reported -and $reported.Trim() -ceq $version) {{ return $true }}
-    }}
+    if (Test-Started) {{ return $true }}
     Start-Sleep -Seconds 1
   }}
   return $false
@@ -657,7 +734,8 @@ try {{
   if (Invoke-Apply) {{
     Write-Record 'awaiting-startup'
     Update-Progress "Starting Hanly $version…" $operations.Count
-    $candidate = Start-Candidate ('--update-ready "' + $readyPath + '"')
+    Clear-Acknowledgement
+    $candidate = Start-Candidate (Get-ReadyArguments)
     if (Wait-ForStartup) {{
       Write-Record 'committed'
       Write-Result 'committed' "Hanly $version started."
@@ -665,6 +743,7 @@ try {{
     }} else {{
       if ($null -ne $candidate) {{ Stop-InstallProcesses }}
       if (Invoke-Rollback) {{
+        Restore-Receipt
         Write-Record 'restored'
         Write-Result 'restored' (
           "Hanly $version did not start, so the previous version is back."
@@ -677,6 +756,7 @@ try {{
     }}
   }} else {{
     if (Invoke-Rollback) {{
+      Restore-Receipt
       Write-Record 'restored'
       Write-Result 'restored' 'The update could not be applied, so nothing was changed.'
       Start-Candidate | Out-Null

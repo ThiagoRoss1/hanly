@@ -371,7 +371,36 @@ def generate_tree_manifest(
             f"{application} carries {len(inventory.unsupported)} entries a manifest cannot "
             f"describe, starting with {inventory.unsupported[0]}"
         )
-    return inventory.manifest(stamp.identity, layout)
+    manifest = inventory.manifest(stamp.identity, layout)
+    if stamp.platform == PLATFORM_WINDOWS:
+        _require_windows_installable(manifest)
+    return manifest
+
+
+def _require_windows_installable(manifest: TreeManifest) -> None:
+    """Refuse a Windows build an in-place update could not put in place.
+
+    Windows changes an installation file by file, so nothing creates a link or
+    an empty directory. Publishing one would produce a release that installs
+    correctly from the full product and never from a delta, which is a defect
+    to catch at build time rather than on somebody's machine.
+    """
+
+    parents = {
+        "/".join(entry.path.split("/")[:depth])
+        for entry in manifest
+        for depth in range(1, entry.path.count("/") + 1)
+    }
+    refused = sorted(
+        entry.path
+        for entry in manifest
+        if entry.is_symlink or (entry.is_directory and entry.path not in parents)
+    )
+    if refused:
+        raise ArtifactError(
+            f"this Windows build contains {len(refused)} link(s) or empty directories an "
+            f"in-place update cannot install, starting with {refused[0]}"
+        )
 
 
 def assemble_tree_delta(
