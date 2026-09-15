@@ -548,8 +548,13 @@ class _NativeTool:
         self.commands.append(command)
         target = Path(command[-1])
         # Archiving names the file it writes; unpacking names a directory that
-        # already exists, and what lands in it is the caller's business.
-        if self.returncode == 0 and not target.is_dir():
+        # already exists, and what lands in it is the caller's business. A
+        # command ending in a flag - `hdiutil detach ... -force` - names no
+        # file at all, and writing one would leave a file called `-force`.
+        writes_a_file = (
+            self.returncode == 0 and not command[-1].startswith("-") and not target.is_dir()
+        )
+        if writes_a_file:
             target.write_bytes(b"native artifact")
         return SimpleNamespace(returncode=self.returncode, stderr=b"tool failed")
 
@@ -1450,3 +1455,15 @@ def test_naming_two_subjects_to_reconstruct_is_refused() -> None:
         ["--from-archive", "a.zip", "--from-disk-image", "b.dmg", "--reconstruct-only"]
     ) == 2
     assert smoke_main(["--against-manifest", "m.json", "--disk-image", "b.dmg"]) == 2
+
+
+def test_a_packaging_tool_that_names_no_file_writes_none(tmp_path: Path) -> None:
+    """`hdiutil detach <mount> -force` ends in a flag; a stub that took it for
+    a path once left a file called `-force` in the repository root."""
+
+    tool = _NativeTool()
+
+    tool(["/usr/bin/hdiutil", "detach", str(tmp_path / "mount"), "-force"])
+
+    assert not Path("-force").exists()
+    assert sorted(item.name for item in tmp_path.iterdir()) == []
