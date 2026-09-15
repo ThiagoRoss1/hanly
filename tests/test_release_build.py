@@ -300,6 +300,7 @@ def test_manual_recovery_refuses_a_tag_that_is_already_public() -> None:
 
 
 RESOURCE_ASSET_NAME = "krdict-20260819-v1.sqlite3.zst"
+DELTA_ASSET_NAME = "hanly-desktop-windows-from-0.5.1-to-0.5.2.delta.zip"
 PUBLISHED_ASSETS = (
     "hanly-desktop-windows.zip",
     # macOS publishes both products: the ZIP the updater installs, and the disk
@@ -307,6 +308,9 @@ PUBLISHED_ASSETS = (
     "hanly-desktop-macos.zip",
     "hanly-desktop-macos.dmg",
     "hanly-desktop-linux.tar.gz",
+    # Windows is the only platform that installs differentially.
+    "hanly-desktop-windows.manifest.json",
+    "hanly-desktop-windows.update.json",
     RESOURCE_ASSET_NAME,
     "hanly-resources.json",
     "SHA256SUMS",
@@ -341,14 +345,19 @@ def test_a_public_release_this_lane_did_not_publish_is_refused() -> None:
 @pytest.mark.parametrize(
     ("assets", "message"),
     [
-        (PUBLISHED_ASSETS[:-1], "not the exact seven"),
+        (PUBLISHED_ASSETS[:-1], "not the exact asset set"),
         (PUBLISHED_ASSETS + ("krdict-other.sqlite3.zst",), "exactly one KRDICT asset"),
         (
             tuple(name for name in PUBLISHED_ASSETS if name != RESOURCE_ASSET_NAME),
             "exactly one KRDICT",
         ),
         (PUBLISHED_ASSETS + ("hanly-desktop-windows.zip",), "duplicate asset name"),
-        (PUBLISHED_ASSETS + ("krdict.sqlite3",), "not the exact seven"),
+        (PUBLISHED_ASSETS + ("krdict.sqlite3",), "not the exact asset set"),
+        (
+            PUBLISHED_ASSETS
+            + (DELTA_ASSET_NAME, "hanly-desktop-windows-from-0.5.0-to-0.5.2.delta.zip"),
+            "at most one Windows delta",
+        ),
     ],
 )
 def test_a_partial_or_inconsistent_public_release_fails_rather_than_no_ops(
@@ -367,8 +376,18 @@ def test_a_release_payload_without_an_asset_list_is_refused() -> None:
         classify_release(published, commit=COMMIT, event="workflow_run")
 
 
-def test_the_exact_seven_asset_names_are_what_a_release_is() -> None:
+def test_the_exact_asset_names_are_what_a_release_is() -> None:
     assert verify_published_assets(list(PUBLISHED_ASSETS)) == RESOURCE_ASSET_NAME
+
+
+def test_a_release_that_carries_its_windows_delta_is_still_complete() -> None:
+    """The delta is optional, so its presence must not read as an extra asset."""
+
+    assets = [*PUBLISHED_ASSETS, DELTA_ASSET_NAME]
+
+    assert verify_published_assets(assets) == RESOURCE_ASSET_NAME
+    decision = classify_release(_published(assets), commit=COMMIT, event="workflow_run")
+    assert decision.action == "noop"
 
 
 # --- Pagination ---------------------------------------------------------------

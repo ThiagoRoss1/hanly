@@ -30,20 +30,27 @@ APPLICATION_WORKFLOW = ".github/workflows/build.yml"
 #: draft without it is not this workflow's draft, whatever its tag says.
 COMMIT_MARKER = "Hanly-Release-Commit:"
 
-#: What a finished Hanly release holds, beside its one KRDICT resource. macOS
-#: publishes two products from one build: the ZIP the updater installs, and the
-#: disk image a person downloads.
+#: What a finished Hanly release always holds, beside its one KRDICT resource.
+#: macOS publishes two products from one build: the ZIP the updater installs,
+#: and the disk image a person downloads. Windows is the only platform that
+#: installs differentially, so it is the only one with update metadata.
 FIXED_RELEASE_ASSETS = frozenset(
     {
         "hanly-desktop-windows.zip",
         "hanly-desktop-macos.zip",
         "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
+        "hanly-desktop-windows.manifest.json",
+        "hanly-desktop-windows.update.json",
         "hanly-resources.json",
         "SHA256SUMS",
     }
 )
 RESOURCE_ASSET = re.compile(r"^krdict-[A-Za-z0-9._-]+\.sqlite3\.zst$")
+
+#: Optional, and at most one: the first manifest-aware build has no published
+#: predecessor to diff against, so a complete release may carry no delta.
+DELTA_ASSET = re.compile(r"^hanly-desktop-windows-from-[0-9.]+-to-[0-9.]+\.delta\.zip$")
 
 SEMVER_TAG = re.compile(r"^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$")
 RELEASE_TAG = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
@@ -251,7 +258,8 @@ def verify_published_assets(names: Sequence[str]) -> str:
     """Return the resource asset name, once ``names`` is exactly a release set.
 
     A partial or foreign public release must not be mistaken for a finished one,
-    so the seven names are checked rather than counted.
+    so the names are checked rather than counted -- the more so because the
+    optional Windows delta makes the count itself not fixed.
     """
 
     unique = set(names)
@@ -263,11 +271,19 @@ def verify_published_assets(names: Sequence[str]) -> str:
         raise ReleaseStateError(
             f"the published release must hold exactly one KRDICT asset; found {len(resources)}"
         )
-    if unique - {resources[0]} != FIXED_RELEASE_ASSETS:
-        missing = sorted(FIXED_RELEASE_ASSETS - unique)
-        unexpected = sorted(unique - FIXED_RELEASE_ASSETS - {resources[0]})
+
+    deltas = sorted(name for name in unique if DELTA_ASSET.fullmatch(name))
+    if len(deltas) > 1:
         raise ReleaseStateError(
-            f"the published release is not the exact seven assets; missing {missing}, "
+            f"a release publishes at most one Windows delta; found {len(deltas)}"
+        )
+
+    remainder = unique - {resources[0]} - set(deltas)
+    if remainder != FIXED_RELEASE_ASSETS:
+        missing = sorted(FIXED_RELEASE_ASSETS - remainder)
+        unexpected = sorted(remainder - FIXED_RELEASE_ASSETS)
+        raise ReleaseStateError(
+            f"the published release is not the exact asset set; missing {missing}, "
             f"unexpected {unexpected}"
         )
     return resources[0]
@@ -417,6 +433,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "APPLICATION_WORKFLOW",
+    "DELTA_ASSET",
     "FIXED_RELEASE_ASSETS",
     "ReadOnlyAPI",
     "COMMIT_MARKER",

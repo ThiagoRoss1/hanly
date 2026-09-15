@@ -884,7 +884,7 @@ def test_finalizing_validates_every_resource_field_before_writing_checksums() ->
     assert steps.index(validation) < steps.index(publish)
 
 
-def test_publication_is_the_last_act_and_only_over_exactly_seven_assets() -> None:
+def test_publication_is_the_last_act_and_only_over_the_expected_assets() -> None:
     publish = _step(_release(), "finalize", step_id="publish")
     code = _shell_code(publish["run"])
 
@@ -896,14 +896,21 @@ def test_publication_is_the_last_act_and_only_over_exactly_seven_assets() -> Non
         "hanly-desktop-macos.zip",
         "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
+        # Windows is the only platform that installs differentially.
+        "hanly-desktop-windows.manifest.json",
+        "hanly-desktop-windows.update.json",
         "hanly-resources.json",
         "SHA256SUMS",
     ):
         assert asset in code, asset
     assert "hanly-desktop-macos.tar.gz" not in code
     assert "RESOURCE_ASSET_NAME" in code
-    assert "expected exactly seven release assets" in code
-    assert code.index("expected exactly seven release assets") < code.index("--draft=false")
+    # The optional Windows delta makes the count vary, so the check is derived
+    # from the expected set rather than written as a literal that goes stale.
+    assert "DELTA_ASSET_NAME" in code
+    guard = "${#actual_assets[@]} -ne ${#expected_assets[@]}"
+    assert guard in code
+    assert code.index(guard) < code.index("--draft=false")
     assert code.count("--draft=false") == 1
     # A failed check leaves the draft; nothing here removes one.
     assert "gh release delete" not in code

@@ -739,13 +739,15 @@ jobs:
           actual_assets_file="$RUNNER_TEMP/actual-release-assets"
           gh api "repos/$REPOSITORY/releases/$RELEASE_ID" --jq '.assets[].name' | sort > "$actual_assets_file"
           mapfile -t actual_assets < "$actual_assets_file"
-          if [[ ${#actual_assets[@]} -ne 7 ]]; then
-            echo "partial draft: expected exactly seven release assets" >&2
+          # The expected set is not a fixed count: the Windows delta is present
+          # only when a published predecessor existed to diff against.
+          if [[ ${#actual_assets[@]} -ne ${#expected_assets[@]} ]]; then
+            echo "partial draft: expected exactly ${#expected_assets[@]} release assets, found ${#actual_assets[@]}" >&2
             exit 1
           fi
           mapfile -t sorted_expected < <(printf '%s\n' "${expected_assets[@]}" | sort)
           [[ "$(printf '%s\n' "${actual_assets[@]}")" == "$(printf '%s\n' "${sorted_expected[@]}")" ]] || {
-            echo "partial draft: release asset list is not exactly the expected seven" >&2
+            echo "partial draft: the release asset list is not exactly the expected set" >&2
             exit 1
           }
 
