@@ -100,6 +100,21 @@ helper, so nothing here was executed against a built binary.
   pid it could not identify, and the native suite prints the helper's stderr on
   a failing case.
 
+- **Fixed now.** macOS alone still refused. Where the kernel gives no name the
+  check fell back to `kill(pid, 0)`, and that answers for a process which has
+  exited and not been waited for: `proc_pidinfo` reports such a process as
+  gone, while it keeps accepting signals until its parent collects it, so every
+  unreaped child on the host read as a process that might be Hanly. The macOS
+  lane failed 13 cases against one pid it could never read, and
+  `test_a_process_this_helper_cannot_look_inside_does_not_stop_the_update` -
+  which makes exactly that process on purpose - reproduces it on a developer
+  machine. The fallback now takes the kernel's own answer: `ESRCH` is a process
+  that has stopped running its program, `EPERM` is a process running as another
+  user and none of this installation's business, and a readable process
+  reported as `SZOMB` is the first case again. Any other error is still
+  unknown, and still stops the update. A refusal now names what it saw - the
+  reported name, or the error the kernel gave - beside the pid, on both lanes.
+
 ### Still open for the deep review
 
 - The helper is unbuilt here. Both native lanes must compile it, and the

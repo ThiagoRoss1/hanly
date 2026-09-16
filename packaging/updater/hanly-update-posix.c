@@ -43,6 +43,7 @@
 
 #if defined(__APPLE__)
 #include <libproc.h>
+#include <sys/proc.h>
 #endif
 
 /* ------------------------------------------------------------------ wire -- */
@@ -529,16 +530,32 @@ static bool process_details(pid_t pid, char *program, size_t size, uint64_t *sta
     return true;
 }
 
-static bool inspection_failure_may_hide(pid_t pid, const char *executable)
+static bool inspection_failure_may_hide(pid_t pid, const char *executable, char *why, size_t size)
 {
     struct proc_bsdinfo info;
+    errno = 0;
     if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != (int)sizeof(info)) {
+        /* A process that has exited and has not been waited for still answers
+         * a signal, so being able to signal one proves nothing: the kernel has
+         * already said it is gone, and it is running no program at all. */
+        if (errno == ESRCH) {
+            return false;
+        }
+        /* The kernel withholds this from anyone but the process's own user,
+         * and a process running as someone else is not one of Hanly's. */
+        if (errno == EPERM) {
+            return false;
+        }
+        snprintf(why, size, "%s", strerror(errno));
         return kill(pid, 0) == 0;
     }
-    if (info.pbi_uid != geteuid()) {
+    /* Another user's process is none of this installation's business, and one
+     * waiting to be collected has already stopped running its program. */
+    if (info.pbi_uid != geteuid() || info.pbi_status == SZOMB) {
         return false;
     }
     const char *reported = info.pbi_name[0] != '\0' ? info.pbi_name : info.pbi_comm;
+    snprintf(why, size, "%s", reported[0] != '\0' ? reported : "unnamed");
     return name_could_be(reported, executable_name(executable));
 }
 
@@ -576,9 +593,10 @@ static int processes_under(const char *root, const char *executable,
         }
         uint64_t started = 0;
         if (!process_details(pids[index], program, sizeof(program), &started)) {
-            if (inspection_failure_may_hide(pids[index], executable)) {
-                char identity[32];
-                snprintf(identity, sizeof(identity), "%ld", (long)pids[index]);
+            char why[64] = "";
+            if (inspection_failure_may_hide(pids[index], executable, why, sizeof(why))) {
+                char identity[128];
+                snprintf(identity, sizeof(identity), "%ld (%s)", (long)pids[index], why);
                 note("a running process could not be identified", identity);
                 free(pids);
                 return -1;
@@ -711,11 +729,12 @@ static bool process_details(pid_t pid, char *program, size_t size, uint64_t *sta
     return linux_process_start(pid, started);
 }
 
-static bool inspection_failure_may_hide(pid_t pid, const char *executable)
+static bool inspection_failure_may_hide(pid_t pid, const char *executable, char *why, size_t size)
 {
     char path[64];
     int written = snprintf(path, sizeof(path), "/proc/%ld", (long)pid);
     if (written < 0 || (size_t)written >= sizeof(path)) {
+        snprintf(why, size, "%s", "unreadable");
         return true;
     }
     struct stat status;
@@ -724,8 +743,12 @@ static bool inspection_failure_may_hide(pid_t pid, const char *executable)
     }
 
     char name[256];
-    return !linux_process_name(pid, name, sizeof(name)) ||
-           name_could_be(name, executable_name(executable));
+    if (!linux_process_name(pid, name, sizeof(name))) {
+        snprintf(why, size, "%s", strerror(errno));
+        return true;
+    }
+    snprintf(why, size, "%s", name);
+    return name_could_be(name, executable_name(executable));
 }
 
 static int processes_under(const char *root, const char *executable,
@@ -755,8 +778,11 @@ static int processes_under(const char *root, const char *executable,
         char program[PATH_MAX];
         uint64_t started = 0;
         if (!process_details((pid_t)value, program, sizeof(program), &started)) {
-            if (inspection_failure_may_hide((pid_t)value, executable)) {
-                note("a running process could not be identified", entry->d_name);
+            char why[64] = "";
+            if (inspection_failure_may_hide((pid_t)value, executable, why, sizeof(why))) {
+                char identity[128];
+                snprintf(identity, sizeof(identity), "%s (%s)", entry->d_name, why);
+                note("a running process could not be identified", identity);
                 closedir(processes);
                 return -1;
             }
