@@ -486,6 +486,34 @@ static bool path_inside(const char *candidate, const char *root)
     return candidate[length] == '/' || candidate[length] == '\0';
 }
 
+/* The shorter of the two kernels' limits on the name they report for a
+ * process: Linux keeps 15 characters, macOS 16. */
+#define REPORTED_NAME_LIMIT 15
+
+/* The descriptor names the executable relative to the installation root; a
+ * kernel reports only its last component. */
+static const char *executable_name(const char *executable)
+{
+    const char *separator = strrchr(executable, '/');
+    return separator != NULL ? separator + 1 : executable;
+}
+
+/* A process running out of the installation is running the installation's own
+ * executable, so a name that is not that one rules the process out without the
+ * program path the kernel is withholding. A name at the reported limit has
+ * been truncated and stands for everything it could have been. */
+static bool name_could_be(const char *name, const char *executable)
+{
+    size_t length = strlen(name);
+    if (length == 0) {
+        return true;
+    }
+    if (strncmp(name, executable, length) != 0) {
+        return false;
+    }
+    return executable[length] == '\0' || length >= REPORTED_NAME_LIMIT;
+}
+
 #if defined(__APPLE__)
 /* By the program each process is actually running, never by its name: the
  * shell, the Control Center and the lookup child all run this installation's
@@ -501,16 +529,21 @@ static bool process_details(pid_t pid, char *program, size_t size, uint64_t *sta
     return true;
 }
 
-static bool process_inspection_failure_is_relevant(pid_t pid)
+static bool inspection_failure_may_hide(pid_t pid, const char *executable)
 {
     struct proc_bsdinfo info;
-    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) == (int)sizeof(info)) {
-        return info.pbi_uid == geteuid();
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != (int)sizeof(info)) {
+        return kill(pid, 0) == 0;
     }
-    return kill(pid, 0) == 0;
+    if (info.pbi_uid != geteuid()) {
+        return false;
+    }
+    const char *reported = info.pbi_name[0] != '\0' ? info.pbi_name : info.pbi_comm;
+    return name_could_be(reported, executable_name(executable));
 }
 
-static int processes_under(const char *root, struct process_identity *found, int limit)
+static int processes_under(const char *root, const char *executable,
+                           struct process_identity *found, int limit)
 {
 #ifdef HANLY_UPDATER_TEST_HOOKS
     static unsigned int calls = 0;
@@ -543,7 +576,10 @@ static int processes_under(const char *root, struct process_identity *found, int
         }
         uint64_t started = 0;
         if (!process_details(pids[index], program, sizeof(program), &started)) {
-            if (process_inspection_failure_is_relevant(pids[index])) {
+            if (inspection_failure_may_hide(pids[index], executable)) {
+                char identity[32];
+                snprintf(identity, sizeof(identity), "%ld", (long)pids[index]);
+                note("a running process could not be identified", identity);
                 free(pids);
                 return -1;
             }
@@ -559,7 +595,9 @@ static int processes_under(const char *root, struct process_identity *found, int
     return count;
 }
 #else
-static bool linux_process_start(pid_t pid, uint64_t *started)
+/* Readable for every process on the system, including the ones whose ``exe``
+ * link is not: it is where both the name and the start time come from. */
+static bool read_process_stat(pid_t pid, char *data, size_t size)
 {
     char path[64];
     int written = snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
@@ -572,18 +610,51 @@ static bool linux_process_start(pid_t pid, uint64_t *started)
     if (handle < 0) {
         return false;
     }
-    char data[4096];
     ssize_t length;
     do {
-        length = read(handle, data, sizeof(data) - 1);
+        length = read(handle, data, size - 1);
     } while (length < 0 && errno == EINTR);
     int saved = errno;
     close(handle);
     errno = saved;
-    if (length <= 0 || (size_t)length >= sizeof(data) - 1) {
+    if (length <= 0 || (size_t)length >= size - 1) {
         return false;
     }
     data[length] = '\0';
+    return true;
+}
+
+/* The name sits between the first parenthesis and the last, unescaped: a
+ * program is free to have parentheses of its own in it. */
+static bool linux_process_name(pid_t pid, char *name, size_t size)
+{
+    char data[4096];
+    if (!read_process_stat(pid, data, sizeof(data))) {
+        return false;
+    }
+
+    const char *opened = strchr(data, '(');
+    const char *closed = strrchr(data, ')');
+    if (opened == NULL || closed == NULL || closed <= opened) {
+        errno = EINVAL;
+        return false;
+    }
+    size_t length = (size_t)(closed - opened - 1);
+    if (length >= size) {
+        errno = ENAMETOOLONG;
+        return false;
+    }
+    memcpy(name, opened + 1, length);
+    name[length] = '\0';
+    return true;
+}
+
+static bool linux_process_start(pid_t pid, uint64_t *started)
+{
+    char data[4096];
+    if (!read_process_stat(pid, data, sizeof(data))) {
+        return false;
+    }
 
     char *cursor = strrchr(data, ')');
     if (cursor == NULL || cursor[1] != ' ') {
@@ -640,7 +711,7 @@ static bool process_details(pid_t pid, char *program, size_t size, uint64_t *sta
     return linux_process_start(pid, started);
 }
 
-static bool process_inspection_failure_is_relevant(pid_t pid)
+static bool inspection_failure_may_hide(pid_t pid, const char *executable)
 {
     char path[64];
     int written = snprintf(path, sizeof(path), "/proc/%ld", (long)pid);
@@ -648,10 +719,17 @@ static bool process_inspection_failure_is_relevant(pid_t pid)
         return true;
     }
     struct stat status;
-    return stat(path, &status) == 0 && status.st_uid == geteuid();
+    if (stat(path, &status) != 0 || status.st_uid != geteuid()) {
+        return false;
+    }
+
+    char name[256];
+    return !linux_process_name(pid, name, sizeof(name)) ||
+           name_could_be(name, executable_name(executable));
 }
 
-static int processes_under(const char *root, struct process_identity *found, int limit)
+static int processes_under(const char *root, const char *executable,
+                           struct process_identity *found, int limit)
 {
 #ifdef HANLY_UPDATER_TEST_HOOKS
     static unsigned int calls = 0;
@@ -677,7 +755,8 @@ static int processes_under(const char *root, struct process_identity *found, int
         char program[PATH_MAX];
         uint64_t started = 0;
         if (!process_details((pid_t)value, program, sizeof(program), &started)) {
-            if (process_inspection_failure_is_relevant((pid_t)value)) {
+            if (inspection_failure_may_hide((pid_t)value, executable)) {
+                note("a running process could not be identified", entry->d_name);
                 closedir(processes);
                 return -1;
             }
@@ -716,13 +795,13 @@ static enum process_match process_still_matches(const char *root,
 /* The process that asked for this update is answered for by its pid alone: it
  * was alive when the descriptor was written, so a pid reused since belongs to
  * a process that started later and is not it. */
-static bool installation_is_free(const char *root, pid_t parent)
+static bool installation_is_free(const char *root, const char *executable, pid_t parent)
 {
     if (parent > 0 && kill(parent, 0) == 0) {
         return false;
     }
     struct process_identity found[MAX_TRACKED_PROCESSES];
-    int count = processes_under(root, found, MAX_TRACKED_PROCESSES);
+    int count = processes_under(root, executable, found, MAX_TRACKED_PROCESSES);
     /* Inspection failing is not the same as nothing running. Refusing to act
      * on an unknown answer is the whole point of asking. */
     return count == 0;
@@ -740,12 +819,12 @@ static bool signal_process(const char *root, const struct process_identity *proc
     return kill(process->pid, signal) == 0 || errno == ESRCH;
 }
 
-static bool stop_processes_under(const char *root)
+static bool stop_processes_under(const char *root, const char *executable)
 {
     struct process_identity found[MAX_TRACKED_PROCESSES];
     const int signals[] = {SIGTERM, SIGKILL};
     for (size_t attempt = 0; attempt < sizeof(signals) / sizeof(signals[0]); attempt++) {
-        int count = processes_under(root, found, MAX_TRACKED_PROCESSES);
+        int count = processes_under(root, executable, found, MAX_TRACKED_PROCESSES);
         if (count < 0) {
             return false;
         }
@@ -760,7 +839,7 @@ static bool stop_processes_under(const char *root)
         sleep_for_poll();
     }
 
-    int remaining = processes_under(root, found, MAX_TRACKED_PROCESSES);
+    int remaining = processes_under(root, executable, found, MAX_TRACKED_PROCESSES);
     return remaining == 0;
 }
 
@@ -964,14 +1043,15 @@ static void sleep_for_poll(void)
     }
 }
 
-static bool wait_for_exit(const char *root, pid_t parent, long long seconds)
+static bool wait_for_exit(const char *root, const char *executable, pid_t parent,
+                          long long seconds)
 {
     struct timespec deadline;
     if (!deadline_after(seconds, &deadline)) {
         return false;
     }
     for (;;) {
-        if (installation_is_free(root, parent)) {
+        if (installation_is_free(root, executable, parent)) {
             return true;
         }
         if (deadline_reached(&deadline)) {
@@ -1060,7 +1140,8 @@ static int roll_back(const struct descriptor *plan, const char *detail)
         return record_recovery_required(plan, "the new installation could not be proved stopped");
     }
 #endif
-    if (installed && !stop_processes_under(plan->fields[FIELD_INSTALL])) {
+    if (installed && !stop_processes_under(plan->fields[FIELD_INSTALL],
+                                           plan->fields[FIELD_EXECUTABLE])) {
         return record_recovery_required(plan, "the new installation could not be proved stopped");
     }
     if ((directory_present(plan->fields[FIELD_INSTALL]) && !installed_candidate_matches(plan)) ||
@@ -1107,7 +1188,8 @@ static int apply_update(const struct descriptor *plan)
         return EXIT_UNUSABLE;
     }
 
-    if (!wait_for_exit(plan->fields[FIELD_INSTALL], (pid_t)parent, exit_timeout)) {
+    if (!wait_for_exit(plan->fields[FIELD_INSTALL], plan->fields[FIELD_EXECUTABLE],
+                       (pid_t)parent, exit_timeout)) {
         return record_failed_outcome(plan, RESULT_ABANDONED,
                                      "Hanly did not close, so nothing was changed");
     }

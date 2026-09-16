@@ -181,13 +181,19 @@ def _run(
     if recover:
         command.append("--recover")
     command.append(str(descriptor))
-    return subprocess.run(
+    completed = subprocess.run(
         command,
         check=False,
         capture_output=True,
         timeout=120,
         env={**os.environ, **(environment or {})},
-    ).returncode
+    )
+
+    # The helper explains a refusal on its own stderr; pytest shows what was
+    # printed here only when the case fails, which is when it is wanted.
+    if completed.stderr:
+        print(completed.stderr.decode("utf-8", "replace"), end="")
+    return completed.returncode
 
 
 def _compile_lingering_program(path: Path) -> None:
@@ -226,6 +232,28 @@ def test_a_candidate_that_answers_is_installed_and_the_old_build_is_kept(
     assert transaction.result()[0] == "committed"
     assert transaction.marker() == "new"
     assert (transaction.staging / "previous" / "marker").read_text(encoding="utf-8") == "old"
+
+
+def test_a_process_this_helper_cannot_look_inside_does_not_stop_the_update(
+    helper: Path, tmp_path: Path
+) -> None:
+    """Every machine has processes whose program cannot be read - a child that
+    has exited and not been waited for has no program left at all. Refusing to
+    act on an unknown answer has to mean an answer that could have been about
+    this installation, not any process on the host."""
+
+    transaction = _Transaction(tmp_path)
+    unrelated = subprocess.Popen(["/bin/sh", "-c", "exit 0"])
+    try:
+        # It has to be gone rather than merely finishing: a running shell has a
+        # program path, and would prove nothing.
+        time.sleep(0.5)
+
+        assert _run(helper, transaction.descriptor_path) == 0
+        assert transaction.result()[0] == "committed"
+        assert transaction.marker() == "new"
+    finally:
+        unrelated.wait()
 
 
 def test_a_candidate_that_never_answers_is_rejected_and_the_old_build_returns(

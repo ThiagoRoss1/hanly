@@ -87,6 +87,19 @@ helper, so nothing here was executed against a built binary.
   the release flags to defining no hook and every `HANLY_TEST_` read to the
   block it is compiled in.
 
+- **Fixed now.** Both native lanes refused every case that scans processes:
+  `processes_under` returned -1 whenever *any* same-user process could not be
+  pathed, and `installation_is_free` reads that as "not free". `wait_for_exit`
+  therefore burned its whole exit timeout and wrote `abandoned`, and
+  `roll_back` stopped in `recovery-required` - 12 native failures on Linux and
+  macOS alike, while every `--recover` case that never scans passed. Inspection
+  failure is now narrowed to a process that could be the installation's own
+  executable: where the program path is withheld the kernel still reports a
+  name (`/proc/<pid>/stat` on Linux, `proc_bsdinfo` on macOS), and a name that
+  is not this installation's rules the process out. A refusal also says which
+  pid it could not identify, and the native suite prints the helper's stderr on
+  a failing case.
+
 ### Still open for the deep review
 
 - The helper is unbuilt here. Both native lanes must compile it, and the
