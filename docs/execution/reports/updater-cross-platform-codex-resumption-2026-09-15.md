@@ -1,6 +1,7 @@
 # Cross-platform updater — Codex resumption and review report
 
-Date: 2026-09-15. Reviewer/resumer: Codex. Host: macOS arm64, Python 3.13.
+Date: 2026-09-15; updated 2026-09-16. Reviewer/resumer: Codex. Host: macOS
+arm64, Python 3.13.
 
 This report is intentionally separate from Claude's
 [`updater-cross-platform-execution-2026-09-15.md`](updater-cross-platform-execution-2026-09-15.md)
@@ -45,7 +46,7 @@ them:
 
 ## Changes made by Codex
 
-No commit, push, merge, tag, release, or workflow dispatch was made.
+Codex did not merge, tag, release, or manually dispatch a workflow.
 
 ### 1. Do not start recovery while the original POSIX helper is live
 
@@ -98,6 +99,24 @@ This file is the user-requested provenance boundary between the inherited
 Claude implementation and Codex's follow-up. It is the only updater report
 Codex added.
 
+### 4. Make Linux's strict GCC build accept bounded process diagnostics
+
+File changed:
+
+- `packaging/updater/hanly-update-posix.c`
+
+The Linux build compiled the native helper with GCC and
+`-Werror=format-truncation`. GCC correctly observed that a `/proc` process
+name or raw directory name could be longer than the diagnostic buffers and
+rejected two `snprintf` calls. This was a compile-time failure in Linux's
+`/proc` implementation, not an updater transaction failure.
+
+The Linux-only code now copies a process diagnostic with explicit bounded
+length and termination, and formats the already parsed numeric PID instead of
+the unbounded raw `/proc` directory entry. Diagnostic truncation remains
+intentional and safe. The macOS process implementation and Windows PowerShell
+helper are unchanged.
+
 ## Review outcome
 
 ### Fixed now
@@ -106,6 +125,8 @@ Codex added.
    native helper still owned the transaction.
 2. Recovery rolled back a proven, exactly acknowledged candidate when the
    durable result record was missing.
+3. Linux's GCC build rejected safe-but-implicit diagnostic truncation as an
+   error, preventing all native-helper tests from starting.
 
 ### Deferred consideration
 
@@ -128,13 +149,13 @@ Executed after the Codex changes unless noted:
 
 | Check | Result |
 |---|---|
-| Focused Python update/handoff tests | **52 passed** |
-| Updater-focused protocol, staging, product, and native set | **127 passed** |
-| `python -m pytest --suite portable` | **1540 passed, 1 skipped** |
+| Linux-failure-focused native POSIX helper tests | **25 passed** |
+| Packaging and CI workflow tests | **170 passed** |
+| `python -m pytest --suite portable` | **1545 passed, 1 skipped** |
 | `python -m ruff check packages packaging tests tools benchmarks` | **passed** |
 | `python -m mypy packages packaging tests tools benchmarks` | **passed**, 244 source files |
-| C11 helper compile with `-Wall -Wextra -Werror -O2` | **passed** |
-| `python -m pytest --suite native` | **52 passed** |
+| macOS C11 helper compile with `-Wall -Wextra -Werror -O2` | **passed** |
+| `python -m pytest --suite native` | **62 passed** |
 
 The first sandboxed undivided `python -m pytest` attempt was not evidence: the
 macOS UI test process aborted and `ps` was denied by the sandbox. Re-running the
@@ -147,7 +168,9 @@ The following items were already unrun in Claude's handoff and remain unrun;
 Codex did not relabel them as passing:
 
 - Windows build, packaged tests, and native PowerShell helper tests on Windows.
-- Linux build, packaged tests, and the native helper's `/proc` branch on Linux.
+- A new Linux CI build after the 2026-09-16 GCC diagnostic-bounds fix. The
+  macOS host cannot execute the helper's `/proc` branch or reproduce GCC's
+  Linux-specific warning locally.
 - A real frozen old-to-target update whose final swap is performed by the
   native helper rather than a disposable fixture.
 - End-to-end execution of the build and release GitHub Actions workflows.

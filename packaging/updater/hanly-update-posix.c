@@ -613,6 +613,20 @@ static int processes_under(const char *root, const char *executable,
     return count;
 }
 #else
+static void copy_diagnostic(char *destination, size_t size, const char *source)
+{
+    if (size == 0) {
+        return;
+    }
+
+    size_t length = strlen(source);
+    if (length >= size) {
+        length = size - 1;
+    }
+    memcpy(destination, source, length);
+    destination[length] = '\0';
+}
+
 /* Readable for every process on the system, including the ones whose ``exe``
  * link is not: it is where both the name and the start time come from. */
 static bool read_process_stat(pid_t pid, char *data, size_t size)
@@ -747,7 +761,7 @@ static bool inspection_failure_may_hide(pid_t pid, const char *executable, char 
         snprintf(why, size, "%s", strerror(errno));
         return true;
     }
-    snprintf(why, size, "%s", name);
+    copy_diagnostic(why, size, name);
     return name_could_be(name, executable_name(executable));
 }
 
@@ -781,7 +795,7 @@ static int processes_under(const char *root, const char *executable,
             char why[64] = "";
             if (inspection_failure_may_hide((pid_t)value, executable, why, sizeof(why))) {
                 char identity[128];
-                snprintf(identity, sizeof(identity), "%s (%s)", entry->d_name, why);
+                snprintf(identity, sizeof(identity), "%ld (%s)", value, why);
                 note("a running process could not be identified", identity);
                 closedir(processes);
                 return -1;
