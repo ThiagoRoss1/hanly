@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import zipfile
+from dataclasses import MISSING, fields
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,14 @@ def _identity(version: str = "1.0.0", build_id: str = "abc123") -> BuildIdentity
         version=version,
         build_id=build_id,
     )
+
+
+def test_tree_entry_xattrs_use_a_default_factory() -> None:
+    xattrs_field = next(field for field in fields(TreeEntry) if field.name == "xattrs")
+
+    assert xattrs_field.default is MISSING
+    assert xattrs_field.default_factory is not MISSING
+    assert TreeEntry(path="app", kind=KIND_DIRECTORY).xattrs == {}
 
 
 def _entry(path: str, content: str) -> FileEntry:

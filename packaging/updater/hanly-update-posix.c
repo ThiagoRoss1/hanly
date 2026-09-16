@@ -879,6 +879,7 @@ static bool launch_detached(const struct descriptor *plan, bool acknowledging)
         }
     }
     report_launch_failure(launch_status[1]);
+    return false;
 }
 
 static bool launch_candidate(const struct descriptor *plan)

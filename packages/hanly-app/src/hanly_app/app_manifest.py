@@ -36,9 +36,8 @@ import json
 import re
 import unicodedata
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from types import MappingProxyType
 from typing import Any
 
 #: Incremented when a field's meaning changes. A client refuses a document it
@@ -60,9 +59,6 @@ RESERVED_NAMES = frozenset({WORKING_DIRECTORY_NAME, INSTALLED_MANIFEST_NAME})
 #: look for; everything else is new and additive.
 MANIFEST_ASSET = "hanly-desktop-windows.manifest.json"
 UPDATE_METADATA_ASSET = "hanly-desktop-windows.update.json"
-
-#: A manifest entry map with nothing in it, usable as a frozen default.
-_EMPTY_XATTRS: Mapping[str, str] = MappingProxyType({})
 
 #: The most entries either schema reads out of one document. A build is a few
 #: thousand files; anything past this is not one to hold in memory and index.
@@ -666,7 +662,7 @@ class TreeEntry:
     size: int | None = None
     mode: int | None = None
     link_target: str | None = None
-    xattrs: Mapping[str, str] = _EMPTY_XATTRS
+    xattrs: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:

@@ -15,6 +15,8 @@
 - Exit and startup waits use monotonic deadlines; detached launch reports immediate `setsid`, `fork`, and `exec` failures through a close-on-exec pipe.
 - Native fault tests cover identity mismatches, inspection and stop uncertainty, directory-sync and result-write failures, timeout bounds, live-candidate termination, and immediate exec failure.
 - Windows build routing removes inherited `HANLY_UPDATE_HELPER`, never compiles the POSIX helper, and the PyInstaller spec refuses to collect it on `win32`.
+- `TreeEntry.xattrs` now uses a dataclass `default_factory`, restoring Python 3.11 import compatibility without changing the normalized manifest value.
+- The detached POSIX launcher now has an explicit failure return after its non-returning report path, satisfying GCC and Clang `-Werror=return-type` analysis.
 
 ## Main expected behavior
 
@@ -34,6 +36,8 @@ Linux and macOS whole-tree updates either commit a transaction-bound acknowledge
 - `tools/build_package.py`
 - `packaging/hanly-desktop.spec`
 - `tests/test_packaging.py`
+- `packages/hanly-app/src/hanly_app/app_manifest.py`
+- `tests/test_app_manifest.py`
 
 ## Implementation-side validation already run
 
@@ -46,7 +50,12 @@ Linux and macOS whole-tree updates either commit a transaction-bound acknowledge
 
 ## Known limitations / intentionally unvalidated areas
 
+- Focused compatibility validation: `python -m pytest tests/test_app_manifest.py tests/test_packaging.py::test_a_windows_build_neither_builds_nor_collects_the_posix_helper -q` passed with 71 tests and 8 skips.
+- The corrected portable suite collected and ran 1461 passing tests with 82 skips; the same 3 Windows sandbox process-inspection/cleanup failures remain.
+- Focused Ruff checks for the manifest implementation and regression test passed.
+
 - This host is Windows. The real helper and the new native fault cases remain skipped here and must compile and execute in both the Linux and macOS native CI lanes.
+- Python 3.11 is not installed on this host; the dataclass regression is guarded structurally and still requires the Linux 3.11 CI rerun.
 - The full unrestricted pytest run also entered native Windows tests and hit an unrelated Control Center failure before timing out.
 - Hardware power-loss guarantees remain limited by the host filesystem and kernel even after successful durability barriers.
 
