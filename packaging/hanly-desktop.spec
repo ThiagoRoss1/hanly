@@ -141,7 +141,7 @@ for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
         continue
 
 binaries: list[tuple[str, str]] = []
-if UPDATE_HELPER and Path(UPDATE_HELPER).is_file():
+if sys.platform != "win32" and UPDATE_HELPER and Path(UPDATE_HELPER).is_file():
     binaries.append((UPDATE_HELPER, "."))
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 

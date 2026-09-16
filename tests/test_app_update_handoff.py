@@ -43,6 +43,7 @@ from hanly_app.app_update_handoff import (
     write_descriptor,
 )
 
+from tests.hanly_fixtures.capabilities import requires_posix_modes
 from tests.hanly_fixtures.update_handoff import (
     MACOS_PROGRAM,
     c_string,
@@ -303,6 +304,7 @@ def test_a_field_too_long_for_the_helper_is_refused_before_it_is_written(
         transaction.to_bytes()
 
 
+@requires_posix_modes
 def test_a_descriptor_is_written_privately_and_read_back(tmp_path: Path) -> None:
     transaction = _native(tmp_path)
     path = tmp_path / "descriptor"
@@ -313,6 +315,7 @@ def test_a_descriptor_is_written_privately_and_read_back(tmp_path: Path) -> None
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+@requires_posix_modes
 def test_the_helper_is_copied_outside_the_installation_and_proved(tmp_path: Path) -> None:
     source = tmp_path / "install" / "hanly-update-posix"
     source.parent.mkdir(parents=True)

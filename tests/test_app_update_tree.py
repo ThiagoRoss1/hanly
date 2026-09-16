@@ -26,6 +26,7 @@ from hanly_app.app_update_tree import (
     verify_candidate,
 )
 
+from tests.hanly_fixtures.capabilities import requires_material_xattrs
 from tests.hanly_fixtures.update_release import PublishedRelease
 from tests.hanly_fixtures.update_tree import LINUX, MACOS, Product, program_bytes
 
@@ -267,6 +268,7 @@ def test_a_candidate_whose_permissions_are_wrong_does_not_verify(tmp_path: Path)
         verify_candidate(candidate)
 
 
+@requires_material_xattrs
 def test_a_macos_candidate_reproduces_its_links_modes_and_signature_material(
     tmp_path: Path,
 ) -> None:
@@ -291,6 +293,7 @@ def test_a_macos_candidate_reproduces_its_links_modes_and_signature_material(
     assert read_xattr(program, "com.apple.cs.CodeDirectory") == b"signature for 0.5.3"
 
 
+@requires_material_xattrs
 def test_a_signature_that_changed_without_the_bytes_costs_no_download(
     tmp_path: Path,
 ) -> None:

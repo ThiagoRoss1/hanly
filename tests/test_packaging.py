@@ -13,10 +13,12 @@ import pytest
 from hanly_app import self_check
 from hanly_app.self_check import SELF_CHECK_MODES
 
-from tools import prepare_easyocr_models, smoke_packaged_runtime
+from tools import build_package, prepare_easyocr_models, smoke_packaged_runtime
 from tools.build_package import (
     APPLICATION_STEM,
     BUNDLE_NAME,
+    NATIVE_HELPER_FLAGS,
+    NATIVE_HELPER_SOURCE,
     RESOURCE_ARCHIVE_STEM,
     PackageLayout,
     PackagingError,
@@ -115,6 +117,58 @@ def test_build_command_uses_spec_and_platform_scoped_dist(tmp_path: Path) -> Non
         tmp_path / "dist" / "linux"
     )
     assert command[-1] == str(tmp_path / "packaging" / "hanly-desktop.spec")
+
+
+def test_a_windows_build_neither_builds_nor_collects_the_posix_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = PackageLayout.for_platform(tmp_path, "windows")
+    monkeypatch.setenv("HANLY_UPDATE_HELPER", str(tmp_path / "unexpected-helper"))
+    monkeypatch.setattr(build_package, "_stamp_build", lambda *_args: object())
+    monkeypatch.setattr(build_package, "build_command", lambda *_args, **_kwargs: ["freeze"])
+    monkeypatch.setattr(
+        build_package,
+        "build_native_helper",
+        lambda *_args, **_kwargs: pytest.fail("Windows tried to build the POSIX helper"),
+    )
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        assert command == ["freeze"]
+        environment = cast(dict[str, str], kwargs["env"])
+        assert "HANLY_UPDATE_HELPER" not in environment
+        return SimpleNamespace(returncode=7)
+
+    monkeypatch.setattr(build_package.subprocess, "run", run)
+
+    assert build_package.run_build(layout) == 7
+
+
+def _unguarded_fault_hooks(source: str) -> list[str]:
+    """Every line naming a fault hook from outside the block that compiles it."""
+
+    guarded = False
+    unguarded: list[str] = []
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#ifdef HANLY_UPDATER_TEST_HOOKS"):
+            guarded = True
+        elif stripped.startswith("#endif"):
+            guarded = False
+        elif "HANLY_TEST_" in line and not guarded:
+            unguarded.append(stripped)
+    return unguarded
+
+
+def test_a_released_helper_carries_none_of_its_fault_injection() -> None:
+    """The failures the native cases inject are a compile-time opt-in.
+
+    A hook reachable in a shipped helper would be a way to make a real update
+    fail, so the release flags never define it and no hook is read outside the
+    block it is compiled in.
+    """
+
+    assert not any("HANLY_UPDATER_TEST_HOOKS" in flag for flag in NATIVE_HELPER_FLAGS)
+    assert _unguarded_fault_hooks((ROOT / NATIVE_HELPER_SOURCE).read_text(encoding="utf-8")) == []
 
 
 def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:

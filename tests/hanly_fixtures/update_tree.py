@@ -31,6 +31,8 @@ from hanly_app.app_hup import (
 from hanly_app.app_inventory import read_tree, write_xattr
 from hanly_app.app_manifest import BuildIdentity, TreeEntry, TreeLayout, TreeManifest
 
+from tests.hanly_fixtures.capabilities import require_posix_tree
+
 BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
 
 
@@ -180,7 +182,12 @@ def write_tree(
 
     ``changes`` overrides or adds entries, which is how a second build of the
     same product is made to differ from the first.
+
+    A POSIX product is skipped rather than approximated where the host cannot
+    hold one, which takes every case built on this tree with it.
     """
+
+    require_posix_tree(product.platform)
 
     root = parent / product.root
     entries = {**product.files, **(changes or {})}

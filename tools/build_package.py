@@ -401,7 +401,9 @@ def run_build(
     stamp = _stamp_build(layout, source_commit, architecture)
     environment = dict(os.environ)
     windows = layout.platform_name == "windows"
-    if not windows:
+    if windows:
+        environment.pop("HANLY_UPDATE_HELPER", None)
+    else:
         # Before PyInstaller, not after: macOS signs the bundle as it builds
         # it, and a binary added to a sealed bundle is one that no longer
         # verifies. Windows has its own helper and needs none of this.

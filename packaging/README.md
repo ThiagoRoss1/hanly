@@ -248,6 +248,18 @@ that exist to exercise it, `HANLY_REQUIRE_NATIVE=1` and
 `HANLY_REQUIRE_PACKAGED=1` turn every one of those reasons into a failure: a
 native gate that skipped everything would be a green run proving nothing.
 
+The portable suite builds real installation trees, and two of the things a
+published tree carries are the host's to give. A macOS or Linux tree is only
+itself where permission bits survive being read back and a framework's symbolic
+links exist, so a Windows session skips those cases rather than reading back a
+tree nothing wrote. A signed build's `com.apple.cs.*` attributes are macOS's
+alone - Linux refuses every namespace but `user.`, and Windows has no attribute
+at all - so elsewhere a published build is simply unsigned, and the three cases
+whose subject is that material are skipped. The rules a manifest applies to
+those attributes are checked on every host, from entries built in memory; the
+round trip through a real filesystem is a macOS one, and the portable matrix
+does not run there.
+
 ## What a failed run leaves behind
 
 A native fault ends the frozen process before it prints its report, so the exit

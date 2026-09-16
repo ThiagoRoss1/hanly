@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from hanly_app.app_inventory import write_xattr
+from hanly_app.app_manifest import MATERIAL_XATTR_PREFIXES
 
 #: Set by the CI jobs that exist to run the native suites, and by the build
 #: job that exists to run the packaged suite.
@@ -76,6 +78,56 @@ def require_display(*, required_by: str = REQUIRE_NATIVE) -> None:
     unavailable("this needs a real display session", required_by=required_by)
 
 
+#: Whether this host answers for the permission bits an update sets and reads
+#: back. Windows does not: ``chmod`` there moves a read-only flag and nothing
+#: else, so a mode a case asserts would be a mode nothing wrote.
+POSIX_MODES = os.name == "posix"
+
+requires_posix_modes = pytest.mark.skipif(
+    not POSIX_MODES, reason="only a POSIX host carries the permission bits this is about"
+)
+
+
+def require_posix_tree(platform: str) -> None:
+    """Require a host that can hold a macOS or Linux product tree as itself.
+
+    Windows reports neither those permission bits nor the symbolic links a
+    framework is built from, so a tree built there would be a different tree -
+    and a case reading it back would prove something else.
+    """
+
+    if platform != "windows" and not POSIX_MODES:
+        pytest.skip("a macOS or Linux tree is only itself on a POSIX host")
+
+
+def _material_xattrs_available() -> bool:
+    """Whether this host can carry the attribute a signed macOS build has.
+
+    Written under the product's own prefix rather than a portable one: Linux
+    confines an unprivileged attribute to the ``user.`` namespace and refuses
+    every other name, which is the answer this asks for.
+    """
+
+    with tempfile.TemporaryDirectory() as directory:
+        probe = Path(directory) / "probe"
+        probe.write_bytes(b"")
+        try:
+            write_xattr(probe, f"{MATERIAL_XATTR_PREFIXES[0]}Probe", b"probe")
+        except (AttributeError, NotImplementedError, OSError):
+            return False
+    return True
+
+
+#: Only macOS carries a build's signature material. Everywhere else a tree is
+#: built unsigned, and the cases whose subject is that material do not run.
+MATERIAL_XATTRS = _material_xattrs_available()
+
+requires_material_xattrs = pytest.mark.skipif(
+    not MATERIAL_XATTRS,
+    reason="this host cannot carry a signed build's material attributes",
+)
+
+
 def _symlinks_available() -> bool:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -94,10 +146,15 @@ requires_symlinks = pytest.mark.skipif(
 )
 
 __all__ = [
+    "MATERIAL_XATTRS",
+    "POSIX_MODES",
     "REQUIRE_NATIVE",
     "REQUIRE_PACKAGED",
     "require_display",
     "require_modules",
+    "require_posix_tree",
+    "requires_material_xattrs",
+    "requires_posix_modes",
     "requires_symlinks",
     "unavailable",
 ]

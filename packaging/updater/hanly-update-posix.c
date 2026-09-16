@@ -99,13 +99,47 @@ enum {
 /* How often the two waiting loops look again. One second is far below any
  * timeout here and far above the cost of the check. */
 #define POLL_SECONDS 1
+#define MAX_TIMEOUT_SECONDS (24 * 60 * 60)
 
 struct descriptor {
     char *fields[FIELD_COUNT];
     size_t lengths[FIELD_COUNT];
 };
 
+enum move_status {
+    MOVE_FAILED = 0,
+    MOVE_DURABLE,
+    MOVE_UNCERTAIN
+};
+
+enum process_match {
+    PROCESS_DIFFERENT = 0,
+    PROCESS_MATCHES,
+    PROCESS_UNKNOWN
+};
+
+struct process_identity {
+    pid_t pid;
+    uint64_t started;
+};
+
 static const char *program_name = "hanly-update-posix";
+
+#ifdef HANLY_UPDATER_TEST_HOOKS
+static bool fail_test_call(const char *name, unsigned int *calls)
+{
+    const char *configured = getenv(name);
+    (*calls)++;
+    if (configured == NULL || configured[0] == '\0') {
+        return false;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    unsigned long requested = strtoul(configured, &end, 10);
+    return errno == 0 && end != configured && *end == '\0' && requested == *calls;
+}
+#endif
 
 static void note(const char *message, const char *detail)
 {
@@ -260,8 +294,28 @@ static long long field_number(const struct descriptor *plan, int field)
 
 /* A rename is only durable once the directory entry itself has been flushed,
  * so every mutation below is followed by a sync of the directory it changed. */
+static bool flush_handle(int handle, bool strongest)
+{
+#if defined(__APPLE__) && defined(F_FULLFSYNC)
+    if (strongest) {
+        return fcntl(handle, F_FULLFSYNC) == 0;
+    }
+#else
+    (void)strongest;
+#endif
+    return fsync(handle) == 0;
+}
+
 static bool sync_directory(const char *path)
 {
+#ifdef HANLY_UPDATER_TEST_HOOKS
+    static unsigned int calls = 0;
+    if (fail_test_call("HANLY_TEST_FAIL_DIRECTORY_SYNC_AT", &calls)) {
+        errno = EIO;
+        return false;
+    }
+#endif
+
     int handle = open(path, O_RDONLY | O_CLOEXEC
 #ifdef O_DIRECTORY
                                 | O_DIRECTORY
@@ -270,9 +324,9 @@ static bool sync_directory(const char *path)
     if (handle < 0) {
         return false;
     }
-    bool flushed = fsync(handle) == 0;
-    close(handle);
-    return flushed;
+    bool flushed = flush_handle(handle, false);
+    bool closed = close(handle) == 0;
+    return flushed && closed;
 }
 
 static bool parent_of(const char *path, char *buffer, size_t size)
@@ -324,14 +378,37 @@ static bool identity_matches(const char *path, long long device, long long inode
     return (long long)status.st_dev == device && (long long)status.st_ino == inode;
 }
 
-static bool move_directory(const char *from, const char *to)
+static enum move_status move_directory(const char *from, const char *to)
 {
     if (rename(from, to) != 0) {
         note("could not move a directory into place", from);
-        return false;
+        return MOVE_FAILED;
     }
-    sync_parent(from);
-    sync_parent(to);
+
+    char from_parent[PATH_MAX];
+    char to_parent[PATH_MAX];
+    if (!parent_of(from, from_parent, sizeof(from_parent)) ||
+        !parent_of(to, to_parent, sizeof(to_parent))) {
+        return MOVE_UNCERTAIN;
+    }
+    bool from_flushed = sync_directory(from_parent);
+    bool to_flushed = strcmp(from_parent, to_parent) == 0 || sync_directory(to_parent);
+    return from_flushed && to_flushed ? MOVE_DURABLE : MOVE_UNCERTAIN;
+}
+
+static bool write_all(int handle, const char *data, size_t size)
+{
+    size_t written_total = 0;
+    while (written_total < size) {
+        ssize_t written = write(handle, data + written_total, size - written_total);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written <= 0) {
+            return false;
+        }
+        written_total += (size_t)written;
+    }
     return true;
 }
 
@@ -347,22 +424,23 @@ static bool write_result(const struct descriptor *plan, const char *outcome, con
     if (handle < 0) {
         return false;
     }
-    FILE *stream = fdopen(handle, "w");
-    if (stream == NULL) {
-        close(handle);
-        return false;
+    const char *message = detail != NULL ? detail : "";
+    bool written_ok = write_all(handle, outcome, strlen(outcome)) && write_all(handle, "\n", 1) &&
+                      write_all(handle, message, strlen(message)) && write_all(handle, "\n", 1);
+#ifdef HANLY_UPDATER_TEST_HOOKS
+    if (getenv("HANLY_TEST_FAIL_RESULT_WRITE") != NULL) {
+        written_ok = false;
+        errno = EIO;
     }
-    fprintf(stream, "%s\n%s\n", outcome, detail != NULL ? detail : "");
-    fflush(stream);
-    bool flushed = fsync(fileno(stream)) == 0;
-    fclose(stream);
+#endif
+    bool flushed = written_ok && flush_handle(handle, true);
+    bool closed = close(handle) == 0;
 
-    if (!flushed || rename(temporary, plan->fields[FIELD_RESULT]) != 0) {
+    if (!flushed || !closed || rename(temporary, plan->fields[FIELD_RESULT]) != 0) {
         unlink(temporary);
         return false;
     }
-    sync_parent(plan->fields[FIELD_RESULT]);
-    return true;
+    return sync_parent(plan->fields[FIELD_RESULT]);
 }
 
 /* ---------------------------------------------------------------- claim --- */
@@ -412,8 +490,36 @@ static bool path_inside(const char *candidate, const char *root)
 /* By the program each process is actually running, never by its name: the
  * shell, the Control Center and the lookup child all run this installation's
  * executable, and anything else called hanly-desktop is none of our business. */
-static int processes_under(const char *root, pid_t *found, int limit)
+static bool process_details(pid_t pid, char *program, size_t size, uint64_t *started)
 {
+    struct proc_bsdinfo info;
+    if (proc_pidpath(pid, program, (uint32_t)size) <= 0 ||
+        proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != (int)sizeof(info)) {
+        return false;
+    }
+    *started = (uint64_t)info.pbi_start_tvsec * 1000000u + (uint64_t)info.pbi_start_tvusec;
+    return true;
+}
+
+static bool process_inspection_failure_is_relevant(pid_t pid)
+{
+    struct proc_bsdinfo info;
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) == (int)sizeof(info)) {
+        return info.pbi_uid == geteuid();
+    }
+    return kill(pid, 0) == 0;
+}
+
+static int processes_under(const char *root, struct process_identity *found, int limit)
+{
+#ifdef HANLY_UPDATER_TEST_HOOKS
+    static unsigned int calls = 0;
+    if (fail_test_call("HANLY_TEST_FAIL_PROCESS_INSPECTION_AT", &calls)) {
+        errno = EIO;
+        return -1;
+    }
+#endif
+
     int capacity = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
     if (capacity <= 0) {
         return -1;
@@ -435,19 +541,126 @@ static int processes_under(const char *root, pid_t *found, int limit)
         if (pids[index] <= 0) {
             continue;
         }
-        if (proc_pidpath(pids[index], program, sizeof(program)) <= 0) {
+        uint64_t started = 0;
+        if (!process_details(pids[index], program, sizeof(program), &started)) {
+            if (process_inspection_failure_is_relevant(pids[index])) {
+                free(pids);
+                return -1;
+            }
             continue;
         }
         if (path_inside(program, root)) {
-            found[count++] = pids[index];
+            found[count].pid = pids[index];
+            found[count].started = started;
+            count++;
         }
     }
     free(pids);
     return count;
 }
 #else
-static int processes_under(const char *root, pid_t *found, int limit)
+static bool linux_process_start(pid_t pid, uint64_t *started)
 {
+    char path[64];
+    int written = snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+        errno = EINVAL;
+        return false;
+    }
+
+    int handle = open(path, O_RDONLY | O_CLOEXEC);
+    if (handle < 0) {
+        return false;
+    }
+    char data[4096];
+    ssize_t length;
+    do {
+        length = read(handle, data, sizeof(data) - 1);
+    } while (length < 0 && errno == EINTR);
+    int saved = errno;
+    close(handle);
+    errno = saved;
+    if (length <= 0 || (size_t)length >= sizeof(data) - 1) {
+        return false;
+    }
+    data[length] = '\0';
+
+    char *cursor = strrchr(data, ')');
+    if (cursor == NULL || cursor[1] != ' ') {
+        errno = EINVAL;
+        return false;
+    }
+    cursor += 2;
+    for (int field = 3; field <= 22; field++) {
+        while (*cursor == ' ') {
+            cursor++;
+        }
+        if (*cursor == '\0') {
+            errno = EINVAL;
+            return false;
+        }
+        char *end = cursor;
+        while (*end != '\0' && *end != ' ') {
+            end++;
+        }
+        if (field == 22) {
+            char saved_character = *end;
+            *end = '\0';
+            errno = 0;
+            char *number_end = NULL;
+            unsigned long long value = strtoull(cursor, &number_end, 10);
+            bool valid = errno == 0 && number_end != cursor && *number_end == '\0';
+            *end = saved_character;
+            if (!valid) {
+                errno = EINVAL;
+                return false;
+            }
+            *started = (uint64_t)value;
+            return true;
+        }
+        cursor = end;
+    }
+    errno = EINVAL;
+    return false;
+}
+
+static bool process_details(pid_t pid, char *program, size_t size, uint64_t *started)
+{
+    char link[64];
+    int written = snprintf(link, sizeof(link), "/proc/%ld/exe", (long)pid);
+    if (written < 0 || (size_t)written >= sizeof(link)) {
+        errno = EINVAL;
+        return false;
+    }
+    ssize_t length = readlink(link, program, size - 1);
+    if (length <= 0 || (size_t)length >= size - 1) {
+        return false;
+    }
+    program[length] = '\0';
+    return linux_process_start(pid, started);
+}
+
+static bool process_inspection_failure_is_relevant(pid_t pid)
+{
+    char path[64];
+    int written = snprintf(path, sizeof(path), "/proc/%ld", (long)pid);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+        return true;
+    }
+    struct stat status;
+    return stat(path, &status) == 0 && status.st_uid == geteuid();
+}
+
+static int processes_under(const char *root, struct process_identity *found, int limit)
+{
+#ifdef HANLY_UPDATER_TEST_HOOKS
+    static unsigned int calls = 0;
+    if (fail_test_call("HANLY_TEST_FAIL_PROCESS_INSPECTION_AT", &calls)) {
+        errno = EIO;
+        return -1;
+    }
+#endif
+
     DIR *processes = opendir("/proc");
     if (processes == NULL) {
         return -1;
@@ -461,19 +674,19 @@ static int processes_under(const char *root, pid_t *found, int limit)
         if (end == entry->d_name || *end != '\0' || value <= 0) {
             continue;
         }
-        char link[PATH_MAX];
         char program[PATH_MAX];
-        int written = snprintf(link, sizeof(link), "/proc/%ld/exe", value);
-        if (written < 0 || (size_t)written >= sizeof(link)) {
+        uint64_t started = 0;
+        if (!process_details((pid_t)value, program, sizeof(program), &started)) {
+            if (process_inspection_failure_is_relevant((pid_t)value)) {
+                closedir(processes);
+                return -1;
+            }
             continue;
         }
-        ssize_t length = readlink(link, program, sizeof(program) - 1);
-        if (length <= 0) {
-            continue;
-        }
-        program[length] = '\0';
         if (path_inside(program, root)) {
-            found[count++] = (pid_t)value;
+            found[count].pid = (pid_t)value;
+            found[count].started = started;
+            count++;
         }
     }
     closedir(processes);
@@ -483,42 +696,72 @@ static int processes_under(const char *root, pid_t *found, int limit)
 
 #define MAX_TRACKED_PROCESSES 256
 
+static void sleep_for_poll(void);
+
+static enum process_match process_still_matches(const char *root,
+                                                const struct process_identity *expected)
+{
+    char program[PATH_MAX];
+    uint64_t started = 0;
+    if (!process_details(expected->pid, program, sizeof(program), &started)) {
+        if (kill(expected->pid, 0) != 0 && errno == ESRCH) {
+            return PROCESS_DIFFERENT;
+        }
+        return PROCESS_UNKNOWN;
+    }
+    return started == expected->started && path_inside(program, root) ? PROCESS_MATCHES
+                                                                      : PROCESS_DIFFERENT;
+}
+
+/* The process that asked for this update is answered for by its pid alone: it
+ * was alive when the descriptor was written, so a pid reused since belongs to
+ * a process that started later and is not it. */
 static bool installation_is_free(const char *root, pid_t parent)
 {
     if (parent > 0 && kill(parent, 0) == 0) {
         return false;
     }
-    pid_t found[MAX_TRACKED_PROCESSES];
+    struct process_identity found[MAX_TRACKED_PROCESSES];
     int count = processes_under(root, found, MAX_TRACKED_PROCESSES);
     /* Inspection failing is not the same as nothing running. Refusing to act
      * on an unknown answer is the whole point of asking. */
     return count == 0;
 }
 
-static bool wait_for_exit(const char *root, pid_t parent, long long seconds)
+static bool signal_process(const char *root, const struct process_identity *process, int signal)
 {
-    for (long long waited = 0; waited <= seconds; waited += POLL_SECONDS) {
-        if (installation_is_free(root, parent)) {
-            return true;
-        }
-        sleep(POLL_SECONDS);
+    enum process_match match = process_still_matches(root, process);
+    if (match == PROCESS_UNKNOWN) {
+        return false;
     }
-    return installation_is_free(root, parent);
+    if (match == PROCESS_DIFFERENT) {
+        return true;
+    }
+    return kill(process->pid, signal) == 0 || errno == ESRCH;
 }
 
-static void stop_processes_under(const char *root)
+static bool stop_processes_under(const char *root)
 {
-    pid_t found[MAX_TRACKED_PROCESSES];
-    for (int attempt = 0; attempt < 2; attempt++) {
+    struct process_identity found[MAX_TRACKED_PROCESSES];
+    const int signals[] = {SIGTERM, SIGKILL};
+    for (size_t attempt = 0; attempt < sizeof(signals) / sizeof(signals[0]); attempt++) {
         int count = processes_under(root, found, MAX_TRACKED_PROCESSES);
-        if (count <= 0) {
-            return;
+        if (count < 0) {
+            return false;
+        }
+        if (count == 0) {
+            return true;
         }
         for (int index = 0; index < count; index++) {
-            kill(found[index], attempt == 0 ? SIGTERM : SIGKILL);
+            if (!signal_process(root, &found[index], signals[attempt])) {
+                return false;
+            }
         }
-        sleep(POLL_SECONDS);
+        sleep_for_poll();
     }
+
+    int remaining = processes_under(root, found, MAX_TRACKED_PROCESSES);
+    return remaining == 0;
 }
 
 /* ---------------------------------------------------------------- launch -- */
@@ -545,24 +788,66 @@ static void redirect_standard_streams(void)
     }
 }
 
+static void report_launch_failure(int handle)
+{
+    int failure = errno != 0 ? errno : EIO;
+    (void)write_all(handle, (const char *)&failure, sizeof(failure));
+    _exit(EXIT_FAILED);
+}
+
 static bool launch_detached(const struct descriptor *plan, bool acknowledging)
 {
     char program[PATH_MAX];
+    int launch_status[2] = {-1, -1};
+    if (pipe(launch_status) != 0 || fcntl(launch_status[1], F_SETFD, FD_CLOEXEC) != 0) {
+        if (launch_status[0] >= 0) {
+            close(launch_status[0]);
+            close(launch_status[1]);
+        }
+        note("could not create the launch status pipe", NULL);
+        return false;
+    }
 
     pid_t child = fork();
     if (child < 0) {
+        close(launch_status[0]);
+        close(launch_status[1]);
         note("could not start the installation", NULL);
         return false;
     }
     if (child > 0) {
-        /* The middle child exits at once; reaping it leaves no zombie. */
+        close(launch_status[1]);
         int status = 0;
-        waitpid(child, &status, 0);
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+
+        int failure = 0;
+        ssize_t received;
+        do {
+            received = read(launch_status[0], &failure, sizeof(failure));
+        } while (received < 0 && errno == EINTR);
+        close(launch_status[0]);
+        if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != EXIT_OK ||
+            received != 0) {
+            note("could not execute the installation", received == (ssize_t)sizeof(failure)
+                                                           ? strerror(failure)
+                                                           : NULL);
+            return false;
+        }
         return true;
     }
 
-    setsid();
-    if (fork() != 0) {
+    close(launch_status[0]);
+    if (setsid() < 0) {
+        report_launch_failure(launch_status[1]);
+    }
+    pid_t application = fork();
+    if (application < 0) {
+        report_launch_failure(launch_status[1]);
+    }
+    if (application > 0) {
         _exit(EXIT_OK);
     }
 
@@ -593,7 +878,7 @@ static bool launch_detached(const struct descriptor *plan, bool acknowledging)
             }
         }
     }
-    _exit(EXIT_FAILED);
+    report_launch_failure(launch_status[1]);
 }
 
 static bool launch_candidate(const struct descriptor *plan)
@@ -651,38 +936,163 @@ static bool acknowledgement_matches(const struct descriptor *plan)
     return matched;
 }
 
+static bool deadline_after(long long seconds, struct timespec *deadline)
+{
+    if (seconds < 0 || seconds > MAX_TIMEOUT_SECONDS ||
+        clock_gettime(CLOCK_MONOTONIC, deadline) != 0) {
+        return false;
+    }
+    deadline->tv_sec += (time_t)seconds;
+    return true;
+}
+
+static bool deadline_reached(const struct timespec *deadline)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return true;
+    }
+    return now.tv_sec > deadline->tv_sec ||
+           (now.tv_sec == deadline->tv_sec && now.tv_nsec >= deadline->tv_nsec);
+}
+
+static void sleep_for_poll(void)
+{
+    struct timespec remaining = {.tv_sec = POLL_SECONDS, .tv_nsec = 0};
+    while (nanosleep(&remaining, &remaining) != 0 && errno == EINTR) {
+    }
+}
+
+static bool wait_for_exit(const char *root, pid_t parent, long long seconds)
+{
+    struct timespec deadline;
+    if (!deadline_after(seconds, &deadline)) {
+        return false;
+    }
+    for (;;) {
+        if (installation_is_free(root, parent)) {
+            return true;
+        }
+        if (deadline_reached(&deadline)) {
+            return false;
+        }
+        sleep_for_poll();
+    }
+}
+
 static bool wait_for_startup(const struct descriptor *plan, long long seconds)
 {
-    for (long long waited = 0; waited <= seconds; waited += POLL_SECONDS) {
+    struct timespec deadline;
+    if (!deadline_after(seconds, &deadline)) {
+        return false;
+    }
+    for (;;) {
         if (acknowledgement_matches(plan)) {
             return true;
         }
-        sleep(POLL_SECONDS);
+        if (deadline_reached(&deadline)) {
+            return false;
+        }
+        sleep_for_poll();
     }
-    return false;
 }
 
 /* ---------------------------------------------------------------- apply --- */
 
-static int roll_back(const struct descriptor *plan, const char *detail)
+static int record_failed_outcome(const struct descriptor *plan, const char *outcome,
+                                 const char *detail)
 {
-    stop_processes_under(plan->fields[FIELD_INSTALL]);
-
-    if (directory_present(plan->fields[FIELD_INSTALL]) &&
-        !move_directory(plan->fields[FIELD_INSTALL], plan->fields[FIELD_REJECTED])) {
-        write_result(plan, RESULT_RECOVERY, "the new installation could not be moved aside");
-        return EXIT_FAILED;
+    if (!write_result(plan, outcome, detail)) {
+        note("could not persist the update result", detail);
     }
-    if (!directory_present(plan->fields[FIELD_INSTALL]) &&
-        directory_present(plan->fields[FIELD_BACKUP]) &&
-        !move_directory(plan->fields[FIELD_BACKUP], plan->fields[FIELD_INSTALL])) {
-        write_result(plan, RESULT_RECOVERY, "the previous installation could not be put back");
-        return EXIT_FAILED;
-    }
+    return EXIT_FAILED;
+}
 
-    write_result(plan, RESULT_RESTORED, detail);
+static int record_recovery_required(const struct descriptor *plan, const char *detail)
+{
+    return record_failed_outcome(plan, RESULT_RECOVERY, detail);
+}
+
+/* The previous installation is back and durable by the time this runs, so a
+ * result file that cannot be written is reported and started anyway: it is a
+ * diagnostic, and withholding the build over it would be the larger failure. */
+static int record_restored(const struct descriptor *plan, const char *detail)
+{
+    if (!write_result(plan, RESULT_RESTORED, detail)) {
+        note("could not persist the restored result", detail);
+    }
     launch_restored(plan);
     return EXIT_FAILED;
+}
+
+static bool original_backup_matches(const struct descriptor *plan)
+{
+    return identity_matches(plan->fields[FIELD_BACKUP],
+                            field_number(plan, FIELD_INSTALL_DEVICE),
+                            field_number(plan, FIELD_INSTALL_INODE));
+}
+
+static bool installed_candidate_matches(const struct descriptor *plan)
+{
+    return identity_matches(plan->fields[FIELD_INSTALL],
+                            field_number(plan, FIELD_CANDIDATE_DEVICE),
+                            field_number(plan, FIELD_CANDIDATE_INODE));
+}
+
+static bool installed_original_matches(const struct descriptor *plan)
+{
+    return identity_matches(plan->fields[FIELD_INSTALL],
+                            field_number(plan, FIELD_INSTALL_DEVICE),
+                            field_number(plan, FIELD_INSTALL_INODE));
+}
+
+static int roll_back(const struct descriptor *plan, const char *detail)
+{
+    bool installed = directory_present(plan->fields[FIELD_INSTALL]);
+    if (!original_backup_matches(plan) || (installed && !installed_candidate_matches(plan))) {
+        return record_recovery_required(
+            plan, "rollback stopped because the installation identities did not match");
+    }
+
+#ifdef HANLY_UPDATER_TEST_HOOKS
+    if (getenv("HANLY_TEST_REFUSE_PROCESS_STOP") != NULL) {
+        return record_recovery_required(plan, "the new installation could not be proved stopped");
+    }
+#endif
+    if (installed && !stop_processes_under(plan->fields[FIELD_INSTALL])) {
+        return record_recovery_required(plan, "the new installation could not be proved stopped");
+    }
+    if ((directory_present(plan->fields[FIELD_INSTALL]) && !installed_candidate_matches(plan)) ||
+        !original_backup_matches(plan)) {
+        return record_recovery_required(
+            plan, "rollback stopped because the installation identities changed");
+    }
+
+    if (directory_present(plan->fields[FIELD_INSTALL])) {
+        enum move_status rejected =
+            move_directory(plan->fields[FIELD_INSTALL], plan->fields[FIELD_REJECTED]);
+        if (rejected == MOVE_FAILED) {
+            return record_recovery_required(plan, "the new installation could not be moved aside");
+        }
+        if (rejected == MOVE_UNCERTAIN) {
+            return record_recovery_required(
+                plan, "the new installation moved aside but its durability is uncertain");
+        }
+    }
+    if (!directory_present(plan->fields[FIELD_INSTALL])) {
+        enum move_status restored =
+            move_directory(plan->fields[FIELD_BACKUP], plan->fields[FIELD_INSTALL]);
+        if (restored == MOVE_FAILED) {
+            return record_recovery_required(plan,
+                                            "the previous installation could not be put back");
+        }
+        if (restored == MOVE_UNCERTAIN) {
+            return record_recovery_required(
+                plan, "the previous installation returned but its durability is uncertain");
+        }
+    }
+
+    return record_restored(plan, detail);
 }
 
 static int apply_update(const struct descriptor *plan)
@@ -690,14 +1100,15 @@ static int apply_update(const struct descriptor *plan)
     long long parent = field_number(plan, FIELD_PARENT_PID);
     long long exit_timeout = field_number(plan, FIELD_EXIT_TIMEOUT);
     long long ready_timeout = field_number(plan, FIELD_READY_TIMEOUT);
-    if (exit_timeout < 0 || ready_timeout < 0) {
+    if (parent < 0 || exit_timeout < 0 || exit_timeout > MAX_TIMEOUT_SECONDS ||
+        ready_timeout < 0 || ready_timeout > MAX_TIMEOUT_SECONDS) {
         note("the update descriptor has no usable timeouts", NULL);
         return EXIT_UNUSABLE;
     }
 
     if (!wait_for_exit(plan->fields[FIELD_INSTALL], (pid_t)parent, exit_timeout)) {
-        write_result(plan, RESULT_ABANDONED, "Hanly did not close, so nothing was changed");
-        return EXIT_FAILED;
+        return record_failed_outcome(plan, RESULT_ABANDONED,
+                                     "Hanly did not close, so nothing was changed");
     }
 
     /* Rechecked here, not only when the plan was made: between deciding and
@@ -707,20 +1118,33 @@ static int apply_update(const struct descriptor *plan)
         !identity_matches(plan->fields[FIELD_CANDIDATE],
                           field_number(plan, FIELD_CANDIDATE_DEVICE),
                           field_number(plan, FIELD_CANDIDATE_INODE))) {
-        write_result(plan, RESULT_ABANDONED,
-                     "the installation changed while the update was waiting");
-        return EXIT_FAILED;
+        return record_failed_outcome(
+            plan, RESULT_ABANDONED, "the installation changed while the update was waiting");
     }
 
-    if (!move_directory(plan->fields[FIELD_INSTALL], plan->fields[FIELD_BACKUP])) {
-        write_result(plan, RESULT_ABANDONED, "the installation could not be moved aside");
-        return EXIT_FAILED;
+    enum move_status backed_up =
+        move_directory(plan->fields[FIELD_INSTALL], plan->fields[FIELD_BACKUP]);
+    if (backed_up == MOVE_FAILED) {
+        return record_failed_outcome(plan, RESULT_ABANDONED,
+                                     "the installation could not be moved aside");
     }
-    if (!move_directory(plan->fields[FIELD_CANDIDATE], plan->fields[FIELD_INSTALL])) {
+    if (backed_up == MOVE_UNCERTAIN) {
+        return record_recovery_required(
+            plan, "the installation moved aside but its durability is uncertain");
+    }
+
+    enum move_status installed =
+        move_directory(plan->fields[FIELD_CANDIDATE], plan->fields[FIELD_INSTALL]);
+    if (installed == MOVE_FAILED) {
         return roll_back(plan, "the new version could not be installed");
     }
+    if (installed == MOVE_UNCERTAIN) {
+        return roll_back(plan, "the new version was not durably installed");
+    }
 
-    unlink(plan->fields[FIELD_ACK]);
+    if (unlink(plan->fields[FIELD_ACK]) != 0 && errno != ENOENT) {
+        return roll_back(plan, "the previous startup acknowledgement could not be removed");
+    }
     if (!launch_candidate(plan)) {
         return roll_back(plan, "the new version could not be started");
     }
@@ -728,7 +1152,10 @@ static int apply_update(const struct descriptor *plan)
         return roll_back(plan, "the new version did not start, so the previous one is back");
     }
 
-    write_result(plan, RESULT_COMMITTED, "the new version started");
+    if (!write_result(plan, RESULT_COMMITTED, "the new version started")) {
+        note("could not persist the committed result", NULL);
+        return EXIT_FAILED;
+    }
     return EXIT_OK;
 }
 
@@ -747,40 +1174,62 @@ static int recover_update(const struct descriptor *plan)
     bool installed = directory_present(plan->fields[FIELD_INSTALL]);
     bool backed_up = directory_present(plan->fields[FIELD_BACKUP]);
     bool candidate = directory_present(plan->fields[FIELD_CANDIDATE]);
+    bool rejected = directory_present(plan->fields[FIELD_REJECTED]);
 
     if (installed && !backed_up) {
-        write_result(plan, RESULT_ABANDONED, "the update never started; nothing was changed");
-        return EXIT_FAILED;
+        if (!installed_original_matches(plan)) {
+            return record_recovery_required(
+                plan, "the only installed tree is not the recorded previous installation");
+        }
+        if (rejected) {
+            if (!sync_parent(plan->fields[FIELD_INSTALL])) {
+                return record_recovery_required(
+                    plan, "the restored installation could not be made durable");
+            }
+            return record_restored(plan, "an interrupted rollback was completed");
+        }
+        return record_failed_outcome(plan, RESULT_ABANDONED,
+                                     "the update never started; nothing was changed");
     }
     if (!installed && backed_up) {
-        if (!move_directory(plan->fields[FIELD_BACKUP], plan->fields[FIELD_INSTALL])) {
-            write_result(plan, RESULT_RECOVERY,
-                         "the previous installation is still beside the installation path");
-            return EXIT_FAILED;
+        if (!original_backup_matches(plan)) {
+            return record_recovery_required(
+                plan, "the previous installation does not have its recorded identity");
         }
-        write_result(plan, RESULT_RESTORED, "an interrupted update was undone");
-        launch_restored(plan);
-        return EXIT_FAILED;
+        enum move_status restored =
+            move_directory(plan->fields[FIELD_BACKUP], plan->fields[FIELD_INSTALL]);
+        if (restored == MOVE_FAILED) {
+            return record_recovery_required(
+                plan, "the previous installation is still beside the installation path");
+        }
+        if (restored == MOVE_UNCERTAIN) {
+            return record_recovery_required(
+                plan, "the previous installation returned but its durability is uncertain");
+        }
+        return record_restored(plan, "an interrupted update was undone");
     }
     if (installed && backed_up) {
+        if (!installed_candidate_matches(plan) || !original_backup_matches(plan)) {
+            return record_recovery_required(
+                plan, "recovery stopped because the installation identities did not match");
+        }
         /* The candidate may have acknowledged successfully just before this
          * helper died while persisting the result.  Its exact inode and exact
          * transaction-bound answer are enough to retain it; rolling it back
          * here would turn a diagnostic-write failure into a product rollback. */
-        if (identity_matches(plan->fields[FIELD_INSTALL],
-                             field_number(plan, FIELD_CANDIDATE_DEVICE),
-                             field_number(plan, FIELD_CANDIDATE_INODE)) &&
-            acknowledgement_matches(plan)) {
-            write_result(plan, RESULT_COMMITTED, "the new version started");
+        if (acknowledgement_matches(plan)) {
+            if (!write_result(plan, RESULT_COMMITTED, "the new version started")) {
+                note("could not persist the committed result", NULL);
+                return EXIT_FAILED;
+            }
             return EXIT_OK;
         }
         return roll_back(plan, "an interrupted update was undone");
     }
 
-    write_result(plan, RESULT_RECOVERY,
-                 candidate ? "the installation is missing and a candidate is staged"
-                           : "the installation is missing and nothing can replace it");
-    return EXIT_FAILED;
+    return record_recovery_required(
+        plan, candidate ? "the installation is missing and a candidate is staged"
+                        : "the installation is missing and nothing can replace it");
 }
 
 /* ----------------------------------------------------------------- main --- */

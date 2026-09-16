@@ -45,6 +45,7 @@ from hanly_app.app_manifest import (
     tree_difference,
 )
 
+from tests.hanly_fixtures.capabilities import requires_material_xattrs
 from tests.hanly_fixtures.update_tree import (
     LINUX,
     MACOS,
@@ -672,7 +673,6 @@ def test_a_dropped_file_is_reported_as_deleted_and_carries_nothing() -> None:
 
 def test_a_real_tree_reads_back_as_the_manifest_that_describes_it(tmp_path: Path) -> None:
     root = write_tree(tmp_path / "build", MACOS)
-    sign_entry(root / "Contents" / "Info.plist")
 
     inventory = read_tree(root, "macos")
     manifest = manifest_for(root, MACOS)
@@ -683,6 +683,16 @@ def test_a_real_tree_reads_back_as_the_manifest_that_describes_it(tmp_path: Path
         "Versions/Current/Qt"
     )
     assert entry_at(manifest, "Contents/MacOS/hanly-desktop").mode == 0o755
+
+
+@requires_material_xattrs
+def test_a_real_tree_reads_back_the_signature_material_it_carries(tmp_path: Path) -> None:
+    root = write_tree(tmp_path / "build", MACOS)
+    sign_entry(root / "Contents" / "Info.plist")
+
+    manifest = manifest_for(root, MACOS)
+
+    assert read_tree(root, "macos").unsupported == ()
     assert entry_at(manifest, "Contents/Info.plist").xattrs
 
 

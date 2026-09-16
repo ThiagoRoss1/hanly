@@ -22,6 +22,7 @@ from hanly_app.app_hup import package_asset_name
 from hanly_app.app_manifest import TreeManifest
 from hanly_app.update_service import DownloadProgress, ProgressCallback, RemoteResource
 
+from tests.hanly_fixtures.capabilities import MATERIAL_XATTRS
 from tests.hanly_fixtures.update_tree import (
     Product,
     asset_for,
@@ -81,9 +82,13 @@ class PublishedRelease:
         Per version, so the attribute really changes between two releases: an
         update that dropped it would produce a bundle that no longer verifies,
         and a case built on an unsigned tree would never notice.
+
+        Only macOS can carry it. Elsewhere the build is published unsigned and
+        the cases whose subject is that material declare they need a host that
+        can hold it.
         """
 
-        if self.product.platform != "macos":
+        if self.product.platform != "macos" or not MATERIAL_XATTRS:
             return
         sign_entry(
             self.build.joinpath(*self.product.executable.split("/")),
