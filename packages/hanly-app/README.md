@@ -15,7 +15,7 @@ python -m pip install -e packages/hanly
 python -m pip install -e "packages/hanly-app[runtime]"
 ```
 
-The engine must go first: `hanly-app` depends on `hanly==0.1.0`, which exists
+The engine must go first: `hanly-app` depends on `hanly==0.5.3`, which exists
 only in this checkout, so installing `hanly-app` on its own sends pip looking
 for a package index that does not have it.
 
