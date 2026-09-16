@@ -24,6 +24,8 @@ from typing import Any, Protocol, cast
 
 from hanly.resource_manager import ResourceManager
 
+from .app_build_identity import BuildStamp, ReceiptStore, read_build_stamp, receipt_store
+from .app_manifest import PLATFORM_WINDOWS
 from .app_update import (
     APPLICATION_STEM,
     ApplicationInstaller,
@@ -31,13 +33,21 @@ from .app_update import (
     ApplicationUpdateError,
     check_application_update,
     confirm_started,
+    confirm_started_v2,
     installation_root,
 )
-from .app_update_install import DifferentialInstaller, DifferentialUpdateError
+from .app_update_install import (
+    DifferentialUpdateError,
+    PosixTreeStaging,
+    TreeUpdateInstaller,
+    WindowsFileStaging,
+)
+from .app_update_journal import AcknowledgementError
 from .app_update_runner import (
-    InPlaceUpdateRunner,
     SettledUpdate,
+    TreeUpdateRunner,
     describe_outcome,
+    settle_native_update,
     settle_previous_update,
 )
 from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
@@ -1044,6 +1054,7 @@ def run_desktop(
     diagnostics: DiagnosticLog | None = None,
     runtime_resolver: Callable[[Path | None], Path] | None = None,
     update_ready: str | Path | None = None,
+    update_challenge: str | Path | None = None,
 ) -> int:
     """Open the Hanly interface, then prepare its runtime behind it.
 
@@ -1058,8 +1069,10 @@ def run_desktop(
     ``diagnostics`` is the session log the entry point already opened. Passing
     ``None`` keeps everything in memory, which is what a test wants.
 
-    ``update_ready`` is set only by an update handoff, which keeps the previous
-    installation until this launch answers at that path.
+    ``update_ready`` and ``update_challenge`` are set only by an update handoff,
+    which keeps the previous installation until this launch answers. The first
+    reports a version, for a helper an older Hanly installed; the second proves
+    this build's own identity, which is what a schema-2 helper waits for.
     """
 
     diagnostics = diagnostics if diagnostics is not None else DiagnosticLog()
@@ -1141,7 +1154,7 @@ def run_desktop(
     desktop.attach_signal_bridge(signal_bridge)
 
     startup.start(explicit_runtime)
-    acknowledge = _update_acknowledgement(update_ready, diagnostics)
+    acknowledge = _update_acknowledgement(update_ready, update_challenge, diagnostics)
     if acknowledge is not None:
         # Queued before the loop starts, so it runs as the first thing the
         # shell does once it is genuinely up.
@@ -1186,22 +1199,30 @@ def settle_pending_update(diagnostics: DiagnosticLog) -> SettledUpdate | None:
     install_root = installation_root()
     if install_root is None:
         return None
+    def report(area: str, message: str) -> None:
+        diagnostics.record(area, message)
+
     try:
+        # Both, and in this order: a Windows transaction lives inside the
+        # installation and a POSIX one beside it, and an installation that has
+        # been both generations can carry one of each.
         settled = settle_previous_update(
-            install_root,
-            default_recovery_directory(),
-            report=lambda area, message: diagnostics.record(area, message),
+            install_root, default_recovery_directory(), report=report
         )
+        native = settle_native_update(receipt_store(install_root), report=report)
     except OSError as error:
         diagnostics.report("Update recovery", error)
         return None
+    settled = native if native is not None else settled
     if settled is not None:
         diagnostics.record("Update", describe_outcome(settled))
     return settled
 
 
 def _update_acknowledgement(
-    path: str | Path | None, diagnostics: DiagnosticLog
+    ready: str | Path | None,
+    challenge: str | Path | None,
+    diagnostics: DiagnosticLog,
 ) -> Callable[[], None] | None:
     """Return what tells a waiting update handoff that this build came up.
 
@@ -1212,14 +1233,28 @@ def _update_acknowledgement(
     works, and neither does whether the user opened a window.
     """
 
-    if path is None:
-        return None
-    ready = Path(path)
+    if challenge is not None:
+        return _acknowledgement(
+            lambda: confirm_started_v2(Path(challenge)), diagnostics
+        )
+    if ready is not None:
+        return _acknowledgement(lambda: confirm_started(Path(ready)), diagnostics)
+    return None
+
+
+def _acknowledgement(
+    answer: Callable[[], None], diagnostics: DiagnosticLog
+) -> Callable[[], None]:
+    """Run one acknowledgement without letting its failure stop the launch.
+
+    A build that cannot answer is rolled back by the helper, which is the right
+    outcome; crashing the shell on the way would leave nothing to roll back to.
+    """
 
     def acknowledge() -> None:
         try:
-            confirm_started(ready)
-        except (ApplicationUpdateError, OSError) as error:
+            answer()
+        except (ApplicationUpdateError, AcknowledgementError, OSError) as error:
             diagnostics.report("Update acknowledgement", error)
 
     return acknowledge
@@ -1322,7 +1357,7 @@ def _application_updates(
 ) -> tuple[
     Callable[[], ApplicationUpdate] | None,
     ApplicationInstall | None,
-    InPlaceUpdateRunner | None,
+    TreeUpdateRunner | None,
 ]:
     """Return how this installation checks for, and installs, a new Hanly build.
 
@@ -1331,10 +1366,10 @@ def _application_updates(
     second channel. An installation that is not a packaged bundle can still be
     told a new build exists; it just has nothing for Hanly to replace.
 
-    Two strategies, one per platform. Windows changes the files that differ,
-    in place. macOS and Linux keep the whole-bundle swap: a ``.app`` is signed
-    as a unit, and neither has the release artifacts a differential update
-    reads.
+    One updater, three ways of applying it. A build carrying a schema-2 stamp
+    goes through the shared preparation core on every platform. A build from
+    before that existed carries no stamp, and keeps the whole-bundle swap it
+    was installed with - which is what lets it reach a build that does.
     """
 
     fetcher = getattr(service, "fetcher", None)
@@ -1350,10 +1385,9 @@ def _application_updates(
     if install_root is None:
         return check, None, None
 
-    if sys.platform == "win32":
-        runner = _in_place_runner(fetcher, release_source, install_root)
-        if runner is not None:
-            return check, None, runner
+    runner = _tree_runner(fetcher, release_source, install_root)
+    if runner is not None:
+        return check, None, runner
 
     try:
         installer = ApplicationInstaller(fetcher, release_source, install_root=install_root)
@@ -1366,24 +1400,52 @@ def _application_updates(
     return check, install, None
 
 
-def _in_place_runner(
+def _tree_runner(
     fetcher: object, release_source: Callable[[], Any], install_root: Path
-) -> InPlaceUpdateRunner | None:
-    """Build the Windows differential updater for this installation."""
+) -> TreeUpdateRunner | None:
+    """Build the schema-2 updater, for a build that carries an identity."""
 
+    stamp = read_build_stamp()
+    if stamp is None:
+        return None
+    store = receipt_store(install_root)
+    tagged = getattr(fetcher, "fetch_release_by_tag", None)
     try:
-        return InPlaceUpdateRunner(
-            DifferentialInstaller(
-                cast(Any, fetcher),
-                release_source,
-                install_root=install_root,
-                executable=f"{APPLICATION_STEM}.exe",
-                recovery_root=default_recovery_directory(),
-            ),
-            recovery_root=default_recovery_directory(),
+        installer = TreeUpdateInstaller(
+            cast(Any, fetcher),
+            release_source,
+            stamp=stamp,
+            install_root=install_root,
+            store=store,
+            strategy=_staging_strategy(stamp, install_root, store),
+            tagged_release_source=tagged if callable(tagged) else None,
+        )
+        return TreeUpdateRunner(
+            installer, store=store, recovery_root=default_recovery_directory()
         )
     except (DifferentialUpdateError, OSError):
         return None
+
+
+def _staging_strategy(
+    stamp: BuildStamp, install_root: Path, store: ReceiptStore
+) -> WindowsFileStaging | PosixTreeStaging:
+    """Which of the three apply paths this installation uses."""
+
+    if stamp.platform == PLATFORM_WINDOWS:
+        return WindowsFileStaging(
+            install_root=install_root,
+            executable=f"{APPLICATION_STEM}.exe",
+            recovery_root=default_recovery_directory(),
+            store=store,
+            source_commit=stamp.source_commit,
+        )
+    return PosixTreeStaging(
+        install_root=install_root,
+        platform=stamp.platform,
+        store=store,
+        source_commit=stamp.source_commit,
+    )
 
 
 class DesktopShuttingDown(DesktopApplicationError):

@@ -13,10 +13,12 @@ import pytest
 from hanly_app import self_check
 from hanly_app.self_check import SELF_CHECK_MODES
 
-from tools import prepare_easyocr_models, smoke_packaged_runtime
+from tools import build_package, prepare_easyocr_models, smoke_packaged_runtime
 from tools.build_package import (
     APPLICATION_STEM,
     BUNDLE_NAME,
+    NATIVE_HELPER_FLAGS,
+    NATIVE_HELPER_SOURCE,
     RESOURCE_ARCHIVE_STEM,
     PackageLayout,
     PackagingError,
@@ -49,12 +51,15 @@ from tools.smoke_packaged_runtime import (
     _executable_in,
     _iter_failures,
     _ProfileContext,
+    compare_to_manifest,
     inspect_bundle,
     isolated_environment,
     reconstruct_application,
+    reconstruct_from_disk_image,
     run_packaged_self_check,
     verify_disk_image,
 )
+from tools.smoke_packaged_runtime import main as smoke_main
 
 ROOT = Path(__file__).parents[1]
 SPEC = ROOT / "packaging" / "hanly-desktop.spec"
@@ -112,6 +117,58 @@ def test_build_command_uses_spec_and_platform_scoped_dist(tmp_path: Path) -> Non
         tmp_path / "dist" / "linux"
     )
     assert command[-1] == str(tmp_path / "packaging" / "hanly-desktop.spec")
+
+
+def test_a_windows_build_neither_builds_nor_collects_the_posix_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    layout = PackageLayout.for_platform(tmp_path, "windows")
+    monkeypatch.setenv("HANLY_UPDATE_HELPER", str(tmp_path / "unexpected-helper"))
+    monkeypatch.setattr(build_package, "_stamp_build", lambda *_args: object())
+    monkeypatch.setattr(build_package, "build_command", lambda *_args, **_kwargs: ["freeze"])
+    monkeypatch.setattr(
+        build_package,
+        "build_native_helper",
+        lambda *_args, **_kwargs: pytest.fail("Windows tried to build the POSIX helper"),
+    )
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        assert command == ["freeze"]
+        environment = cast(dict[str, str], kwargs["env"])
+        assert "HANLY_UPDATE_HELPER" not in environment
+        return SimpleNamespace(returncode=7)
+
+    monkeypatch.setattr(build_package.subprocess, "run", run)
+
+    assert build_package.run_build(layout) == 7
+
+
+def _unguarded_fault_hooks(source: str) -> list[str]:
+    """Every line naming a fault hook from outside the block that compiles it."""
+
+    guarded = False
+    unguarded: list[str] = []
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#ifdef HANLY_UPDATER_TEST_HOOKS"):
+            guarded = True
+        elif stripped.startswith("#endif"):
+            guarded = False
+        elif "HANLY_TEST_" in line and not guarded:
+            unguarded.append(stripped)
+    return unguarded
+
+
+def test_a_released_helper_carries_none_of_its_fault_injection() -> None:
+    """The failures the native cases inject are a compile-time opt-in.
+
+    A hook reachable in a shipped helper would be a way to make a real update
+    fail, so the release flags never define it and no hook is read outside the
+    block it is compiled in.
+    """
+
+    assert not any("HANLY_UPDATER_TEST_HOOKS" in flag for flag in NATIVE_HELPER_FLAGS)
+    assert _unguarded_fault_hooks((ROOT / NATIVE_HELPER_SOURCE).read_text(encoding="utf-8")) == []
 
 
 def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:
@@ -545,8 +602,13 @@ class _NativeTool:
         self.commands.append(command)
         target = Path(command[-1])
         # Archiving names the file it writes; unpacking names a directory that
-        # already exists, and what lands in it is the caller's business.
-        if self.returncode == 0 and not target.is_dir():
+        # already exists, and what lands in it is the caller's business. A
+        # command ending in a flag - `hdiutil detach ... -force` - names no
+        # file at all, and writing one would leave a file called `-force`.
+        writes_a_file = (
+            self.returncode == 0 and not command[-1].startswith("-") and not target.is_dir()
+        )
+        if writes_a_file:
             target.write_bytes(b"native artifact")
         return SimpleNamespace(returncode=self.returncode, stderr=b"tool failed")
 
@@ -1363,3 +1425,99 @@ def test_an_identity_check_that_never_runs_the_executable_is_refused(
 
     assert status == 2
     assert "runs the executable" in capsys.readouterr().err
+
+
+def test_the_disk_image_is_the_product_a_client_reconstructs_from(
+    tmp_path: Path,
+) -> None:
+    """A HUP client downloads the disk image, so that is what gets smoked."""
+
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"disk image")
+    tools = _NativeTool()
+
+    def native(command: list[str], **options: object) -> object:
+        tools.commands.append(command)
+        if command[0].endswith("hdiutil") and command[1] == "attach":
+            program = Path(command[-1]) / SMOKE_BUNDLE_NAME / "Contents" / "MacOS"
+            program.mkdir(parents=True)
+            (program / APPLICATION_STEM).write_bytes(b"program")
+        if command[0].endswith("ditto"):
+            import shutil
+
+            shutil.copytree(command[-2], command[-1])
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    application = reconstruct_from_disk_image(image, tmp_path / "out", runner=native)
+
+    assert application == (tmp_path / "out" / SMOKE_BUNDLE_NAME)
+    assert _executable_in(application).is_file()
+    assert tools.commands[-1][:2] == ["/usr/bin/hdiutil", "detach"]
+
+
+def test_a_disk_image_without_the_application_leaves_nothing_mounted(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"disk image")
+    tools = _NativeTool()
+
+    with pytest.raises(FileNotFoundError, match=SMOKE_BUNDLE_NAME):
+        reconstruct_from_disk_image(image, tmp_path / "out", runner=tools)
+
+    assert tools.commands[-1][:2] == ["/usr/bin/hdiutil", "detach"]
+
+
+def test_a_reconstructed_product_is_held_to_the_manifest_its_release_publishes(
+    tmp_path: Path,
+) -> None:
+    from tests.hanly_fixtures.update_tree import LINUX, manifest_for, write_tree
+
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest_for(root, LINUX).to_json(), encoding="utf-8")
+
+    report = compare_to_manifest(root, manifest_path)
+    assert report["ok"] is True
+    assert report["entries"] == len(manifest_for(root, LINUX))
+
+    (root / "hanly-desktop").write_bytes(b"a different program entirely")
+    mismatched = compare_to_manifest(root, manifest_path)
+    assert mismatched["ok"] is False
+    assert mismatched["differing"] == ["hanly-desktop"]
+
+
+def test_a_product_that_is_not_the_published_build_fails_the_smoke(
+    tmp_path: Path,
+) -> None:
+    from tests.hanly_fixtures.update_tree import LINUX, manifest_for, write_tree
+
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest_for(root, LINUX).to_json(), encoding="utf-8")
+    (root / "stowaway").write_bytes(b"not in the release")
+
+    status = smoke_main(
+        [str(root), "--inventory-only", "--against-manifest", str(manifest_path)]
+    )
+
+    assert status == 1
+
+
+def test_naming_two_subjects_to_reconstruct_is_refused() -> None:
+    assert smoke_main(
+        ["--from-archive", "a.zip", "--from-disk-image", "b.dmg", "--reconstruct-only"]
+    ) == 2
+    assert smoke_main(["--against-manifest", "m.json", "--disk-image", "b.dmg"]) == 2
+
+
+def test_a_packaging_tool_that_names_no_file_writes_none(tmp_path: Path) -> None:
+    """`hdiutil detach <mount> -force` ends in a flag; a stub that took it for
+    a path once left a file called `-force` in the repository root."""
+
+    tool = _NativeTool()
+
+    tool(["/usr/bin/hdiutil", "detach", str(tmp_path / "mount"), "-force"])
+
+    assert not Path("-force").exists()
+    assert sorted(item.name for item in tmp_path.iterdir()) == []

@@ -11,6 +11,7 @@ external resource artifact and must be named by ``--runtime-config``.
 
 from __future__ import annotations
 
+import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -39,6 +40,11 @@ APPLICATION_STEM = "hanly-desktop"
 BUNDLE_NAME = "Hanly.app"
 BUNDLE_DISPLAY_NAME = "Hanly"
 BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
+
+#: Where the build compiled the POSIX update helper, if it did. It has to be
+#: collected before the bundle is signed: a binary added to a sealed bundle is
+#: a bundle that no longer verifies.
+UPDATE_HELPER = os.environ.get("HANLY_UPDATE_HELPER", "")
 
 #: The weights a frozen build loads; it cannot download them.
 MODEL_DIRECTORY = APP_SOURCE / "hanly_app" / "assets" / "easyocr_models"
@@ -117,6 +123,9 @@ datas = collect_data_files(
         "assets/control_center/*.css",
         "assets/control_center/*.js",
         "assets/easyocr_models/*.pth",
+        # Written by the release build before this freeze; a source checkout
+        # has none, and one built without it has no schema-2 identity.
+        "assets/hanly-build.json",
     ],
 )
 
@@ -132,6 +141,8 @@ for distribution in ("PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"):
         continue
 
 binaries: list[tuple[str, str]] = []
+if sys.platform != "win32" and UPDATE_HELPER and Path(UPDATE_HELPER).is_file():
+    binaries.append((UPDATE_HELPER, "."))
 hiddenimports = collect_submodules("hanly") + collect_submodules("hanly_app")
 
 # EasyOCR is left to its own hook, constrained below to the languages Hanly's

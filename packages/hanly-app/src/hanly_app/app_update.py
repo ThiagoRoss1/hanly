@@ -31,11 +31,17 @@ from importlib import metadata
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from .app_build_identity import read_build_stamp, receipt_store
 from .app_update_handoff import (
     HandoffError,
     Spawn,
     UpdateTransaction,
     start_handoff,
+)
+from .app_update_journal import (
+    acknowledgement_path,
+    read_challenge,
+    write_acknowledgement,
 )
 from .paths import macos_bundle_root
 from .update_service import (
@@ -479,13 +485,44 @@ class ApplicationInstaller:
 def confirm_started(path: Path) -> None:
     """Report this build's version to the handoff that installed it.
 
-    This file is the whole acknowledgement an update waits for: until the
-    version written here is the one it installed, the handoff keeps the
-    previous installation and can still put it back.
+    The schema-1 acknowledgement, kept exactly as it is: a helper installed by
+    an older Hanly is already waiting for this file and this content, and a
+    target that answered differently would be rolled back by it.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(installed_version(), encoding="utf-8")
+
+
+def confirm_started_v2(challenge_path: Path, *, install_root: Path | None = None) -> None:
+    """Answer one update's challenge, from this build's own stamp.
+
+    The challenge says which build was installed and where. This does not copy
+    that back: it reads the identity out of the running build's own embedded
+    stamp and refuses unless the two agree, so the answer means "the build that
+    was installed is the build now running", which a version number never did.
+
+    Only once that holds does the receipt the update staged become this
+    installation's own.
+    """
+
+    challenge = read_challenge(Path(challenge_path))
+    stamp = read_build_stamp()
+    if stamp is None:
+        raise ApplicationUpdateError("this build carries no identity to acknowledge an update with")
+    if stamp.identity.to_dict() != challenge.identity.to_dict():
+        raise ApplicationUpdateError("the build that started is not the build the update installed")
+    if installed_version() != stamp.version:
+        raise ApplicationUpdateError("this build's version and its stamp disagree")
+
+    root = installation_root() if install_root is None else Path(install_root)
+    if root is None or str(root) != challenge.install_root:
+        raise ApplicationUpdateError("this build is not running from the installation it updated")
+
+    store = receipt_store(root)
+    if store.promote_pending(stamp) is None:
+        raise ApplicationUpdateError("the update staged no receipt for this build to adopt")
+    write_acknowledgement(acknowledgement_path(Path(challenge_path)), challenge, stamp.identity)
 
 
 def _emit(
@@ -735,6 +772,7 @@ __all__ = [
     "ApplicationUpdateError",
     "check_application_update",
     "confirm_started",
+    "confirm_started_v2",
     "extract_application_bundle",
     "extract_application_tar",
     "installation_root",

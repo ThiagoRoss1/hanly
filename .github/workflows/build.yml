@@ -12,8 +12,45 @@ permissions:
   contents: read
 
 jobs:
+  # Resolved once and given to all three jobs. Three jobs asking separately
+  # could pick three different predecessors while a release is being cut, and
+  # a package indexing deltas from different bases describes nothing.
+  predecessor:
+    name: Pin the predecessor release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pin.outputs.tag }}
+      available: ${{ steps.pin.outputs.available }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install the packages the resolver imports
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            --editable packages/hanly --editable packages/hanly-app
+
+      - name: Resolve the published release this build diffs against
+        id: pin
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(python tools/release_version.py)"
+          python tools/release_build.py predecessor \
+            --repository "$REPOSITORY" --version "$version" >> "$GITHUB_OUTPUT"
+
   build:
     name: build (${{ matrix.platform }})
+    needs: predecessor
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -21,14 +58,20 @@ jobs:
         # A matrix vector declared beside `include` would collapse these
         # three entries into a single job.
         include:
+          # The architecture is declared rather than read off the runner: a
+          # hosted label's default is not a promise, and the build verifies the
+          # executable it produced really is for this machine.
           - platform: windows
             runner: windows-latest
+            architecture: x86_64
             python-version: "3.10"
           - platform: macos
             runner: macos-latest
+            architecture: arm64
             python-version: "3.10"
           - platform: linux
             runner: ubuntu-latest
+            architecture: x86_64
             python-version: "3.10"
 
     steps:
@@ -114,30 +157,31 @@ jobs:
       - name: Prepare the bundled EasyOCR weights
         run: python tools/prepare_easyocr_models.py
 
-      # The delta is diffed against the previous *published* manifest, never a
-      # rebuilt tag: a rebuild is a different tree, and a delta whose base
-      # nobody has installed applies to nothing. A release without one is
-      # normal - the first manifest-aware build has no predecessor - so this
-      # step never fails the build.
-      - name: Fetch the previous published Windows manifest
+      # Diffed against the previous *published* package, never a rebuilt tag:
+      # a rebuild is a different tree, and a delta whose base nobody has
+      # installed applies to nothing. A release without one is normal - the
+      # first package-aware build has no predecessor - so this never fails.
+      - name: Fetch the pinned predecessor's update package
         id: base
-        if: matrix.platform == 'windows'
+        if: needs.predecessor.outputs.available == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          BASE_TAG: ${{ needs.predecessor.outputs.tag }}
         run: |
           set -uo pipefail
           mkdir -p release-base
-          for asset in hanly-desktop-windows.manifest.json SHA256SUMS; do
-            gh release download --repo "$REPOSITORY" --pattern "$asset"               --dir release-base --clobber || true
+          package="Hanly-${BASE_TAG}.hup"
+          for asset in "$package" SHA256SUMS; do
+            gh release download "$BASE_TAG" --repo "$REPOSITORY" --pattern "$asset" \
+              --dir release-base --clobber || true
           done
-          if [[ -f release-base/hanly-desktop-windows.manifest.json && -f release-base/SHA256SUMS ]]
-          then
-            echo "available=true" >> "$GITHUB_OUTPUT"
+          if [[ -f "release-base/$package" && -f release-base/SHA256SUMS ]]; then
+            echo "package=release-base/$package" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "no previous published manifest; this release publishes no delta"
+            echo "package=" >> "$GITHUB_OUTPUT"
+            echo "$BASE_TAG publishes no update package; this release publishes no delta"
           fi
 
       - name: Build application package
@@ -146,15 +190,18 @@ jobs:
         env:
           PYINSTALLER_STRICT_BUNDLE_CODESIGN_ERROR: "1"
           RUNNER_PLATFORM: ${{ matrix.platform }}
-          BASE_AVAILABLE: ${{ steps.base.outputs.available }}
+          RUNNER_ARCHITECTURE: ${{ matrix.architecture }}
+          BUILD_COMMIT: ${{ github.sha }}
+          BASE_PACKAGE: ${{ steps.base.outputs.package }}
         run: |
           set -euo pipefail
-          arguments=(--platform "$RUNNER_PLATFORM")
-          if [[ "$RUNNER_PLATFORM" == "windows" && "$BASE_AVAILABLE" == "true" ]]; then
-            arguments+=(
-              --base-manifest release-base/hanly-desktop-windows.manifest.json
-              --base-checksums release-base/SHA256SUMS
-            )
+          arguments=(
+            --platform "$RUNNER_PLATFORM"
+            --architecture "$RUNNER_ARCHITECTURE"
+            --source-commit "$BUILD_COMMIT"
+          )
+          if [[ -n "$BASE_PACKAGE" ]]; then
+            arguments+=(--base-package "$BASE_PACKAGE" --base-checksums release-base/SHA256SUMS)
           fi
           python tools/build_package.py "${arguments[@]}"
 
@@ -169,12 +216,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/reports
+          manifest="dist/release/$RUNNER_PLATFORM/manifest.json"
+          echo "PUBLISHED_MANIFEST=$manifest" >> "$GITHUB_ENV"
           if [ "$RUNNER_PLATFORM" = "macos" ]; then
+            # The disk image is the whole product a client downloads when it
+            # needs one, so it is what is smoked.
             python tools/smoke_packaged_runtime.py \
-              --from-archive dist/hanly-desktop-macos.zip \
+              --from-disk-image dist/hanly-desktop-macos.dmg \
               --reconstruct-into dist/reconstructed \
+              --against-manifest "$manifest" \
               --reconstruct-only \
               | tee "dist/reports/hanly-products-macos.json"
+            # Both published products come from one finished bundle, so holding
+            # each to the same manifest is what proves the compatibility ZIP
+            # still unpacks into the same application.
+            python tools/smoke_packaged_runtime.py \
+              --from-archive dist/hanly-desktop-macos.zip \
+              --reconstruct-into dist/reconstructed-zip \
+              --against-manifest "$manifest" \
+              --reconstruct-only \
+              | tee "dist/reports/hanly-legacy-macos.json"
             echo "SMOKE_APP=dist/reconstructed/Hanly.app" >> "$GITHUB_ENV"
           else
             echo "SMOKE_APP=dist/$RUNNER_PLATFORM/hanly-desktop" >> "$GITHUB_ENV"
@@ -201,6 +262,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/reports
           python tools/smoke_packaged_runtime.py "$SMOKE_APP" --inventory-only \
+            --against-manifest "$PUBLISHED_MANIFEST" \
             | tee "dist/reports/hanly-inventory-${{ matrix.platform }}.json"
 
       - name: Build the dictionary the frozen smoke installs
@@ -321,6 +383,21 @@ jobs:
           python - "${products[@]}" > "dist/reports/hanly-artifact-${RUNNER_PLATFORM}.json" <<'PY'
           import hashlib, json, os, platform, sys
 
+          def published():
+              """What this build calls itself, as its own release says."""
+              descriptor = os.path.join(
+                  "dist", "release", os.environ["RUNNER_PLATFORM"], "descriptor.json"
+              )
+              with open(descriptor, encoding="utf-8") as stream:
+                  entry = json.load(stream)
+              return {
+                  "build_id": entry["identity"]["build_id"],
+                  "architecture": entry["architecture"],
+                  "manifest_sha256": entry["manifest"]["sha256"],
+                  "delta": None if entry["delta"] is None else entry["delta"]["payload"]["name"],
+                  "delta_omitted_reason": entry.get("delta_omitted_reason", ""),
+              }
+
           def described(path):
               digest = hashlib.sha256()
               with open(path, "rb") as stream:
@@ -336,8 +413,10 @@ jobs:
               {
                   "platform": os.environ["RUNNER_PLATFORM"],
                   # An archive hash says two downloads are the same file. Only
-                  # these say which source the file was made from.
+                  # these say which source the file was made from, and which
+                  # build an update will be offered against.
                   "build_commit": os.environ["BUILD_COMMIT"],
+                  "published": published(),
                   "source_version": os.environ["SOURCE_VERSION"],
                   "runner_os": os.environ["RUNNER_OS_NAME"],
                   "runner_arch": os.environ["RUNNER_ARCHITECTURE"],
@@ -377,10 +456,74 @@ jobs:
             dist/hanly-desktop-${{ matrix.platform }}.tar.gz
             dist/hanly-desktop-windows.manifest.json
             dist/hanly-desktop-windows.update.json
-            dist/hanly-desktop-windows-from-*.delta.zip
+            dist/release/${{ matrix.platform }}/
             dist/reports/hanly-smoke-${{ matrix.platform }}.json
             dist/reports/hanly-window-${{ matrix.platform }}.json
             dist/reports/hanly-artifact-${{ matrix.platform }}.json
             dist/reports/hanly-products-${{ matrix.platform }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # One package for the whole release, assembled once from the jobs that
+  # succeeded. No platform writes a fragment of it, and nothing here rebuilds
+  # an application: the descriptors and the products are what this run made.
+  package:
+    name: Assemble the update package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install the packages the producer imports
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            --editable packages/hanly --editable packages/hanly-app
+
+      - name: Collect what every platform produced
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: hanly-desktop-*
+          path: release-inputs
+          merge-multiple: true
+
+      - name: Assemble the one update package
+        shell: bash
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version="$(python tools/release_version.py)"
+          mkdir -p dist/package
+          arguments=()
+          for directory in release-inputs/release/*/; do
+            test -f "$directory/descriptor.json" || continue
+            arguments+=(--descriptor "$directory")
+          done
+          test "${#arguments[@]}" -gt 0 || {
+            echo "no platform produced a release to index" >&2
+            exit 1
+          }
+          python tools/update_artifacts.py package \
+            "${arguments[@]}" \
+            --products release-inputs \
+            --source-commit "$BUILD_COMMIT" \
+            --output "dist/package/Hanly-v$version.hup"
+          # Beside the package, because a release publishes both and the
+          # release lane takes them from one place.
+          find release-inputs/release -name '*.delta.zip' -exec cp {} dist/package/ \;
+          ls -l dist/package
+
+      - name: Retain the update package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hanly-update-package
+          path: dist/package/
           if-no-files-found: error
           retention-days: 14

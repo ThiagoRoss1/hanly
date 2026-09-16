@@ -71,6 +71,10 @@ _ZSTD_MAX_OUTPUT_BYTES = 512 * 1024 * 1024
 #: incrementally rather than after a hostile frame has already been buffered.
 _ZSTD_CHUNK_BYTES = 1024 * 1024
 
+#: The largest JSON document this adapter reads from a release API. A release
+#: payload lists a handful of assets; anything past this is not one to buffer.
+MAX_RELEASE_JSON_BYTES = 1024 * 1024
+
 
 @dataclass(frozen=True)
 class RemoteResource:
@@ -276,6 +280,7 @@ class GitHubReleaseFetcher:
         self._timeout = timeout
         self._opener = opener or _https_opener()
         self._release_payload: Mapping[str, Any] | None = None
+        self._tagged_payloads: dict[str, Mapping[str, Any]] = {}
 
     def fetch_release(self, *, refresh: bool = False) -> Mapping[str, Any]:
         """Return the raw release payload, reading it at most once per fetcher.
@@ -288,6 +293,23 @@ class GitHubReleaseFetcher:
         if refresh or self._release_payload is None:
             self._release_payload = self._json(self._release_url)
         return self._release_payload
+
+    def fetch_release_by_tag(self, tag: str) -> Mapping[str, Any]:
+        """Return one specific release, without disturbing the pinned one.
+
+        An installation with no receipt reads the metadata of the tag it is
+        already running to find out what it is. That is a different release
+        from the one being installed, and asking for it must not replace the
+        payload every other step of this update is bound to.
+        """
+
+        if not tag.strip() or "/" in tag:
+            raise RemoteManifestError(f"{tag!r} is not a release tag")
+        cached = self._tagged_payloads.get(tag)
+        if cached is None:
+            cached = self._json(f"{self._api_url}/tags/{urllib.parse.quote(tag, safe='')}")
+            self._tagged_payloads[tag] = cached
+        return cached
 
     def fetch_manifest(self) -> RemoteManifest:
         payload = self.fetch_release(refresh=True)
@@ -323,9 +345,19 @@ class GitHubReleaseFetcher:
         )
 
     def _json(self, url: str) -> Mapping[str, Any]:
+        """Read one bounded JSON document from the release API.
+
+        The bound is read as the body arrives: a response with no declared
+        length, or one that lies about it, is abandoned mid-stream rather than
+        buffered whole and rejected afterwards.
+        """
+
         try:
             with closing(self._open(url)) as response:
-                value = json.loads(response.read().decode("utf-8"))
+                raw = response.read(MAX_RELEASE_JSON_BYTES + 1)
+                if len(raw) > MAX_RELEASE_JSON_BYTES:
+                    raise RemoteManifestError("remote metadata is larger than this build reads")
+                value = json.loads(raw.decode("utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise RemoteManifestError(f"could not read remote metadata: {exc}") from exc
         if not isinstance(value, Mapping):

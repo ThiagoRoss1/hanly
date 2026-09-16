@@ -31,4 +31,9 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-hanly_app = ["assets/control_center/*.html", "assets/control_center/*.css", "assets/control_center/*.js"]
+hanly_app = [
+    "assets/control_center/*.html",
+    "assets/control_center/*.css",
+    "assets/control_center/*.js",
+    "assets/hanly-build.json",
+]

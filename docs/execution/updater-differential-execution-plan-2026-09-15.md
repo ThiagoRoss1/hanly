@@ -1,5 +1,13 @@
 # Hanly updater: differential installation and visible progress
 
+> **Superseded — 2026-09-15.** The single current plan for the next updater
+> wave is [Cross-platform updater and distribution](updater-cross-platform-distribution-plan-2026-09-15.md).
+> This file preserves the Windows-only plan and its subsequent observations as
+> history; its execution instructions, platform recommendations and unchecked
+> checklist are not instructions for the new wave. The completed Windows
+> [review handoff](review-handoffs/updater-differential-2026-09-15.md) remains
+> historical implementation evidence and has not been rewritten.
+
 Date: 2026-09-15. Planner: Codex. Executor: Claude, directly in one session.
 
 ## Execution instruction

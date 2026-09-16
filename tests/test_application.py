@@ -156,7 +156,7 @@ def test_the_running_shell_is_what_answers_a_waiting_update_handoff(
 
     monkeypatch.setattr(metadata, "version", lambda name: "0.2.0")
     ready = tmp_path / "transaction" / "ready"
-    acknowledge = application_module._update_acknowledgement(ready, DiagnosticLog())
+    acknowledge = application_module._update_acknowledgement(ready, None, DiagnosticLog())
     assert acknowledge is not None
 
     acknowledge()
@@ -165,7 +165,7 @@ def test_the_running_shell_is_what_answers_a_waiting_update_handoff(
 
 
 def test_a_launch_no_handoff_is_waiting_on_writes_no_acknowledgement() -> None:
-    assert application_module._update_acknowledgement(None, DiagnosticLog()) is None
+    assert application_module._update_acknowledgement(None, None, DiagnosticLog()) is None
 
 
 def test_an_unwritable_acknowledgement_is_reported_and_never_stops_the_launch(
@@ -178,7 +178,7 @@ def test_an_unwritable_acknowledgement_is_reported_and_never_stops_the_launch(
     blocked = tmp_path / "file" / "ready"
     blocked.parent.write_text("not a directory", encoding="utf-8")
 
-    acknowledge = application_module._update_acknowledgement(blocked, diagnostics)
+    acknowledge = application_module._update_acknowledgement(blocked, None, diagnostics)
     assert acknowledge is not None
     acknowledge()
 

@@ -19,4 +19,7 @@ data/generated/
 
 # Build inputs fetched by tools/prepare_easyocr_models.py.
 packages/hanly-app/src/hanly_app/assets/easyocr_models/
+
+# Written by the release build before each freeze; it names one build.
+packages/hanly-app/src/hanly_app/assets/hanly-build.json
 data/reports/

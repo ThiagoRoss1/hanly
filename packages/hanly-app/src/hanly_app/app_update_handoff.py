@@ -6,20 +6,29 @@ script that outlives this process: it waits for Hanly to exit, swaps the staged
 build in, starts it, and waits for the new build to say it came up. Only then
 is the previous build discarded.
 
-Everything the swap touches lives inside one :class:`UpdateTransaction`
-directory beside the installation, so finishing - successfully or not - is a
-single directory removal rather than a set of fixed names to clean up.
+Schema 2 replaces the POSIX half of that with a small native program, because
+a shell script cannot give durable renames, exact process identity, or a lock
+that outlives the process that took it. What is here is the Python side of the
+handoff: the fixed descriptor that program reads, the copy of it kept outside
+the installation, and the confirmation that it has taken ownership.
+
+Everything the swap touches lives inside one transaction directory beside the
+installation, so finishing - successfully or not - is a single directory
+removal rather than a set of fixed names to clean up.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 #: The internal argument the relaunched build answers with its own version.
 READY_ARGUMENT = "--update-ready"
@@ -469,14 +478,386 @@ exit 1
 """
 
 
+# --------------------------------------------------------------------------
+# Schema 2: handing a whole-tree swap to the native helper
+#
+# The shell script above cannot give durable renames, exact process identity,
+# or a lock that survives the process that took it. A small C program can, and
+# does, and reads exactly one thing: the fixed descriptor below. Nothing it is
+# given is a script, a format, or a path it did not receive as an argument.
+# --------------------------------------------------------------------------
+
+#: The helper's own name, wherever it is built, shipped, or copied to.
+NATIVE_HELPER_NAME = "hanly-update-posix"
+
+#: The descriptor's wire format. Both sides carry the same field list in the
+#: same order; a descriptor with any other count is refused rather than read as
+#: far as the two happen to agree.
+DESCRIPTOR_MAGIC = b"HANLYUPD"
+DESCRIPTOR_VERSION = 1
+MAX_DESCRIPTOR_BYTES = 64 * 1024
+MAX_FIELD_BYTES = 4096
+
+DESCRIPTOR_FIELDS = (
+    "transaction_id",
+    "lock_path",
+    "install_path",
+    "staging_path",
+    "candidate_path",
+    "backup_path",
+    "rejected_path",
+    "result_path",
+    "ack_path",
+    "challenge_path",
+    "expected",
+    "executable",
+    "launch",
+    "parent_pid",
+    "exit_timeout",
+    "ready_timeout",
+    "install_device",
+    "install_inode",
+    "candidate_device",
+    "candidate_inode",
+)
+
+#: How the relaunched build is started. macOS goes through LaunchServices so
+#: the new Hanly is a registered application; Linux runs the program directly.
+LAUNCH_OPEN = "open"
+LAUNCH_EXEC = "exec"
+
+#: How long the shell waits for the helper to take the installation's lock.
+#: Quitting before it has leaves the candidate with nobody to install it.
+NATIVE_CLAIM_SECONDS = 30.0
+
+#: Outcomes the helper writes, in the vocabulary the desktop already reads.
+NATIVE_RESULTS = frozenset({"committed", "restored", "recovery-required", "abandoned"})
+
+
+@dataclass(frozen=True, slots=True)
+class NativeTransaction:
+    """Everything the native helper is told, and nothing it could infer wrong.
+
+    Device and inode numbers are recorded for both roots because a path is not
+    an identity: between this being written and the helper acting, a path is
+    exactly the thing that can be made to point somewhere else.
+    """
+
+    transaction_id: str
+    lock_path: Path
+    install_path: Path
+    staging_path: Path
+    candidate_path: Path
+    backup_path: Path
+    rejected_path: Path
+    result_path: Path
+    ack_path: Path
+    challenge_path: Path
+    expected: str
+    executable: str
+    launch: str
+    parent_pid: int
+    exit_timeout: int
+    ready_timeout: int
+    install_device: int
+    install_inode: int
+    candidate_device: int
+    candidate_inode: int
+
+    def to_bytes(self) -> bytes:
+        """Render the descriptor exactly as the native reader parses it."""
+
+        payload = bytearray(DESCRIPTOR_MAGIC)
+        payload += DESCRIPTOR_VERSION.to_bytes(4, "big")
+        payload += len(DESCRIPTOR_FIELDS).to_bytes(4, "big")
+        for name in DESCRIPTOR_FIELDS:
+            raw = str(getattr(self, name)).encode("utf-8")
+            if b"\0" in raw:
+                raise HandoffError(f"{name} cannot appear in an update descriptor")
+            if len(raw) > MAX_FIELD_BYTES:
+                raise HandoffError(f"{name} is longer than an update descriptor carries")
+            payload += len(raw).to_bytes(4, "big")
+            payload += raw
+        if len(payload) > MAX_DESCRIPTOR_BYTES:
+            raise HandoffError("the update descriptor is larger than the helper reads")
+        return bytes(payload)
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> NativeTransaction:
+        """Read a descriptor back, under the same rules the helper applies."""
+
+        if len(data) > MAX_DESCRIPTOR_BYTES:
+            raise HandoffError("the update descriptor is larger than the helper reads")
+        if not data.startswith(DESCRIPTOR_MAGIC):
+            raise HandoffError("the update descriptor is not one of ours")
+
+        offset = len(DESCRIPTOR_MAGIC)
+        version, offset = _read_u32(data, offset)
+        count, offset = _read_u32(data, offset)
+        if version != DESCRIPTOR_VERSION or count != len(DESCRIPTOR_FIELDS):
+            raise HandoffError("the update descriptor was written by a different Hanly")
+
+        values: dict[str, Any] = {}
+        for name in DESCRIPTOR_FIELDS:
+            length, offset = _read_u32(data, offset)
+            if length > MAX_FIELD_BYTES or offset + length > len(data):
+                raise HandoffError("the update descriptor ends inside a field")
+            values[name] = data[offset : offset + length].decode("utf-8")
+            offset += length
+        if offset != len(data):
+            raise HandoffError("the update descriptor has trailing data")
+
+        return cls(
+            transaction_id=values["transaction_id"],
+            lock_path=Path(values["lock_path"]),
+            install_path=Path(values["install_path"]),
+            staging_path=Path(values["staging_path"]),
+            candidate_path=Path(values["candidate_path"]),
+            backup_path=Path(values["backup_path"]),
+            rejected_path=Path(values["rejected_path"]),
+            result_path=Path(values["result_path"]),
+            ack_path=Path(values["ack_path"]),
+            challenge_path=Path(values["challenge_path"]),
+            expected=values["expected"],
+            executable=values["executable"],
+            launch=values["launch"],
+            parent_pid=int(values["parent_pid"]),
+            exit_timeout=int(values["exit_timeout"]),
+            ready_timeout=int(values["ready_timeout"]),
+            install_device=int(values["install_device"]),
+            install_inode=int(values["install_inode"]),
+            candidate_device=int(values["candidate_device"]),
+            candidate_inode=int(values["candidate_inode"]),
+        )
+
+
+def launch_mode(platform: str = sys.platform) -> str:
+    return LAUNCH_OPEN if platform.startswith("darwin") else LAUNCH_EXEC
+
+
+def write_descriptor(path: Path, transaction: NativeTransaction) -> Path:
+    """Write the descriptor privately, and make it durable before it is used."""
+
+    payload = transaction.to_bytes()
+    try:
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as error:
+        raise HandoffError(f"could not write the update descriptor: {error}") from error
+    return path
+
+
+def read_descriptor(path: Path) -> NativeTransaction:
+    """Read a descriptor back, which is how its round trip is held to account."""
+
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise HandoffError(f"{path} is not an update descriptor")
+        return NativeTransaction.from_bytes(path.read_bytes())
+    except OSError as error:
+        raise HandoffError(f"could not read the update descriptor: {error}") from error
+
+
+def install_native_helper(source: Path, destination: Path) -> Path:
+    """Copy the helper somewhere outside the installation, and prove the copy.
+
+    The installation is briefly absent between the two renames, so the program
+    doing the renaming cannot live inside it. The copy is compared against the
+    original byte for byte before anything is handed to it.
+    """
+
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload = source.read_bytes()
+        destination.write_bytes(payload)
+        os.chmod(destination, 0o700)
+        if destination.read_bytes() != payload:
+            raise HandoffError("the update helper did not copy correctly")
+    except OSError as error:
+        raise HandoffError(f"could not prepare the update helper: {error}") from error
+    return destination
+
+
+def start_native_helper(
+    helper: Path,
+    descriptor: Path,
+    *,
+    recover: bool = False,
+    spawn: Spawn | None = None,
+) -> None:
+    """Start the helper detached, with the descriptor as its only input.
+
+    Arguments, never a rendered script and never a shell: a generated body is
+    where an installation path picks up both injection and code-page damage.
+    """
+
+    command = [str(helper)]
+    if recover:
+        command.append("--recover")
+    command.append(str(descriptor))
+    runner = spawn if spawn is not None else spawn_detached
+    try:
+        runner(command, descriptor.parent)
+    except OSError as error:
+        raise HandoffError(f"could not start the update helper: {error}") from error
+
+
+def await_native_claim(
+    lock_path: Path,
+    *,
+    timeout: float = NATIVE_CLAIM_SECONDS,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Block until the helper holds the installation's lock, then return.
+
+    Ownership is transferred by observation rather than by a file the helper
+    writes: the lock is held on an open handle, so a helper that dies releases
+    it, and one that has it is genuinely the owner. Nothing has been mutated
+    yet - the helper does not touch the installation until this process exits -
+    so waiting here is what closes the window, not what opens one.
+    """
+
+    deadline = clock() + timeout
+    while clock() < deadline:
+        if not _lock_is_free(lock_path):
+            return
+        sleep(0.2)
+    raise HandoffError("the update helper did not start; nothing has been changed")
+
+
+def native_helper_is_running(lock_path: Path) -> bool:
+    """Whether a POSIX helper currently owns this installation's update lock.
+
+    The candidate launched by that helper enters normal startup before it
+    writes its acknowledgement. Settlement must leave the live owner alone;
+    starting a recovery helper in that window creates a second contender for
+    the same transaction and reports an interruption that did not happen.
+    """
+
+    return not _lock_is_free(lock_path)
+
+
+def read_native_result(path: Path) -> tuple[str, str] | None:
+    """What the helper settled on, if it has settled on anything yet."""
+
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    if not lines or lines[0] not in NATIVE_RESULTS:
+        return None
+    return lines[0], lines[1] if len(lines) > 1 else ""
+
+
+#: The pointer a recovery run follows when Hanly itself will not start.
+NATIVE_PENDING_NAME = "pending.json"
+
+
+def record_native_pending(directory: Path, descriptor: Path) -> Path:
+    """Name the transaction a recovery run would settle, outside the installation."""
+
+    path = Path(directory) / NATIVE_PENDING_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"descriptor": str(descriptor), "at": time.time()}, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError as error:
+        raise HandoffError(f"could not record the pending update: {error}") from error
+    return path
+
+
+def native_pending(directory: Path) -> Path | None:
+    """The descriptor an outstanding transaction left behind, if there is one."""
+
+    try:
+        payload = json.loads(
+            (Path(directory) / NATIVE_PENDING_NAME).read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    value = payload.get("descriptor") if isinstance(payload, dict) else None
+    return Path(value) if isinstance(value, str) and value else None
+
+
+def clear_native_pending(directory: Path) -> None:
+    """Drop the pointer once the transaction it named has settled."""
+
+    try:
+        (Path(directory) / NATIVE_PENDING_NAME).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _lock_is_free(path: Path) -> bool:
+    """Whether nothing currently holds the installation's advisory lock.
+
+    Imported here rather than at module scope: this module is loaded on Windows
+    too, where the Windows helper is what holds a transaction and ``fcntl``
+    does not exist.
+    """
+
+    import fcntl
+
+    try:
+        handle = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    else:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        return True
+    finally:
+        os.close(handle)
+
+
+def _read_u32(data: bytes, offset: int) -> tuple[int, int]:
+    if offset + 4 > len(data):
+        raise HandoffError("the update descriptor is too short")
+    return int.from_bytes(data[offset : offset + 4], "big"), offset + 4
+
+
 __all__ = [
+    "DESCRIPTOR_FIELDS",
+    "DESCRIPTOR_MAGIC",
+    "DESCRIPTOR_VERSION",
     "EXIT_WAIT_SECONDS",
+    "LAUNCH_EXEC",
+    "LAUNCH_OPEN",
+    "MAX_DESCRIPTOR_BYTES",
+    "MAX_FIELD_BYTES",
+    "NATIVE_CLAIM_SECONDS",
+    "NATIVE_HELPER_NAME",
+    "NATIVE_PENDING_NAME",
+    "NATIVE_RESULTS",
     "READY_ARGUMENT",
     "READY_WAIT_SECONDS",
     "HandoffError",
+    "NativeTransaction",
     "UpdateTransaction",
+    "await_native_claim",
+    "clear_native_pending",
     "handoff_arguments",
+    "native_pending",
+    "install_native_helper",
+    "launch_mode",
+    "native_helper_is_running",
+    "read_descriptor",
+    "read_native_result",
+    "record_native_pending",
     "render_handoff_script",
     "spawn_detached",
     "start_handoff",
+    "start_native_helper",
+    "write_descriptor",
 ]

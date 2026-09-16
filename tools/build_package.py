@@ -10,6 +10,7 @@ the packaged process receives its path through ``--runtime-config``.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -24,11 +25,18 @@ if __package__ in (None, ""):
     # is not on the path and ``tools.update_artifacts`` cannot be imported.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from hanly_app.app_build_identity import BuildStamp
+from hanly_app.app_manifest import TreeLayout, TreeManifest
+
 from tools.update_artifacts import (
     ArtifactError,
     ReleaseProducts,
+    build_platform_release,
     build_release_products,
     generate_manifest,
+    host_architecture,
+    load_base_package_manifest,
+    write_build_stamp,
 )
 
 APPLICATION_STEM = "hanly-desktop"
@@ -47,6 +55,16 @@ BUNDLE_VOLUME_NAME = "Hanly"
 #: the built application.
 DITTO = "/usr/bin/ditto"
 HDIUTIL = "/usr/bin/hdiutil"
+
+#: The native updater, and how it is built. Warnings are errors: it runs when
+#: the application it is repairing cannot, so a compiler diagnostic in it is
+#: not something to notice later.
+NATIVE_HELPER_NAME = "hanly-update-posix"
+NATIVE_HELPER_SOURCE = Path("packaging") / "updater" / f"{NATIVE_HELPER_NAME}.c"
+NATIVE_HELPER_FLAGS = ("-std=c11", "-Wall", "-Wextra", "-Werror", "-O2")
+
+#: What each platform publishes its whole product as, in the update package.
+FULL_FORMATS = {"windows": "zip", "macos": "dmg", "linux": "tar.gz"}
 
 CommandRunner = Callable[..., Any]
 
@@ -141,6 +159,28 @@ class PackageLayout:
         """
 
         return self.repo_root / "dist"
+
+    @property
+    def update_product(self) -> Path:
+        """The whole product a HUP client downloads when it needs one.
+
+        macOS is the disk image: it and the ZIP come from the same finished
+        bundle, and the image is what a person already downloads.
+        """
+
+        return self.application_dmg if self.platform_name == "macos" else self.application_archive
+
+    @property
+    def platform_release_directory(self) -> Path:
+        """Where this platform's manifest, delta, and descriptor are written."""
+
+        return self.repo_root / "dist" / "release" / self.platform_name
+
+    @property
+    def native_helper(self) -> Path:
+        """Where the POSIX update helper is compiled before the build runs."""
+
+        return self.repo_root / "dist" / ".native" / self.platform_name / NATIVE_HELPER_NAME
 
     @property
     def work_root(self) -> Path:
@@ -285,23 +325,46 @@ def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None
         raise PackagingError(f"{failure}: {detail.strip() or command[0]}")
 
 
+def build_native_helper(
+    repo_root: Path,
+    destination: Path,
+    *,
+    compiler: str | None = None,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Compile the POSIX update helper into a finished build.
+
+    It goes beside the executable so it is inside the macOS bundle before that
+    bundle is signed: a binary added afterwards would break the seal. Windows
+    has its own helper and needs none of this.
+    """
+
+    source = Path(repo_root) / NATIVE_HELPER_SOURCE
+    if not source.is_file():
+        raise PackagingError(f"the update helper source is missing: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _run_native(
+        runner,
+        [compiler or "cc", *NATIVE_HELPER_FLAGS, "-o", str(destination), str(source)],
+        "could not build the update helper",
+    )
+    destination.chmod(0o755)
+    return destination
+
+
 def product_version() -> str:
     """The version the build carries, read the way the application reads it."""
 
     return metadata.version("hanly-app")
 
 
-def write_update_artifacts(
-    layout: PackageLayout,
-    *,
-    base_manifest: Path | None = None,
-    base_checksums: Path | None = None,
-) -> ReleaseProducts:
-    """Produce the Windows manifest, update metadata, and optional delta.
+def write_update_artifacts(layout: PackageLayout) -> ReleaseProducts:
+    """Produce the schema-1 documents an older Windows client still reads.
 
-    Only Windows installs differentially, so only Windows publishes these. The
-    manifest is written into the frozen tree first, so the archive beside it
-    carries the inventory the next update will read from disk.
+    Full-only from the HUP era on: a client that understands these has always
+    supported the whole-archive branch, and publishing a second, legacy-only
+    delta to save one bootstrap download would add a second thing to keep
+    correct for the rest of that generation's life.
     """
 
     return build_release_products(
@@ -309,8 +372,9 @@ def write_update_artifacts(
         layout.application_archive,
         product_version(),
         layout.update_metadata_directory,
-        base_manifest_path=base_manifest,
-        base_checksums_path=base_checksums,
+        delta_reason=(
+            "this release publishes its differential updates through its update package"
+        ),
     )
 
 
@@ -320,41 +384,168 @@ def run_build(
     python_executable: Path | str | None = None,
     clean: bool = True,
     noconfirm: bool = True,
-    base_manifest: Path | None = None,
+    source_commit: str | None = None,
+    architecture: str | None = None,
+    base_package: Path | None = None,
     base_checksums: Path | None = None,
 ) -> int:
-    """Run PyInstaller using the selected interpreter and return its status."""
+    """Freeze the application and produce everything its release publishes.
+
+    The order matters and is the same everywhere: the build's identity goes in
+    before it is frozen, the compatibility inventory goes in before the archive
+    that carries it, and the manifest a release publishes is read from the
+    finished, signed tree afterwards. The one update package is assembled from
+    every platform's products by a later job, never here.
+    """
+
+    stamp = _stamp_build(layout, source_commit, architecture)
+    environment = dict(os.environ)
+    windows = layout.platform_name == "windows"
+    if windows:
+        environment.pop("HANLY_UPDATE_HELPER", None)
+    else:
+        # Before PyInstaller, not after: macOS signs the bundle as it builds
+        # it, and a binary added to a sealed bundle is one that no longer
+        # verifies. Windows has its own helper and needs none of this.
+        try:
+            environment["HANLY_UPDATE_HELPER"] = str(
+                build_native_helper(layout.repo_root, layout.native_helper)
+            )
+        except (OSError, PackagingError) as error:
+            print(f"Hanly packaging: {error}", file=sys.stderr)
+            return 1
 
     command = build_command(
         layout, python_executable=python_executable, clean=clean, noconfirm=noconfirm
     )
-    completed = subprocess.run(command, cwd=layout.repo_root, check=False)
+    completed = subprocess.run(command, cwd=layout.repo_root, check=False, env=environment)
     if completed.returncode != 0:
         return completed.returncode
 
-    windows = layout.platform_name == "windows"
     try:
-        if windows:
-            # Before archiving: the inventory belongs inside the build, so a
-            # fresh installation already knows what it is made of.
-            generate_manifest(layout.application_directory, product_version())
-        products = [archive_application(layout)]
-        if layout.platform_name == "macos":
-            # Two products from one build: the ZIP the updater installs, and
-            # the disk image a person downloads.
-            products.append(create_disk_image(layout))
-        if windows:
-            products.extend(
-                write_update_artifacts(
-                    layout, base_manifest=base_manifest, base_checksums=base_checksums
-                ).paths()
-            )
+        products = _release_products(layout, stamp, base_package, base_checksums)
     except (OSError, PackagingError, ArtifactError) as error:
-        print(f"Hanly packaging: could not create application archive: {error}", file=sys.stderr)
+        print(f"Hanly packaging: could not produce the release artifacts: {error}", file=sys.stderr)
         return 1
     for product in products:
         print(f"Hanly packaging: application artifact written to {product}")
     return 0
+
+
+def _stamp_build(
+    layout: PackageLayout, source_commit: str | None, architecture: str | None
+) -> BuildStamp:
+    """Give this freeze an identity, before there is anything to identify."""
+
+    return write_build_stamp(
+        layout.repo_root / "packages" / "hanly-app" / "src" / "hanly_app",
+        platform_name=layout.platform_name,
+        architecture=architecture or host_architecture(),
+        version=product_version(),
+        source_commit=source_commit or _source_commit(layout.repo_root),
+    )
+
+
+def _source_commit(repo_root: Path) -> str:
+    """The commit this build is being made from, for a local build with none."""
+
+    completed = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    commit = completed.stdout.strip()
+    if completed.returncode != 0 or len(commit) != 40:
+        raise PackagingError(
+            "this build has no source commit; pass --source-commit for a build outside a checkout"
+        )
+    return commit
+
+
+def _release_products(
+    layout: PackageLayout,
+    stamp: BuildStamp,
+    base_package: Path | None,
+    base_checksums: Path | None,
+) -> list[Path]:
+    """Everything the finished tree yields, in the order its parts depend on."""
+
+    windows = layout.platform_name == "windows"
+    if windows:
+        # Before archiving: the compatibility inventory belongs inside the
+        # build, so a fresh installation carries what an older client reads.
+        generate_manifest(layout.application_directory, product_version())
+
+    products = [archive_application(layout)]
+    if layout.platform_name == "macos":
+        # Two products from one build: the disk image a person downloads and
+        # a HUP client installs, and the ZIP an older client still needs.
+        products.append(create_disk_image(layout))
+
+    products.extend(write_platform_release(layout, stamp, base_package, base_checksums))
+    if windows:
+        products.extend(write_update_artifacts(layout).paths())
+    return products
+
+
+def write_platform_release(
+    layout: PackageLayout,
+    stamp: BuildStamp,
+    base_package: Path | None = None,
+    base_checksums: Path | None = None,
+) -> tuple[Path, ...]:
+    """Produce this platform's schema-2 manifest, delta, and descriptor."""
+
+    base, reason = _base_manifest(stamp, base_package, base_checksums)
+    release = build_platform_release(
+        layout.application_directory,
+        stamp,
+        _tree_layout(layout),
+        layout.update_product,
+        layout.platform_release_directory,
+        full_format=FULL_FORMATS[layout.platform_name],
+        base=base,
+        base_reason=reason,
+    )
+    written = [release.manifest_path, release.descriptor_path]
+    if release.delta is not None:
+        written.append(layout.platform_release_directory / release.delta.payload.name)
+    return tuple(written)
+
+
+def _base_manifest(
+    stamp: BuildStamp, base_package: Path | None, base_checksums: Path | None
+) -> tuple[TreeManifest | None, str]:
+    """Read the predecessor this platform diffs against, or say why it cannot.
+
+    A missing or unusable predecessor never fails a build: the first HUP-aware
+    release has none by definition, and a release that stopped because it could
+    not diff would be worse than one that ships the whole product.
+    """
+
+    if base_package is None:
+        return None, "no previous published update package was supplied"
+    try:
+        return (
+            load_base_package_manifest(
+                base_package,
+                base_checksums,
+                platform_name=stamp.platform,
+                architecture=stamp.architecture,
+            ),
+            "",
+        )
+    except ArtifactError as error:
+        return None, str(error)
+
+
+def _tree_layout(layout: PackageLayout) -> TreeLayout:
+    """What an installation of this platform's product is called and runs."""
+
+    executable = layout.executable.relative_to(layout.application_directory).as_posix()
+    mode = None if layout.platform_name == "windows" else 0o755
+    return TreeLayout(root=layout.payload_name, executable=executable, mode=mode)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -383,14 +574,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="allow PyInstaller to ask before replacing an existing artifact",
     )
     parser.add_argument(
-        "--base-manifest",
+        "--source-commit",
+        help="the commit this build is made from (defaults to the checkout's HEAD)",
+    )
+    parser.add_argument(
+        "--architecture",
+        help="the machine this build targets (defaults to the host's)",
+    )
+    parser.add_argument(
+        "--base-package",
         type=Path,
-        help="the previous release's published Windows manifest, to diff against",
+        help="the previous release's published update package, to diff against",
     )
     parser.add_argument(
         "--base-checksums",
         type=Path,
-        help="that release's SHA256SUMS, which proves the manifest is its own",
+        help="that release's SHA256SUMS, which proves the package is its own",
     )
     parser.add_argument(
         "--dry-run",
@@ -422,7 +621,9 @@ def main(argv: list[str] | None = None) -> int:
         python_executable=args.python_executable,
         clean=not args.no_clean,
         noconfirm=not args.no_noconfirm,
-        base_manifest=args.base_manifest,
+        source_commit=args.source_commit,
+        architecture=args.architecture,
+        base_package=args.base_package,
         base_checksums=args.base_checksums,
     )
 

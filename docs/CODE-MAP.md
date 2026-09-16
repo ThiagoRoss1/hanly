@@ -227,76 +227,88 @@ download run the same code.
 A resource is swapped while Hanly keeps running. The application holds the
 executable and the interpreter running from it, so it cannot be.
 
-**Two strategies, one per platform.** Windows changes only the files that
-differ, in place, at the same installation path. macOS and Linux keep the
-whole-bundle swap: a `.app` is signed as a unit, and neither publishes the
-release artifacts a differential update reads.
-
-### Windows: differential, in place
+**One plan, three ways of applying it.** Preparing an update is identical
+everywhere: pin the release, read the one metadata package, read the
+installation, establish what it is, decide what changes. Only what happens to
+the plan afterwards differs.
 
 ```
 Control Center "Update now"
   → update_coordinator.py          one operation at a time, off the UI thread
-  → app_update_runner.py           takes the per-installation lock
+  → app_update_runner.py           TreeUpdateRunner takes the installation's lock
   → app_update_install.py  prepare()
-        SHA256SUMS → update.json → manifest.json     (metadata only, no payload)
-        hash the installation                        app_inventory.py
-        decide what changes                          app_update_plan.py
-    ↳ the delta cannot be used here → show its real size, ask again
+        pin the release                              ReleaseSnapshot
+        SHA256SUMS → Hanly-vX.Y.Z.hup                app_hup.py (metadata only)
+        this machine's entry                         stamp: app_build_identity.py
+        read the installation as a tree              app_inventory.read_tree
+        establish ownership: receipt, or bootstrap against the installed tag
+        decide what changes                          app_update_plan.plan_tree_update
+    ↳ the delta cannot be used here → show the real size, ask again
   → app_update_install.py  stage()
-        download the delta (or the full archive, as a source of files)
-        verify it, extract only the members the plan named, verify each
-        write the journal                            app_update_journal.py
-  → app_update_helper.py           a detached PowerShell program, then Hanly quits
-        wait for every process running out of the installation to exit
-        per file: move the original aside, move the staged file in
-        relaunch with `--update-ready <path>`, wait for the expected version
-        ↳ it reports    commit, and remove the transaction
-        ↳ it does not   put every original back and relaunch the old build
+        download the payload the plan named, verify it
+        → WindowsFileStaging   stage only the changed files      (journal)
+        → PosixTreeStaging     build a whole candidate and prove it
+  → hand off, then Hanly quits
+        → app_update_helper.py    detached PowerShell, file by file
+        → app_update_handoff.py   the native helper, two renames
 ```
 
-### macOS and Linux: whole-bundle swap
+### Windows: change the files that differ, in place
 
-```
-  → app_update.py          ApplicationInstaller.stage() / .apply()
-  → app_update_handoff.py  rename installation aside, rename the staged build in
-```
+The installation path never changes and no second copy is made. Everything
+lives under `<installation>/.hanly-update/<transaction>/`: the staged files,
+the originals moved aside, the journal, and the answer the new build has to
+produce. `app_update_helper.py` renders the PowerShell that applies it.
 
-Four rules hold the whole thing together:
+### macOS and Linux: build the whole thing, then swap
+
+`app_update_tree.py` reconstructs the published build in a private directory
+beside the installation - mostly out of bytes the installation already holds -
+and `verify_candidate` proves it entry by entry. `app_update_macos.py` adds
+what only macOS needs: a disk image attached read-only at a private mount
+point, `ditto`, and `codesign --verify --deep --strict` on the result. Nothing
+is re-signed locally; the published signature material travels as file content
+and extended attributes (`app_xattr_darwin.py` binds the four libc calls
+CPython does not expose).
+
+The swap itself belongs to `packaging/updater/hanly-update-posix.c`, a small
+C program linked against nothing but the system. It has to work when the thing
+it is repairing does not: the installation path is briefly absent between its
+two renames, so a helper that loaded an interpreter or a script out of that
+directory would be relying on the tree it is replacing.
+
+Five rules hold the whole thing together:
 
 - **The previous build outlives the update.** It is discarded only once the new
-  one has reported the expected version through `--update-ready`, which
-  `cli.main` answers from `application.run_desktop` when the window opens. A
-  build that installs and then cannot start is rolled back, not shrugged at.
-- **Correctness comes from the filesystem, not the journal.** Every apply and
-  rollback step reads what is actually there before acting, so a step
-  interrupted between the move and the record of it replays to the same result.
-  The journal bounds the work and drives the progress window.
-- **The helper depends on nothing it is changing.** Windows PowerShell and the
-  .NET Framework, and a verified copy under `%LOCALAPPDATA%/Hanly/recovery`
-  with a `.cmd` beside it, so an installation that will not start can still be
-  repaired.
-- **Ownership decides deletion.** Only a path the previous build's manifest
-  owned, and the new one dropped, is removed. An installation carrying no
-  inventory deletes nothing.
-
-`extract_application_tar` is the application's own extractor: a PyInstaller
-directory build is full of relative links between its bundled libraries, and
-the resource extractor rejects every link outright - correctly, for a resource.
-macOS keeps `ditto`, which is the only thing that reproduces an `.app` intact.
+  one has answered that transaction's challenge - its own build UUID, a random
+  nonce, and the manifest digest - which `cli.main` answers through
+  `--update-ready-v2` when the shell's event loop starts. A version number is
+  not an acknowledgement; `--update-ready` remains exactly as it was for
+  helpers an older Hanly installed.
+- **Correctness comes from the filesystem, not the record.** Every apply,
+  rollback, and recovery step reads what is actually there before acting.
+- **The helper depends on nothing it is changing.** A verified copy of it lives
+  outside the installation, with a route to run it when Hanly will not start.
+- **Ownership decides deletion.** Only a path the previous build owned, and the
+  new one dropped, is removed. Ownership comes from a receipt this updater
+  wrote, or from a tree proved to match a published manifest exactly - never
+  from equal bytes at a path nobody claimed.
+- **A plan is decided before a payload is fetched.** The size a person is shown
+  is the size that will be downloaded, and a full download is always asked for.
 
 ### What a release publishes for it
 
 | Asset | Read by |
 |---|---|
-| `hanly-desktop-windows.zip` | every client; also the source of files on a fallback |
-| `hanly-desktop-windows.manifest.json` | the inventory of the new build |
-| `hanly-desktop-windows.update.json` | what to download, and which build the delta starts from |
-| `hanly-desktop-windows-from-<base>-to-<target>.delta.zip` | optional; only the changed files |
+| `Hanly-vX.Y.Z.hup` | every package-aware client: the index and one tree manifest per platform |
+| `hanly-desktop-<platform>-<arch>-from-<base>-to-<target>.delta.zip` | one platform's changed bytes, when a verified predecessor existed |
+| `hanly-desktop-windows.zip`, `-macos.dmg`, `-linux.tar.gz` | the whole product, when a delta cannot be used |
+| `hanly-desktop-macos.zip`, `-windows.manifest.json`, `-windows.update.json` | compatibility, for clients from before update packages |
 
-`tools/update_artifacts.py` produces all three from the finished frozen tree,
-and writes the inventory into the build as `.hanly-manifest.json` so a fresh
-installation already knows what it is made of.
+`tools/update_artifacts.py` produces each platform's manifest, delta, and
+descriptor from the finished, signed tree, and assembles the one package from
+every platform that succeeded. `packaging/README.md` has the build order and
+the migration routes.
 
 ---
 

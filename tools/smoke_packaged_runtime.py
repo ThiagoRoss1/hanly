@@ -549,6 +549,83 @@ def reconstruct_application(
     return application
 
 
+def reconstruct_from_disk_image(
+    image: str | Path,
+    destination: str | Path,
+    *,
+    payload_name: str = BUNDLE_NAME,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Copy the application out of the published disk image, as a client does.
+
+    The disk image is the whole product a HUP client downloads when it needs
+    one, so what is smoked is what comes out of it - not the build directory it
+    was made from, and not the ZIP beside it.
+    """
+
+    source = Path(image).resolve()
+    target = Path(destination).resolve()
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+
+    with tempfile.TemporaryDirectory(prefix="hanly-dmg-") as scratch:
+        mountpoint = Path(scratch) / "mount"
+        mountpoint.mkdir()
+        _run_native(
+            runner,
+            [HDIUTIL, "attach", str(source), "-readonly", "-nobrowse", "-mountpoint",
+             str(mountpoint)],
+            f"could not mount {source.name}",
+        )
+        try:
+            application = mountpoint / payload_name
+            if not application.is_dir():
+                raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
+            _run_native(
+                runner,
+                [DITTO, str(application), str(target / payload_name)],
+                f"could not copy {payload_name} out of {source.name}",
+            )
+        finally:
+            _run_native(
+                runner,
+                [HDIUTIL, "detach", str(mountpoint), "-force"],
+                f"could not unmount {source.name}",
+            )
+
+    copied = target / payload_name
+    if not copied.joinpath(*_BUNDLE_PROGRAM_PARTS).is_file():
+        raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
+    return copied
+
+
+def compare_to_manifest(application: Path, manifest_path: Path) -> dict[str, object]:
+    """Say exactly how a reconstructed product differs from what was published.
+
+    Both published macOS products come from one finished bundle, so holding
+    each to the same manifest is what proves they are the same application -
+    and what would catch one of them losing a link or a permission bit on the
+    way through its own format.
+    """
+
+    from hanly_app.app_inventory import compare_tree, read_tree
+    from hanly_app.app_manifest import TreeManifest
+
+    manifest = TreeManifest.from_json(Path(manifest_path).read_text(encoding="utf-8"))
+    inventory = read_tree(Path(application), manifest.platform)
+    comparison = compare_tree(inventory, manifest)
+    return {
+        "manifest": Path(manifest_path).name,
+        "build_id": manifest.identity.build_id,
+        "entries": len(manifest),
+        "ok": comparison.matches,
+        "missing": list(comparison.missing[:10]),
+        "differing": list(comparison.differing[:10]),
+        "unexpected": list(comparison.extra[:10]),
+    }
+
+
 def verify_disk_image(
     image: str | Path,
     *,
@@ -787,6 +864,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="where --from-archive unpacks (default: a temporary directory)",
     )
     parser.add_argument(
+        "--from-disk-image",
+        type=Path,
+        help="reconstruct the application out of the published disk image, and check that",
+    )
+    parser.add_argument(
+        "--against-manifest",
+        type=Path,
+        help="compare whatever was reconstructed to the manifest the release publishes",
+    )
+    parser.add_argument(
         "--disk-image",
         type=Path,
         help="published macOS DMG to mount read-only and report on",
@@ -875,21 +962,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             output["disk_image"] = verify_disk_image(args.disk_image)
 
         application = args.application_directory
-        if args.from_archive is not None:
+        source = args.from_archive if args.from_archive is not None else args.from_disk_image
+        if source is not None:
             destination = args.reconstruct_into
             if destination is None:
                 reconstruction = tempfile.TemporaryDirectory(prefix="hanly-reconstruct-")
                 destination = Path(reconstruction.name) / "app"
-            application = reconstruct_application(args.from_archive, destination)
+            application = (
+                reconstruct_application(source, destination)
+                if args.from_archive is not None
+                else reconstruct_from_disk_image(source, destination)
+            )
             output["reconstructed"] = {
-                "archive": Path(args.from_archive).name,
+                "archive": Path(source).name,
                 "application": str(application),
             }
+
+        if application is not None and args.against_manifest is not None:
+            output["manifest"] = compare_to_manifest(application, args.against_manifest)
 
         if application is None or args.reconstruct_only:
             print(json.dumps(output, indent=2))
             return _unusable_disk_image(output)
-        return max(_report(args, application, output), _unusable_disk_image(output))
+        return max(
+            _report(args, application, output),
+            _unusable_disk_image(output),
+            _mismatched_manifest(output),
+        )
     finally:
         if reconstruction is not None:
             reconstruction.cleanup()
@@ -898,18 +997,45 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _argument_problem(args: argparse.Namespace) -> str | None:
     """Reject an invocation that names no subject, or two of them."""
 
-    if args.application_directory is not None and args.from_archive is not None:
-        return "name either an application directory or --from-archive, not both"
-    subjects = (args.application_directory, args.from_archive, args.disk_image)
+    named = [
+        subject
+        for subject in (args.application_directory, args.from_archive, args.from_disk_image)
+        if subject is not None
+    ]
+    if len(named) > 1:
+        return "name one application directory, --from-archive, or --from-disk-image"
+    subjects = (*named, args.disk_image)
     if all(subject is None for subject in subjects):
         return "name an application directory, --from-archive, or --disk-image"
-    if args.reconstruct_only and args.from_archive is None:
-        return "--reconstruct-only needs --from-archive"
+    if args.reconstruct_only and not named:
+        return "--reconstruct-only needs --from-archive or --from-disk-image"
+    if args.against_manifest is not None and not named:
+        return "--against-manifest needs an application to compare"
     if args.expect_version is not None and (args.inventory_only or args.reconstruct_only):
         # The bundle answers for its own version by running; a check that does
         # not run it would report an identity it never asked for.
         return "--expect-version needs a check that runs the executable"
     return None
+
+
+def _mismatched_manifest(output: Mapping[str, object]) -> int:
+    """Fail on a reconstructed product that is not the build it claims to be.
+
+    A product that unpacks is not evidence. One that unpacks into a tree the
+    release does not describe is a product a client would refuse to install,
+    discovered here rather than by the first person to update.
+    """
+
+    report = output.get("manifest")
+    if isinstance(report, Mapping) and report.get("ok") is not True:
+        print(
+            f"Hanly smoke: what was reconstructed is not the build {report.get('manifest')} "
+            f"describes; missing {report.get('missing')}, differing {report.get('differing')}, "
+            f"unexpected {report.get('unexpected')}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 def _unusable_disk_image(output: Mapping[str, object]) -> int:

@@ -7,12 +7,14 @@ change does not fail and a semantic regression does not pass unnoticed.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+from tools.release_build import FIXED_RELEASE_ASSETS
 
 WORKFLOWS = Path(__file__).parents[1] / ".github" / "workflows"
 
@@ -266,13 +268,12 @@ def test_build_retains_the_release_archive_and_its_evidence() -> None:
 
     assert upload["with"]["name"] == "hanly-desktop-${{ matrix.platform }}"
     assert upload["with"]["if-no-files-found"] == "error"
-    # The archive, plus the small JSON reports that say what was verified and
-    # which artifact it was verified against. The onedir tree beside the
-    # archive is the same payload a second time, and never travels.
-    assert all(
-        path.startswith("dist/hanly-desktop-") or path.startswith("dist/reports/")
-        for path in paths
-    ), paths
+    # The products, the small JSON reports saying what was verified against
+    # which artifact, and this platform's release metadata - which is what the
+    # aggregation job reads. The onedir tree beside the archive is the same
+    # payload a second time, and never travels.
+    carried = ("dist/hanly-desktop-", "dist/reports/", "dist/release/")
+    assert all(path.startswith(carried) for path in paths), paths
     assert not any("hanly-desktop/" in path or ".pyinstaller" in path for path in paths)
     # `if: always()` would upload after a failed build and report a second,
     # misleading "no files found" error on top of the real failure.
@@ -358,13 +359,24 @@ _STATUS_TERMS = {"always()": True, "!cancelled()": True, "cancelled()": False}
 
 _STEP_OUTCOME = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outcome\s*==\s*'(\w+)'")
 _MATRIX_PLATFORM = re.compile(r"matrix\.platform\s*==\s*'(\w+)'")
+_NEEDS_OUTPUT = re.compile(r"needs\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)\s*==\s*'([^']*)'")
+
+#: What the jobs this one needs reported, for a replay that does not say.
+#: A repository with releases behind it is the ordinary case.
+_DEFAULT_NEEDS = {"predecessor.available": "true"}
 
 
 def _step_key(step: dict[str, Any]) -> str:
     return str(step.get("id") or step.get("name", ""))
 
 
-def _term_holds(term: str, outcomes: dict[str, str], platform: str, failed: bool) -> bool:
+def _term_holds(
+    term: str,
+    outcomes: dict[str, str],
+    platform: str,
+    failed: bool,
+    needs: Mapping[str, str],
+) -> bool:
     """Decide one ``&&``-separated term, refusing to guess at an unknown one."""
 
     if term in _STATUS_TERMS:
@@ -377,23 +389,34 @@ def _term_holds(term: str, outcomes: dict[str, str], platform: str, failed: bool
     matrix = _MATRIX_PLATFORM.fullmatch(term)
     if matrix is not None:
         return platform == matrix.group(1)
+    required = _NEEDS_OUTPUT.fullmatch(term)
+    if required is not None:
+        return needs.get(f"{required.group(1)}.{required.group(2)}") == required.group(3)
     if term.startswith("startsWith(github.ref"):
         return False
     raise AssertionError(f"unmodelled step condition: {term!r}")
 
 
 def _condition_holds(
-    condition: str, outcomes: dict[str, str], platform: str, failed: bool
+    condition: str,
+    outcomes: dict[str, str],
+    platform: str,
+    failed: bool,
+    needs: Mapping[str, str],
 ) -> bool:
     expression = condition.strip().removeprefix("${{").removesuffix("}}").strip()
     return all(
-        _term_holds(term.strip(), outcomes, platform, failed)
+        _term_holds(term.strip(), outcomes, platform, failed, needs)
         for term in expression.split("&&")
     )
 
 
 def _run_plan(
-    job: str, *, platform: str, failing: Sequence[str] = ()
+    job: str,
+    *,
+    platform: str,
+    failing: Sequence[str] = (),
+    needs: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Replay the job, returning what each step's outcome would have been.
 
@@ -401,6 +424,7 @@ def _run_plan(
     exactly the default that made one failure hide every later check.
     """
 
+    required = {**_DEFAULT_NEEDS, **(needs or {})}
     outcomes: dict[str, str] = {}
     failed = False
     for step in _steps(_workflow("build.yml"), job):
@@ -409,7 +433,7 @@ def _run_plan(
         runs = (
             not failed
             if condition is None
-            else _condition_holds(str(condition), outcomes, platform, failed)
+            else _condition_holds(str(condition), outcomes, platform, failed, required)
         )
         outcomes[key] = ("failure" if key in failing else "success") if runs else "skipped"
         failed = failed or outcomes[key] == "failure"
@@ -890,24 +914,15 @@ def test_publication_is_the_last_act_and_only_over_the_expected_assets() -> None
 
     assert "gh release upload" in code
     assert "--clobber" in code
-    for asset in (
-        "hanly-desktop-windows.zip",
-        # Both macOS products: the updater's ZIP and the human's disk image.
-        "hanly-desktop-macos.zip",
-        "hanly-desktop-macos.dmg",
-        "hanly-desktop-linux.tar.gz",
-        # Windows is the only platform that installs differentially.
-        "hanly-desktop-windows.manifest.json",
-        "hanly-desktop-windows.update.json",
-        "hanly-resources.json",
-        "SHA256SUMS",
-    ):
-        assert asset in code, asset
-    assert "hanly-desktop-macos.tar.gz" not in code
-    assert "RESOURCE_ASSET_NAME" in code
-    # The optional Windows delta makes the count vary, so the check is derived
-    # from the expected set rather than written as a literal that goes stale.
-    assert "DELTA_ASSET_NAME" in code
+    # The set comes from the validated update package rather than being
+    # restated here: two lists could otherwise disagree about what this release
+    # is. `tests/test_release_build.py` holds the derivation itself.
+    assert publish["env"]["EXPECTED_ASSETS"] == (
+        "${{ steps.resources.outputs.expected_assets }}"
+    )
+    assert "mapfile -t expected_assets" in code
+    for asset in ("hanly-desktop-windows.zip", "hanly-desktop-macos.dmg", "Hanly-v"):
+        assert asset not in code, asset
     guard = "${#actual_assets[@]} -ne ${#expected_assets[@]}"
     assert guard in code
     assert code.index(guard) < code.index("--draft=false")
@@ -1069,8 +1084,10 @@ def test_the_published_checksums_are_proven_to_be_the_generated_ones() -> None:
     code = _shell_code(publish["run"])
 
     # Tolerated on the draft, because a rerun has to be able to repair its own
-    # partially finished work rather than refuse it.
-    assert "SHA256SUMS" in allowed.split("allowed=(", 1)[1].split(")", 1)[0]
+    # partially finished work rather than refuse it. It is tolerated by being
+    # part of the derived set, which is where every allowed name now comes from.
+    assert "release_build.py assets" in allowed
+    assert "SHA256SUMS" in FIXED_RELEASE_ASSETS
 
     assert "cmp --silent" in code
     assert "release-output/SHA256SUMS" in code
@@ -1132,3 +1149,131 @@ def test_the_release_lane_carries_exactly_the_application_products() -> None:
     sums = _release_code("finalize").split("> release-output/SHA256SUMS")[0]
     assert sums.count("release-output/hanly-desktop-") == 6
     assert "hanly-desktop-windows-from-*.delta.zip" in sums
+
+
+def test_the_predecessor_is_resolved_once_for_every_platform_that_builds() -> None:
+    """Three jobs asking separately could pick three different predecessors."""
+
+    workflow = _workflow("build.yml")
+
+    assert workflow["jobs"]["build"]["needs"] == "predecessor"
+    pin = _step(workflow, "predecessor", step_id="pin")
+    assert "release_build.py predecessor" in _shell_code(pin["run"])
+
+    fetch = _step(workflow, "build", step_id="base")
+    assert fetch["if"] == "needs.predecessor.outputs.available == 'true'"
+    assert fetch["env"]["BASE_TAG"] == "${{ needs.predecessor.outputs.tag }}"
+
+
+def test_a_release_with_no_predecessor_still_builds_every_product() -> None:
+    outcomes = _run_plan(
+        "build", platform="linux", needs={"predecessor.available": "false"}
+    )
+
+    assert outcomes["base"] == "skipped"
+    assert outcomes["build"] == "success"
+    assert outcomes[RELEASE_UPLOAD] == "success"
+
+
+def test_each_build_declares_the_machine_it_targets_rather_than_reading_it() -> None:
+    entries = _workflow("build.yml")["jobs"]["build"]["strategy"]["matrix"]["include"]
+    architectures = {entry["platform"]: entry["architecture"] for entry in entries}
+
+    assert architectures == {"windows": "x86_64", "macos": "arm64", "linux": "x86_64"}
+    build = _step(_workflow("build.yml"), "build", step_id="build")
+    assert build["env"]["RUNNER_ARCHITECTURE"] == "${{ matrix.architecture }}"
+    assert build["env"]["BUILD_COMMIT"] == "${{ github.sha }}"
+
+
+def test_the_update_package_is_assembled_once_from_the_run_that_built_it() -> None:
+    workflow = _workflow("build.yml")
+    package = workflow["jobs"]["package"]
+
+    assert package["needs"] == "build"
+    download = next(
+        step for step in package["steps"] if "download-artifact" in step.get("uses", "")
+    )
+    assert download["with"]["pattern"] == "hanly-desktop-*"
+    assert download["with"]["merge-multiple"] is True
+
+    assemble = next(
+        step for step in package["steps"] if "update_artifacts.py package" in step.get("run", "")
+    )
+    code = _shell_code(assemble["run"])
+    assert "--products release-inputs" in code
+    assert "--source-commit" in code
+    # Nothing in this job builds an application: a release publishes the
+    # artifacts of one run, and rebuilding one would produce a different tree.
+    for step in package["steps"]:
+        assert "build_package.py" not in step.get("run", "")
+
+
+def test_the_update_package_is_retained_as_its_own_artifact() -> None:
+    upload = _step(_workflow("build.yml"), "package", name="Retain the update package")
+
+    assert upload["with"]["name"] == "hanly-update-package"
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+def test_the_release_set_is_derived_from_the_package_the_release_publishes() -> None:
+    """A list kept beside the package could disagree with it about a delta."""
+
+    resources = _step(_release(), "finalize", step_id="resources")
+    code = _shell_code(resources["run"])
+
+    assert "release_build.py assets" in code
+    assert "--package" in code and "--resource" in code
+    assert "expected_assets<<HANLY_ASSETS" in code
+
+
+@pytest.mark.parametrize("job", ["stage", "finalize"])
+def test_both_halves_take_the_package_from_the_run_that_built_the_products(
+    job: str,
+) -> None:
+    steps = _steps(_release(), job)
+    downloads = [step for step in steps if "download-artifact" in step.get("uses", "")]
+    package = next(step for step in downloads if step["with"].get("name") == "hanly-update-package")
+    products = next(step for step in downloads if step["with"].get("pattern") == "hanly-desktop-*")
+
+    assert package["with"]["run-id"] == products["with"]["run-id"]
+    assert package["with"]["path"] == "release-inputs/package"
+
+
+@pytest.mark.parametrize("job", ["stage", "finalize"])
+def test_a_release_with_a_package_publishes_no_separate_windows_delta(job: str) -> None:
+    code = _release_code(job)
+
+    assert "no separate Windows delta" in code
+    assert "expected exactly one Hanly update package" in code
+
+
+def test_the_macos_lane_smokes_the_product_a_client_would_download() -> None:
+    """The disk image is what a HUP client fetches when it needs a whole
+    product, so smoking only the compatibility ZIP would prove the wrong one."""
+
+    resolve = _step(_workflow("build.yml"), "build", step_id="resolve")
+    code = _shell_code(resolve["run"])
+
+    assert "--from-disk-image dist/hanly-desktop-macos.dmg" in code
+    assert "--from-archive dist/hanly-desktop-macos.zip" in code
+    # Both products come from one bundle, and one manifest is what proves it.
+    assert code.count("--against-manifest") == 2
+    assert 'SMOKE_APP=dist/reconstructed/Hanly.app' in code
+
+
+def test_every_build_is_held_to_the_manifest_its_release_publishes() -> None:
+    inventory = _step(_workflow("build.yml"), "build", step_id="inventory")
+
+    assert '--against-manifest "$PUBLISHED_MANIFEST"' in _shell_code(inventory["run"])
+
+
+def test_each_artifact_records_the_build_an_update_will_be_offered_against() -> None:
+    """An archive hash says two downloads are the same file; only the build
+    identity says which build a later release may publish a delta from."""
+
+    identity = _step(_workflow("build.yml"), "build", step_id="identity")
+    code = _shell_code(identity["run"])
+
+    for field in ("build_id", "architecture", "manifest_sha256", "delta_omitted_reason"):
+        assert field in code, field
+    assert "release" in code and "descriptor.json" in code
