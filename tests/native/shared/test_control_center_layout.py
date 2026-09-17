@@ -21,15 +21,15 @@ _WIDTHS = (400, 640, 760, 780, 900, 1039, 1040, 1080)
 
 #: Controls that must stay inside the window at every one of those widths.
 _CONTROLS = (
-    "start-capture",
-    "stop-capture",
+    "toggle-capture",
     "select-area",
-    "hotkey",
-    "hover-hotkey",
-    "capture-hotkey",
-    "hover-activation",
+    "capture-target",
     "lookup-preload",
-    "hover-delay",
+    "hover-delay-slider",
+    "hover-delay-value",
+    "region-left",
+    "region-height",
+    "quit-ask",
 )
 
 _CHILD_TIMEOUT_SECONDS = 300
@@ -71,11 +71,17 @@ MEASURE = """
 host = ControlCenterHost(ControlCenterBridge(), width=1080, height=760)
 report = {"measurements": [], "errors": []}
 
+# Region mode is what puts the widest row on the page, and its fields have no
+# geometry at all while the section is collapsed.
+OPEN_REGION = 'document.getElementById("target-region").click();'
+
 
 def started():
     try:
         time.sleep(2.5)
         window = host.window
+        host.evaluate(OPEN_REGION)
+        time.sleep(1.5)
         for width in WIDTHS:
             window.resize(width, 760)
             time.sleep(1.0)

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-mode="light">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,271 +7,301 @@
     <link rel="stylesheet" href="control_center.css">
   </head>
   <body>
-    <main class="shell" id="control-center">
-      <header class="masthead">
-        <div>
-          <p class="eyebrow">Hanly / desktop desk</p>
-          <h1>Read what is ready.</h1>
-          <p class="lede">Control capture at a glance, then leave the desk quiet while Hanly reads.</p>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">한</div>
+          <div class="brand-words">
+            <div class="brand-name">Hanly</div>
+            <div class="brand-sub">Control Center</div>
+          </div>
         </div>
-        <div class="masthead-side">
-          <div class="readiness-mark" aria-label="Hanly readiness mark">
-            <span>준</span><span>비</span><span>읽</span><span>기</span>
+
+        <nav class="nav" id="nav" aria-label="Sections">
+          <div class="nav-bubble" id="nav-bubble" aria-hidden="true"></div>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="live-card">
+            <div class="live-head">
+              <span class="dot" id="live-dot" aria-hidden="true"></span>
+              <span class="live-label" id="live-label">Preparing</span>
+            </div>
+            <div class="live-facts" role="status" aria-live="polite">
+              <div class="live-fact" id="fact-runtime">
+                <span>runtime</span><span id="live-runtime">—</span>
+              </div>
+              <div class="live-fact" id="fact-engine">
+                <span>engine</span><span id="live-engine">—</span>
+              </div>
+              <div class="live-fact" id="fact-version" hidden>
+                <span>version</span><span id="live-version"></span>
+              </div>
+            </div>
           </div>
-          <button class="button button-quiet" id="quit-hanly" type="button">Quit Hanly</button>
+
+          <button class="btn btn-sm btn-quiet" id="quit-ask" type="button">Quit Hanly</button>
+          <div class="quit-confirm" id="quit-confirm" hidden>
+            <span class="quit-note">Capture stops and the tray icon goes away.</span>
+            <div class="quit-row">
+              <button class="btn btn-sm btn-danger" id="quit-confirm-yes" type="button">Quit</button>
+              <button class="btn btn-sm btn-quiet" id="quit-confirm-no" type="button">Cancel</button>
+            </div>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <div class="layout">
-        <aside class="status-spine" aria-labelledby="status-heading">
-          <div class="spine-heading">
-            <p class="eyebrow">Live status</p>
-            <h2 id="status-heading">At a glance</h2>
+      <main class="main">
+        <header class="page-head">
+          <div id="page-intro" data-anim="a">
+            <div class="page-kicker" id="page-kicker">Capture</div>
+            <h1 class="page-title" id="page-title">읽을 준비</h1>
+            <p class="page-desc" id="page-desc">Choose where Hanly reads.</p>
           </div>
-          <div class="status-line" id="status-line" data-state="new">
-            <span class="status-dot" aria-hidden="true"></span>
-            <div>
-              <span class="status-label">Application</span>
-              <strong id="app-state">Preparing</strong>
-              <p class="hint" id="app-detail">Hanly is getting ready.</p>
-            </div>
+          <div class="head-actions" id="capture-actions" hidden>
+            <button class="btn" id="select-area" type="button">Select area</button>
+            <button class="btn btn-primary btn-capture" id="toggle-capture" type="button">
+              Start capture
+            </button>
           </div>
-          <div class="status-item connection-item" id="connection-item" hidden>
-            <span class="status-label">This window</span>
-            <strong id="connection-state">Connecting…</strong>
-            <p class="hint" id="connection-message"></p>
-            <button class="text-button" id="reconnect" type="button" hidden>Try again</button>
-          </div>
-          <div class="status-item">
-            <span class="status-label">Capture</span>
-            <strong id="capture-state">Stopped</strong>
-          </div>
-          <div class="status-item runtime-item" data-phase="idle" id="runtime-item">
-            <span class="status-label">Lookup runtime</span>
-            <strong id="runtime-state">Preparing</strong>
-            <p class="hint" id="runtime-message">Hanly is getting its resources ready.</p>
-            <button class="text-button" id="retry-runtime" type="button" hidden>Try again</button>
-          </div>
-          <div class="status-item engine-item" data-state="sleeping" id="engine-item">
-            <span class="status-label">Lookup engine</span>
-            <strong id="engine-state">Not loaded</strong>
-            <p class="hint" id="engine-message">Hanly loads it when a lookup needs it.</p>
-          </div>
-          <div class="status-item">
-            <span class="status-label">OCR provider</span>
-            <strong id="ocr-provider">—</strong>
-          </div>
-          <div class="status-item">
-            <span class="status-label">Diagnostics</span>
-            <strong id="diagnostic-state">Clear</strong>
-          </div>
-          <div class="spine-footer">
-            <span class="utility" id="resource-count">0 resources</span>
-            <span class="utility" id="log-path">V1 / local</span>
-          </div>
-        </aside>
+        </header>
 
-        <section class="workspace" aria-label="Control Center controls">
-          <section class="workspace-section capture-section" aria-labelledby="capture-heading">
-            <div class="section-intro">
-              <p class="eyebrow">01 / capture</p>
-              <h2 id="capture-heading">Choose the reading surface</h2>
-              <p>Start or stop the listener, then tell Hanly where your text lives.</p>
+        <div class="page-body" id="page-body" data-anim="a">
+          <div class="banner" id="connection-banner" data-tone="warn" role="status" hidden>
+            <span class="banner-text" id="connection-text"></span>
+            <button class="btn btn-sm btn-quiet" id="reconnect" type="button" hidden>Try again</button>
+          </div>
+          <div class="banner" id="runtime-error" data-tone="bad" role="status" hidden>
+            <span class="banner-text" id="runtime-error-text"></span>
+            <button class="btn btn-sm btn-quiet" id="retry-runtime" type="button">Try again</button>
+          </div>
+          <div class="banner" id="action-error" data-tone="bad" role="alert" hidden>
+            <span class="banner-text" id="action-error-text"></span>
+          </div>
+
+          <!-- Capture ----------------------------------------------------- -->
+          <section class="page" id="page-capture" aria-labelledby="page-title">
+            <div class="capture-status" id="capture-status" data-rise="1">
+              <span class="dot" id="capture-dot" aria-hidden="true"></span>
+              <span class="capture-headline" id="capture-headline">Not reading</span>
+              <span class="capture-where" id="capture-where"></span>
+              <span class="capture-hint" id="capture-hint"></span>
             </div>
-            <div class="capture-controls">
-              <div class="action-row">
-                <button class="button button-primary" id="start-capture" type="button">Start capture</button>
-                <button class="button button-quiet" id="stop-capture" type="button">Stop capture</button>
-                <button class="button button-quiet" id="select-area" type="button">Select capture area…</button>
-              </div>
-              <p class="hint hint-error" id="action-error" role="alert" hidden></p>
-              <div class="permissions" id="permissions" hidden>
-                <div class="permissions-head">
-                  <span class="eyebrow">Permissions</span>
-                  <button class="text-button" id="recheck-permissions" type="button">Check again</button>
+
+            <div class="capture-stage">
+              <section class="panel" data-rise="2" aria-labelledby="target-heading">
+                <div class="panel-head">
+                  <h2 class="panel-title" id="target-heading">Reading target</h2>
                 </div>
-                <div class="permission-list" id="permission-list" aria-live="polite"></div>
-              </div>
-              <div class="field-grid">
-                <label class="field">
-                  <span>Capture scope</span>
-                  <select id="capture-mode">
-                    <option value="full_monitor">Current monitor</option>
-                    <option value="region">Selected region</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>Target monitor</span>
-                  <select id="capture-target">
-                    <option value="cursor">Follow cursor</option>
-                  </select>
-                </label>
-              </div>
-              <div class="region-panel">
-                <div class="region-fields">
-                  <label class="field"><span>Left</span><input id="region-left" type="number"></label>
-                  <label class="field"><span>Top</span><input id="region-top" type="number"></label>
-                  <label class="field"><span>Width</span><input id="region-width" type="number" min="1"></label>
-                  <label class="field"><span>Height</span><input id="region-height" type="number" min="1"></label>
+                <div class="panel-rows" role="radiogroup" aria-labelledby="target-heading">
+                  <button class="option" id="target-monitor" type="button" role="radio" aria-checked="false">
+                    <span class="option-radio" aria-hidden="true"></span>
+                    <span class="option-text">
+                      <span class="option-label">Current monitor</span>
+                      <span class="option-desc" id="target-monitor-desc">Follows the display the cursor is on.</span>
+                    </span>
+                  </button>
+                  <button class="option" id="target-region" type="button" role="radio" aria-checked="false">
+                    <span class="option-radio" aria-hidden="true"></span>
+                    <span class="option-text">
+                      <span class="option-label">Selected region</span>
+                      <span class="option-desc">A fixed rectangle you draw once.</span>
+                    </span>
+                  </button>
                 </div>
-                <div class="region-actions">
-                  <button class="text-button" id="apply-region" type="button">Apply region</button>
-                  <button class="text-button" id="clear-region" type="button">Clear region</button>
+              </section>
+
+              <div class="collapse" id="region-collapse" data-open="false">
+                <div class="collapse-inner">
+                  <section class="panel collapse-gap" id="region-panel" aria-labelledby="region-heading">
+                    <div class="region-head">
+                      <h2 class="panel-title" id="region-heading">Region</h2>
+                      <span class="region-coords" id="region-coords"></span>
+                      <button class="btn btn-sm btn-quiet" id="region-select-area" type="button">
+                        Select area
+                      </button>
+                    </div>
+                    <div class="region-body">
+                      <div class="region-fields">
+                        <label class="field">
+                          <span class="field-label">Left</span>
+                          <input class="input" id="region-left" type="text" inputmode="numeric" autocomplete="off">
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Top</span>
+                          <input class="input" id="region-top" type="text" inputmode="numeric" autocomplete="off">
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Width</span>
+                          <input class="input" id="region-width" type="text" inputmode="numeric" autocomplete="off">
+                        </label>
+                        <label class="field">
+                          <span class="field-label">Height</span>
+                          <input class="input" id="region-height" type="text" inputmode="numeric" autocomplete="off">
+                        </label>
+                      </div>
+                      <div class="region-actions">
+                        <button class="btn btn-sm btn-text" id="region-clear" type="button">Clear</button>
+                        <button class="btn btn-sm btn-primary" id="region-apply" type="button">Apply</button>
+                      </div>
+                    </div>
+                  </section>
                 </div>
               </div>
-              <p class="hint" id="region-hint">No region selected. Choose a scope to keep capture close to the word.</p>
             </div>
-          </section>
 
-          <section class="workspace-section resources-section" aria-labelledby="resources-heading">
-            <div class="section-intro">
-              <p class="eyebrow">02 / readiness</p>
-              <h2 id="resources-heading">Local tools</h2>
-              <p>ResourceManager is the source of truth for local availability and compatibility.</p>
-            </div>
-            <div class="resource-list" id="resource-list" aria-live="polite"></div>
-          </section>
-
-          <section class="workspace-section logs-section" aria-labelledby="logs-heading">
-            <div class="section-intro">
-              <p class="eyebrow">04 / logs</p>
-              <h2 id="logs-heading">What Hanly has been doing</h2>
-              <p>Startup, capture, the lookup engine, and anything that went wrong.</p>
-            </div>
-            <div class="logs-controls">
-              <div class="field-grid">
-                <label class="field">
-                  <span>Level</span>
-                  <select id="log-level">
-                    <option value="all">All</option>
-                    <option value="info">Info</option>
-                    <option value="warning">Warning</option>
-                    <option value="error">Error</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>Subsystem</span>
-                  <select id="log-subsystem">
-                    <option value="all">All</option>
-                  </select>
-                </label>
+            <section class="settings-card" data-rise="4" aria-labelledby="capture-settings-heading">
+              <div class="settings-head">
+                <h2 class="panel-title" id="capture-settings-heading">Capture settings</h2>
+                <span class="settings-aside">Applies to both targets.</span>
               </div>
-              <label class="field">
-                <span>Search</span>
-                <input id="log-search" type="search" spellcheck="false" autocomplete="off"
-                       placeholder="Filter by text">
-              </label>
-              <div class="action-row">
-                <button class="button button-quiet" id="refresh-logs" type="button">Refresh</button>
-                <button class="button button-quiet" id="copy-logs" type="button">Copy</button>
-                <button class="button button-quiet" id="export-diagnostics" type="button">
-                  Save report
-                </button>
-                <button class="button button-quiet" id="clear-logs" type="button">Clear</button>
-              </div>
-              <p class="hint" id="log-summary">No records yet.</p>
-              <div class="log-list" id="log-list" role="log" aria-live="polite"></div>
-            </div>
-          </section>
 
-          <section class="workspace-section settings-section" aria-labelledby="settings-heading">
-            <div class="section-intro">
-              <p class="eyebrow">05 / settings</p>
-              <h2 id="settings-heading">Make it feel like yours</h2>
-              <p>These preferences stay local to the desktop client.</p>
-            </div>
-            <div class="settings-grid">
-              <label class="field">
-                <span>Hover delay <small>(ms)</small></span>
-                <input id="hover-delay" type="number" min="1" max="2000" step="10" inputmode="numeric">
-              </label>
-              <label class="field">
-                <span>Push to Hover <small>(hold)</small></span>
-                <input id="hotkey" type="text" spellcheck="false" autocomplete="off">
-                <small class="field-hint" id="hotkey-registered"></small>
-              </label>
-              <label class="field">
-                <span>Pause / continue hover</span>
-                <input id="hover-hotkey" type="text" spellcheck="false" autocomplete="off">
-                <small class="field-hint" id="hover-hotkey-registered"></small>
-              </label>
-              <label class="field">
-                <span>Start / stop capture</span>
-                <input id="capture-hotkey" type="text" spellcheck="false" autocomplete="off">
-                <small class="field-hint" id="capture-hotkey-registered"></small>
-              </label>
-              <label class="field">
-                <span>Automatic hover</span>
-                <select id="hover-activation">
-                  <option value="push_to_hover">Only while the hold is pressed</option>
-                  <option value="always_active">Whenever capture is running</option>
+              <div class="settings-row">
+                <span class="settings-name" id="monitor-name">Monitor</span>
+                <select class="select" id="capture-target" aria-labelledby="monitor-name">
+                  <option value="cursor">Follow cursor</option>
                 </select>
-              </label>
-              <label class="field">
-                <span>Lookup engine</span>
-                <select id="lookup-preload">
+                <span class="settings-help">Which display Hanly reads, in either target.</span>
+              </div>
+
+              <div class="settings-row">
+                <span class="settings-name" id="delay-name">Hover delay</span>
+                <input id="hover-delay-slider" type="range" min="20" max="2000" step="10" value="80"
+                       aria-labelledby="delay-name">
+                <span class="delay-value">
+                  <input class="delay-input" id="hover-delay-value" type="text" inputmode="numeric"
+                         autocomplete="off" aria-label="Hover delay in milliseconds">
+                  <span class="delay-unit">ms</span>
+                </span>
+                <span class="settings-help">How long the cursor rests before Hanly reads.</span>
+              </div>
+
+              <div class="settings-row">
+                <span class="settings-name" id="preload-name">Lookup engine</span>
+                <select class="select" id="lookup-preload" aria-labelledby="preload-name">
                   <option value="when_capture_starts">Load while watching the screen</option>
                   <option value="always">Keep loaded</option>
                   <option value="on_demand">Load only for a lookup</option>
                 </select>
-                <small class="field-hint">Keeping it loaded is faster and uses about a gigabyte.</small>
-              </label>
-            </div>
-            <div class="update-panel" aria-live="polite">
-              <div>
-                <span class="eyebrow">Updates</span>
-                <strong id="update-status">No update check</strong>
-                <p id="update-message">Check remote metadata for newer validated resources.</p>
-                <p class="update-application" id="application-update">
-                  <span id="application-message">Checking the installed Hanly version…</span>
-                  <button class="button button-primary" id="update-application" type="button" hidden>
-                    Update now
-                  </button>
-                  <button class="button button-quiet" id="release-notes" type="button" hidden>
-                    View release notes
-                  </button>
-                </p>
-                <p class="update-plan" id="update-plan" hidden></p>
-                <div class="update-progress" id="application-progress" hidden>
-                  <progress id="application-progress-bar" max="1" value="0"></progress>
-                  <span id="application-progress-label">Preparing…</span>
-                  <span class="update-bytes" id="application-progress-bytes"></span>
-                </div>
-                <div class="action-row update-button-row" id="application-actions">
-                  <button class="button button-primary" id="confirm-full-update" type="button" hidden>
-                    Download full update
-                  </button>
-                  <button class="button button-quiet" id="cancel-update" type="button" hidden>
-                    Cancel
-                  </button>
-                </div>
-                <details class="update-details" id="update-details" hidden>
-                  <summary>Details</summary>
-                  <ul class="update-activity" id="update-activity"></ul>
-                </details>
+                <span class="settings-help" id="preload-help"></span>
               </div>
-              <div class="update-actions">
-                <label class="field update-resource-field">
-                  <span>Resource</span>
-                  <select id="update-resource" disabled>
-                    <option value="">No updates available</option>
-                  </select>
-                </label>
-                <div class="action-row update-button-row">
-                  <button class="button button-quiet" id="check-updates" type="button">Check for updates</button>
-                  <button class="button button-primary" id="install-update" type="button" disabled>Install update</button>
-                </div>
-                <div class="update-progress" id="update-progress" hidden>
-                  <progress id="update-progress-bar" max="1" value="0"></progress>
-                  <span id="update-progress-label">Preparing…</span>
-                </div>
+            </section>
+          </section>
+
+          <!-- Permissions ------------------------------------------------- -->
+          <section class="page" id="page-permissions" hidden>
+            <div class="stack" id="permission-list" aria-live="polite"></div>
+            <p class="settings-help" id="permission-note" style="margin-top:2px"></p>
+            <div class="stack" style="margin-top:12px">
+              <div>
+                <button class="btn btn-sm btn-quiet" id="recheck-permissions" type="button">
+                  Check again
+                </button>
               </div>
             </div>
           </section>
-        </section>
-      </div>
-      <footer class="footer"><span>Hanly Control Center</span><span class="utility">State is local · actions are explicit</span></footer>
-    </main>
+
+          <!-- Shortcuts --------------------------------------------------- -->
+          <section class="page stack stack-tight" id="page-shortcuts" hidden>
+            <div class="stack stack-tight" id="shortcut-list"></div>
+            <section class="panel" data-rise="2" aria-labelledby="hover-mode-heading">
+              <div class="panel-head">
+                <h2 class="panel-title" id="hover-mode-heading">Automatic hover</h2>
+              </div>
+              <div class="panel-rows" id="hover-mode-rows" role="radiogroup"
+                   aria-labelledby="hover-mode-heading"></div>
+            </section>
+          </section>
+
+          <!-- Appearance -------------------------------------------------- -->
+          <section class="page stack stack-wide narrow" id="page-appearance" hidden>
+            <section class="panel" data-rise="1" aria-labelledby="theme-heading">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title" id="theme-heading">Theme</h2>
+                  <p class="panel-note">System follows the desktop setting.</p>
+                </div>
+                <div class="segmented" id="theme-choices" role="group" aria-labelledby="theme-heading"></div>
+              </div>
+            </section>
+          </section>
+
+          <!-- Updates ----------------------------------------------------- -->
+          <section class="page stack narrow" id="page-updates" hidden>
+            <section class="panel" id="update-panel" data-rise="1" aria-live="polite"></section>
+
+            <section class="panel" data-rise="2">
+              <button class="disclosure" id="resources-toggle" type="button" aria-expanded="false"
+                      aria-controls="resources-collapse">
+                <span class="disclosure-caret" aria-hidden="true">▾</span>Resources
+                <span class="disclosure-summary" id="resources-summary"></span>
+              </button>
+              <div class="collapse" id="resources-collapse" data-open="false">
+                <div class="collapse-inner">
+                  <div style="border-top:1px solid var(--border)">
+                    <div id="resource-list"></div>
+                    <p class="resource-foot">
+                      Resources swap without restarting. Lookups pause for a moment during the swap.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel" data-rise="3">
+              <button class="disclosure" id="activity-toggle" type="button" aria-expanded="false"
+                      aria-controls="activity-collapse">
+                <span class="disclosure-caret" aria-hidden="true">▾</span>Update activity
+                <span class="disclosure-summary" id="activity-summary"></span>
+              </button>
+              <div class="collapse" id="activity-collapse" data-open="false">
+                <div class="collapse-inner">
+                  <div id="activity-list" style="border-top:1px solid var(--border)"></div>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <!-- Logs -------------------------------------------------------- -->
+          <section class="page stack stack-wide" id="page-logs" hidden>
+            <section class="panel" data-rise="1" aria-labelledby="readiness-heading">
+              <div class="panel-head">
+                <h2 class="panel-title" id="readiness-heading">Readiness</h2>
+                <button class="btn btn-sm btn-quiet" id="recheck-readiness" type="button"
+                        style="margin-left:auto">Check again</button>
+              </div>
+              <div class="readiness-stage" id="readiness-stage" data-loading="false">
+                <div class="readiness-rows" id="readiness-rows"></div>
+                <div class="readiness-skeleton" id="readiness-skeleton" aria-hidden="true"></div>
+              </div>
+            </section>
+
+            <section data-rise="2" aria-labelledby="activity-heading">
+              <div class="logs-head">
+                <h2 class="panel-title" id="activity-heading">Activity</h2>
+                <div class="logs-filters" id="log-levels" role="group" aria-label="Filter by level"></div>
+                <select class="select" id="log-subsystem" aria-label="Filter by subsystem">
+                  <option value="all">All subsystems</option>
+                </select>
+                <input class="log-search" id="log-search" type="search" spellcheck="false"
+                       autocomplete="off" placeholder="Search" aria-label="Search records">
+              </div>
+              <div class="log-list" id="log-list" role="log" aria-live="polite"></div>
+              <div class="logs-foot">
+                <span class="logs-summary" id="log-summary">No records yet.</span>
+                <span class="logs-summary" id="log-path"></span>
+                <div class="logs-actions">
+                  <button class="chip" id="refresh-logs" type="button">Refresh</button>
+                  <button class="chip" id="copy-logs" type="button">Copy</button>
+                  <button class="chip" id="export-diagnostics" type="button">Save report</button>
+                  <button class="chip" id="clear-logs" type="button">Clear</button>
+                </div>
+              </div>
+            </section>
+          </section>
+        </div>
+      </main>
+    </div>
     <script src="control_center.js"></script>
   </body>
 </html>

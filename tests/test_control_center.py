@@ -273,7 +273,9 @@ def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None
     assets = load_control_center_assets()
 
     assert "<title>Hanly · Control Center</title>" in assets.html
-    assert "--jade: #47756D" in assets.css
+    # One token set, redefined for the dark mode the theme control selects.
+    assert "--accent: #E88CA1" in assets.css
+    assert '[data-mode="dark"]' in assets.css
     assert "function renderState" in assets.javascript
     assert "function renderUpdates" in assets.javascript
     assert "install_update" in assets.javascript
@@ -292,6 +294,39 @@ def test_hover_delay_is_bounded_to_the_supported_range(tmp_path: Path) -> None:
     for rejected in (HOVER_DELAY_MIN_MS - 1, HOVER_DELAY_MAX_MS + 1):
         with pytest.raises(ValueError, match="hover delay must be between"):
             bridge.set_hover_delay(rejected)
+
+
+def test_the_delay_slider_is_given_the_bounds_python_actually_enforces(
+    tmp_path: Path,
+) -> None:
+    """A slider with its own constants drifts from the validator behind it."""
+
+    bridge, _runtime, _manager = _bridge(tmp_path)
+
+    bounds = bridge.get_state()["runtime"]["hover_delay_bounds"]
+    assert bounds == {"min": HOVER_DELAY_MIN_MS, "max": HOVER_DELAY_MAX_MS}
+    assert 'id="hover-delay-slider"' in load_control_center_assets().html
+    assert "hover_delay_bounds" in load_control_center_assets().javascript
+
+
+def test_the_installed_version_reaches_the_page_or_nothing_does() -> None:
+    """The sidebar shows the running build, and shows nothing if it cannot."""
+
+    from hanly_app import control_center
+
+    version = control_center.ControlCenterBridge().get_state()["runtime"]["app_version"]
+    assert version is None or isinstance(version, str)
+
+    def unavailable() -> str:
+        raise RuntimeError("no metadata here")
+
+    original = control_center.installed_version
+    control_center.installed_version = unavailable
+    try:
+        snapshot = control_center.ControlCenterBridge().get_state()
+    finally:
+        control_center.installed_version = original
+    assert snapshot["runtime"]["app_version"] is None
 
 
 def test_persisted_hotkeys_are_validated_by_the_desktop_canonicalizer(
@@ -464,17 +499,16 @@ def test_the_primary_update_action_installs_in_app_and_the_browser_is_secondary(
 
     assert "install_application_update" in assets.javascript
     assert "open_release_page" not in assets.javascript
-    assert 'id="update-application"' in assets.html
-    assert 'class="button button-primary" id="update-application"' in assets.html
-    assert "Update now" in assets.html
-    assert 'class="button button-quiet" id="release-notes"' in assets.html
-    assert "View release notes" in assets.html
+    # The update panel is built from the coordinator's snapshot, so which
+    # action is primary is decided in the script rather than in the markup.
+    assert '"Install update", "btn btn-primary"' in assets.javascript
+    assert '"View release notes", "btn btn-quiet"' in assets.javascript
     # The one action that reaches a browser is the notes, and only the notes.
     browser_calls = [
         line for line in assets.javascript.splitlines() if "open_release_notes" in line
     ]
     assert len(browser_calls) == 1
-    assert "release-notes" in browser_calls[0]
+    assert "View release notes" in browser_calls[0]
 
 
 def test_selecting_a_capture_area_persists_what_the_selector_returned(
@@ -589,8 +623,8 @@ def test_the_page_says_when_a_region_scope_has_no_region_to_read() -> None:
 
     assets = load_control_center_assets()
 
-    assert "reads the whole monitor" in assets.javascript
-    assert 'app.capture_mode === "region"' in assets.javascript
+    assert "reading the whole monitor" in assets.javascript
+    assert 'capture_mode === "region"' in assets.javascript
 
 
 def test_start_capture_is_refused_while_the_runtime_is_still_preparing() -> None:
@@ -902,10 +936,16 @@ def test_every_new_preference_has_a_control_on_the_page() -> None:
 
     assets = load_control_center_assets()
 
-    for element in ("hover-hotkey", "hover-activation", "lookup-preload", "engine-state"):
-        assert f'id="{element}"' in assets.html
-    for choice in ("when_capture_starts", "always", "on_demand", "always_active"):
-        assert f'value="{choice}"' in assets.html
+    for element in ("lookup-preload", "live-engine", "hover-mode-rows", "shortcut-list",
+                    "theme-choices", "hover-delay-slider", "hover-delay-value"):
+        assert f'id="{element}"' in assets.html, element
+    for choice in ("when_capture_starts", "always", "on_demand"):
+        assert f'value="{choice}"' in assets.html, choice
+    # The shortcut rows and the activation modes are rendered from the config
+    # field names, so those are what the script has to name.
+    for field in ("hover_hotkey", "capture_hotkey", "hover_activation",
+                  "always_active", "push_to_hover", "theme"):
+        assert field in assets.javascript, field
     assert "update_settings" in assets.javascript
 
 
@@ -1002,13 +1042,18 @@ def test_the_logs_panel_renders_records_with_text_content_only() -> None:
 
     assets = load_control_center_assets()
 
-    for element in ("log-list", "log-level", "log-subsystem", "log-search"):
-        assert f'id="{element}"' in assets.html
+    for element in ("log-list", "log-levels", "log-subsystem", "log-search"):
+        assert f'id="{element}"' in assets.html, element
     for action in ("refresh-logs", "copy-logs", "clear-logs", "export-diagnostics"):
-        assert f'id="{action}"' in assets.html
+        assert f'id="{action}"' in assets.html, action
     body = assets.javascript.split("function renderLogs(", 1)[1].split("function loadLogs", 1)[0]
-    assert "textContent" in body
-    assert "innerHTML = \"\"" in body
+    # Records reach the page only through the one element helper, which sets
+    # text and never markup.
+    assert "innerHTML" not in body
+    assert "el(" in body
+    helper = assets.javascript.split("function el(", 1)[1].split("function attr(", 1)[0]
+    assert "textContent" in helper
+    assert "innerHTML" not in helper
 
 
 def test_the_update_panel_states_what_is_downloaded_and_what_remains() -> None:
@@ -1017,18 +1062,18 @@ def test_the_update_panel_states_what_is_downloaded_and_what_remains() -> None:
 
     assets = load_control_center_assets()
 
-    for element in (
-        'id="update-plan"',
-        'id="application-progress-bytes"',
-        'id="confirm-full-update"',
-        'id="cancel-update"',
-        'id="update-activity"',
+    assert 'id="activity-list"' in assets.html
+    for fragment in (
+        "function describePlan",
+        "function describeTransfer",
+        '"Download full update"',
+        "remaining",
     ):
-        assert element in assets.html, element
-    assert "Download full update" in assets.html
-    # Both are real bridge operations, not page-local state.
-    assert "cancel_update" in assets.javascript
-    assert 'invoke("install_application_update", true)' in assets.javascript
+        assert fragment in assets.javascript, fragment
+    # Both are real bridge operations, not page-local state. The second click
+    # authorizing a full download is the argument, not a different action.
+    assert '"Cancel", "btn btn-sm btn-quiet", "cancel_update"' in assets.javascript
+    assert '"install_application_update", "true"' in assets.javascript
 
 
 def test_a_download_at_one_hundred_percent_is_not_reported_as_finished() -> None:
@@ -1052,4 +1097,7 @@ def test_the_activity_tail_is_bounded_rather_than_appended_to() -> None:
     from hanly_app.update_coordinator import ACTIVITY_LIMIT
 
     assert ACTIVITY_LIMIT <= 200
-    assert "list.innerHTML = \"\";" in load_control_center_assets().javascript
+    javascript = load_control_center_assets().javascript
+    body = javascript.split("function renderActivity(", 1)[1].split("// ---- readiness", 1)[0]
+    assert "clear(list)" in body
+    assert "appendChild(list)" not in body

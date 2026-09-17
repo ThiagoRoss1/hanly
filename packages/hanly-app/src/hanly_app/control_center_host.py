@@ -193,7 +193,7 @@ class ControlCenterHost:
             width=self._width,
             height=self._height,
             min_size=(760, 560),
-            background_color="#F7F8FC",
+            background_color="#FAFAF9",
         )
         self._subscribe(window)
         with self._lock:

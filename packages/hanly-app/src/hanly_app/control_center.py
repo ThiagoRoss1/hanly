@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 from hanly.resource_manager import ResourceManager
 
+from .app_update import installed_version
 from .capture import CaptureService, MonitorInfo, ScreenRect
 from .capture_selector import CaptureSelection
 from .config import (
@@ -290,6 +291,11 @@ class ControlCenterBridge:
             "config": config.to_dict(),
             "runtime": {
                 "ocr_provider": self._ocr_provider,
+                "app_version": _installed_version(),
+                "hover_delay_bounds": {
+                    "min": HOVER_DELAY_MIN_MS,
+                    "max": HOVER_DELAY_MAX_MS,
+                },
                 "resources": self._resources(),
                 "status": self._status_snapshot(),
                 "engine": self._engine_snapshot(),
@@ -870,6 +876,19 @@ class ControlCenterBridge:
             }
             resources.append(resource)
         return resources
+
+
+def _installed_version() -> str | None:
+    """Report the running product version, or nothing rather than a guess.
+
+    A source tree without installed metadata is a real case, and the page shows
+    no version at all instead of a placeholder that looks like one.
+    """
+
+    try:
+        return installed_version()
+    except Exception:
+        return None
 
 
 #: The only host a release page may live on, and the path segment that says

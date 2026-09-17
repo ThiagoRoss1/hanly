@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{
+  --font-ui: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --font-mono: ui-monospace,"Cascadia Mono",Consolas,"SFMono-Regular",Menlo,"Liberation Mono",monospace;
+  --radius-sm:7px; --radius-md:11px; --radius-lg:16px; --radius-pill:999px;
+  --control-height:2.375rem; --control-height-sm:2.125rem; --primary-action-width:8.75rem; --action-width:6rem;
+  --acc-expand:250ms; --acc-collapse:250ms; --acc-ease:cubic-bezier(.22,1,.36,1);
+  --mat-inset:inset 0 1px 2px rgba(20,14,18,.05);
+  --motion-fast:150ms; --motion-normal:200ms; --motion-nav:300ms;
+  --ease-soft:cubic-bezier(.32,.72,0,1);
+  --ease-pop:cubic-bezier(.34,1.3,.5,1);
+  --desk:#DEDDDB;
+  --app-bg:linear-gradient(180deg,#F5F4F2 0%,#ECEBE8 100%);
+  --surface:#FAFAF9; --surface-subtle:#EFEEED; --surface-raised:#FFFFFF; --surface-selected:#FFFFFF; --surface-hover:#F0EFEE;
+  --chrome:#EBEAE9;
+  --text-primary:#202124; --text-secondary:#5F6268; --text-muted:#85888F; --text-on-accent:#202124;
+  --border:#D8D6D4; --border-soft:#E4E2E0; --border-strong:#B9B6B3;
+  --accent:#E88CA1; --accent-hover:#DF7D95; --accent-pressed:#D47089; --accent-strong:#B75C76;
+  --accent-wash:rgba(232,140,161,.08); --accent-wash-hover:rgba(232,140,161,.13);
+  --think-base:#5F6268; --think-hi:#17181B;
+  --resize-dur:300ms; --resize-ease:cubic-bezier(.22,1,.36,1);
+  --think-swap:150ms; --think-distance:8px; --think-blur:2px; --think-shimmer:2000ms;
+  --success:#2F6349; --success-wash:rgba(47,99,73,.12);
+  --warning:#7E5A0D; --warning-wash:rgba(224,169,59,.18);
+  --danger:#A0302A; --danger-wash:rgba(160,48,42,.1);
+  --permission:#47589A; --permission-wash:rgba(71,88,154,.12);
+  --focus-ring:#8A5C9E;
+  --scroll-thumb:rgba(163,78,92,.26); --scroll-thumb-hover:rgba(163,78,92,.44);
+  --slider-track:rgba(42,36,41,.16);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.04),0 4px 12px rgba(0,0,0,.025);
+  --shadow-md:0 8px 24px rgba(0,0,0,.09);
+  --shadow-win:0 24px 70px rgba(28,18,24,.3),0 2px 6px rgba(28,18,24,.16);
+}
+[data-mode="dark"]{
+  --desk:#0D0E10;
+  --app-bg:#1C1D20;
+  --mat-inset:inset 0 1px 2px rgba(0,0,0,.4);
+  --surface:#1C1D20; --surface-subtle:#161719; --surface-raised:#232428; --surface-selected:#232428; --surface-hover:#292A2E;
+  --chrome:#17181A;
+  --text-primary:#F2F2F3; --text-secondary:#B8BAC0; --text-muted:#858890; --text-on-accent:#171719;
+  --border:#34363A; --border-soft:#2A2C30; --border-strong:#4A4C52;
+  --accent:#F08FA6; --accent-hover:#F59CAF; --accent-pressed:#E47F98; --accent-strong:#F4A5B6;
+  --accent-wash:rgba(240,143,166,.08); --accent-wash-hover:rgba(240,143,166,.12);
+  --success:#7FC9A3; --success-wash:rgba(127,201,163,.12);
+  --warning:#E7BC74; --warning-wash:rgba(231,188,116,.12);
+  --danger:#F09086; --danger-wash:rgba(240,144,134,.12);
+  --permission:#9FB2E8; --permission-wash:rgba(159,178,232,.12);
+  --focus-ring:#F08FA6;
+  --think-base:#B8BAC0; --think-hi:#FFFFFF;
+  --scroll-thumb:#44454B; --scroll-thumb-hover:#5A565D;
+  --slider-track:#34363A;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.45);
+  --shadow-md:0 10px 28px rgba(0,0,0,.6);
+  --shadow-win:0 30px 80px rgba(0,0,0,.7),0 2px 8px rgba(0,0,0,.5);
+}
+html,body{margin:0;padding:0;background:var(--desk)}
+button,input{font-family:inherit}
+*{scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:999px;border:2px solid transparent;background-clip:padding-box;transition:background 150ms}
+::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover);background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
+input[type="range"]{-webkit-appearance:none;appearance:none;height:20px;background:transparent;cursor:pointer}
+input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:linear-gradient(to right,var(--accent) 0 var(--fill,0%),var(--slider-track) var(--fill,0%) 100%)}
+input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-5px;border:0;border-radius:50%;background:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform 150ms cubic-bezier(.34,1.3,.5,1)}
+input[type="range"]:hover::-webkit-slider-thumb{transform:scale(1.12)}
+input[type="range"]::-moz-range-track{height:4px;border-radius:999px;background:var(--slider-track)}
+input[type="range"]::-moz-range-progress{height:4px;border-radius:999px;background:var(--accent)}
+input[type="range"]::-moz-range-thumb{width:14px;height:14px;border:0;border-radius:50%;background:var(--accent);box-shadow:var(--shadow-sm)}
+a{color:var(--accent-strong)}
+a:hover{color:var(--accent)}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+@keyframes hlyPageIn{from{opacity:0;transform:translate3d(0,7px,0)}to{opacity:1;transform:none}}
+@keyframes hlyRise{from{opacity:0;transform:translate3d(0,5px,0)}to{opacity:1;transform:none}}
+@keyframes hlyPulse{0%,100%{opacity:.5}50%{opacity:.95}}
+@keyframes hlyDot{0%,100%{opacity:.14;transform:scale(.82)}42%{opacity:1;transform:scale(1)}}
+@keyframes hlyThinkA{from{opacity:0;filter:blur(var(--think-blur));transform:translate3d(0,var(--think-distance),0)}to{opacity:1;filter:blur(0);transform:translate3d(0,0,0)}}
+@keyframes hlyThinkB{from{opacity:0;filter:blur(var(--think-blur));transform:translate3d(0,var(--think-distance),0)}to{opacity:1;filter:blur(0);transform:translate3d(0,0,0)}}
+@keyframes hlyTextShine{from{background-position:120% 0}to{background-position:-120% 0}}
+@keyframes hlyMarquee{from{opacity:0;transform:scale(.98)}to{opacity:1;transform:none}}
+@keyframes hlyReveal{from{opacity:0;transform:scale(.96) translateZ(0)}to{opacity:1;transform:scale(1) translateZ(0)}}
+
+[data-anim="a"],[data-anim="b"]{animation:hlyPageIn var(--motion-normal) var(--ease-soft) both;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+[data-rise]{animation:hlyRise var(--motion-normal) var(--ease-soft) both}
+[data-rise="2"]{animation-delay:45ms}
+[data-rise="3"]{animation-delay:90ms}
+[data-rise="4"]{animation-delay:135ms}
+[data-think]{background:linear-gradient(100deg,var(--think-base) 0 38%,var(--think-hi) 50%,var(--think-base) 62% 100%);background-size:260% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+[data-think="a"]{animation:hlyThinkA var(--think-swap) var(--ease-soft) both,hlyTextShine var(--think-shimmer) linear infinite}
+[data-think="b"]{animation:hlyThinkB var(--think-swap) var(--ease-soft) both,hlyTextShine var(--think-shimmer) linear infinite}
+[data-skel]{animation:hlyPulse 1.25s ease-in-out infinite}
+[data-mdot]{animation:hlyDot 1.05s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){
+*{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+[data-think]{background:none;color:var(--text-primary)}
+}
+</style>
+</helmet>
+
+<div data-mode="{{ mode }}" style="font-family:var(--font-ui);height:100vh;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:clamp(6px,2vh,24px);box-sizing:border-box;background:var(--desk);-webkit-font-smoothing:antialiased">
+<div style="{{ windowStyle }}">
+
+  <div style="flex:none;height:36px;display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--chrome);border-bottom:1px solid var(--border);user-select:none">
+    <sc-if value="{{ macChrome }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;gap:8px">
+        <button type="button" onClick="{{ askQuit }}" aria-label="Close" style="width:12px;height:12px;padding:0;cursor:pointer;border:0;border-radius:50%;background:#EC6A5E"></button>
+        <button type="button" aria-label="Minimize" style="width:12px;height:12px;padding:0;cursor:pointer;border:0;border-radius:50%;background:#F4BF4F"></button>
+        <button type="button" onClick="{{ toggleMax }}" aria-label="Zoom" style="width:12px;height:12px;padding:0;cursor:pointer;border:0;border-radius:50%;background:#61C554"></button>
+      </div>
+    </sc-if>
+    <div style="flex:1;text-align:center;font-size:11.5px;font-weight:600;color:var(--text-muted);letter-spacing:.01em">Hanly</div>
+    <sc-if value="{{ winChrome }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;gap:2px">
+        <button type="button" aria-label="Minimize" style="width:30px;height:24px;cursor:pointer;border:0;background:transparent;color:var(--text-secondary);font-size:11px;border-radius:4px" style-hover="background:var(--surface-hover)">—</button>
+        <button type="button" onClick="{{ toggleMax }}" aria-label="Maximize" style="width:30px;height:24px;cursor:pointer;border:0;background:transparent;color:var(--text-secondary);font-size:10px;border-radius:4px" style-hover="background:var(--surface-hover)">▢</button>
+        <button type="button" onClick="{{ askQuit }}" aria-label="Close" style="width:30px;height:24px;cursor:pointer;border:0;background:transparent;color:var(--text-secondary);font-size:11px;border-radius:4px" style-hover="background:#EC6A5E;color:#fff">✕</button>
+      </div>
+    </sc-if>
+    <sc-if value="{{ macChrome }}" hint-placeholder-val="{{ true }}">
+      <div style="width:56px"></div>
+    </sc-if>
+  </div>
+
+  <div style="flex:1;min-height:0;display:flex;background:var(--surface);color:var(--text-primary)">
+
+    <aside style="width:206px;flex:none;display:flex;flex-direction:column;padding:16px 12px 12px;background:var(--surface-subtle);border-right:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:11px;padding:2px 6px 20px">
+        <div style="width:42px;height:42px;flex:none;display:grid;place-items:center;background:var(--accent);color:var(--text-on-accent);border-radius:13px;font-size:22px;font-weight:700;box-shadow:var(--shadow-sm)">한</div>
+        <div style="min-width:0">
+          <div style="font-size:18px;font-weight:750;letter-spacing:-.02em;line-height:1.05">Hanly</div>
+          <div style="margin-top:2px;font-size:10px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--text-muted)">Control Center</div>
+        </div>
+      </div>
+
+      <nav style="position:relative;flex:none;display:flex;flex-direction:column;gap:2px" aria-label="Sections">
+        <div style="{{ bubbleStyle }}"></div>
+        <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="6">
+          <button type="button" onClick="{{ item.go }}" aria-current="{{ item.current }}" style="{{ item.btnStyle }}" style-hover="{{ item.hoverStyle }}">
+            <span style="{{ item.innerStyle }}">
+              <span style="{{ item.dotStyle }}"></span>
+              <span style="{{ item.labelStyle }}">{{ item.label }}</span>
+            </span>
+          </button>
+        </sc-for>
+      </nav>
+
+      <div style="margin-top:auto;flex:none;display:flex;flex-direction:column;gap:10px;padding:8px 4px 0">
+        <div style="padding:10px 12px 11px;background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="{{ liveDotStyle }}"></span>
+            <span style="font-size:13px;font-weight:700;letter-spacing:-.01em">{{ captureLabel }}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border);font-size:10.5px">
+            <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--text-muted)">runtime</span><span style="font-family:var(--font-mono);font-weight:650;color:var(--success)">ready</span></div>
+            <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--text-muted)">engine</span><span style="font-family:var(--font-mono);font-weight:650;color:var(--text-primary)">{{ engineLabel }}</span></div>
+            <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--text-muted)">version</span><span style="font-family:var(--font-mono);font-weight:650;color:var(--text-primary)">0.13.0</span></div>
+          </div>
+        </div>
+        <sc-if value="{{ quitAsking }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:7px;padding:10px;background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-md);animation:hlyRise var(--motion-fast) var(--ease-soft) both">
+            <span style="font-size:11.5px;line-height:1.45;color:var(--text-secondary)">Capture stops and the tray icon goes away.</span>
+            <div style="display:flex;gap:6px">
+              <button type="button" onClick="{{ confirmQuit }}" style="flex:1;cursor:pointer;font:inherit;font-size:11.5px;font-weight:650;color:#fff;background:var(--danger);border:1px solid var(--danger);border-radius:var(--radius-sm);padding:7px 0">Quit</button>
+              <button type="button" onClick="{{ cancelQuit }}" style="flex:1;cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:var(--radius-sm);padding:7px 0">Cancel</button>
+            </div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ quitIdle }}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{ askQuit }}" style="cursor:pointer;font:inherit;font-size:12px;font-weight:600;color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;transition:background var(--motion-fast) var(--ease-soft),color var(--motion-fast)" style-hover="background:var(--surface-hover);color:var(--text-primary)">Quit Hanly</button>
+        </sc-if>
+      </div>
+    </aside>
+
+    <main style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+      <header style="flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:18px 22px 14px;border-bottom:1px solid var(--border)">
+        <div data-anim="{{ anim }}" style="min-width:0">
+          <div style="font-size:10.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)">{{ pageKicker }}</div>
+          <h1 style="margin:3px 0 0;font-size:25px;font-weight:700;letter-spacing:-.02em;line-height:1.15">{{ pageKo }}</h1>
+          <p style="margin:3px 0 0;font-size:12.5px;color:var(--text-secondary)">{{ pageDesc }}</p>
+        </div>
+        <sc-if value="{{ onCapture }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:none;display:flex;align-items:center;gap:8px">
+            <button type="button" onClick="{{ openPicker }}" style="height:38px;display:inline-flex;align-items:center;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-primary);background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-md);padding:0 15px;transition:background var(--motion-fast) var(--ease-soft)" style-hover="background:var(--surface-hover)">Select area</button>
+            <button type="button" onClick="{{ toggleCapture }}" style="{{ primaryBtnStyle }}" style-hover="background:var(--accent-hover);border-color:var(--accent-hover)" style-active="background:var(--accent-pressed);border-color:var(--accent-pressed);transform:translateY(1px)">{{ captureBtnLabel }}</button>
+          </div>
+        </sc-if>
+      </header>
+
+      <div data-anim="{{ anim }}" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 22px 22px">
+
+        <sc-if value="{{ onCapture }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column">
+            <div data-rise="1" style="{{ statusPanelStyle }}">
+              <span style="{{ liveDotStyle }}"></span>
+              <span style="font-size:14px;font-weight:650;letter-spacing:-.01em">{{ captureHeadline }}</span>
+              <span style="font-size:12.5px;color:var(--text-secondary)">{{ captureWhere }}</span>
+              <span style="margin-left:auto;display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">{{ holdHint }}</span>
+            </div>
+
+            <div style="{{ captureGridStyle }}">
+              <section data-rise="2" style="{{ panelStyle }}">
+                <h2 style="margin:0;padding:13px 15px 11px;font-size:12.5px;font-weight:650;letter-spacing:-.005em">Reading target</h2>
+                <div style="display:flex;flex-direction:column;border-top:1px solid var(--border)">
+                  <button type="button" onClick="{{ pickMonitor }}" style="{{ monitorRowStyle }}">
+                    <span style="{{ monitorRadioStyle }}"></span>
+                    <span style="text-align:left;flex:1;min-width:0">
+                      <span style="display:block;font-size:12.5px;font-weight:600">Current monitor</span>
+                      <span style="display:block;margin-top:1px;font-size:11.5px;color:var(--text-secondary)">Follows the display the cursor is on.</span>
+                    </span>
+                  </button>
+                  <button type="button" onClick="{{ pickRegion }}" style="{{ regionRowStyle }}">
+                    <span style="{{ regionRadioStyle }}"></span>
+                    <span style="text-align:left;flex:1;min-width:0">
+                      <span style="display:block;font-size:12.5px;font-weight:600">Selected region</span>
+                      <span style="display:block;margin-top:1px;font-size:11.5px;color:var(--text-secondary)">A fixed rectangle you draw once.</span>
+                    </span>
+                  </button>
+                </div>
+              </section>
+
+              <div style="{{ regionGridStyle }}">
+              <div style="{{ regionInnerStyle }}">
+              <section aria-hidden="{{ regionHidden }}" style="{{ regionPanelStyle }}">
+                <div style="display:flex;align-items:center;gap:10px;padding:13px 15px 11px">
+                  <h2 style="margin:0;font-size:12.5px;font-weight:650">Region</h2>
+                  <select value="{{ monitor }}" onChange="{{ setMonitor }}" aria-label="Target monitor" style="margin-left:auto;flex:none;height:28px;cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:var(--radius-sm);padding:0 6px">
+                    <sc-for list="{{ monitors }}" as="m" hint-placeholder-count="3">
+                      <option value="{{ m.value }}">{{ m.label }}</option>
+                    </sc-for>
+                  </select>
+                  <button type="button" onClick="{{ openPicker }}" style="flex:none;height:28px;display:inline-flex;align-items:center;white-space:nowrap;cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-primary);background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0 11px;transition:background var(--motion-fast)" style-hover="background:var(--surface-hover)">Select area</button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:13px;padding:14px 15px;border-top:1px solid var(--border)">
+                  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px">
+                    <sc-for list="{{ regionFields }}" as="f" hint-placeholder-count="4">
+                      <label style="display:flex;flex-direction:column;gap:4px;min-width:0">
+                        <span style="font-size:9.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)">{{ f.label }}</span>
+                        <input type="text" value="{{ f.value }}" onChange="{{ f.onChange }}" style="width:100%;height:32px;box-sizing:border-box;font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text-primary);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0 9px;box-shadow:var(--mat-inset)" />
+                      </label>
+                    </sc-for>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px">
+                    <button type="button" onClick="{{ clearRegion }}" style="height:32px;display:inline-flex;align-items:center;cursor:pointer;font:inherit;font-size:12px;font-weight:600;color:var(--text-secondary);background:transparent;border:0;border-radius:var(--radius-sm);padding:0 8px;transition:color var(--motion-fast)" style-hover="color:var(--text-primary)">Clear</button>
+                    <button type="button" onClick="{{ applyRegion }}" style="height:32px;display:inline-flex;align-items:center;cursor:pointer;font:inherit;font-size:12px;font-weight:650;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:0 17px;box-shadow:var(--shadow-sm);transition:background var(--motion-fast)" style-hover="background:var(--accent-hover);border-color:var(--accent-hover)" style-active="background:var(--accent-pressed)">Apply</button>
+                  </div>
+                </div>
+              </section>
+              </div>
+              </div>
+            </div>
+
+            <section data-rise="4" style="margin-top:16px;padding:12px 14px;background:var(--surface-subtle);border:1px solid var(--border);border-radius:var(--radius-md)">
+              <div style="display:flex;align-items:center;gap:10px">
+                <h2 style="margin:0;font-size:12.5px;font-weight:650;color:var(--text-secondary)">Capture settings</h2>
+                <span style="font-size:11.5px;color:var(--text-muted)">Applies to both targets.</span>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:11px">
+                <span style="font-size:12px;font-weight:600;width:88px">Hover delay</span>
+                <input type="range" min="20" max="2000" step="10" value="{{ hoverDelay }}" onChange="{{ setHoverDelay }}" style="{{ sliderStyle }}" />
+                <span style="display:inline-flex;align-items:center;gap:4px;min-width:72px;font-family:var(--font-mono);font-size:12px;font-weight:600">
+                  <input type="text" value="{{ delayValue }}" onChange="{{ onDelayInput }}" onFocus="{{ onDelayFocus }}" onBlur="{{ onDelayCommit }}" onKeyDown="{{ onDelayKey }}" aria-label="Hover delay in milliseconds" style="{{ delayInputStyle }}" />
+                  <span style="color:var(--text-secondary)">ms</span>
+                </span>
+                <span style="font-size:11.5px;color:var(--text-muted)">How long the cursor rests before Hanly reads.</span>
+              </div>
+            </section>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ onPermissions }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <sc-for list="{{ permissions }}" as="p" hint-placeholder-count="2">
+              <div data-rise="1" style="{{ p.rowStyle }}">
+                <span style="{{ p.dotStyle }}"></span>
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span style="font-size:13.5px;font-weight:650">{{ p.name }}</span>
+                    <span style="{{ p.tagStyle }}">{{ p.stateLabel }}</span>
+                  </div>
+                  <div style="margin-top:2px;font-size:12.5px;line-height:1.45;color:var(--text-secondary)">{{ p.why }}</div>
+                </div>
+                <sc-if value="{{ p.needsAction }}" hint-placeholder-val="{{ true }}">
+                  <button type="button" onClick="{{ p.action }}" style="flex:none;cursor:pointer;font:inherit;font-size:12px;font-weight:650;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:9px 14px;box-shadow:var(--shadow-sm)">{{ p.actionLabel }}</button>
+                </sc-if>
+              </div>
+            </sc-for>
+            <p style="margin:2px 0 0;font-size:11.5px;color:var(--text-muted)">{{ permsNote }}</p>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ onShortcuts }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <sc-for list="{{ shortcuts }}" as="s" hint-placeholder-count="3">
+              <div data-rise="1" style="{{ s.panelStyle }}">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 14px">
+                  <div style="flex:1;min-width:160px">
+                    <div style="font-size:14px;font-weight:700;letter-spacing:-.01em">{{ s.name }}</div>
+                    <div style="margin-top:2px;font-size:11.5px;color:var(--text-muted)">{{ s.hint }}</div>
+                  </div>
+                  <div style="display:flex;gap:4px;flex-wrap:wrap">
+                    <sc-for list="{{ s.keys }}" as="k" hint-placeholder-count="3">
+                      <span style="{{ k.style }}">{{ k.label }}</span>
+                    </sc-for>
+                  </div>
+                  <button type="button" onClick="{{ s.action }}" style="{{ s.btnStyle }}">{{ s.actionLabel }}</button>
+                </div>
+                <sc-if value="{{ s.hasNote }}" hint-placeholder-val="{{ false }}">
+                  <div style="{{ s.noteStyle }}">
+                    <span style="{{ s.noteDotStyle }}"></span>
+                    <span><span style="font-weight:650">{{ s.noteTitle }}</span> {{ s.note }}</span>
+                    <button type="button" onClick="{{ s.fix }}" style="margin-left:auto;flex:none;cursor:pointer;font:inherit;font-size:11.5px;font-weight:650;color:inherit;background:transparent;border:0;padding:0;text-decoration:underline">{{ s.fixLabel }}</button>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+            <section data-rise="2" style="{{ panelStyle }}">
+              <h2 style="margin:0;padding:12px 14px 10px;font-size:12.5px;font-weight:650">Push to Hover</h2>
+              <div style="display:flex;flex-direction:column;border-top:1px solid var(--border)">
+                <sc-for list="{{ hoverModes }}" as="h" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ h.go }}" style="{{ h.style }}">
+                    <span style="{{ h.radioStyle }}"></span>
+                    <span style="text-align:left;flex:1;min-width:0">
+                      <span style="display:block;font-size:12.5px;font-weight:600">{{ h.label }}</span>
+                      <span style="display:block;margin-top:1px;font-size:11.5px;color:var(--text-secondary)">{{ h.desc }}</span>
+                    </span>
+                  </button>
+                </sc-for>
+              </div>
+            </section>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ onAppearance }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:14px;max-width:720px">
+            <section data-rise="1" style="{{ panelStyle }}">
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 14px">
+                <div>
+                  <h2 style="margin:0;font-size:12.5px;font-weight:650">Theme</h2>
+                  <p style="margin:2px 0 0;font-size:11.5px;color:var(--text-secondary)">System follows the desktop setting.</p>
+                </div>
+                <div style="margin-left:auto;display:inline-flex;padding:3px;background:var(--surface-subtle);border:1px solid var(--border);border-radius:var(--radius-md)">
+                  <sc-for list="{{ modes }}" as="m" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ m.go }}" style="{{ m.style }}">{{ m.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </section>
+
+            <section data-rise="2" style="{{ panelStyle }}">
+              <div style="padding:12px 14px 10px">
+                <h2 style="margin:0;font-size:12.5px;font-weight:650">Interface font</h2>
+                <p style="margin:2px 0 0;font-size:11.5px;color:var(--text-secondary)">Only fonts already installed on this machine.</p>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding:12px 14px;border-top:1px solid var(--border)">
+                <sc-for list="{{ fonts }}" as="f" hint-placeholder-count="4">
+                  <button type="button" onClick="{{ f.go }}" style="{{ f.style }}">
+                    <span style="{{ f.sampleStyle }}">읽을 준비 Aa</span>
+                    <span style="display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600"><span style="{{ f.radioStyle }}"></span>{{ f.name }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </section>
+
+            <section data-rise="3" style="padding:12px 14px;background:var(--surface-subtle);border:1px solid var(--border);border-radius:var(--radius-md)">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
+                <div>
+                  <h2 style="margin:0;font-size:12.5px;font-weight:650;color:var(--text-secondary)">Preview platform</h2>
+                  <p style="margin:2px 0 0;font-size:11.5px;color:var(--text-muted)">Prototype only — changes window chrome and platform-specific sections.</p>
+                </div>
+                <div style="margin-left:auto;display:flex;gap:5px">
+                  <sc-for list="{{ platforms }}" as="p" hint-placeholder-count="3">
+                    <button type="button" onClick="{{ p.go }}" style="{{ p.style }}">{{ p.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </section>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ onUpdates }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;max-width:720px">
+            <section data-rise="1" style="{{ updatePanelStyle }}">
+              <sc-if value="{{ updIdle }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px">
+                  <div style="min-width:0">
+                    <div style="font-size:13.5px;font-weight:650">Hanly 0.13.0 is up to date</div>
+                    <div style="margin-top:2px;font-size:12px;color:var(--text-secondary)">Checked 12 minutes ago.</div>
+                  </div>
+                  <button type="button" onClick="{{ checkUpdates }}" style="margin-left:auto;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-primary);background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-md);padding:9px 14px">Check now</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ updBusy }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:11px;padding:14px">
+                  <div style="display:flex;align-items:center;gap:11px;min-height:22px">
+                    <span style="display:grid;grid-template-columns:repeat(3,5px);gap:3px;flex:none">
+                      <sc-for list="{{ matrixDots }}" as="d" hint-placeholder-count="9">
+                        <span data-mdot="1" style="{{ d.style }}"></span>
+                      </sc-for>
+                    </span>
+                    <span style="position:relative;display:inline-block;font-size:13.5px;font-weight:650;letter-spacing:-.005em">
+                      <span aria-hidden="true" style="visibility:hidden;white-space:nowrap">{{ processSizer }}</span>
+                      <span data-think="{{ thinkTick }}" style="position:absolute;left:0;top:0;white-space:nowrap">{{ processText }}</span>
+                    </span>
+                    <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap">{{ processDetail }}</span>
+                    <span style="margin-left:auto;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">{{ progressLabel }}</span>
+                  </div>
+                  <sc-if value="{{ updRunning }}" hint-placeholder-val="{{ false }}">
+                    <div style="height:6px;background:var(--surface-subtle);border-radius:var(--radius-pill);overflow:hidden">
+                      <div style="{{ progressStyle }}"></div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{ updAvailable }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:14px;animation:hlyRise var(--motion-normal) var(--ease-soft) both">
+                  <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:8px">
+                    <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-muted)">0.13.0</span>
+                    <span style="color:var(--text-muted)">→</span>
+                    <span style="font-family:var(--font-mono);font-size:19px;font-weight:700;color:var(--accent-strong)">0.14.0</span>
+                    <span style="font-size:12px;color:var(--text-secondary)">· 64.2 MB</span>
+                  </div>
+                  <p style="margin:0;font-size:12.5px;line-height:1.55;color:var(--text-secondary)">Faster first lookup, a fix for hover pausing after sleep, and the region picker remembers the last monitor.</p>
+                  <div style="display:flex;gap:8px">
+                    <button type="button" onClick="{{ startUpdate }}" style="height:38px;display:inline-flex;align-items:center;cursor:pointer;font:inherit;font-size:13px;font-weight:650;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:var(--radius-md);padding:0 17px;box-shadow:var(--shadow-sm);transition:background var(--motion-fast)" style-hover="background:var(--accent-hover);border-color:var(--accent-hover)" style-active="background:var(--accent-pressed)">Install update</button>
+                    <button type="button" onClick="{{ failUpdate }}" style="cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:var(--radius-md);padding:10px 14px">Simulate failure</button>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ updReady }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px;animation:hlyRise var(--motion-normal) var(--ease-soft) both">
+                  <div style="min-width:0">
+                    <div style="font-size:13.5px;font-weight:650">0.14.0 is staged</div>
+                    <div style="margin-top:2px;font-size:12px;color:var(--text-secondary)">Hanly restarts into the new build. Region and shortcuts stay.</div>
+                  </div>
+                  <button type="button" onClick="{{ restartApp }}" style="margin-left:auto;height:38px;display:inline-flex;align-items:center;cursor:pointer;font:inherit;font-size:13px;font-weight:650;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:var(--radius-md);padding:0 17px;box-shadow:var(--shadow-sm);transition:background var(--motion-fast)" style-hover="background:var(--accent-hover);border-color:var(--accent-hover)">Restart now</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ updError }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px">
+                  <div style="min-width:0">
+                    <div style="font-size:13.5px;font-weight:650;color:var(--danger)">Download stopped</div>
+                    <div style="margin-top:2px;font-size:12px;color:var(--text-secondary)">The release channel closed the connection. Nothing was changed.</div>
+                  </div>
+                  <button type="button" onClick="{{ startUpdate }}" style="margin-left:auto;cursor:pointer;font:inherit;font-size:12.5px;font-weight:650;color:var(--text-primary);background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:9px 14px">Try again</button>
+                </div>
+              </sc-if>
+            </section>
+
+            <section data-rise="2" style="{{ panelStyle }}">
+              <button type="button" onClick="{{ toggleResources }}" aria-expanded="{{ resourcesOpen }}" style="display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;cursor:pointer;font:inherit;font-size:12.5px;font-weight:650;color:var(--text-primary);background:transparent;border:0;padding:12px 14px;text-align:left">
+                <span style="{{ resCaretStyle }}">▾</span>Resources
+                <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;font-weight:500;color:var(--text-muted)">{{ resourceSummary }}</span>
+              </button>
+              <div style="{{ resGridStyle }}">
+                <div style="{{ resInnerStyle }}">
+                <div style="border-top:1px solid var(--border)">
+                  <sc-for list="{{ resources }}" as="r" hint-placeholder-count="3">
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border)">
+                      <div style="flex:1;min-width:150px">
+                        <div style="font-family:var(--font-mono);font-size:12px;font-weight:650">{{ r.name }}</div>
+                        <div style="margin-top:1px;font-size:11.5px;color:var(--text-muted)">{{ r.detail }}</div>
+                      </div>
+                      <sc-if value="{{ r.busy }}" hint-placeholder-val="{{ false }}">
+                        <span style="display:flex;align-items:center;gap:8px">
+                          <span style="display:grid;grid-template-columns:repeat(3,4px);gap:2px">
+                            <sc-for list="{{ matrixDots }}" as="d" hint-placeholder-count="9">
+                              <span data-mdot="1" style="{{ d.smallStyle }}"></span>
+                            </sc-for>
+                          </span>
+                          <span style="position:relative;display:inline-block;font-size:11.5px;font-weight:600">
+                            <span aria-hidden="true" style="visibility:hidden;white-space:nowrap">{{ resourceSizer }}</span>
+                            <span data-think="{{ thinkTick }}" style="position:absolute;left:0;top:0;white-space:nowrap">{{ resourceText }}</span>
+                          </span>
+                        </span>
+                      </sc-if>
+                      <sc-if value="{{ r.idle }}" hint-placeholder-val="{{ true }}">
+                        <span style="{{ r.tagStyle }}">{{ r.state }}</span>
+                      </sc-if>
+                      <sc-if value="{{ r.canInstall }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ r.install }}" style="cursor:pointer;font:inherit;font-size:12px;font-weight:650;color:var(--text-primary);background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:7px 13px">Install</button>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <p style="margin:0;padding:10px 14px;font-size:11.5px;color:var(--text-muted)">Resources swap without restarting. Lookups pause for a moment during the swap.</p>
+                </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ onLogs }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <section data-rise="1" style="{{ panelStyle }}">
+              <div style="display:flex;align-items:center;gap:10px;padding:11px 14px">
+                <h2 style="margin:0;font-size:12.5px;font-weight:650">Readiness</h2>
+                <button type="button" onClick="{{ recheck }}" style="margin-left:auto;cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 11px">Check again</button>
+              </div>
+              <div style="position:relative;border-top:1px solid var(--border)">
+                <div style="{{ readinessContentStyle }}">
+                  <sc-for list="{{ readiness }}" as="r" hint-placeholder-count="5">
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;height:34px;padding:0 14px;border-bottom:1px solid var(--border)">
+                      <span style="{{ r.dotStyle }}"></span>
+                      <span style="width:112px;font-size:12.5px;font-weight:650">{{ r.label }}</span>
+                      <span style="flex:1;min-width:110px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">{{ r.detail }}</span>
+                      <span style="{{ r.valueStyle }}">{{ r.value }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="{{ readinessSkelStyle }}">
+                  <sc-for list="{{ skeletonRows }}" as="s" hint-placeholder-count="5">
+                    <div style="display:flex;align-items:center;gap:10px;height:34px;padding:0 14px;border-bottom:1px solid var(--border)">
+                      <span data-skel="1" style="{{ s.dotStyle }}"></span>
+                      <span data-skel="1" style="{{ s.labelStyle }}"></span>
+                      <span data-skel="1" style="{{ s.detailStyle }}"></span>
+                      <span data-skel="1" style="{{ s.valueStyle }}"></span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </section>
+
+            <section data-rise="2">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px">
+                <h2 style="margin:0;font-size:12.5px;font-weight:650">Activity</h2>
+                <div style="margin-left:auto;display:flex;gap:5px">
+                  <sc-for list="{{ logFilters }}" as="f" hint-placeholder-count="4">
+                    <button type="button" onClick="{{ f.go }}" style="{{ f.style }}">{{ f.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-md);padding:8px 2px;box-shadow:var(--shadow-sm)">
+                <sc-for list="{{ visibleLogs }}" as="l" hint-placeholder-count="8">
+                  <div style="display:flex;gap:10px;padding:4px 12px;font-family:var(--font-mono);font-size:11.5px;line-height:1.55">
+                    <span style="flex:none;color:var(--text-muted)">{{ l.time }}</span>
+                    <span style="{{ l.levelStyle }}">{{ l.level }}</span>
+                    <span style="flex:1;min-width:0;color:var(--text-secondary)">{{ l.msg }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;margin-top:8px;padding:9px 12px;background:var(--surface-subtle);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px;color:var(--text-muted)">
+                <span>Lookups this session <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:650">42</span></span>
+                <span>Cache hits <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:650">61%</span></span>
+                <span>Median lookup <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:650">180 ms</span></span>
+                <button type="button" onClick="{{ copyDiag }}" style="margin-left:auto;height:28px;display:inline-flex;align-items:center;cursor:pointer;font:inherit;font-size:11.5px;font-weight:600;color:var(--text-secondary);background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0 11px" style-hover="color:var(--text-primary)">{{ diagLabel }}</button>
+              </div>
+            </section>
+          </div>
+        </sc-if>
+
+      </div>
+    </main>
+  </div>
+
+  <sc-if value="{{ pickerOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;z-index:50;background:rgba(14,10,13,.5);display:flex;align-items:center;justify-content:center;animation:hlyRise var(--motion-fast) var(--ease-soft) both">
+      <div style="position:absolute;inset:0" onClick="{{ closePicker }}"></div>
+      <div style="{{ marqueeStyle }}"></div>
+      <div style="position:relative;display:flex;align-items:center;gap:12px;padding:11px 12px;background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-md)">
+        <span style="font-size:12.5px;color:var(--text-secondary)">{{ pickerHint }}</span>
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-primary)">{{ pickerCoords }}</span>
+        <button type="button" onClick="{{ confirmPicker }}" style="cursor:pointer;font:inherit;font-size:12.5px;font-weight:650;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:var(--radius-sm);padding:8px 13px">Use this area</button>
+        <button type="button" onClick="{{ closePicker }}" style="cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;color:var(--text-secondary);background:transparent;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px">Cancel</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ quitDone }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:var(--surface);animation:hlyRise var(--motion-normal) var(--ease-soft) both">
+      <div style="text-align:center">
+        <div style="font-size:20px;font-weight:700">Hanly stopped</div>
+        <div style="margin-top:5px;font-size:12.5px;color:var(--text-secondary)">Prototype only.</div>
+        <button type="button" onClick="{{ relaunch }}" style="margin-top:14px;cursor:pointer;font:inherit;font-size:12.5px;font-weight:650;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:var(--radius-md);padding:10px 17px">Launch again</button>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1240,&quot;height&quot;:820}}">
+const NAV = [
+  {id:'capture', label:'Capture', kicker:'Capture', ko:'읽을 준비', desc:'Choose where Hanly reads.'},
+  {id:'permissions', label:'Permissions', mac:true, kicker:'Permissions', ko:'접근 권한', desc:'Two macOS grants before Hanly can read.'},
+  {id:'shortcuts', label:'Shortcuts', kicker:'Shortcuts', ko:'단축키', desc:'Change your preferred settings.'},
+  {id:'appearance', label:'Appearance', kicker:'Appearance', ko:'겉모습', desc:'Theme and type.'},
+  {id:'updates', label:'Updates', kicker:'Updates', ko:'업데이트', desc:'The app and its resources update separately.'},
+  {id:'logs', label:'Logs', kicker:'Logs', ko:'기록', desc:'Runtime state and recent activity.'}
+];
+const SLOT = 38, GAP = 2;
+
+const LOGS = [
+  {time:'09:41:02', level:'info', msg:'capture started · monitor 1 · region 420,280 1120×180'},
+  {time:'09:41:02', level:'ok', msg:'lookup engine loaded in 1.9s'},
+  {time:'09:41:18', level:'ok', msg:'lookup 학교 · 180ms · cache miss'},
+  {time:'09:41:19', level:'ok', msg:'lookup 학생 · 12ms · cache hit'},
+  {time:'09:42:33', level:'warn', msg:'hover paused — display woke from sleep'},
+  {time:'09:42:34', level:'info', msg:'hover resumed'},
+  {time:'09:44:10', level:'perm', msg:'accessibility granted · automatic hover available'},
+  {time:'09:45:51', level:'err', msg:'ocr timeout after 2000ms · frame dropped'},
+  {time:'09:46:02', level:'ok', msg:'lookup 도서관 · 164ms · cache miss'},
+  {time:'09:47:20', level:'info', msg:'resource check · krdict 1.2.0 valid'}
+];
+const LEVEL_COLOR = {ok:'var(--success)', err:'var(--danger)', warn:'var(--warning)', perm:'var(--permission)', info:'var(--text-muted)'};
+
+const FONTS = [
+  {id:'system', name:'System', stack:'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif'},
+  {id:'gothic', name:'Korean gothic', stack:'"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif'},
+  {id:'serif', name:'Serif', stack:'Georgia,"Apple SD Gothic Neo","Batang",serif'},
+  {id:'mono', name:'Monospace', stack:'ui-monospace,"Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace'}
+];
+
+const UPDATE_STAGES = ['Checking installation…', 'Preparing update…', 'Downloading update…', 'Verifying files…', 'Applying update…', 'Preparing restart…', 'Starting Hanly…'];
+const RESOURCE_STAGES = ['Checking resources…', 'Downloading dictionary…', 'Verifying dictionary…', 'Preparing OCR resources…'];
+const LONGEST = (list) => list.reduce((a, b) => (b.length > a.length ? b : a), '');
+
+class Component extends DCLogic {
+  state = {
+    page:'capture', anim:'a', navMoving:false, maximized:false, platform:'macos',
+    mode:'light', modeChoice:'light', font:'system',
+    capturing:true, target:'region', hoverDelay:80,
+    region:{x:420, y:280, w:1120, h:180}, draft:{x:'420', y:'280', w:'1120', h:'180'}, monitor:1,
+    pickerOpen:false,
+    perms:{screen:'granted', access:'required'},
+    shortcuts:{hover:{keys:['ctrl', 'shift', 'space'], state:'refused'}, pause:{keys:['ctrl', 'shift', 'f11'], state:'migrated'}, toggle:{keys:[], state:'unassigned'}},
+    recording:null, hoverMode:'hold',
+    update:'idle', progress:0, processText:'', thinkTick:'a',
+    resourcesOpen:false, krdictInstalled:false, resourceBusy:false, resourceText:'',
+    readinessLoading:false, logFilter:'all', diagCopied:false,
+    delayEditing:false, delayDraft:'80',
+    quit:'idle'
+  };
+
+  componentDidMount(){ this._key = (e) => this.onKey(e); window.addEventListener('keydown', this._key); }
+  componentWillUnmount(){ window.removeEventListener('keydown', this._key); clearInterval(this._t); clearInterval(this._r); clearTimeout(this._t2); }
+
+  commitDelay(){
+    const raw = parseInt(this.state.delayDraft, 10);
+    const next = Number.isFinite(raw) ? Math.round(Math.min(2000, Math.max(20, raw)) / 10) * 10 : this.state.hoverDelay;
+    this.setState({hoverDelay:next, delayDraft:String(next), delayEditing:false});
+  }
+
+  say(text, key){
+    const patch = {thinkTick:this.state.thinkTick === 'a' ? 'b' : 'a'};
+    patch[key || 'processText'] = text;
+    this.setState(patch);
+  }
+
+  onKey(e){
+    if(this.state.recording){
+      e.preventDefault();
+      const mods = [];
+      if(e.ctrlKey) mods.push('ctrl');
+      if(e.shiftKey) mods.push('shift');
+      if(e.altKey) mods.push('alt');
+      if(e.metaKey) mods.push('cmd');
+      const k = e.key.toLowerCase();
+      if(['control', 'shift', 'alt', 'meta'].includes(k)) return;
+      if(k === 'escape'){ this.setState({recording:null}); return; }
+      const sc = Object.assign({}, this.state.shortcuts);
+      sc[this.state.recording] = {keys:mods.concat([k === ' ' ? 'space' : k]), state:'ok'};
+      this.setState({shortcuts:sc, recording:null});
+      return;
+    }
+    if(e.key === 'Escape' && this.state.pickerOpen) this.setState({pickerOpen:false});
+  }
+
+  go(page){
+    if(page === this.state.page) return;
+    this.setState({page, anim:this.state.anim === 'a' ? 'b' : 'a', navMoving:true});
+    clearTimeout(this._t2);
+    this._t2 = setTimeout(() => this.setState({navMoving:false}), 300);
+    if(page === 'logs') this.loadReadiness();
+  }
+
+  loadReadiness(){
+    this.setState({readinessLoading:true});
+    setTimeout(() => this.setState({readinessLoading:false}), 1000);
+  }
+
+  runUpdate(){
+    clearInterval(this._t);
+    this.setState({update:'running', progress:0});
+    this.say(UPDATE_STAGES[1]);
+    this._t = setInterval(() => {
+      const p = Math.min(100, this.state.progress + 3);
+      const stage = p < 12 ? UPDATE_STAGES[1] : (p < 58 ? UPDATE_STAGES[2] : (p < 80 ? UPDATE_STAGES[3] : (p < 94 ? UPDATE_STAGES[4] : UPDATE_STAGES[5])));
+      if(stage !== this.state.processText) this.say(stage);
+      this.setState({progress:p});
+      if(p >= 100){ clearInterval(this._t); this.setState({update:'ready'}); }
+    }, 80);
+  }
+
+  installResource(){
+    clearInterval(this._r);
+    let i = 0;
+    this.setState({resourceBusy:true});
+    this.say(RESOURCE_STAGES[0], 'resourceText');
+    this._r = setInterval(() => {
+      i += 1;
+      if(i < RESOURCE_STAGES.length){ this.say(RESOURCE_STAGES[i], 'resourceText'); }
+      else { clearInterval(this._r); this.setState({resourceBusy:false, krdictInstalled:true}); }
+    }, 900);
+  }
+
+  row(active, last){
+    return 'display:flex;align-items:flex-start;gap:10px;width:100%;box-sizing:border-box;cursor:pointer;font:inherit;text-align:left;padding:11px 14px;border:0;'
+      + (last ? '' : 'border-bottom:1px solid var(--border);')
+      + 'background:' + (active ? 'var(--accent-wash)' : 'transparent')
+      + ';box-shadow:' + (active ? 'inset 2.5px 0 0 var(--accent)' : 'none')
+      + ';color:var(--text-primary);transition:background var(--motion-fast) var(--ease-soft),box-shadow var(--motion-fast) var(--ease-soft)';
+  }
+  radio(active){
+    return 'width:14px;height:14px;flex:none;margin-top:2px;border-radius:var(--radius-pill);background:var(--surface-raised);border:'
+      + (active ? '4.5px solid var(--accent)' : '1.5px solid var(--border-strong)')
+      + ';transition:border var(--motion-fast) var(--ease-pop)';
+  }
+  chip(active){
+    return 'cursor:pointer;white-space:nowrap;flex:none;font:inherit;font-size:10.5px;font-weight:600;padding:6px 9px;border-radius:var(--radius-pill);border:1px solid '
+      + (active ? 'var(--accent)' : 'var(--border)') + ';background:' + (active ? 'var(--surface-raised)' : 'transparent')
+      + ';box-shadow:' + (active ? 'var(--shadow-sm)' : 'var(--mat-inset)')
+      + ';color:' + (active ? 'var(--text-primary)' : 'var(--text-secondary)') + ';transition:background var(--motion-fast) var(--ease-soft),border-color var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast)';
+  }
+  tag(color, wash){
+    return 'font-size:10.5px;font-weight:650;color:' + color + ';background:' + wash + ';border-radius:var(--radius-pill);padding:3px 9px';
+  }
+  dot(color){ return 'width:8px;height:8px;flex:none;border-radius:var(--radius-pill);background:' + color; }
+
+  renderVals(){
+    const s = this.state;
+    const isMac = s.platform === 'macos';
+    const nav0 = NAV.filter(n => !n.mac || isMac);
+    const idx = Math.max(0, nav0.findIndex(n => n.id === s.page));
+    const nav = nav0[idx] || nav0[0];
+
+    const navItems = nav0.map((n, i) => {
+      const active = n.id === s.page;
+      return {
+        label:n.label, current: active ? 'page' : undefined,
+        go: () => this.go(n.id),
+        btnStyle:'position:relative;z-index:1;height:' + SLOT + 'px;display:flex;align-items:center;cursor:pointer;font:inherit;text-align:left;background:transparent;border:0;border-radius:var(--radius-md);padding:0 11px;color:' + (active ? 'var(--text-primary)' : 'var(--text-secondary)') + ';transition:color var(--motion-nav) var(--ease-soft),background var(--motion-fast) var(--ease-soft)',
+        hoverStyle: active ? 'background:transparent' : 'background:var(--surface-hover);color:var(--text-primary)',
+        innerStyle:'display:flex;align-items:center;gap:9px;width:100%',
+        dotStyle:'width:5px;height:5px;flex:none;border-radius:var(--radius-pill);background:' + (active ? 'var(--accent)' : 'var(--border-strong)') + ';transform:' + (active ? 'scale(1.2)' : 'scale(1)') + ';transition:background var(--motion-nav),transform var(--motion-nav) var(--ease-pop)',
+        labelStyle:'font-size:13px;font-weight:' + (active ? 700 : 500) + ';letter-spacing:-.008em'
+      };
+    });
+
+    const bubbleStyle = {
+      position:'absolute', left:0, right:0, top:0, height:SLOT + 'px',
+      transform:'translate3d(0,' + Math.round(idx * (SLOT + GAP)) + 'px,0) scaleY(' + (s.navMoving ? 1.04 : 1) + ') scaleX(' + (s.navMoving ? .99 : 1) + ')',
+      background:'var(--surface-selected)',
+      border:'1px solid var(--accent)', boxShadow:'var(--shadow-sm)',
+      borderRadius:'var(--radius-md)',
+      transition:'transform var(--motion-nav) var(--ease-pop)',
+      backfaceVisibility:'hidden', WebkitBackfaceVisibility:'hidden',
+      willChange:s.navMoving ? 'transform' : 'auto', pointerEvents:'none'
+    };
+
+    const panelStyle = 'background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-sm);overflow:hidden';
+    const stateColor = s.capturing ? 'var(--success)' : 'var(--text-muted)';
+    const r = s.region;
+    const regionCoords = r.w + ' × ' + r.h + ' at ' + r.x + ', ' + r.y;
+    const setDraft = (k) => (e) => { const d = Object.assign({}, s.draft); d[k] = e.target.value; this.setState({draft:d}); };
+
+    const permDefs = [
+      {id:'screen', name:'Screen Recording', why:'Without it Hanly cannot read anything on screen.'},
+      {id:'access', name:'Accessibility', why:'Only needed for hover that follows the cursor on its own.'}
+    ];
+    const permissions = permDefs.map(p => {
+      const st = s.perms[p.id];
+      const granted = st === 'granted';
+      return {
+        name:p.name, why:p.why, stateLabel: granted ? 'granted' : (st === 'required' ? 'required' : 'unknown'),
+        needsAction:!granted,
+        actionLabel: st === 'required' ? 'Open settings' : 'Check',
+        action: () => { const np = Object.assign({}, s.perms); np[p.id] = 'granted'; this.setState({perms:np}); },
+        rowStyle:'display:flex;align-items:flex-start;gap:11px;padding:13px 14px;border-radius:var(--radius-md);border:1px solid ' + (granted ? 'var(--border)' : 'var(--accent)') + ';background:' + (granted ? 'transparent' : 'var(--surface-raised)') + ';box-shadow:' + (granted ? 'none' : 'var(--shadow-sm)') + ';opacity:' + (granted ? .7 : 1) + ';transition:opacity var(--motion-normal) var(--ease-soft),border-color var(--motion-normal)',
+        dotStyle:this.dot(granted ? 'var(--success)' : 'var(--permission)') + ';margin-top:4px',
+        tagStyle:this.tag(granted ? 'var(--success)' : 'var(--permission)', granted ? 'var(--success-wash)' : 'var(--permission-wash)')
+      };
+    });
+
+    const scDefs = [
+      {id:'hover', name:'Push to Hover', hint:'Hold to read the word under the cursor.'},
+      {id:'pause', name:'Pause automatic hover', hint:'Mutes hover without stopping capture.'},
+      {id:'toggle', name:'Start / stop capture', hint:'No keys assigned yet.'}
+    ];
+    const NOTES = {
+      refused:{title:'Not registered.', text:'Another app owns this combination — the old binding is still what your keyboard does.', fix:'Rebind', tone:'danger'},
+      migrated:{title:'Moved.', text:'ctrl+shift+f9 was taken, so this was set to ctrl+shift+f11.', fix:'Change', tone:'warning'}
+    };
+    const shortcuts = scDefs.map(d => {
+      const sc = s.shortcuts[d.id];
+      const rec = s.recording === d.id;
+      const note = NOTES[sc.state];
+      const unassigned = sc.state === 'unassigned';
+      const keys = rec ? [{label:'Press keys…', style:'font-family:var(--font-mono);font-size:11.5px;font-weight:600;color:var(--accent-strong);background:var(--accent-wash);border:1px dashed var(--accent);border-radius:var(--radius-sm);padding:6px 12px'}]
+        : (unassigned ? [{label:'unassigned', style:'font-family:var(--font-mono);font-size:11.5px;color:var(--text-muted);background:transparent;border:1px dashed var(--border-strong);border-radius:var(--radius-sm);padding:6px 12px'}]
+        : sc.keys.map(k => ({label:k, style:'min-width:30px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11.5px;font-weight:650;color:var(--text-primary);background:var(--surface-subtle);border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;padding:0 9px'})));
+      const tone = note ? (note.tone === 'danger' ? 'var(--danger)' : 'var(--warning)') : 'var(--text-muted)';
+      const wash = note ? (note.tone === 'danger' ? 'var(--danger-wash)' : 'var(--warning-wash)') : 'transparent';
+      return {
+        name:d.name, hint:d.hint, keys,
+        panelStyle:panelStyle + ';border-color:' + (rec ? 'var(--accent)' : 'var(--border)') + ';transition:border-color var(--motion-fast) var(--ease-soft)',
+        actionLabel: rec ? 'Cancel' : (unassigned ? 'Assign' : 'Change'),
+        action: () => this.setState({recording:rec ? null : d.id}),
+        btnStyle:'flex:none;height:var(--control-height-sm);width:var(--action-width);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;font-size:12px;font-weight:650;border-radius:var(--radius-sm);padding:0 14px;transition:filter var(--motion-fast),background var(--motion-fast);'
+          + (unassigned && !rec ? 'color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);box-shadow:var(--shadow-sm)' : 'color:var(--text-primary);background:var(--surface-raised);border:1px solid var(--border-strong)'),
+        hasNote:!!note,
+        noteTitle: note ? note.title : '', note: note ? note.text : '',
+        fixLabel: note ? note.fix : '',
+        fix: () => this.setState({recording:d.id}),
+        noteDotStyle:this.dot(tone) + ';width:6px;height:6px;margin-top:5px',
+        noteStyle:'display:flex;align-items:flex-start;gap:8px;padding:9px 14px;background:' + wash + ';border-top:1px solid var(--border);font-size:11.5px;line-height:1.45;color:' + tone
+      };
+    });
+
+    const modes = [{id:'light', label:'Light'}, {id:'dark', label:'Dark'}, {id:'system', label:'System'}].map(m => ({
+      label:m.label,
+      go: () => this.setState({modeChoice:m.id, mode:m.id === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : m.id}),
+      style:'cursor:pointer;font:inherit;font-size:12px;font-weight:600;padding:7px 14px;border:0;border-radius:var(--radius-sm);transition:background var(--motion-fast) var(--ease-soft),color var(--motion-fast);'
+        + (s.modeChoice === m.id ? 'background:var(--surface-raised);color:var(--text-primary);box-shadow:var(--shadow-sm)' : 'background:transparent;color:var(--text-secondary)')
+    }));
+
+    const fonts = FONTS.map(f => ({
+      name:f.name,
+      go: () => { document.documentElement.style.setProperty('--font-ui', f.stack); this.setState({font:f.id}); },
+      style:'display:flex;flex-direction:column;gap:8px;cursor:pointer;font:inherit;text-align:left;padding:11px 12px;background:' + (s.font === f.id ? 'var(--surface-raised)' : 'var(--surface)') + ';border:1px solid ' + (s.font === f.id ? 'var(--accent)' : 'var(--border)') + ';box-shadow:' + (s.font === f.id ? 'var(--shadow-sm)' : 'none') + ';border-radius:var(--radius-sm);color:var(--text-primary);transition:background var(--motion-fast) var(--ease-soft),border-color var(--motion-fast),box-shadow var(--motion-fast)',
+      sampleStyle:'font-family:' + f.stack + ';font-size:16px;font-weight:600',
+      radioStyle:this.radio(s.font === f.id).replace('margin-top:2px;', '').replace('width:14px;height:14px', 'width:12px;height:12px')
+    }));
+
+    const platforms = [{id:'macos', label:'macOS'}, {id:'windows', label:'Windows'}, {id:'linux', label:'Linux'}].map(p => ({
+      label:p.label, go: () => { const patch = {platform:p.id}; if(p.id !== 'macos' && s.page === 'permissions') patch.page = 'capture'; this.setState(patch); },
+      style:this.chip(s.platform === p.id)
+    }));
+
+    const resources = [
+      {name:'krdict', detail: s.krdictInstalled ? 'installed 1.3.0 · revalidated after install' : '1.2.0 → 1.3.0 · 214 MB', state: s.krdictInstalled ? 'current' : 'available', canInstall:!s.krdictInstalled && !s.resourceBusy, busy:s.resourceBusy, install: () => this.installResource()},
+      {name:'easyocr_ko', detail:'installed 1.0.4 · managed by EasyOCR', state:'current', canInstall:false, busy:false},
+      {name:'tokenizer', detail:'installed 0.9.1', state:'current', canInstall:false, busy:false}
+    ].map(x => Object.assign({}, x, {
+      idle:!x.busy,
+      tagStyle:this.tag(x.state === 'current' ? 'var(--success)' : 'var(--accent-strong)', x.state === 'current' ? 'var(--success-wash)' : 'var(--accent-wash)')
+    }));
+
+    const readiness = [
+      {label:'Runtime', value:'ready', detail:'providers constructed', tone:'ok'},
+      {label:'Lookup engine', value: s.capturing ? 'loaded' : 'sleeping', detail: s.capturing ? 'resident while watching · ~1 GB' : 'retires on pause', tone: s.capturing ? 'ok' : 'idle'},
+      {label:'OCR', value:'EasyOCR', detail:'ko · gpu off', tone:'ok'},
+      {label:'Dictionary', value:'412,880', detail:'krdict · schema 1.2 · sha256:9f2c…41ab', tone:'ok'},
+      {label:'Hotkeys', value:'2 / 3', detail:'carbon backend · one unassigned', tone:'warn'}
+    ].map(x => ({
+      label:x.label, value:x.value, detail:x.detail,
+      dotStyle:this.dot(x.tone === 'ok' ? 'var(--success)' : (x.tone === 'warn' ? 'var(--warning)' : 'var(--text-muted)')),
+      valueStyle:'font-family:var(--font-mono);font-size:11.5px;font-weight:650;color:' + (x.tone === 'warn' ? 'var(--warning)' : 'var(--text-primary)')
+    }));
+    const skelBar = (w) => 'height:9px;width:' + w + ';border-radius:var(--radius-pill);background:var(--surface-hover)';
+    const skeletonRows = [200, 170, 150, 190, 160].map((w, i) => ({
+      dotStyle:'width:8px;height:8px;flex:none;border-radius:var(--radius-pill);background:var(--surface-hover);animation-delay:' + (i * 90) + 'ms',
+      labelStyle:skelBar('88px') + ';animation-delay:' + (i * 90 + 40) + 'ms',
+      detailStyle:'flex:1;' + skelBar(w + 'px') + ';max-width:' + w + 'px;animation-delay:' + (i * 90 + 80) + 'ms',
+      valueStyle:skelBar('54px') + ';animation-delay:' + (i * 90 + 120) + 'ms'
+    }));
+
+    const filters = [{id:'all', label:'All'}, {id:'ok', label:'Success'}, {id:'warn', label:'Warnings'}, {id:'err', label:'Errors'}];
+    const visibleLogs = LOGS.filter(l => s.logFilter === 'all' || l.level === s.logFilter).map(l => ({
+      time:l.time, level:l.level, msg:l.msg,
+      levelStyle:'flex:none;width:42px;font-weight:650;color:' + LEVEL_COLOR[l.level]
+    }));
+
+    return {
+      mode:s.mode, anim:s.anim, navItems, bubbleStyle, panelStyle,
+      windowStyle:{
+        position:'relative', display:'flex', flexDirection:'column', overflow:'hidden',
+        width:'min(' + (s.maximized ? 1400 : 1080) + 'px, 100%)',
+        minWidth:'min(760px, 100%)',
+        height:'min(' + (s.maximized ? 920 : 760) + 'px, calc(100vh - 24px))',
+        minHeight:'min(560px, calc(100vh - 24px))',
+        background:'var(--app-bg)', border:'1px solid var(--border)',
+        borderRadius:'14px', boxShadow:'var(--shadow-win)',
+        transition:'width var(--motion-nav) var(--ease-soft),height var(--motion-nav) var(--ease-soft)'
+      },
+      macChrome:isMac, winChrome:!isMac,
+      toggleMax: () => this.setState({maximized:!s.maximized}),
+      pageKicker:nav.kicker, pageKo:nav.ko, pageDesc:nav.desc,
+      onCapture:s.page === 'capture', onPermissions:s.page === 'permissions', onShortcuts:s.page === 'shortcuts',
+      onAppearance:s.page === 'appearance', onUpdates:s.page === 'updates', onLogs:s.page === 'logs',
+
+      liveDotStyle:this.dot(stateColor) + (s.capturing ? ';box-shadow:0 0 0 4px var(--success-wash)' : ''),
+      captureLabel: s.capturing ? 'Capture running' : 'Capture stopped',
+      engineLabel: s.capturing ? 'loaded' : 'sleeping',
+      captureHeadline: s.capturing ? 'Reading now' : 'Not reading',
+      captureWhere: s.target === 'region' ? ('Monitor ' + s.monitor + ' · ' + regionCoords) : ('Monitor ' + s.monitor + ' · whole screen'),
+      holdHint: s.capturing ? 'hold ctrl shift space' : 'press start to read',
+      statusPanelStyle:'display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 14px;background:var(--surface-raised);border:1px solid var(--border);border-left:3px solid ' + stateColor + ';border-radius:var(--radius-md);box-shadow:var(--shadow-sm)',
+      captureGridStyle:'width:100%;max-width:100%;min-width:0;box-sizing:border-box;margin-top:16px',
+      regionHidden:s.target !== 'region',
+      regionGridStyle:'display:grid;grid-template-rows:' + (s.target === 'region' ? '1fr' : '0fr') + ';transition:grid-template-rows 250ms var(--resize-ease)',
+      // The gap above the card belongs to the collapsing content, never to the
+      // clipping wrapper: a 0fr track only zeroes the item's content box, so
+      // padding here would leave the wrapper standing and clip the card's own
+      // border into a hairline under Reading target.
+      regionPanelStyle:panelStyle + ';margin-top:16px',
+      regionInnerStyle:'overflow:hidden;min-height:0;opacity:' + (s.target === 'region' ? 1 : 0)
+        + ';filter:blur(' + (s.target === 'region' ? '0' : '2px') + ');transform:translate3d(0,' + (s.target === 'region' ? '0' : '4px') + ',0)'
+        + ';pointer-events:' + (s.target === 'region' ? 'auto' : 'none')
+        + ';transition:opacity 250ms var(--resize-ease),filter 250ms var(--resize-ease),transform 250ms var(--resize-ease)',
+
+      captureBtnLabel: s.capturing ? 'Stop capture' : 'Start capture',
+      primaryBtnStyle:'height:var(--control-height);width:var(--primary-action-width);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:inherit;font-size:13.5px;font-weight:700;letter-spacing:-.01em;border-radius:var(--radius-md);color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);box-shadow:var(--shadow-sm);transition:background var(--motion-fast) var(--ease-soft),transform var(--motion-fast) var(--ease-pop)',
+      toggleCapture: () => this.setState({capturing:!s.capturing}),
+
+      pickMonitor: () => this.setState({target:'monitor'}),
+      pickRegion: () => this.setState({target:'region'}),
+      targetIsRegion:s.target === 'region',
+      // The card's own rounded border is its bottom edge, so the final row
+      // never carries one of its own.
+      monitorRowStyle:this.row(s.target === 'monitor'), regionRowStyle:this.row(s.target === 'region', true),
+      monitorRadioStyle:this.radio(s.target === 'monitor'), regionRadioStyle:this.radio(s.target === 'region'),
+      regionTitle:'Monitor ' + s.monitor, regionCoords,
+      clearRegion: () => this.setState({target:'monitor'}),
+      regionFields:[['Left', 'x'], ['Top', 'y'], ['Width', 'w'], ['Height', 'h']].map(([label, k]) => ({label, value:s.draft[k], onChange:setDraft(k)})),
+      applyRegion: () => this.setState({region:{x:+s.draft.x || 0, y:+s.draft.y || 0, w:+s.draft.w || 0, h:+s.draft.h || 0}, target:'region'}),
+      hoverDelay:s.hoverDelay,
+      setHoverDelay: (e) => this.setState({hoverDelay:+e.target.value, delayDraft:String(e.target.value)}),
+      sliderStyle:{flex:1, minWidth:'180px', maxWidth:'340px', '--fill':(((s.hoverDelay - 20) / 1980) * 100).toFixed(1) + '%'},
+      delayValue: s.delayEditing ? s.delayDraft : String(s.hoverDelay),
+      delayInputStyle:'width:44px;box-sizing:border-box;font:inherit;font-family:var(--font-mono);font-size:12px;font-weight:600;text-align:right;color:var(--text-primary);background:' + (s.delayEditing ? 'var(--surface-raised)' : 'transparent') + ';border:1px solid ' + (s.delayEditing ? 'var(--accent)' : 'transparent') + ';border-radius:var(--radius-sm);padding:2px 4px;transition:background var(--motion-fast),border-color var(--motion-fast)',
+      onDelayFocus: () => this.setState({delayEditing:true, delayDraft:String(s.hoverDelay)}),
+      onDelayInput: (e) => this.setState({delayDraft:e.target.value}),
+      onDelayCommit: () => this.commitDelay(),
+      onDelayKey: (e) => {
+        if(e.key === 'Enter'){ e.preventDefault(); this.commitDelay(); e.target.blur(); }
+        if(e.key === 'Escape'){ e.preventDefault(); this.setState({delayEditing:false, delayDraft:String(s.hoverDelay)}); e.target.blur(); }
+      },
+      monitor:String(s.monitor),
+      setMonitor: (e) => this.setState({monitor:+e.target.value}),
+      monitors:[1, 2, 3].map(m => ({label:'Monitor ' + m, value:String(m)})),
+
+      permissions,
+      permsNote: isMac ? 'Granted permissions stay listed so you can see what Hanly is using.' : '',
+      shortcuts,
+      hoverModes:[
+        {id:'hold', label:'Active', desc:'Press the shortcut to activate hover reading.'},
+        {id:'always', label:'Deactivated', desc:'The shortcut will not activate hover reading.'}
+      ].map((h, i, arr) => ({
+        label:h.label, desc:h.desc, go: () => this.setState({hoverMode:h.id}),
+        style:this.row(s.hoverMode === h.id, i === arr.length - 1), radioStyle:this.radio(s.hoverMode === h.id)
+      })),
+
+      modes, fonts, platforms,
+
+      updatePanelStyle:panelStyle + (s.update === 'available' || s.update === 'ready' ? ';border-color:var(--accent)' : (s.update === 'error' ? ';border-color:var(--danger);background:var(--danger-wash)' : '')),
+      updIdle:s.update === 'idle', updAvailable:s.update === 'available',
+      updBusy:s.update === 'checking' || s.update === 'running', updRunning:s.update === 'running',
+      updReady:s.update === 'ready', updError:s.update === 'error',
+      processText:s.processText, thinkTick:s.thinkTick, resourceText:s.resourceText,
+      processSizer:LONGEST(UPDATE_STAGES), resourceSizer:LONGEST(RESOURCE_STAGES),
+      processDetail: s.update === 'running'
+        ? (s.progress < 58 ? (((s.progress / 58) * 64.2).toFixed(1) + ' / 64.2 MB') : 'hanly 0.13.0 → 0.14.0')
+        : 'release channel · ThiagoRoss1/hanly',
+      matrixDots:Array.from({length:9}).map((_, i) => ({
+        style:'width:5px;height:5px;background:var(--accent-strong);border-radius:1.5px;animation-delay:' + (i * 90) + 'ms',
+        smallStyle:'width:4px;height:4px;background:var(--accent-strong);border-radius:1px;animation-delay:' + (i * 90) + 'ms'
+      })),
+      checkUpdates: () => { this.setState({update:'checking'}); this.say(UPDATE_STAGES[0]); setTimeout(() => this.setState({update:'available'}), 1500); },
+      startUpdate: () => this.runUpdate(),
+      failUpdate: () => this.setState({update:'error'}),
+      restartApp: () => { this.setState({update:'checking'}); this.say(UPDATE_STAGES[6]); setTimeout(() => this.setState({update:'idle', progress:0}), 1600); },
+      progressLabel: s.update === 'running' ? s.progress + '%' : '',
+      progressStyle:'height:100%;width:' + s.progress + '%;background:var(--accent);border-radius:var(--radius-pill);transition:width 80ms linear',
+      resourcesOpen:s.resourcesOpen,
+      toggleResources: () => this.setState({resourcesOpen:!s.resourcesOpen}),
+      resCaretStyle:'display:inline-block;font-size:11px;line-height:1;color:var(--text-muted);transform:scaleY(' + (s.resourcesOpen ? -1 : 1) + ');transition:transform var(--acc-expand) var(--acc-ease)',
+      resGridStyle:'display:grid;grid-template-rows:' + (s.resourcesOpen ? '1fr' : '0fr') + ';transition:grid-template-rows ' + (s.resourcesOpen ? 'var(--acc-expand)' : 'var(--acc-collapse)') + ' var(--acc-ease)',
+      resInnerStyle:'overflow:hidden;opacity:' + (s.resourcesOpen ? 1 : 0) + ';filter:blur(' + (s.resourcesOpen ? '0' : '2px') + ');transition:opacity var(--acc-expand) var(--acc-ease),filter var(--acc-expand) var(--acc-ease)',
+      resourceSummary: s.krdictInstalled ? '3 current' : '1 update available',
+      resources,
+
+      readinessContentStyle:'opacity:' + (s.readinessLoading ? 0 : 1) + ';filter:blur(' + (s.readinessLoading ? '6px' : '0') + ');transition:opacity 260ms var(--ease-soft),filter 260ms var(--ease-soft)',
+      readinessSkelStyle:'position:absolute;inset:0;pointer-events:' + (s.readinessLoading ? 'auto' : 'none') + ';opacity:' + (s.readinessLoading ? 1 : 0) + ';filter:blur(' + (s.readinessLoading ? '0' : '6px') + ');transition:opacity 260ms var(--ease-soft),filter 260ms var(--ease-soft)',
+      readiness, skeletonRows,
+      recheck: () => this.loadReadiness(),
+      logFilters:filters.map(f => ({label:f.label, go: () => this.setState({logFilter:f.id}), style:this.chip(s.logFilter === f.id)})),
+      visibleLogs,
+      diagLabel: s.diagCopied ? 'Copied' : 'Copy diagnostics',
+      copyDiag: () => { this.setState({diagCopied:true}); setTimeout(() => this.setState({diagCopied:false}), 1500); },
+
+      pickerOpen:s.pickerOpen,
+      openPicker: () => this.setState({pickerOpen:true}),
+      closePicker: () => this.setState({pickerOpen:false}),
+      confirmPicker: () => this.setState({pickerOpen:false, target:'region', region:{x:420, y:280, w:1120, h:180}, draft:{x:'420', y:'280', w:'1120', h:'180'}}),
+      pickerHint:'Drag to choose an area · Esc cancels',
+      pickerCoords:'1120 × 180 at 420, 280',
+      marqueeStyle:{position:'absolute', left:'16%', top:'26%', width:'52%', height:'22%', border:'2px dashed var(--accent)', background:'var(--accent-wash)', borderRadius:'var(--radius-sm)', animation:'hlyMarquee 200ms cubic-bezier(.32,.72,0,1) both'},
+
+      quitIdle:s.quit === 'idle', quitAsking:s.quit === 'asking', quitDone:s.quit === 'done',
+      askQuit: () => this.setState({quit:'asking'}),
+      cancelQuit: () => this.setState({quit:'idle'}),
+      confirmQuit: () => this.setState({quit:'done', capturing:false}),
+      relaunch: () => this.setState({quit:'idle', capturing:true})
+    };
+  }
+}
+</script>
+</body>
+</html>
