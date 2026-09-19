@@ -312,7 +312,14 @@ def test_lookup_result_is_frozen() -> None:
 
 def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None:
     ocr_result = OCRResult(text="한국어", confidence=0.9, quad=_quad(0, 0, 10, 10))
-    context = LookupContext(text="한국어", lemma="한국어", ocr_results=(ocr_result,))
+    analysis = TokenAnalysis("한국어", "한국어", "NNG")
+    context = LookupContext(
+        text="한국어",
+        lemma="한국어",
+        ocr_results=(ocr_result,),
+        selected_ocr=ocr_result,
+        analyses=(analysis,),
+    )
     result = LookupResult(status=LookupStatus.EMPTY, context=context)
 
     assert is_dataclass(context)
@@ -321,11 +328,15 @@ def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None
         "text",
         "lemma",
         "ocr_results",
+        "selected_ocr",
+        "analyses",
         "word_region",
     ]
     assert result.context == context
     assert result.context.ocr_results == (ocr_result,)
     assert isinstance(result.context.ocr_results, tuple)
+    assert result.context.selected_ocr is ocr_result
+    assert result.context.analyses == (analysis,)
     # Geometry is optional evidence, not something every outcome carries.
     assert result.context.word_region is None
 

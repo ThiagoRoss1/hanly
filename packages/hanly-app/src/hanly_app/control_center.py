@@ -33,6 +33,8 @@ from .config import (
     ConfigManager,
     HoverActivation,
     LookupPreload,
+    PopupDefaultSize,
+    TechnicalDetailLevel,
 )
 from .desktop_controller import DesktopState
 from .diagnostics import LEVELS, DiagnosticLog, diagnostics_bundle
@@ -439,6 +441,8 @@ class ControlCenterBridge:
             "capture_mode",
             "theme",
             "popup_enabled",
+            "popup_default_size",
+            "technical_details",
             "update_checks_enabled",
         }
         unknown = set(changes) - supported
@@ -456,6 +460,16 @@ class ControlCenterBridge:
         if "lookup_preload" in values:
             values["lookup_preload"] = _validated_choice(
                 values["lookup_preload"], LookupPreload, "lookup engine preload"
+            )
+        if "popup_default_size" in values:
+            values["popup_default_size"] = _validated_choice(
+                values["popup_default_size"], PopupDefaultSize, "default popup size"
+            )
+        if "technical_details" in values:
+            values["technical_details"] = _validated_choice(
+                values["technical_details"],
+                TechnicalDetailLevel,
+                "technical details",
             )
         self._update_config(**values)
         return self.get_state()

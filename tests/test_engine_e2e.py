@@ -115,7 +115,12 @@ def test_engine_e2e_returns_success_from_roi_to_dictionary_entry(
     assert ocr.received_image is _IMAGE
     assert result.status is LookupStatus.SUCCESS
     assert result.entries == (
-        DictionaryEntry(headword="읽다", definitions=("to read",), part_of_speech="동사"),
+        DictionaryEntry(
+            headword="읽다",
+            definitions=("to read",),
+            part_of_speech="동사",
+            source="krdict",
+        ),
     )
     assert result.diagnostics == ()
     assert result.error is None
@@ -123,6 +128,8 @@ def test_engine_e2e_returns_success_from_roi_to_dictionary_entry(
     assert result.context.text == "읽습니다."
     assert result.context.lemma == "읽다"
     assert result.context.ocr_results == KOREAN_OCR_RESULTS
+    assert result.context.selected_ocr is KOREAN_OCR_RESULTS[1]
+    assert result.context.analyses
 
 
 def test_engine_e2e_real_kiwi_looks_up_the_word_targeted_inside_a_line_region(
@@ -137,7 +144,12 @@ def test_engine_e2e_real_kiwi_looks_up_the_word_targeted_inside_a_line_region(
 
     assert result.status is LookupStatus.SUCCESS
     assert result.entries == (
-        DictionaryEntry(headword="읽다", definitions=("to read",), part_of_speech="동사"),
+        DictionaryEntry(
+            headword="읽다",
+            definitions=("to read",),
+            part_of_speech="동사",
+            source="krdict",
+        ),
     )
     assert result.context is not None
     assert result.context.text == "읽습니다."

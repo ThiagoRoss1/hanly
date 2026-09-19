@@ -10,24 +10,35 @@ top-level window rather than a child of the main window.
 from __future__ import annotations
 
 import pytest
-from hanly import DictionaryEntry, LookupResult, LookupStatus
+from hanly import DictionaryEntry, HanlyError, LookupResult, LookupStatus
 
 from tests.hanly_fixtures.capabilities import require_modules
 
 require_modules("PyQt6.QtWidgets", module_level=True)
 
+from hanly_app.config import (  # noqa: E402
+    AppConfig,
+    PopupDefaultSize,
+    TechnicalDetailLevel,
+    Theme,
+)
 from hanly_app.popup import PopupPosition  # noqa: E402
 from hanly_app.qt_popup import QtPopupView  # noqa: E402
 from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QPixmap  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
 
 
 def _result() -> LookupResult:
     return LookupResult(
         status=LookupStatus.SUCCESS,
         entries=(
-            DictionaryEntry(headword="사과", definitions=("apple",), part_of_speech="noun"),
+            DictionaryEntry(
+                headword="사과",
+                definitions=("apple",),
+                part_of_speech="noun",
+                source="krdict",
+            ),
         ),
     )
 
@@ -123,7 +134,7 @@ def test_an_explicit_parent_is_still_honoured_for_callers_that_pass_one(
         parent.close()
 
 
-def test_the_popup_paints_its_own_panel_background(popup_view: QtPopupView) -> None:
+def test_the_popup_paints_its_own_panel_background() -> None:
     """A translucent widget is cleared to nothing unless it paints itself.
 
     Without the paint handler the popup reached the screen as bare text over
@@ -131,11 +142,94 @@ def test_the_popup_paints_its_own_panel_background(popup_view: QtPopupView) -> N
     the widget onto a known background runs the same paint path the screen does.
     """
 
-    popup_view.show_result(_result(), PopupPosition(60, 60))
-    canvas = QPixmap(popup_view.size())
-    canvas.fill(QColor("white"))
+    popup_view = QtPopupView(config=AppConfig(theme=Theme.DARK))
+    try:
+        popup_view.show_result(_result(), PopupPosition(60, 60))
+        canvas = QPixmap(popup_view.size())
+        canvas.fill(QColor("white"))
 
-    popup_view.render(canvas)
+        popup_view.render(canvas)
 
-    centre = canvas.toImage().pixelColor(popup_view.width() // 2, popup_view.height() // 2)
-    assert centre == QColor("#20252b")
+        centre = canvas.toImage().pixelColor(
+            popup_view.width() // 2, popup_view.height() // 2
+        )
+        assert centre == QColor("#232428")
+    finally:
+        popup_view.close()
+
+
+def test_compact_and_expanded_sizes_follow_content_without_clipping(
+    qt_application: QApplication,
+) -> None:
+    view = QtPopupView(
+        config=AppConfig(popup_default_size=PopupDefaultSize.COMPACT)
+    )
+    try:
+        compact = view.prepare_result(_result())
+        assert compact.width == 340
+        button = view.findChild(QPushButton, "hanlyPopupSize")
+        assert button is not None
+
+        button.click()
+        qt_application.processEvents()
+
+        assert view.expanded is True
+        assert view.popup_size.width == 386
+        layout = view.layout()
+        assert layout is not None
+        assert layout.sizeHint().height() <= view.height()
+    finally:
+        view.close()
+
+
+def test_light_and_dark_preferences_apply_the_approved_palettes() -> None:
+    light = QtPopupView(config=AppConfig(theme=Theme.LIGHT))
+    dark = QtPopupView(config=AppConfig(theme=Theme.DARK))
+    try:
+        assert "#FFFFFF" in light.styleSheet()
+        assert "#232428" in dark.styleSheet()
+        assert "#F08FA6" in dark.styleSheet()
+    finally:
+        light.close()
+        dark.close()
+
+
+def test_popup_preferences_apply_live_and_default_size_applies_next_result() -> None:
+    view = QtPopupView(config=AppConfig())
+    try:
+        view.prepare_result(_result())
+        assert view.popup_size.width == 340
+
+        view.apply_preferences(
+            AppConfig(
+                theme=Theme.DARK,
+                popup_default_size=PopupDefaultSize.EXPANDED,
+                technical_details=TechnicalDetailLevel.BASIC,
+            )
+        )
+
+        assert "#232428" in view.styleSheet()
+        assert view.popup_size.width == 340
+        assert "KRDICT" in " ".join(
+            label.text() for label in view.findChildren(QLabel)
+        )
+        assert view.prepare_result(_result()).width == 386
+    finally:
+        view.close()
+
+
+def test_non_success_result_is_rendered_as_a_human_first_card() -> None:
+    view = QtPopupView(config=AppConfig(theme=Theme.LIGHT))
+    result = LookupResult(
+        status=LookupStatus.ERROR,
+        diagnostics=("dictionary failed: database is locked",),
+        error=HanlyError("database is locked"),
+    )
+    try:
+        view.show_result(result, PopupPosition(20, 20))
+        texts = {label.text() for label in view.findChildren(QLabel)}
+
+        assert "Lookup failed" in texts
+        assert not any("database is locked" in text for text in texts)
+    finally:
+        view.close()

@@ -33,10 +33,10 @@ def test_provider_looks_up_primary_lemmas_and_inflected_word_forms(tmp_path) -> 
 
     with KRDICTProvider(database) as provider:
         assert provider.lookup(" 먹다 ") == (
-            DictionaryEntry("먹다", ("to eat",), "동사"),
+            DictionaryEntry("먹다", ("to eat",), "동사", source="krdict"),
         )
         assert provider.lookup("먹어요") == (
-            DictionaryEntry("먹다", ("to eat",), "동사"),
+            DictionaryEntry("먹다", ("to eat",), "동사", source="krdict"),
         )
 
 

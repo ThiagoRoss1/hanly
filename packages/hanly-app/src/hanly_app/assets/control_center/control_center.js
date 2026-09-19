@@ -11,7 +11,7 @@
     config: {
       hover_delay_ms: 80, hotkey: "", hover_hotkey: "", capture_hotkey: "",
       hover_activation: "push_to_hover", lookup_preload: "when_capture_starts",
-      theme: "system"
+      theme: "system", popup_default_size: "compact", technical_details: "off"
     },
     runtime: {
       ocr_provider: "", resources: [], diagnostics: [], log_path: null,
@@ -111,6 +111,17 @@
     { id: "light", label: "Light" },
     { id: "dark", label: "Dark" },
     { id: "system", label: "System" }
+  ];
+
+  const POPUP_SIZES = [
+    { id: "compact", label: "Compact" },
+    { id: "expanded", label: "Expanded" }
+  ];
+
+  const TECHNICAL_DETAILS = [
+    { id: "off", label: "Off" },
+    { id: "basic", label: "Basic" },
+    { id: "full", label: "Full" }
   ];
 
   const LOG_LEVELS = [
@@ -631,15 +642,26 @@
   // ---- appearance --------------------------------------------------------
 
   function renderAppearance() {
-    const choices = byId("theme-choices");
+    renderSegments("theme-choices", THEMES, config().theme || "system", "theme");
+    renderSegments(
+      "popup-size-choices", POPUP_SIZES,
+      config().popup_default_size || "compact", "popupSize"
+    );
+    renderSegments(
+      "technical-detail-choices", TECHNICAL_DETAILS,
+      config().technical_details || "off", "technicalDetails"
+    );
+  }
+
+  function renderSegments(id, options, active, dataKey) {
+    const choices = byId(id);
     if (!choices) return;
-    const active = config().theme || "system";
     clear(choices);
-    THEMES.forEach(function (theme) {
-      const button = el("button", "segment", theme.label);
+    options.forEach(function (option) {
+      const button = el("button", "segment", option.label);
       button.type = "button";
-      button.dataset.theme = theme.id;
-      attr(button, "aria-pressed", theme.id === active ? "true" : "false");
+      button.dataset[dataKey] = option.id;
+      attr(button, "aria-pressed", option.id === active ? "true" : "false");
       choices.appendChild(button);
     });
   }
@@ -1379,6 +1401,16 @@
   delegate("theme-choices", function (event) {
     const button = closest(event.target, function (node) { return dataOf(node, "theme"); });
     if (button) settings({ theme: button.dataset.theme });
+  });
+
+  delegate("popup-size-choices", function (event) {
+    const button = closest(event.target, function (node) { return dataOf(node, "popupSize"); });
+    if (button) settings({ popup_default_size: button.dataset.popupSize });
+  });
+
+  delegate("technical-detail-choices", function (event) {
+    const button = closest(event.target, function (node) { return dataOf(node, "technicalDetails"); });
+    if (button) settings({ technical_details: button.dataset.technicalDetails });
   });
 
   // Python validates the spelling and registers with the operating system; a

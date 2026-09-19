@@ -910,6 +910,20 @@ def test_a_setting_that_changes_no_shortcut_is_stored_then_applied(
     assert controller.applied[-1].lookup_preload.value == "always"
 
 
+def test_popup_preferences_are_persisted_and_applied_live(tmp_path: Path) -> None:
+    controller = _Bindings()
+    bridge, manager = _rebinding_bridge(tmp_path, controller)
+
+    state = bridge.update_settings(
+        {"popup_default_size": "expanded", "technical_details": "full"}
+    )
+
+    assert manager.config.popup_default_size.value == "expanded"
+    assert manager.config.technical_details.value == "full"
+    assert controller.applied[-1] == manager.config
+    assert state["config"]["popup_default_size"] == "expanded"
+
+
 def test_the_snapshot_reports_the_engine_apart_from_shell_readiness(
     tmp_path: Path,
 ) -> None:
@@ -937,14 +951,16 @@ def test_every_new_preference_has_a_control_on_the_page() -> None:
     assets = load_control_center_assets()
 
     for element in ("lookup-preload", "live-engine", "hover-mode-rows", "shortcut-list",
-                    "theme-choices", "hover-delay-slider", "hover-delay-value"):
+                    "theme-choices", "popup-size-choices", "technical-detail-choices",
+                    "hover-delay-slider", "hover-delay-value"):
         assert f'id="{element}"' in assets.html, element
     for choice in ("when_capture_starts", "always", "on_demand"):
         assert f'value="{choice}"' in assets.html, choice
     # The shortcut rows and the activation modes are rendered from the config
     # field names, so those are what the script has to name.
     for field in ("hover_hotkey", "capture_hotkey", "hover_activation",
-                  "always_active", "push_to_hover", "theme"):
+                  "always_active", "push_to_hover", "theme", "popup_default_size",
+                  "technical_details"):
         assert field in assets.javascript, field
     assert "update_settings" in assets.javascript
 

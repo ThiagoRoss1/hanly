@@ -7,7 +7,7 @@ import pytest
 from hanly import DictionaryEntry, DictionaryProvider, ProviderError
 from hanly.krdict_provider import KRDICTProvider, KRDICTProviderError
 
-from tests.hanly_fixtures.krdict import build_fixture_krdict
+from tests.hanly_fixtures.krdict import build_fixture_krdict, build_krdict_database
 
 
 def _database(tmp_path):
@@ -52,7 +52,12 @@ def test_provider_is_protocol_conformant_and_normalizes_entries(tmp_path) -> Non
         entries = provider.lookup("  먹다 ")
 
     assert entries == (
-        DictionaryEntry(headword="먹다", definitions=("to eat",), part_of_speech="동사"),
+        DictionaryEntry(
+            headword="먹다",
+            definitions=("to eat",),
+            part_of_speech="동사",
+            source="krdict",
+        ),
     )
     assert all(isinstance(entry, DictionaryEntry) for entry in entries)
 
@@ -100,3 +105,39 @@ def test_provider_opens_database_read_only_and_does_not_expose_rows(tmp_path) ->
 
 def test_provider_error_is_a_hanly_provider_error() -> None:
     assert issubclass(KRDICTProviderError, ProviderError)
+
+
+def test_provider_exposes_real_hanja_without_relabeling_plain_origin_text(tmp_path) -> None:
+    xml = """<?xml version="1.0" encoding="utf-8"?>
+<LexicalResource><Lexicon>
+  <LexicalEntry att="id" val="1">
+    <feat att="lexicalUnit" val="단어" /><feat att="partOfSpeech" val="명사" />
+    <feat att="origin" val="文化" /><feat att="vocabularyLevel" val="초급" />
+    <Lemma><feat att="writtenForm" val="문화" /></Lemma>
+    <Sense att="id" val="11"><feat att="definition" val="사회가 만든 생활 양식" />
+      <Equivalent><feat att="language" val="영어" />
+        <feat att="lemma" val="culture" />
+        <feat att="definition" val="culture" /></Equivalent>
+    </Sense>
+  </LexicalEntry>
+  <LexicalEntry att="id" val="2">
+    <feat att="lexicalUnit" val="단어" /><feat att="partOfSpeech" val="명사" />
+    <feat att="origin" val="robot" />
+    <Lemma><feat att="writtenForm" val="로봇" /></Lemma>
+    <Sense att="id" val="21"><feat att="definition" val="기계" />
+      <Equivalent><feat att="language" val="영어" />
+        <feat att="lemma" val="robot" />
+        <feat att="definition" val="robot" /></Equivalent>
+    </Sense>
+  </LexicalEntry>
+</Lexicon></LexicalResource>"""
+    database = build_krdict_database(tmp_path, xml)
+
+    with KRDICTProvider(database) as provider:
+        culture = provider.lookup("문화")[0]
+        robot = provider.lookup("로봇")[0]
+
+    assert culture.hanja == "文化"
+    assert culture.vocabulary_level == "초급"
+    assert culture.source == "krdict"
+    assert robot.hanja is None

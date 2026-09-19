@@ -43,6 +43,8 @@ READ_ENTRY = DictionaryEntry(
         "To interpret a certain writing or remark in a particular way.",
     ),
     part_of_speech="동사",
+    source="krdict",
+    vocabulary_level="초급",
 )
 
 

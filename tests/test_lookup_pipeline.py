@@ -304,6 +304,10 @@ def test_pipeline_runs_stages_in_order_and_returns_success() -> None:
     assert result.context.text == "읽습니다."
     assert result.context.lemma == "읽다"
     assert result.context.ocr_results == (_OCR_RESULT,)
+    assert result.context.selected_ocr is _OCR_RESULT
+    assert result.context.analyses == (
+        TokenAnalysis(token="읽습니다", lemma="읽다", part_of_speech="동사"),
+    )
     assert result.error is None
 
 
@@ -330,6 +334,7 @@ def test_pipeline_returns_unusable_for_low_confidence_when_configured() -> None:
     assert events == ["ocr", "resolver"]
     assert result.context is not None
     assert result.context.text == "읽습니다."
+    assert result.context.selected_ocr is _OCR_RESULT
     assert any("confidence" in diagnostic.lower() for diagnostic in result.diagnostics)
 
 
@@ -382,6 +387,7 @@ def test_pipeline_looks_up_only_the_first_usable_lemma_and_reports_not_found() -
     assert events == ["ocr", "resolver", "morphology", "dictionary"]
     assert result.context is not None
     assert result.context.lemma == "읽다"
+    assert result.context.analyses == analyses
     assert any("읽다" in diagnostic for diagnostic in result.diagnostics)
 
 

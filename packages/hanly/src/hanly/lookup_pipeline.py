@@ -108,7 +108,10 @@ class LookupPipeline:
         text = text.strip()
         word_region = _word_region(self._word_resolver, region, target)
         context = LookupContext(
-            text=text, ocr_results=ocr_results, word_region=word_region
+            text=text,
+            ocr_results=ocr_results,
+            selected_ocr=region,
+            word_region=word_region,
         )
 
         # Hanly's downstream language services are Korean-only. OCR must run
@@ -154,7 +157,13 @@ class LookupPipeline:
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
                 diagnostics=("Morphology returned no usable lemma",),
-                context=context,
+                context=LookupContext(
+                    text=text,
+                    ocr_results=ocr_results,
+                    selected_ocr=region,
+                    analyses=analyses,
+                    word_region=word_region,
+                ),
             )
 
         lemma = lemmas[0]
@@ -172,7 +181,12 @@ class LookupPipeline:
 
         _abort_if_cancelled(cancelled)
         context = LookupContext(
-            text=text, lemma=lemma, ocr_results=ocr_results, word_region=word_region
+            text=text,
+            lemma=lemma,
+            ocr_results=ocr_results,
+            selected_ocr=region,
+            analyses=analyses,
+            word_region=word_region,
         )
         try:
             entries = tuple(self._dictionary_provider.lookup(lemma))

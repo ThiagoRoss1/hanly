@@ -410,6 +410,13 @@ def test_a_presented_result_retains_the_word_its_own_capture_found(
     assert retained is not None
     assert retained.word == ScreenRect(510, 420, 30, 30)
     assert retained.popup == ScreenRect(700, 500, 320, 180)
+
+    manual.update_popup_geometry(ScreenRect(640, 360, 386, 540))
+
+    resized = hover.retained_target
+    assert resized is not None
+    assert resized.word == retained.word
+    assert resized.popup == ScreenRect(640, 360, 386, 540)
     manual.shutdown()
 
 

@@ -24,6 +24,20 @@ def _normalise(value: str | None) -> str:
     return " ".join(value.split())
 
 
+def _hanja_from_origin(value: str | None) -> str | None:
+    """Keep only real CJK ideographs from KRDICT's mixed origin field."""
+
+    normalized = _normalise(value)
+    hanja = "".join(
+        character
+        for character in normalized
+        if "\u3400" <= character <= "\u4dbf"
+        or "\u4e00" <= character <= "\u9fff"
+        or "\uf900" <= character <= "\ufaff"
+    )
+    return hanja or None
+
+
 class KRDICTProvider:
     """Look up normalized dictionary entries from an explicit database path.
 
@@ -94,7 +108,8 @@ class KRDICTProvider:
                     SELECT entry_id FROM word_forms WHERE written_form = ?
                 )
                 SELECT e.id AS entry_id, l.written_form AS headword,
-                       e.part_of_speech, s.sense_order, t.id AS translation_id,
+                       e.source, e.part_of_speech, e.vocabulary_level, e.origin,
+                       s.sense_order, t.id AS translation_id,
                        t.definition
                 FROM candidates AS c
                 JOIN entries AS e ON e.id = c.entry_id
@@ -118,23 +133,36 @@ class KRDICTProvider:
                 "KRDICT database became unreadable during lookup"
             ) from exc
 
-        grouped: OrderedDict[int, tuple[str, str | None, list[str]]] = OrderedDict()
+        grouped: OrderedDict[
+            int,
+            tuple[str, str | None, str | None, str | None, str | None, list[str]],
+        ] = OrderedDict()
         for row in rows:
             entry_id = int(row["entry_id"])
             if entry_id not in grouped:
                 grouped[entry_id] = (
                     _normalise(row["headword"]),
                     _normalise(row["part_of_speech"]) or None,
+                    _normalise(row["source"]) or None,
+                    _hanja_from_origin(row["origin"]),
+                    _normalise(row["vocabulary_level"]) or None,
                     [],
                 )
-            definitions = grouped[entry_id][2]
+            definitions = grouped[entry_id][5]
             definition = _normalise(row["definition"])
             if definition and definition not in definitions:
                 definitions.append(definition)
 
         entries: list[DictionaryEntry] = []
         try:
-            for headword, part_of_speech, definitions in grouped.values():
+            for (
+                headword,
+                part_of_speech,
+                source,
+                hanja,
+                vocabulary_level,
+                definitions,
+            ) in grouped.values():
                 if not headword or not definitions:
                     raise ValueError("an entry has no normalized headword or definition")
                 entries.append(
@@ -142,6 +170,9 @@ class KRDICTProvider:
                         headword=headword,
                         definitions=tuple(definitions),
                         part_of_speech=part_of_speech,
+                        source=source,
+                        hanja=hanja,
+                        vocabulary_level=vocabulary_level,
                     )
                 )
         except ValueError as exc:

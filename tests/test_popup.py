@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Event, Thread
 
 import pytest
 from hanly import (
+    BoundingBox,
     DictionaryEntry,
     HanlyError,
+    LookupContext,
     LookupResult,
     LookupStatus,
+    OCRResult,
     PixelFormat,
     Point,
+    Quad,
     ROIImage,
+    TokenAnalysis,
 )
+from hanly_app.config import TechnicalDetailLevel
 from hanly_app.lookup_controller import LookupController
 from hanly_app.popup import (
     PopupController,
@@ -28,6 +35,11 @@ _IMAGE = ROIImage(1, 1, PixelFormat.GRAYSCALE_8, b"\x00")
 
 
 def _success() -> LookupResult:
+    evidence = OCRResult(
+        text="먹었습니다",
+        confidence=0.93,
+        quad=Quad.from_bounding_box(BoundingBox(0, 0, 100, 24)),
+    )
     return LookupResult(
         status=LookupStatus.SUCCESS,
         entries=(
@@ -35,6 +47,19 @@ def _success() -> LookupResult:
                 headword="먹다",
                 definitions=("to eat", "consume"),
                 part_of_speech="verb",
+                source="krdict",
+                hanja="食",
+            ),
+        ),
+        context=LookupContext(
+            text="먹었습니다",
+            lemma="먹다",
+            ocr_results=(evidence,),
+            selected_ocr=evidence,
+            analyses=(
+                TokenAnalysis("먹", "먹다", "VV"),
+                TokenAnalysis("었", "었", "EP"),
+                TokenAnalysis("습니다", "습니다", "EF"),
             ),
         ),
     )
@@ -65,19 +90,93 @@ class _RecordingView:
         self.events.append(("close", None, None))
 
 
+class _ResizableView(_RecordingView):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.resize_handler: Callable[[PopupSize], None] | None = None
+        self.positions: list[PopupPosition] = []
+
+    def set_resize_handler(self, handler: Callable[[PopupSize], None]) -> None:
+        self.resize_handler = handler
+
+    def reposition(self, position: PopupPosition) -> None:
+        self.positions.append(position)
+
+
 def test_format_lookup_result_covers_success_normal_outcomes_and_error() -> None:
     success = format_lookup_result(_success())
     assert success.title == "먹다"
-    assert "to eat" in success.lines
+    assert success.entry is not None
+    assert "to eat" in success.entry.definitions
+    assert success.entry.hanja == "食"
+    assert success.surface == "먹었습니다"
+    assert [piece.role for piece in success.analysis] == [
+        "verb stem",
+        "past",
+        "formal polite",
+    ]
 
     for status in (LookupStatus.EMPTY, LookupStatus.NOT_FOUND, LookupStatus.UNUSABLE):
         content = format_lookup_result(_non_success(status))
         assert content.title
-        assert "diagnostic detail" in content.lines
+        assert content.body
+        assert content.technical_lines == ()
 
     error = format_lookup_result(_non_success(LookupStatus.ERROR))
-    assert error.title == "Lookup error"
-    assert "provider unavailable" in error.lines
+    assert error.title == "Lookup failed"
+    assert "provider unavailable" not in error.body
+
+
+def test_technical_details_are_off_basic_and_full_from_real_evidence() -> None:
+    off = format_lookup_result(_success(), TechnicalDetailLevel.OFF)
+    basic = format_lookup_result(_success(), TechnicalDetailLevel.BASIC)
+    full = format_lookup_result(_success(), TechnicalDetailLevel.FULL)
+
+    assert off.technical_lines == ()
+    assert basic.technical_lines == ("OCR 93%", "KRDICT")
+    assert full.technical_lines[:3] == ("OCR 93%", "KRDICT", "SUCCESS")
+
+
+def test_presenter_keeps_multiple_entries_and_omits_missing_optional_metadata() -> None:
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(
+            DictionaryEntry("문화", ("culture",), "noun", source="krdict"),
+            DictionaryEntry("문화", ("civilization",), "noun", source="krdict"),
+        ),
+        context=LookupContext(
+            text="문화는",
+            lemma="문화",
+            analyses=(
+                TokenAnalysis("문화", "문화", "NNG"),
+                TokenAnalysis("는", "는", "JX"),
+            ),
+        ),
+    )
+
+    content = format_lookup_result(result)
+
+    assert content.entry is not None
+    assert content.entry.hanja is None
+    assert content.entry.vocabulary_level is None
+    assert content.other_entries[0].definitions == ("civilization",)
+    assert [(piece.text, piece.role) for piece in content.analysis] == [
+        ("문화", "noun"),
+        ("는", "topic particle"),
+    ]
+
+
+def test_presenter_allows_surface_and_lemma_to_match_without_fake_analysis() -> None:
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(DictionaryEntry("문화", ("culture",), "noun"),),
+        context=LookupContext(text="문화", lemma="문화"),
+    )
+
+    content = format_lookup_result(result)
+
+    assert content.surface == content.lemma == "문화"
+    assert content.analysis == ()
 
 
 def test_popup_position_flips_and_clamps_at_screen_edges() -> None:
@@ -126,7 +225,7 @@ def test_popup_show_update_hide_and_close_lifecycle() -> None:
         LookupStatus.ERROR,
     ),
 )
-def test_popup_suppresses_non_success_and_clears_a_visible_success(
+def test_popup_renders_non_success_in_the_existing_view(
     status: LookupStatus,
 ) -> None:
     view = _RecordingView([])
@@ -136,10 +235,46 @@ def test_popup_suppresses_non_success_and_clears_a_visible_success(
 
     position = controller.open(_non_success(status), Point(20, 20), screen)
 
-    assert position is None
-    assert controller.visible is False
-    assert controller.result is None
-    assert [event[0] for event in view.events] == ["show", "hide"]
+    assert position == PopupPosition(36, 36)
+    assert controller.visible is True
+    assert controller.result is not None
+    assert controller.result.status is status
+    assert [event[0] for event in view.events] == ["show", "update"]
+
+
+def test_variable_size_placement_and_resize_stay_inside_the_screen() -> None:
+    view = _RecordingView([])
+    controller = PopupController(view, popup_size=PopupSize(340, 220))
+    screen = ScreenGeometry(-1000, -200, 1000, 700)
+
+    compact = controller.position_for(Point(-8, 490), screen)
+    expanded = controller.position_for(
+        Point(-8, 490), screen, PopupSize(386, 620)
+    )
+
+    assert compact == PopupPosition(-364, 254)
+    assert expanded.x >= screen.left
+    assert expanded.y >= screen.top
+    assert expanded.x + 386 <= screen.right
+    assert expanded.y + 620 <= screen.bottom
+
+
+def test_interactive_resize_repositions_and_reports_the_final_geometry() -> None:
+    view = _ResizableView()
+    geometries: list[tuple[PopupPosition, PopupSize]] = []
+    controller = PopupController(
+        view,
+        popup_size=PopupSize(340, 220),
+        on_geometry_changed=lambda position, size: geometries.append((position, size)),
+    )
+    controller.open(_success(), Point(790, 590), ScreenGeometry(0, 0, 800, 600))
+    assert callable(view.resize_handler)
+
+    view.resize_handler(PopupSize(386, 500))
+
+    assert view.positions[-1] == PopupPosition(388, 74)
+    assert controller.position == PopupPosition(388, 74)
+    assert geometries[-1] == (PopupPosition(388, 74), PopupSize(386, 500))
 
 
 def test_popup_requires_normalized_lookup_result() -> None:

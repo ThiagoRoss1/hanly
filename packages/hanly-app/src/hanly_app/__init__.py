@@ -33,6 +33,8 @@ from .config import (
     ConfigManager,
     HoverActivation,
     LookupPreload,
+    PopupDefaultSize,
+    TechnicalDetailLevel,
     Theme,
 )
 from .control_center import (
@@ -159,6 +161,7 @@ __all__ = [
     "MouseObserver",
     "PopupContent",
     "PopupController",
+    "PopupDefaultSize",
     "PopupPosition",
     "PopupRuntime",
     "PopupSize",
@@ -178,6 +181,7 @@ __all__ = [
     "ScreenGeometry",
     "ScreenRect",
     "Theme",
+    "TechnicalDetailLevel",
     "TrayService",
     "TrayState",
     "TrayStatus",

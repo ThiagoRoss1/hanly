@@ -113,6 +113,7 @@ class LookupResidency(Protocol):
 
 
 PopupPresenter: TypeAlias = Callable[[LookupResult], object]
+PopupPreferenceApplier: TypeAlias = Callable[[AppConfig], None]
 InitializationErrorHandler: TypeAlias = Callable[[BaseException], None]
 CursorProvider: TypeAlias = Callable[[], Point]
 ShutdownScheduler: TypeAlias = Callable[[Callable[[], None]], None]
@@ -204,6 +205,7 @@ class ManualLookupRuntime:
         idle_scheduler: IdleScheduler | None = None,
         idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS,
         on_stopped: Callable[[], None] | None = None,
+        apply_popup_preferences: PopupPreferenceApplier | None = None,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -221,6 +223,8 @@ class ManualLookupRuntime:
             raise TypeError("current_cursor must be callable")
         if not callable(dispatcher):
             raise TypeError("dispatcher must be callable")
+        if apply_popup_preferences is not None and not callable(apply_popup_preferences):
+            raise TypeError("apply_popup_preferences must be callable")
         if not isinstance(hotkey, str) or not hotkey.strip():
             raise TypeError("hotkey must be a non-empty string")
 
@@ -247,6 +251,7 @@ class ManualLookupRuntime:
         self._idle_scheduler = idle_scheduler or _schedule_idle
         self._idle_timeout = float(idle_timeout_seconds)
         self._on_stopped = on_stopped
+        self._apply_popup_preferences = apply_popup_preferences
         self._activation = activation
         self._on_toggle_capture = on_toggle_capture
         self._hotkeys = (hotkey_factory or _create_hotkey)(
@@ -328,6 +333,8 @@ class ManualLookupRuntime:
 
         if hover_runtime is not None:
             hover_runtime.set_delay_ms(float(config.hover_delay_ms))
+        if self._apply_popup_preferences is not None:
+            self._apply_popup_preferences(config)
 
         self._apply_preload_change(config.lookup_preload)
 
@@ -908,12 +915,7 @@ class ManualLookupRuntime:
         lookup_request_id: int | None,
         popup: ScreenRect | None = None,
     ) -> None:
-        """Retain where a successful answer came from, so it can be read.
-
-        Only a successful result is worth protecting: the others are already
-        suppressed rather than shown, and keeping a region for them would
-        freeze hover over a word Hanly could not read.
-        """
+        """Retain where a successful answer came from, so it can be read."""
 
         hover = self._hover_runtime
         if hover is None:
@@ -923,6 +925,17 @@ class ManualLookupRuntime:
             hover.clear_target()
             return
         hover.retain(RetainedTarget(lookup_request_id, word, popup))
+
+    def update_popup_geometry(self, popup: ScreenRect) -> None:
+        """Keep hover protection aligned with an expanded or collapsed popup."""
+
+        hover = self._hover_runtime
+        if hover is None:
+            return
+        retained = hover.retained_target
+        if retained is None:
+            return
+        hover.retain(RetainedTarget(retained.lookup_request_id, retained.word, popup))
 
     def _word_rect(
         self, result: LookupResult, lookup_request_id: int | None
@@ -1181,7 +1194,7 @@ def create_qt_manual_lookup(
     from .qt_popup import QtPopupTrigger, QtPopupView, QtResultDispatcher
 
     dispatcher = QtResultDispatcher()
-    view = QtPopupView()
+    view = QtPopupView(config=app_config)
     popup_controller = PopupController(view, popup_size=view.popup_size)
     popup_trigger = QtPopupTrigger(popup_controller, trace_sink=trace_sink)
 
@@ -1189,6 +1202,15 @@ def create_qt_manual_lookup(
 
     origins = CaptureOrigins()
     manual_holder: list[ManualLookupRuntime] = []
+
+    def popup_geometry_changed(position: object, size: object) -> None:
+        if not manual_holder:
+            return
+        popup = _popup_rect(position, size)
+        if popup is not None:
+            manual_holder[0].update_popup_geometry(popup)
+
+    popup_controller.set_geometry_handler(popup_geometry_changed)
 
     def present_result(result: LookupResult) -> object:
         lookup_request_id = controller.current_request_id
@@ -1250,6 +1272,7 @@ def create_qt_manual_lookup(
         origins=origins,
         idle_scheduler=idle_scheduler,
         on_stopped=on_stopped,
+        apply_popup_preferences=view.apply_preferences,
     )
     manual_holder.append(manual)
     if hover_enabled:

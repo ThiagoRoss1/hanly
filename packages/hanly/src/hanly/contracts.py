@@ -1,5 +1,7 @@
 """Standard-library-only normalized data contracts for the Hanly engine."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 from math import ceil, floor, isfinite
@@ -150,7 +152,7 @@ class Quad:
         )
 
     @classmethod
-    def from_bounding_box(cls, box: BoundingBox) -> "Quad":
+    def from_bounding_box(cls, box: BoundingBox) -> Quad:
         """Build an axis-aligned quad from a rectangle, clockwise from top-left."""
 
         left, top = float(box.left), float(box.top)
@@ -193,6 +195,12 @@ class LookupContext:
     text: str | None = None
     lemma: str | None = None
     ocr_results: tuple[OCRResult, ...] = ()
+    #: The exact OCR region selected for this lookup. Clients must not guess
+    #: confidence by matching text against ``ocr_results``.
+    selected_ocr: OCRResult | None = None
+    #: Provider-normalized morphology retained for clients that explain how a
+    #: surface form relates to the dictionary lemma.
+    analyses: tuple[TokenAnalysis, ...] = ()
     #: Where the resolved word sits in the image the lookup was given, which is
     #: not the whole recognized line. A client that protects the word the user
     #: is reading needs the word, not the sentence around it.
@@ -216,6 +224,9 @@ class DictionaryEntry:
     headword: str
     definitions: tuple[str, ...]
     part_of_speech: str | None = None
+    source: str | None = None
+    hanja: str | None = None
+    vocabulary_level: str | None = None
 
     def __post_init__(self) -> None:
         if not self.headword:

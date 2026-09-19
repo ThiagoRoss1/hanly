@@ -62,6 +62,22 @@ def test_kiwi_provider_uses_surface_and_base_form_fallbacks() -> None:
     assert analyzer.inputs == []
 
 
+def test_kiwi_provider_preserves_a_multi_token_conjugation() -> None:
+    provider = KiwiProvider(
+        analyzer=lambda _text: (
+            {"form": "깨뜨리", "tag": "VV", "lemma": "깨뜨리다"},
+            {"form": "었", "tag": "EP", "lemma": "었"},
+            {"form": "습니다", "tag": "EF", "lemma": "습니다"},
+        )
+    )
+
+    assert provider.analyze("깨뜨렸습니다") == (
+        TokenAnalysis("깨뜨리", "깨뜨리다", "VV"),
+        TokenAnalysis("었", "었", "EP"),
+        TokenAnalysis("습니다", "습니다", "EF"),
+    )
+
+
 def test_kiwi_provider_returns_empty_for_empty_input_without_calling_analyzer() -> None:
     analyzer = _FakeAnalyzer(
         (_FakeToken("절대 호출되면 안 됨", "NNG", "절대 호출되면 안 됨"),)
