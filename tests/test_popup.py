@@ -444,3 +444,100 @@ def test_an_in_card_dismissal_clears_the_popup_and_notifies_composition() -> Non
     assert controller.visible is False
     assert controller.result is None
     assert dismissed == ["forget"]
+
+
+def _component_result() -> LookupResult:
+    """`초대받았어요` near `초대`, the way the engine reports it."""
+
+    from hanly import LexicalCandidate, LexicalComponent
+
+    return LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(
+            DictionaryEntry(
+                headword="초대",
+                senses=(DictionarySense(definition="An act of asking.", gloss="invitation"),),
+            ),
+        ),
+        context=LookupContext(
+            text="초대받았어요",
+            lemma="초대",
+            candidate=LexicalCandidate(lemma="초대", start=0, end=2),
+            components=(
+                LexicalComponent(lemma="초대", start=0, end=2, gloss="invitation"),
+                LexicalComponent(lemma="받다", start=2, end=6, gloss="receive"),
+                LexicalComponent(
+                    lemma="었", start=3, end=4, gloss="tense or honorific", grammatical=True
+                ),
+                LexicalComponent(
+                    lemma="어요", start=4, end=6, gloss="sentence ending", grammatical=True
+                ),
+            ),
+        ),
+    )
+
+
+def test_the_component_panel_shows_each_part_with_its_own_surface() -> None:
+    content = format_lookup_result(_component_result())
+
+    assert [piece.surface for piece in content.components] == [
+        "초대",
+        "받았어요",
+        "았",
+        "어요",
+    ]
+    assert [piece.gloss for piece in content.components][:2] == ["invitation", "receive"]
+    assert [piece.grammatical for piece in content.components] == [
+        False,
+        False,
+        True,
+        True,
+    ]
+
+
+def test_the_component_the_cursor_is_on_is_marked_once() -> None:
+    content = format_lookup_result(_component_result())
+
+    selected = [piece for piece in content.components if piece.selected]
+    assert [piece.lemma for piece in selected] == ["초대"]
+
+
+def test_a_simple_word_shows_no_component_panel() -> None:
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(
+            DictionaryEntry(
+                headword="학교",
+                senses=(DictionarySense(definition="A place.", gloss="school"),),
+            ),
+        ),
+        context=LookupContext(text="학교", lemma="학교"),
+    )
+
+    assert format_lookup_result(result).components == ()
+
+
+def test_a_component_without_a_gloss_is_reported_rather_than_invented() -> None:
+    from hanly import LexicalComponent
+
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(
+            DictionaryEntry(
+                headword="초대",
+                senses=(DictionarySense(definition="An act.", gloss="invitation"),),
+            ),
+        ),
+        context=LookupContext(
+            text="초대받았어요",
+            lemma="초대",
+            components=(
+                LexicalComponent(lemma="초대", start=0, end=2, gloss="invitation"),
+                LexicalComponent(lemma="받다", start=2, end=6),
+            ),
+        ),
+    )
+
+    content = format_lookup_result(result)
+    assert content.components[1].gloss is None
+    assert content.components[1].grammatical is False

@@ -333,6 +333,7 @@ def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None
         "analyses",
         "word_region",
         "candidate",
+        "components",
     ]
     assert result.context == context
     assert result.context.ocr_results == (ocr_result,)
@@ -422,6 +423,7 @@ def test_public_export_surface_is_explicit() -> None:
         "MorphologyProvider",
         "DictionarySense",
         "LexicalCandidate",
+        "LexicalComponent",
         "MorphologyAnalysis",
         "OCRProvider",
         "OCRResult",

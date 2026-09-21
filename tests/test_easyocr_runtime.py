@@ -105,8 +105,9 @@ class _FakeKRDICT:
         _PROVIDER_THREADS["krdict"] = threading.get_ident()
 
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
-        assert lemma == "책"
         _PROVIDER_THREADS["krdict_lookup"] = threading.get_ident()
+        if lemma != "책":
+            return ()
         return (DictionaryEntry(headword="책", definitions=("book",)),)
 
     def close(self) -> None:

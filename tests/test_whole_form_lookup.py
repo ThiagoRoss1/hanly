@@ -75,7 +75,9 @@ def test_a_complete_form_the_dictionary_has_becomes_the_primary_result() -> None
 
     assert result.status is LookupStatus.SUCCESS
     assert result.entries[0].headword == "초대받다"
-    assert dictionary.queries == ["초대받다"]
+    # The exact surface first, then the reconstructed form, then the components
+    # the panel explains.
+    assert dictionary.queries == ["초대받았어요", "초대받다", "초대", "받다"]
 
 
 @pytest.mark.parametrize("cursor_index", range(len(_SURFACE)))
@@ -114,8 +116,10 @@ def test_without_a_complete_form_the_cursor_component_is_the_answer(
 
     assert result.status is LookupStatus.SUCCESS
     assert result.entries[0].headword == lemma
-    # Bounded: the complete form is probed once, then the component.
-    assert dictionary.queries == ["초대받다", lemma]
+    # Bounded and ordered: exact surface, whole form, then the component the
+    # cursor is on before the rest.
+    assert dictionary.queries[:3] == ["초대받았어요", "초대받다", lemma]
+    assert len(dictionary.queries) <= 5
 
 
 def test_a_simple_word_probes_no_complete_form() -> None:
@@ -205,7 +209,7 @@ def test_a_missing_complete_form_and_missing_component_is_still_not_found() -> N
 
     assert result.status is LookupStatus.NOT_FOUND
     assert result.entries == ()
-    assert dictionary.queries == ["초대받다", "초대"]
+    assert dictionary.queries == ["초대받았어요", "초대받다", "초대", "받다"]
 
 
 def test_a_dictionary_failure_during_the_probe_is_an_error_result() -> None:

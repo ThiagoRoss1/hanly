@@ -320,7 +320,8 @@ class _FakeMorphology:
 
 class _FakeDictionary:
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
-        assert lemma == "읽다"
+        if lemma != "읽다":
+            return ()
         return (DictionaryEntry(headword="읽다", definitions=("to read",)),)
 
 

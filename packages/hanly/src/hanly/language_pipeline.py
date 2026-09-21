@@ -26,6 +26,7 @@ from unicodedata import category
 from .contracts import (
     DictionaryEntry,
     LexicalCandidate,
+    LexicalComponent,
     LookupContext,
     LookupResult,
     LookupStatus,
@@ -125,14 +126,24 @@ class LanguagePipeline:
         # A dictionary failure still has to explain which unit was being looked
         # up, and the whole form is not known until the probe has answered.
         attempted = replace(context, lemma=selected.lemma, candidate=selected)
+        probes = _DictionaryProbes(self._dictionary_provider)
         try:
-            selected, entries = self._resolve_entries(analysis, selected, text)
+            selected, entries = self._resolve_entries(probes, analysis, selected, text)
+            # The dictionary listing the whole surface settles what it is; the
+            # morphology's split of it into other words is then a worse reading,
+            # not extra information.
+            listed_whole = bool(entries) and selected.lemma == text
+            components = _components(
+                probes, analysis, text, selection.cursor_index, listed_whole
+            )
         except Exception as exc:
             return error_result("dictionary", exc, attempted)
 
         lemma = selected.lemma
         diagnostics = _selection_diagnostics(analysis, selected, text)
-        context = replace(context, lemma=lemma, candidate=selected)
+        context = replace(
+            context, lemma=lemma, candidate=selected, components=components
+        )
 
         if not entries:
             return LookupResult(
@@ -151,24 +162,37 @@ class LanguagePipeline:
 
     def _resolve_entries(
         self,
+        probes: "_DictionaryProbes",
         analysis: MorphologyAnalysis,
         selected: LexicalCandidate,
         text: str,
     ) -> tuple[LexicalCandidate, tuple[DictionaryEntry, ...]]:
-        """Prefer a real dictionary entry for the whole form over one component.
+        """Answer with the largest real dictionary form covering the surface.
 
-        The dictionary is asked at most twice: once for the complete form when
-        the surface holds several lexical units, and once for the component the
-        cursor is on when the dictionary does not have that complete form.
+        The exact surface comes first because a dictionary lists many forms
+        verbatim -- ``깜짝이야`` and ``고소득층`` are entries in their own right,
+        and reconstructing them from morphology would answer a different word.
+        Only then is the whole form reconstructed, and only then the component
+        the cursor is on.
         """
+
+        entries = probes.lookup(text)
+        if entries:
+            surface = LexicalCandidate(
+                lemma=text,
+                start=0,
+                end=len(text),
+                part_of_speech=selected.part_of_speech,
+            )
+            return surface, entries
 
         whole = _complete_form(analysis, text)
         if whole is not None:
-            entries = tuple(self._dictionary_provider.lookup(whole.lemma))
+            entries = probes.lookup(whole.lemma)
             if entries:
                 return whole, entries
 
-        return selected, tuple(self._dictionary_provider.lookup(selected.lemma))
+        return selected, probes.lookup(selected.lemma)
 
 
 def error_result(
@@ -278,6 +302,190 @@ _POS_EQUIVALENTS = {
     "MM": "관형사",
     "IC": "감탄사",
 }
+
+
+#: Kiwi tag families that attach to a lexical unit instead of naming one. They
+#: explain the form of the word, so they are annotations rather than entries.
+_GRAMMATICAL_PREFIXES = ("E", "J", "XS")
+
+#: What each grammatical family contributes, in the reader's terms. An absent
+#: family simply has no label, which is honest rather than invented.
+_GRAMMATICAL_LABELS = {
+    "EP": "tense or honorific",
+    "EF": "sentence ending",
+    "EC": "connective ending",
+    "ETN": "nominalizing ending",
+    "ETM": "modifier ending",
+    "JKS": "subject particle",
+    "JKC": "complement particle",
+    "JKO": "object particle",
+    "JKG": "possessive particle",
+    "JKB": "adverbial particle",
+    "JKV": "vocative particle",
+    "JKQ": "quotative particle",
+    "JX": "auxiliary particle",
+    "JC": "connective particle",
+    "XSN": "noun-forming suffix",
+    "XSV": "verb-forming suffix",
+    "XSA": "adjective-forming suffix",
+}
+
+#: The dictionary budget for one lookup: the exact surface, the reconstructed
+#: whole form, and up to three lexical components.
+_MAX_DICTIONARY_QUERIES = 5
+_MAX_COMPONENT_QUERIES = 3
+
+
+class _DictionaryProbes:
+    """One lookup's dictionary budget, deduplicated and capped.
+
+    A hover must not multiply into an unbounded number of queries just because
+    a surface decomposes into many parts, so a repeated lemma is free and the
+    budget simply runs out rather than growing.
+    """
+
+    def __init__(self, provider: DictionaryProvider) -> None:
+        self._provider = provider
+        self._answers: dict[str, tuple[DictionaryEntry, ...]] = {}
+
+    def lookup(self, lemma: str) -> tuple[DictionaryEntry, ...]:
+        cached = self._answers.get(lemma)
+        if cached is not None:
+            return cached
+        if len(self._answers) >= _MAX_DICTIONARY_QUERIES:
+            return ()
+        entries = tuple(self._provider.lookup(lemma))
+        self._answers[lemma] = entries
+        return entries
+
+    @property
+    def query_count(self) -> int:
+        return len(self._answers)
+
+
+def _components(
+    probes: _DictionaryProbes,
+    analysis: MorphologyAnalysis,
+    text: str,
+    cursor_index: int,
+    listed_whole: bool = False,
+) -> tuple[LexicalComponent, ...]:
+    """Describe how ``text`` is built, with a gloss for each part.
+
+    A surface that does not decompose has nothing to explain, so it returns
+    nothing and a client has no panel to show. When the dictionary lists the
+    surface itself, its parts are dropped: ``고소득층`` is one word, and naming
+    its first syllable ``고 · the late`` would explain it wrongly. The endings
+    are kept either way, because they describe the form rather than rename it.
+    """
+
+    lexical = (
+        [] if listed_whole else _lexical_components(probes, analysis, text, cursor_index)
+    )
+    grammatical = _grammatical_components(analysis, text)
+    if len(lexical) + len(grammatical) < 2:
+        return ()
+
+    # Stable in morphology order for equal offsets, which keeps a stem ahead of
+    # the ending that fuses into the same characters.
+    return tuple(sorted(lexical + grammatical, key=lambda item: item.start))
+
+
+def _lexical_components(
+    probes: _DictionaryProbes,
+    analysis: MorphologyAnalysis,
+    text: str,
+    cursor_index: int,
+) -> list[LexicalComponent]:
+    """The dictionary-addressable parts, glossed while the budget allows."""
+
+    selected = _select_candidate(analysis, cursor_index)
+    ordered = list(analysis.candidates)
+    if selected is not None:
+        # The part the reader is pointing at is the one worth spending the
+        # budget on first.
+        ordered.sort(key=lambda candidate: candidate.lemma != selected.lemma)
+
+    glossed: dict[str, str | None] = {}
+    for candidate in ordered:
+        if len(glossed) >= _MAX_COMPONENT_QUERIES:
+            break
+        if candidate.lemma in glossed:
+            continue
+        entries = probes.lookup(candidate.lemma)
+        glossed[candidate.lemma] = _first_gloss(entries, candidate.part_of_speech)
+
+    components: list[LexicalComponent] = []
+    for candidate in analysis.candidates:
+        span = _clamp_span(candidate.start, candidate.end, text)
+        if span is None:
+            continue
+        components.append(
+            LexicalComponent(
+                lemma=candidate.lemma,
+                start=span[0],
+                end=span[1],
+                gloss=glossed.get(candidate.lemma),
+                part_of_speech=candidate.part_of_speech,
+            )
+        )
+    return components
+
+
+def _grammatical_components(
+    analysis: MorphologyAnalysis, text: str
+) -> list[LexicalComponent]:
+    """The endings and particles, which explain the form rather than name it."""
+
+    components: list[LexicalComponent] = []
+    for token in analysis.tokens:
+        family = _tag_family(token.part_of_speech)
+        if not family.startswith(_GRAMMATICAL_PREFIXES):
+            continue
+        if token.start is None or token.length is None:
+            continue
+        span = _clamp_span(token.start, token.start + token.length, text)
+        if span is None or not token.lemma:
+            continue
+        components.append(
+            LexicalComponent(
+                lemma=token.lemma,
+                start=span[0],
+                end=span[1],
+                gloss=_GRAMMATICAL_LABELS.get(family),
+                part_of_speech=token.part_of_speech,
+                grammatical=True,
+            )
+        )
+    return components
+
+
+def _clamp_span(start: int, end: int, text: str) -> tuple[int, int] | None:
+    """Keep a provider's span inside the text it describes, or drop it.
+
+    A candidate's span covers the endings attached to its unit, and a provider
+    may report one reaching past the analyzed text. The contract requires
+    offsets that index ``text``, so an unusable span is omitted rather than
+    repaired into a different claim.
+    """
+
+    if not isinstance(start, int) or not isinstance(end, int):
+        return None
+    bounded_end = min(end, len(text))
+    if start < 0 or bounded_end <= start:
+        return None
+    return start, bounded_end
+
+
+def _first_gloss(
+    entries: tuple[DictionaryEntry, ...], part_of_speech: str | None
+) -> str | None:
+    """The gloss a reader would see for this part, under the same ordering."""
+
+    if not entries:
+        return None
+    senses = _rank_entries(entries, part_of_speech)[0].senses
+    return senses[0].gloss if senses else None
 
 
 def _complete_form(

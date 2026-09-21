@@ -210,6 +210,10 @@ class LookupContext:
     #: The lexical unit the pointer selected, when the morphology provider
     #: reported spans. It names which part of ``text`` the answer is about.
     candidate: LexicalCandidate | None = None
+    #: How ``text`` decomposes, with a gloss for each part the dictionary knows.
+    #: Empty when the surface does not decompose, so a client showing a
+    #: breakdown has nothing to show for a simple word.
+    components: tuple[LexicalComponent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -317,6 +321,41 @@ class LexicalCandidate:
         if self.contains(index):
             return 0
         return self.start - index if index < self.start else index - self.end + 1
+
+
+@dataclass(frozen=True)
+class LexicalComponent:
+    """One part of an analyzed surface, with the gloss naming it.
+
+    ``start`` and ``end`` are character offsets into the analyzed text, so the
+    surface is ``text[start:end]`` and is deliberately not duplicated here.
+    Components may overlap: Korean contractions make a stem and the ending that
+    fuses with it cover the same characters, and both are real.
+    """
+
+    lemma: str
+    start: int
+    end: int
+    gloss: str | None = None
+    part_of_speech: str | None = None
+    #: A grammatical ending explains the form rather than naming a dictionary
+    #: entry, which is why a missing gloss here means something different from
+    #: a lexical component the dictionary simply does not hold.
+    grammatical: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.lemma, str) or not self.lemma:
+            raise ValueError("lexical components require a lemma")
+        if isinstance(self.start, bool) or isinstance(self.end, bool):
+            raise TypeError("component offsets must be integers")
+        if not isinstance(self.start, int) or not isinstance(self.end, int):
+            raise TypeError("component offsets must be integers")
+        if self.start < 0 or self.end <= self.start:
+            raise ValueError("lexical components require a non-empty forward span")
+        if self.gloss is not None and not isinstance(self.gloss, str):
+            raise TypeError("component gloss must be a string or None")
+        if not isinstance(self.grammatical, bool):
+            raise TypeError("grammatical must be a bool")
 
 
 @dataclass(frozen=True)

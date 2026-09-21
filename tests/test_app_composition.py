@@ -75,7 +75,10 @@ class _MorphologyProvider(_Provider):
 
 class _DictionaryProvider(_Provider):
     def lookup(self, lemma: str):
-        assert lemma == "책"
+        # A real dictionary answers nothing for a form it does not hold, which
+        # is what the surface and whole-form probes rely on.
+        if lemma != "책":
+            return ()
         return (DictionaryEntry(headword="책", definitions=("book",)),)
 
 

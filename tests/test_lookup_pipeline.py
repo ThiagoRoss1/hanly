@@ -41,6 +41,11 @@ _ENTRY = DictionaryEntry(
     definitions=("to read",),
     part_of_speech="동사",
 )
+_BOOK_ENTRY = DictionaryEntry(
+    headword="책",
+    definitions=("book",),
+    part_of_speech="명사",
+)
 
 
 class _OCR:
@@ -87,7 +92,11 @@ class _Dictionary:
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
         self.events.append("dictionary")
         self.lemmas.append(lemma)
-        return self.entries
+        # Only the forms it actually holds, so the surface and whole-form
+        # probes see a real miss rather than a universal hit.
+        if any(entry.headword == lemma for entry in self.entries):
+            return self.entries
+        return ()
 
 
 def _morphology(events: list[str], analyses: Sequence[TokenAnalysis] | None = None) -> _Morphology:
@@ -160,7 +169,7 @@ def test_a_provider_without_spans_keeps_the_first_usable_lemma() -> None:
                 TokenAnalysis(token="읽습니다", lemma="읽다", part_of_speech="동사"),
             )
         ),
-        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+        dictionary_provider=_Dictionary(events, (_BOOK_ENTRY,)),
         word_resolver=_WholeRegionResolver(),
     )
 
@@ -221,19 +230,19 @@ def test_the_pointer_chooses_among_several_lexical_units() -> None:
                 region=line, text=line.text, cursor_index=self.index, region_start=0
             )
 
-    class _NoCompoundDictionary(_Dictionary):
-        """`책읽다` is not a word, so only the units themselves are found."""
+    class _UnitsOnlyDictionary(_Dictionary):
+        """Neither `책읽는` nor `책읽다` is a word; only the units are."""
 
         def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
             found = super().lookup(lemma)
-            return () if lemma == "책읽다" else found
+            return found if lemma in {"책", "읽다"} else ()
 
     for index, expected in ((0, "책"), (1, "읽다"), (2, "읽다")):
         events: list[str] = []
         pipeline = LookupPipeline(
             ocr_provider=_OCR(events, (line,)),
             morphology_provider=_Analysis(),
-            dictionary_provider=_NoCompoundDictionary(events, (_ENTRY,)),
+            dictionary_provider=_UnitsOnlyDictionary(events, (_ENTRY,)),
             word_resolver=_PointingResolver(index),
         )
 
@@ -347,14 +356,14 @@ def test_korean_target_with_spaces_and_punctuation_reaches_morphology_and_dictio
     pipeline = LookupPipeline(
         ocr_provider=_OCR(events, (line,)),
         morphology_provider=_AnyTextMorphology(),
-        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+        dictionary_provider=_Dictionary(events, (_BOOK_ENTRY,)),
         word_resolver=_WholeRegionResolver(),
     )
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.SUCCESS
-    assert events == ["ocr", "resolver", "morphology", "dictionary"]
+    assert events == ["ocr", "resolver", "morphology", "dictionary", "dictionary"]
 
 
 def test_error_diagnostic_does_not_repeat_the_stage_prefix() -> None:
@@ -374,7 +383,8 @@ def test_pipeline_runs_stages_in_order_and_returns_success() -> None:
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 
-    assert events == ["ocr", "resolver", "morphology", "dictionary"]
+    # The surface is probed before the lemma, so the stage appears twice.
+    assert events == ["ocr", "resolver", "morphology", "dictionary", "dictionary"]
     assert result.status is LookupStatus.SUCCESS
     assert result.entries == (_ENTRY,)
     assert result.context is not None
@@ -461,7 +471,7 @@ def test_pipeline_looks_up_only_the_first_usable_lemma_and_reports_not_found() -
     result = pipeline.lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.NOT_FOUND
-    assert events == ["ocr", "resolver", "morphology", "dictionary"]
+    assert events == ["ocr", "resolver", "morphology", "dictionary", "dictionary"]
     assert result.context is not None
     assert result.context.lemma == "읽다"
     assert result.context.analyses == analyses

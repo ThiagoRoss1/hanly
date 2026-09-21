@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from .config import AppConfig, PopupDefaultSize, TechnicalDetailLevel, Theme
 from .popup import (
     LookupStopper,
+    PopupComponent,
     PopupContent,
     PopupController,
     PopupEntryContent,
@@ -454,6 +455,16 @@ class QtPopupView(QFrame):
                 self._content_layout.addWidget(pieces)
                 self._content_layout.addWidget(roles)
 
+        if content.components:
+            self._content_layout.addWidget(self._divider())
+            self._content_layout.addWidget(
+                _label("HOW THIS FORM IS BUILT", name="hanlyPopupMuted")
+            )
+            self._content_layout.addSpacing(5)
+            for component in content.components:
+                self._content_layout.addWidget(self._component_row(component))
+                self._content_layout.addSpacing(4)
+
         if self._expanded and self._others_open:
             self._content_layout.addWidget(self._divider())
             for other in content.other_entries:
@@ -522,6 +533,25 @@ class QtPopupView(QFrame):
         close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         close.clicked.connect(self._request_dismiss)
         self._footer_layout.addWidget(close)
+
+    def _component_row(self, component: PopupComponent) -> QLabel:
+        """One line of the breakdown: the characters, then what they contribute.
+
+        A grammatical part explains the form rather than naming a word, so a
+        missing gloss there is expected; a lexical part without one is a word
+        the dictionary does not hold, and saying so is better than inventing it.
+        """
+
+        meaning = component.gloss
+        if meaning is None:
+            meaning = "grammatical" if component.grammatical else "no dictionary entry"
+        text = f"{component.surface} · {meaning}"
+        if component.selected:
+            text = f"▸ {text}"
+        name = "hanlyPopupMuted" if component.grammatical else "hanlyPopupSecondary"
+        label = _label(text, name=name)
+        label.setWordWrap(True)
+        return label
 
     def _divider(self) -> QFrame:
         line = QFrame()

@@ -143,7 +143,8 @@ hover (while the push chord is held, or for the whole session)
       → TextSelection (text + cursor index)   lookup_pipeline.py
       → Hangul-only gate                      language_pipeline.py
       → morphology (lemma)                    kiwi_provider.py
-      → dictionary                            krdict_provider.py
+      → dictionary, at most five queries       krdict_provider.py
+        (exact surface, whole form, components)
   → final request-currency check              lookup_controller.py
   → popup, and the word it came from retained qt_popup.py / hover_target.py
 ```
@@ -332,7 +333,7 @@ the migration routes.
 
 | File | What it does |
 |---|---|
-| `contracts.py` | The value types that cross every seam: `OCRResult`, `TokenAnalysis`, `DictionaryEntry`, `LookupResult`, `ROIImage`, `TextSelection` |
+| `contracts.py` | The value types that cross every seam: `OCRResult`, `TokenAnalysis`, `DictionaryEntry`, `LookupResult`, `ROIImage`, `TextSelection`, `LexicalComponent` |
 | `providers.py` | The three provider interfaces |
 | `lookup_pipeline.py` | The pixel facade: ROI → `TextSelection` → `LookupResult` |
 | `language_pipeline.py` | `TextSelection` → `LookupResult`; owns the Hangul-only gate, candidate selection, and the dictionary query. Knows nothing about pixels |

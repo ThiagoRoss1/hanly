@@ -131,3 +131,61 @@ def test_a_surface_with_no_entry_is_not_found_not_an_error(
     result = language.lookup(TextSelection("쀍쀍쀍", 0))
     assert result.status in {LookupStatus.NOT_FOUND, LookupStatus.UNUSABLE}
     assert result.error is None
+
+
+@pytest.mark.parametrize(
+    ("surface", "headword"),
+    [
+        ("깜짝이야", "깜짝이야"),
+        ("고소득층", "고소득층"),
+        ("고차원적", "고차원적"),
+        ("구시대적", "구시대적"),
+        ("꿀꿀이", "꿀꿀이"),
+    ],
+)
+def test_a_surface_the_dictionary_lists_verbatim_is_answered_as_itself(
+    language: LanguagePipeline, surface: str, headword: str
+) -> None:
+    """These joined to a different real word before the exact surface was probed."""
+
+    assert _primary(language, surface, 0)[0] == headword
+
+
+@pytest.mark.parametrize(
+    ("index", "headword", "gloss"), [(0, "초대", "invitation"), (3, "받다", "receive; get")]
+)
+def test_초대받았어요_stays_cursor_sensitive_with_the_decomposition_retained(
+    language: LanguagePipeline, index: int, headword: str, gloss: str
+) -> None:
+    result = language.lookup(TextSelection("초대받았어요", index))
+
+    assert (result.entries[0].headword, result.entries[0].senses[0].gloss) == (
+        headword,
+        gloss,
+    )
+    assert result.context is not None
+    components = result.context.components
+    assert [c.lemma for c in components if not c.grammatical] == ["초대", "받다"]
+    assert [c.gloss for c in components if not c.grammatical] == [
+        "invitation",
+        "receive; get",
+    ]
+    assert [c.lemma for c in components if c.grammatical] == ["었", "어요"]
+
+
+def test_a_simple_real_word_carries_no_component_panel(
+    language: LanguagePipeline,
+) -> None:
+    result = language.lookup(TextSelection("학교", 0))
+
+    assert result.context is not None
+    assert result.context.components == ()
+
+
+def test_overlapping_real_spans_are_preserved(language: LanguagePipeline) -> None:
+    result = language.lookup(TextSelection("예뻤어요", 0))
+
+    assert result.context is not None
+    spans = [(c.lemma, c.start, c.end) for c in result.context.components]
+    assert ("예쁘다", 0, 4) in spans
+    assert ("었", 1, 2) in spans

@@ -143,8 +143,10 @@ def test_pixel_and_direct_selections_agree_at_every_cursor_offset(
     assert direct.context is not None and via_facade.context is not None
     assert direct.context.lemma == via_facade.context.lemma == lemma
     assert direct.context.candidate == via_facade.context.candidate
-    # The complete form is probed once, then the component the cursor is on.
-    assert direct_dictionary.queries == pixel_dictionary.queries == ["초대받다", lemma]
+    # The exact surface, then the reconstructed form, then the component the
+    # cursor is on before any other component.
+    assert direct_dictionary.queries == pixel_dictionary.queries
+    assert direct_dictionary.queries[:3] == ["초대받았어요", "초대받다", lemma]
 
 
 def test_a_real_pixel_lookup_and_an_equivalent_direct_selection_agree() -> None:
@@ -275,7 +277,7 @@ def test_not_found_is_a_language_result_from_either_acquisition() -> None:
         assert result.context is not None
         assert result.context.lemma == "없는말"
         assert result.context.analyses
-    assert dictionary.queries == ["없는말"]
+    assert dictionary.queries == ["초대받았어요", "없는말"]
 
 
 @pytest.mark.parametrize("text", ["Hanly 2.0", "12345", "   ", "", "!!!"])
@@ -315,7 +317,7 @@ def test_a_sequence_only_morphology_provider_still_works() -> None:
     result = language.lookup(TextSelection(_SURFACE, 0))
 
     assert result.status is LookupStatus.SUCCESS
-    assert dictionary.queries == ["받다"]
+    assert dictionary.queries == ["초대받았어요", "받다"]
 
 
 # --- Errors and cancellation ------------------------------------------------

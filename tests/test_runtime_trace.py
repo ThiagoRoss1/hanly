@@ -86,7 +86,8 @@ class _Morphology:
 
 class _Dictionary:
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
-        assert lemma == "읽다"
+        if lemma != "읽다":
+            return ()
         return (_ENTRY,)
 
 

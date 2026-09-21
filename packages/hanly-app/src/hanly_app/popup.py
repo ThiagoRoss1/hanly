@@ -10,6 +10,7 @@ from typing import Protocol
 from hanly import (
     DictionaryEntry,
     DictionarySense,
+    LookupContext,
     LookupResult,
     LookupStatus,
     Point,
@@ -90,6 +91,19 @@ class PopupAnalysisPiece:
 
 
 @dataclass(frozen=True)
+class PopupComponent:
+    """One part of the hovered form, as the panel shows it."""
+
+    surface: str
+    lemma: str
+    gloss: str | None = None
+    grammatical: bool = False
+    #: The part the pointer is on, which the popup marks so a reader can see
+    #: which piece of the form the headword above is about.
+    selected: bool = False
+
+
+@dataclass(frozen=True)
 class PopupContent:
     """Typed, provider-independent presentation data for one popup."""
 
@@ -101,6 +115,7 @@ class PopupContent:
     surface: str | None = None
     lemma: str | None = None
     analysis: tuple[PopupAnalysisPiece, ...] = ()
+    components: tuple[PopupComponent, ...] = ()
     other_entries: tuple[PopupEntryContent, ...] = ()
     confidence: float | None = None
     source: str | None = None
@@ -194,6 +209,38 @@ def _analysis_text(analysis: TokenAnalysis) -> str:
     return analysis.token
 
 
+def _popup_components(context: LookupContext | None) -> tuple[PopupComponent, ...]:
+    """Render the engine's decomposition, without recomputing any of it.
+
+    The surface of each part is a slice of the text the engine analyzed, so the
+    panel cannot disagree with the answer above it. A decomposition of one part
+    explains nothing, so it is dropped rather than shown as a single row.
+    """
+
+    if context is None or not context.components or not context.text:
+        return ()
+
+    text = context.text
+    selected = context.candidate
+    pieces = tuple(
+        PopupComponent(
+            surface=text[component.start : component.end],
+            lemma=component.lemma,
+            gloss=component.gloss,
+            grammatical=component.grammatical,
+            # Where a lexical and a grammatical part cover the same characters,
+            # only the lexical one is what the reader picked.
+            selected=(
+                not component.grammatical
+                and selected is not None
+                and component.lemma == selected.lemma
+            ),
+        )
+        for component in context.components
+    )
+    return pieces if len(pieces) > 1 else ()
+
+
 def _technical_lines(
     result: LookupResult,
     detail_level: TechnicalDetailLevel,
@@ -248,6 +295,7 @@ def format_lookup_result(
             status=result.status,
             title=entry.headword,
             entry=entry,
+            components=_popup_components(context),
             surface=context.text if context is not None else None,
             lemma=context.lemma if context is not None else entry.headword,
             analysis=analysis,
