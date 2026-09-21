@@ -220,3 +220,34 @@ def test_a_dictionary_failure_during_the_probe_is_an_error_result() -> None:
     assert result.status is LookupStatus.ERROR
     assert result.error is not None
     assert "dictionary" in result.diagnostics[0]
+
+
+def test_a_join_that_would_drop_surface_characters_is_refused() -> None:
+    """`고소득층` splits into `고` + `소득`, whose span swallowed the suffix `층`.
+
+    Substituting the bare lemma would ask for `고소득`, a different word the
+    dictionary also holds, and answer it while pointing at `고소득층`.
+    """
+
+    analysis = MorphologyAnalysis(
+        candidates=(
+            LexicalCandidate(lemma="고", start=0, end=1, part_of_speech="XPN"),
+            LexicalCandidate(lemma="소득", start=1, end=4, part_of_speech="NNG"),
+        )
+    )
+    dictionary = _Dictionary({"고소득": _entry("고소득", "high income")})
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    result = language.lookup(TextSelection("고소득층", 0))
+
+    assert "고소득" not in dictionary.queries
+    assert result.status is LookupStatus.NOT_FOUND
+
+
+def test_an_inflected_predicate_may_still_replace_its_surface() -> None:
+    """The same span test must not block the case the rule exists for."""
+
+    dictionary = _Dictionary({"초대받다": _entry("초대받다", "be invited")})
+    language = LanguagePipeline(_Morphology(_SPLIT), dictionary)
+
+    assert language.lookup(TextSelection(_SURFACE, 0)).entries[0].headword == "초대받다"

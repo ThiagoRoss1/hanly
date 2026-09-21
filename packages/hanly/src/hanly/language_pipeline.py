@@ -306,6 +306,16 @@ def _complete_form(
     if any(character.isspace() for character in span):
         return None
 
+    # Substituting the final lemma for its surface is only right when that
+    # lemma is the dictionary form of an inflected predicate. A noun whose span
+    # swallowed a derivational suffix keeps its bare lemma, so the same
+    # substitution would silently drop characters -- `고소득층` would be asked
+    # for as `고소득`, which is a different word the dictionary also has.
+    swallowed_suffix = last.end > last.start + len(last.lemma)
+    predicate = (last.part_of_speech or "").upper().startswith("V")
+    if swallowed_suffix and not predicate:
+        return None
+
     lemma = text[first.start : last.start] + last.lemma
     if not lemma:
         return None
