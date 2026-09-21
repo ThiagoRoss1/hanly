@@ -48,6 +48,7 @@ from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
 from .popup import PopupController, should_present
 from .runtime_trace import RuntimeTraceSink, emit_trace
+from .text_acquisition import default_text_acquisition
 
 
 class RuntimeComposition(Protocol):
@@ -1239,6 +1240,7 @@ def create_manual_lookup(
                 on_invalidate=clear_popup or close_popup,
                 trace_sink=trace_sink,
                 capture_observer=capture_observer,
+                acquisition=default_text_acquisition(),
                 origins=origins,
                 sticky=_hover_is_sticky(app_config),
             )
@@ -1390,6 +1392,7 @@ def create_qt_manual_lookup(
                 on_invalidate=popup_controller.clear,
                 trace_sink=trace_sink,
                 capture_observer=capture_observer,
+                acquisition=default_text_acquisition(),
                 origins=origins,
                 sticky=_hover_is_sticky(app_config),
             )

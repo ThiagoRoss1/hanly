@@ -146,3 +146,85 @@ alternative was removal.
 **Commit:** `feat: show lexical component context`
 **Next boundary ready:** yes.
 
+---
+
+## Boundary 2 — Wave 5, macOS direct-text acquisition
+
+### Implemented
+
+| Piece | Where |
+|---|---|
+| `Outcome`, `DirectText`, `Acquisition`, `DirectTextCoordinator` — every rule, platform-neutral | `hanly_app/text_acquisition.py` |
+| `default_text_acquisition()` — macOS only, `None` elsewhere | `hanly_app/text_acquisition.py` |
+| `AccessibilityTextProvider` — AX through `ctypes`, no Objective-C dependency | `hanly_app/text_acquisition_ax.py` |
+| `LookupRequest.selection`, `image` now optional | `hanly_app/lookup_controller.py` |
+| `LookupController.submit_selection` | `hanly_app/lookup_controller.py` |
+| Direct branch that never calls OCR, and its own cache identity | `hanly_app/composition.py` |
+| Selection-carrying transport message | `hanly_app/lookup_process.py` |
+| `_submit_direct_text` before capture | `hanly_app/hover_lookup.py` |
+
+Every rule lives in the coordinator, not the adapter, so a second platform
+cannot relax one by implementing its reader differently. `hanly` is untouched:
+no AX, geometry or lifecycle type entered the engine.
+
+### Real evidence, macOS 26.6.2, accessibility granted
+
+| Target | Result |
+|---|---|
+| **TextEdit** (native `AXTextArea`) | **52/66 on-text points direct**, all three Korean lines read correctly with correct cursor indices. p50 **0.514 ms**, p95 **0.879 ms** |
+| **TextEdit, empty space below the text** | **40/40 refused** as `not_containing` |
+| **Safari** (local Korean page) | **0 direct.** `AXStaticText` exposes the whole line through `AXValue` but **not** `AXRangeForPosition`, so the cursor index cannot be determined without guessing. Falls back to OCR |
+| **Discord** (Electron) | **0 direct** over 504 points; roles `AXScrollArea`/`AXWebArea`/`AXGroup`. Falls back to OCR. Probed for capability only — no message content was read |
+| **Preview** showing a raster Korean image | **396/396** `unsupported`; OCR retained exactly as required |
+| **Canvas/WebGL** (canvas on the Safari page) | Covered by the Safari result: no direct text, OCR retained |
+
+**The nearest-but-not-containing failure was observed in the wild.** Below the
+last line of a TextEdit document, `AXRangeForPosition` returns index 0 and the
+adapter reads line 1, whose rectangle is ~60 px away. Without the containment
+check, hovering empty space would confidently define `초대`. Every such point was
+refused.
+
+### Timeout, measured before declaring a default
+
+n=300 warm calls against TextEdit: p50 **0.592 ms**, p95 **2.574 ms**,
+p99 **5.558 ms**, max **7.099 ms**, and **0 calls exceeded 40 ms**. The first
+call after process start cost **71.37 ms** and would be discarded once, falling
+back to OCR safely. `DEFAULT_TIMEOUT_MS = 40` is therefore a development default
+with a measured basis — roughly 7× the observed p99 — not a product SLA.
+
+### Focused tests
+
+| Suite | Result |
+|---|---|
+| `tests/test_text_acquisition.py` (new, 19) | passed — direct, no provider, denied permission, unsupported, secure, not-containing, ambiguous geometry, index past the text, empty, non-Korean, timeout, late answer, exception, supersession |
+| `tests/test_direct_text_routing.py` (new, 23) | passed — no OCR call on the direct path, dictionary miss without OCR, captured path unchanged, supersession, trace attribution without the word, cache separation, transport both ways, all 11 refusals leaving capture to run |
+| Full portable suite | 2089 passed, 2 skipped |
+| `pytest --suite native` | 72 passed |
+| ruff / mypy | clean, 277 source files |
+
+### Privacy
+
+`Freeze` is untouched and remains memory-only; no export path changed. The
+direct-text trace event carries the `accessibility` label and the outcome
+reason, never the word — asserted by a test. The direct cache key holds the
+word, so `_cache_key_fingerprint` hashes it exactly as it hashes pixels. A
+secure field is refused by reason and carries no text at all.
+
+### Known limitations
+
+- **Web and Electron content has no direct path on macOS today.** This is a
+  WebKit/Chromium accessibility limitation, not a missing rule, and it is the
+  single most important coverage finding for Wave 6.
+- The 71 ms cold call is paid once per process and falls back to OCR. No prewarm
+  was added.
+- `AXLineForIndex`/`AXRangeForLine` take a `CFNumber` while the other
+  parameterized attributes take an `AXValue`; that asymmetry is the one place
+  this binding is easy to get wrong, and it silently returned nothing until
+  fixed.
+- Evidence is one machine, one macOS version, one display scale.
+- No live hover through the real desktop application was performed; the runtime
+  path is covered by tests, and the adapter by direct measurement.
+
+**Commit:** `feat: add macos accessible text acquisition`
+**Next boundary ready:** yes.
+

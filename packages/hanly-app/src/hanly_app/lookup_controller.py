@@ -12,7 +12,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from hanly import HanlyError, LookupResult, LookupStatus, Point, ROIImage
+from hanly import (
+    HanlyError,
+    LookupResult,
+    LookupStatus,
+    Point,
+    ROIImage,
+    TextSelection,
+)
 from hanly.errors import LookupCancelled
 
 from .job_executor import JobExecutor
@@ -29,9 +36,12 @@ class LookupRequest:
     """
 
     request_id: int
-    image: ROIImage
+    image: ROIImage | None
     target: Point
     hover_request_id: int | None = None
+    #: A word the desktop already read, so no pixels were captured for it. The
+    #: worker then runs the language stage alone and never calls OCR.
+    selection: TextSelection | None = None
     _cancelled: threading.Event = field(
         default_factory=threading.Event,
         compare=False,
@@ -43,7 +53,11 @@ class LookupRequest:
             raise TypeError("request_id must be an integer")
         if self.request_id <= 0:
             raise ValueError("request_id must be positive")
-        if not isinstance(self.image, ROIImage):
+        if self.selection is not None and not isinstance(self.selection, TextSelection):
+            raise TypeError("selection must be a TextSelection or None")
+        if self.selection is None and not isinstance(self.image, ROIImage):
+            raise TypeError("image must be an ROIImage")
+        if self.image is not None and not isinstance(self.image, ROIImage):
             raise TypeError("image must be an ROIImage")
         if not isinstance(self.target, Point):
             raise TypeError("target must be a Point")
@@ -195,6 +209,27 @@ class LookupController:
         """
 
         request = self._new_request(image, target, hover_request_id=hover_request_id)
+        return self._dispatch(request)
+
+    def submit_selection(
+        self,
+        selection: TextSelection,
+        target: Point,
+        *,
+        hover_request_id: int | None = None,
+    ) -> LookupRequest:
+        """Submit a word the desktop read directly, with no pixels behind it.
+
+        Identical to :meth:`submit` in currency, cancellation and dispatch; the
+        worker simply has nothing to recognize.
+        """
+
+        request = self._new_request(
+            None, target, hover_request_id=hover_request_id, selection=selection
+        )
+        return self._dispatch(request)
+
+    def _dispatch(self, request: LookupRequest) -> LookupRequest:
         try:
             self._executor.submit(request)
         except Exception as error:
@@ -291,12 +326,13 @@ class LookupController:
 
     def _new_request(
         self,
-        image: ROIImage,
+        image: ROIImage | None,
         target: Point,
         *,
         hover_request_id: int | None,
+        selection: TextSelection | None = None,
     ) -> LookupRequest:
-        if not isinstance(image, ROIImage):
+        if selection is None and not isinstance(image, ROIImage):
             raise TypeError("image must be an ROIImage")
         if not isinstance(target, Point):
             raise TypeError("target must be a Point")
@@ -311,6 +347,7 @@ class LookupController:
                 image,
                 target,
                 hover_request_id=hover_request_id,
+                selection=selection,
             )
             self._next_request_id += 1
             self._current_request_id = request.request_id

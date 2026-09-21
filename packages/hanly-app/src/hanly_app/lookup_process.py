@@ -29,7 +29,14 @@ from queue import Empty, Queue
 from time import monotonic
 from typing import Literal
 
-from hanly import LookupResult, OCRProvider, PixelFormat, Point, ROIImage
+from hanly import (
+    LookupResult,
+    OCRProvider,
+    PixelFormat,
+    Point,
+    ROIImage,
+    TextSelection,
+)
 from hanly.easyocr_provider import EasyOCRConfig
 from hanly.errors import HanlyError, LookupCancelled, ProviderError
 
@@ -757,19 +764,36 @@ def _trace_replay(sink: RuntimeTraceSink | None) -> TraceReplay | None:
 
 
 def _lookup_message(request: LookupRequest) -> Message:
-    """Describe one request as bytes, dimensions, format, and a local target."""
+    """Describe one request as bytes, dimensions, format, and a local target.
 
-    image = request.image
-    return {
+    A request the desktop read directly carries the word instead of pixels, so
+    nothing that was never captured is sent.
+    """
+
+    common: dict[str, object] = {
         "kind": "lookup",
         "request_id": request.request_id,
         "hover_request_id": request.hover_request_id,
+        "target_x": request.target.x,
+        "target_y": request.target.y,
+    }
+    selection = request.selection
+    if selection is not None:
+        return {
+            **common,
+            "selection_text": selection.text,
+            "selection_cursor_index": selection.cursor_index,
+            "selection_source": selection.source,
+        }
+
+    image = request.image
+    assert image is not None
+    return {
+        **common,
         "width": image.width,
         "height": image.height,
         "pixel_format": image.pixel_format.value,
         "data": image.data,
-        "target_x": request.target.x,
-        "target_y": request.target.y,
     }
 
 
@@ -1003,18 +1027,30 @@ def _stable_error_type(error: BaseException) -> str:
 def _request_from(message: Message) -> LookupRequest:
     """Rebuild the request locally, with cancellation state of its own."""
 
+    hover_request_id = message.get("hover_request_id")
+    target = Point(float(message["target_x"]), float(message["target_y"]))
+    hover = hover_request_id if isinstance(hover_request_id, int) else None
+
+    if "selection_text" in message:
+        source = message.get("selection_source")
+        selection = TextSelection(
+            text=str(message["selection_text"]),
+            cursor_index=int(message["selection_cursor_index"]),
+            source=source if isinstance(source, str) else None,
+        )
+        return LookupRequest(
+            int(message["request_id"]), None, target,
+            hover_request_id=hover, selection=selection,
+        )
+
     image = ROIImage(
         width=int(message["width"]),
         height=int(message["height"]),
         pixel_format=PixelFormat(message["pixel_format"]),
         data=bytes(message["data"]),
     )
-    hover_request_id = message.get("hover_request_id")
     return LookupRequest(
-        int(message["request_id"]),
-        image,
-        Point(float(message["target_x"]), float(message["target_y"])),
-        hover_request_id=hover_request_id if isinstance(hover_request_id, int) else None,
+        int(message["request_id"]), image, target, hover_request_id=hover,
     )
 
 

@@ -54,7 +54,9 @@ _GATE_SAMPLES_PER_ROW = 64
 _GATE_SAMPLE_ROWS = 32
 _GATE_EDGE_DELTA = 32
 _GATE_MIN_TRANSITIONS = 8
-LookupCacheKey = tuple[bool, int, int, str, float, float, bytes]
+#: A captured ROI keys on its pixels and target; direct text keys on the word
+#: itself, so the two can never collide.
+LookupCacheKey = tuple[bool, int, int, str, float, float, bytes] | tuple[bool, str, int]
 _OCRCacheKey = tuple[int, int, str, bytes]  # dimensions, format, ROI digest
 
 
@@ -288,6 +290,24 @@ class LookupWorker:
         return result
 
     def _lookup(self, item: LookupRequest) -> LookupResult:
+        if item.selection is not None:
+            # The desktop already read this word, so there is nothing to
+            # recognize. The OCR provider is not consulted at all, and a
+            # dictionary miss here stays a miss rather than falling into OCR.
+            emit_trace(
+                self._trace_sink,
+                "lookup_acquisition",
+                lookup_request_id=item.request_id,
+                hover_request_id=item.hover_request_id,
+                # The label only, never the word it was read from.
+                acquisition_source=item.selection.source,
+                ocr_stage_skipped=True,
+            )
+            return self._pipeline.lookup_selection(
+                item.selection, cancelled=item.is_cancelled
+            )
+
+        assert item.image is not None
         result = self._pipeline.lookup(
             item.image,
             item.target,
@@ -496,7 +516,17 @@ def _prewarm_provider(
 
 
 def _cache_key_fingerprint(key: LookupCacheKey) -> str:
-    """Identify a full-result cache key without carrying the pixels it holds."""
+    """Identify a cache key without carrying what it holds.
+
+    A captured key holds pixels and a direct key holds the word that was read.
+    Both are private, so a trace only ever receives this digest of them.
+    """
+
+    if len(key) == 3:
+        hover, text, cursor_index = key
+        digest = blake2b(str(text).encode("utf-8"), digest_size=16)
+        digest.update(f"|direct|{hover}|{cursor_index}".encode())
+        return digest.hexdigest()
 
     hover, width, height, pixel_format, target_x, target_y, data = key
     digest = blake2b(data, digest_size=16)
@@ -507,7 +537,17 @@ def _cache_key_fingerprint(key: LookupCacheKey) -> str:
 
 
 def _lookup_cache_key(request: LookupRequest) -> LookupCacheKey:
+    if request.selection is not None:
+        # Direct text is its own cache identity: the same word read the same
+        # way answers the same, and no pixels were involved to key on.
+        return (
+            request.hover_request_id is not None,
+            request.selection.text,
+            request.selection.cursor_index,
+        )
+
     image = request.image
+    assert image is not None
     return (
         request.hover_request_id is not None,
         image.width,

@@ -29,6 +29,7 @@ from .hover_target import (
 from .lookup_controller import LookupController
 from .mouse_observer import MouseListenerFactory, MouseObserver
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
+from .text_acquisition import DirectTextCoordinator
 
 
 class CaptureSource(Protocol):
@@ -119,6 +120,7 @@ class HoverLookupRuntime:
         on_invalidate: Callable[[], None] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
         capture_observer: CaptureObserver | None = None,
+        acquisition: DirectTextCoordinator | None = None,
         origins: CaptureOrigins | None = None,
         exit_scheduler: HoverScheduler | None = None,
         transfer_ms: float = POPUP_TRANSFER_MS,
@@ -143,6 +145,9 @@ class HoverLookupRuntime:
         self._on_invalidate = on_invalidate
         self._trace_sink = trace_sink
         self._capture_observer = capture_observer
+        # Absent on a platform with no direct-text reader, which simply means
+        # every hover captures and runs OCR exactly as before.
+        self._acquisition = acquisition
         self._dispatcher = dispatch
         self._lock = RLock()
         self._running = False
@@ -701,6 +706,9 @@ class HoverLookupRuntime:
             hover_request_id=request.request_id,
         )
 
+        if self._submit_direct_text(request):
+            return
+
         capture_started_ns = perf_counter_ns() if self._trace_sink is not None else 0
         emit_trace(
             self._trace_sink,
@@ -854,6 +862,63 @@ class HoverLookupRuntime:
         )
         if self._controller.is_current(request_id):
             self._controller.invalidate()
+
+    def _submit_direct_text(self, request: HoverRequest) -> bool:
+        """Try to read the word without capturing, and say whether that worked.
+
+        Every refusal is ordinary: the caller simply captures and runs OCR as
+        it always has, and the reason is traced so coverage can be measured.
+        """
+
+        if self._acquisition is None:
+            return False
+
+        acquired = self._acquisition.acquire(
+            request.point, cancelled=lambda: not self._hover.is_current(request)
+        )
+        emit_trace(
+            self._trace_sink,
+            "hover_direct_text",
+            hover_request_id=request.request_id,
+            # The reason only. The word itself never enters a trace.
+            outcome=acquired.outcome.value,
+            duration_ns=acquired.duration_ns,
+            used_direct_text=acquired.used_direct_text,
+        )
+        if not acquired.used_direct_text or acquired.selection is None:
+            return False
+        if not self._hover.is_current(request):
+            return True
+
+        try:
+            lookup_request = self._controller.submit_selection(
+                acquired.selection,
+                request.point,
+                hover_request_id=request.request_id,
+            )
+        except Exception as error:
+            emit_trace(
+                self._trace_sink,
+                "hover_submission_error",
+                hover_request_id=request.request_id,
+                error_type=type(error).__name__,
+            )
+            self._report_error("hover submission", error)
+            return True
+
+        if acquired.bounds is not None:
+            # The popup protects the word the answer came from, and direct text
+            # reports that rectangle itself instead of a captured region.
+            self._origins.remember(
+                lookup_request.request_id,
+                ScreenRect(
+                    left=acquired.bounds.left,
+                    top=acquired.bounds.top,
+                    width=acquired.bounds.right - acquired.bounds.left,
+                    height=acquired.bounds.bottom - acquired.bounds.top,
+                ),
+            )
+        return True
 
     def _report_error(self, stage: str, error: BaseException) -> None:
         if self._on_error is None:
