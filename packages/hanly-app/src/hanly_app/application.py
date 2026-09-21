@@ -101,9 +101,9 @@ from .permissions import (
 )
 from .qt_bootstrap import ensure_qt_application
 from .runtime import (
-    OCR_DISPLAY_NAME,
     HanlyRuntime,
     load_runtime,
+    ocr_display_name,
 )
 from .runtime_status import (
     ACTIVITY_LABELS,
@@ -261,6 +261,7 @@ class DesktopApplication:
         # Every Hanly window is transient -- the popup, the capture overlay,
         # and a Control Center that is not even in this process.
         self._qt.setQuitOnLastWindowClosed(False)
+        self._install_reopen_route()
         self._start_tray()
         self.open_control_center()
         try:
@@ -320,6 +321,33 @@ class DesktopApplication:
             self._diagnostics.add(str(refusal))
         except Exception as error:
             self._diagnostics.report("Start capture", error)
+
+    def _install_reopen_route(self) -> None:
+        """Let a macOS Dock click reach the Control Center it already owns.
+
+        The child is an accessory process with no Dock tile of its own, so
+        activating Hanly from the Dock reaches the shell and previously did
+        nothing while the window sat minimized. Only a live child is reopened,
+        so activation never resurrects a window the user closed on purpose.
+        """
+
+        from .app_reopen_darwin import install_reopen_filter
+
+        self._reopen_filter = install_reopen_filter(
+            self._qt, self.open_control_center, self._control_center_is_live
+        )
+
+    def _control_center_is_live(self) -> bool:
+        """Whether a Control Center child exists to be brought forward.
+
+        Liveness is probed rather than required of the protocol, so a
+        substituted Control Center that cannot report it simply never triggers
+        a reopen — the conservative direction, since the cost of a missed
+        reopen is a tray click and the cost of a wrong one is a window the user
+        closed coming back.
+        """
+
+        return bool(getattr(self._control_center, "running", False))
 
     def open_control_center(self) -> None:
         try:
@@ -465,6 +493,7 @@ class _DesktopSession:
         self._pending_release: list[DesktopController] = []
         self._engine_state: tuple[str, str] = ("sleeping", "")
         self._activation = settings.config.hover_activation
+        self._reopen_filter: object | None = None
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
@@ -477,7 +506,7 @@ class _DesktopSession:
             log_path=diagnostics.path,
             on_lifecycle_changed=self.refresh_tray,
             permission_service=self._permissions,
-            ocr_provider=OCR_DISPLAY_NAME,
+            ocr_provider=lambda: ocr_display_name(settings.config.ocr_backend),
             engine_status=self.engine_status,
             registered_hotkeys=self.registered_hotkeys,
             application_snapshot=self.application_snapshot,

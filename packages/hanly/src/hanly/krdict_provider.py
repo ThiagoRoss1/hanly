@@ -6,9 +6,10 @@ import os
 import sqlite3
 import unicodedata
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .contracts import DictionaryEntry
+from .contracts import DictionaryEntry, DictionarySense
 from .errors import ProviderError
 from .krdict_schema import validate_krdict_connection
 
@@ -36,6 +37,41 @@ def _hanja_from_origin(value: str | None) -> str | None:
         or "\uf900" <= character <= "\ufaff"
     )
     return hanja or None
+
+
+@dataclass
+class _EntryRows:
+    """Accumulates one entry's senses while the ordered result set is walked."""
+
+    headword: str
+    part_of_speech: str | None
+    source: str | None
+    hanja: str | None
+    vocabulary_level: str | None
+    senses: list[DictionarySense] = field(default_factory=list)
+
+    def add_sense(self, row: sqlite3.Row) -> None:
+        definition = _normalise(row["definition"])
+        if not definition:
+            return
+
+        # Two senses may share a definition while their glosses differ, so only
+        # an identical gloss-and-definition pair counts as a duplicate.
+        # Deduplicating on the definition alone is what discarded senses before.
+        gloss = _normalise(row["gloss"]) or None
+        if any(
+            existing.gloss == gloss and existing.definition == definition
+            for existing in self.senses
+        ):
+            return
+
+        self.senses.append(
+            DictionarySense(
+                definition=definition,
+                gloss=gloss,
+                sense_id=str(row["sense_id"]),
+            )
+        )
 
 
 class KRDICTProvider:
@@ -109,8 +145,8 @@ class KRDICTProvider:
                 )
                 SELECT e.id AS entry_id, l.written_form AS headword,
                        e.source, e.part_of_speech, e.vocabulary_level, e.origin,
-                       s.sense_order, t.id AS translation_id,
-                       t.definition
+                       s.id AS sense_id, s.sense_order, t.id AS translation_id,
+                       t.lemma AS gloss, t.definition
                 FROM candidates AS c
                 JOIN entries AS e ON e.id = c.entry_id
                 JOIN lemmas AS l ON l.entry_id = e.id AND l.is_primary = 1
@@ -133,46 +169,33 @@ class KRDICTProvider:
                 "KRDICT database became unreadable during lookup"
             ) from exc
 
-        grouped: OrderedDict[
-            int,
-            tuple[str, str | None, str | None, str | None, str | None, list[str]],
-        ] = OrderedDict()
+        grouped: OrderedDict[int, _EntryRows] = OrderedDict()
         for row in rows:
             entry_id = int(row["entry_id"])
             if entry_id not in grouped:
-                grouped[entry_id] = (
-                    _normalise(row["headword"]),
-                    _normalise(row["part_of_speech"]) or None,
-                    _normalise(row["source"]) or None,
-                    _hanja_from_origin(row["origin"]),
-                    _normalise(row["vocabulary_level"]) or None,
-                    [],
+                grouped[entry_id] = _EntryRows(
+                    headword=_normalise(row["headword"]),
+                    part_of_speech=_normalise(row["part_of_speech"]) or None,
+                    source=_normalise(row["source"]) or None,
+                    hanja=_hanja_from_origin(row["origin"]),
+                    vocabulary_level=_normalise(row["vocabulary_level"]) or None,
                 )
-            definitions = grouped[entry_id][5]
-            definition = _normalise(row["definition"])
-            if definition and definition not in definitions:
-                definitions.append(definition)
+            grouped[entry_id].add_sense(row)
 
         entries: list[DictionaryEntry] = []
         try:
-            for (
-                headword,
-                part_of_speech,
-                source,
-                hanja,
-                vocabulary_level,
-                definitions,
-            ) in grouped.values():
-                if not headword or not definitions:
+            for entry_id, collected in grouped.items():
+                if not collected.headword or not collected.senses:
                     raise ValueError("an entry has no normalized headword or definition")
                 entries.append(
                     DictionaryEntry(
-                        headword=headword,
-                        definitions=tuple(definitions),
-                        part_of_speech=part_of_speech,
-                        source=source,
-                        hanja=hanja,
-                        vocabulary_level=vocabulary_level,
+                        headword=collected.headword,
+                        part_of_speech=collected.part_of_speech,
+                        source=collected.source,
+                        hanja=collected.hanja,
+                        vocabulary_level=collected.vocabulary_level,
+                        senses=tuple(collected.senses),
+                        entry_id=str(entry_id),
                     )
                 )
         except ValueError as exc:

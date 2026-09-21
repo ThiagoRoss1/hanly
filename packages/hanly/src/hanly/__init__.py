@@ -3,9 +3,12 @@
 from .contracts import (
     BoundingBox,
     DictionaryEntry,
+    DictionarySense,
+    LexicalCandidate,
     LookupContext,
     LookupResult,
     LookupStatus,
+    MorphologyAnalysis,
     OCRResult,
     PixelFormat,
     Point,
@@ -13,21 +16,30 @@ from .contracts import (
     ResourceMetadata,
     ResourceStatus,
     ROIImage,
+    TargetResolution,
+    TextSelection,
     TokenAnalysis,
 )
 from .errors import HanlyError, ProviderError
+from .language_pipeline import LanguagePipeline
 from .lookup_pipeline import LookupPipeline
 from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
 
 __all__ = [
     "BoundingBox",
     "DictionaryEntry",
+    "DictionarySense",
     "DictionaryProvider",
     "HanlyError",
+    "LanguagePipeline",
+    "LexicalCandidate",
+    "MorphologyAnalysis",
+    "TargetResolution",
     "LookupContext",
     "LookupPipeline",
     "LookupResult",
     "LookupStatus",
+    "MorphologyAnalysis",
     "MorphologyProvider",
     "OCRProvider",
     "OCRResult",
@@ -38,5 +50,7 @@ __all__ = [
     "ROIImage",
     "ResourceMetadata",
     "ResourceStatus",
+    "TargetResolution",
+    "TextSelection",
     "TokenAnalysis",
 ]

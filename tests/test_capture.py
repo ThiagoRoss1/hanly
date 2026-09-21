@@ -12,6 +12,7 @@ from hanly_app.capture import (
     BackendMonitor,
     CaptureBackendError,
     CaptureError,
+    CapturePlan,
     CaptureResult,
     CaptureService,
     ConfiguredCaptureService,
@@ -374,3 +375,133 @@ def test_the_reported_target_is_where_the_cursor_pixel_actually_landed(
     result = service.capture_at_cursor(Point(float(cursor[0]), float(cursor[1])))
 
     assert _marked_pixel(result.image) == (int(result.target.x), int(result.target.y))
+
+
+# --- Capture plan evidence --------------------------------------------------
+
+
+def _plan(result: CaptureResult) -> CapturePlan:
+    assert result.plan is not None
+    return result.plan
+
+
+def test_the_plan_reports_the_exact_ideal_snapped_and_actual_rectangles() -> None:
+    backend = FakeBackend((_monitor(width=1920, height=1080),), pixels=bytes(200 * 100 * 3))
+    service = CaptureService(backend=backend, roi_size=(200, 100), roi_grid=32)
+
+    plan = _plan(service.capture_at_cursor(Point(500, 400)))
+
+    # floor(500 - 199/2) = 400, floor(400 - 99/2) = 350; snapped to 32.
+    assert plan.ideal_region == ScreenRect(400, 350, 200, 100)
+    assert plan.desired_region == ScreenRect(416, 352, 200, 100)
+    assert plan.actual_region == plan.desired_region == backend.last_region
+    assert plan.snapped is True
+    assert plan.clipped is False
+    assert plan.clipped_edges == (0, 0, 0, 0)
+    assert plan.roi_size == (200, 100) and plan.roi_grid == 32
+
+
+def test_an_unsnapped_plan_reports_the_centred_rectangle_as_both() -> None:
+    backend = FakeBackend((_monitor(),), pixels=bytes(40 * 20 * 3))
+
+    plan = _plan(_service(backend).capture_at_cursor(Point(100, 60)))
+
+    assert plan.ideal_region == plan.desired_region == ScreenRect(80, 50, 40, 20)
+    assert plan.snapped is False
+
+
+def test_the_plan_reports_which_edges_the_monitor_clipped() -> None:
+    backend = FakeBackend((_monitor(width=200, height=120),), pixels=bytes(30 * 20 * 3))
+
+    plan = _plan(_service(backend).capture_at_cursor(Point(190, 60)))
+
+    assert plan.desired_region == ScreenRect(170, 50, 40, 20)
+    assert plan.actual_region == ScreenRect(170, 50, 30, 20)
+    assert plan.clipped is True
+    assert plan.clipped_edges == (0, 0, 10, 0)
+
+
+def test_the_plan_reports_a_configured_region_as_the_clip_area() -> None:
+    backend = FakeBackend((_monitor(width=400, height=300),), pixels=bytes(40 * 20 * 3))
+    region = ScreenRect(50, 40, 300, 200)
+
+    plan = _plan(_service(backend).capture_at_cursor(Point(100, 60), region=region))
+
+    assert plan.configured_region == region
+    assert plan.clip_bounds == region
+    assert plan.monitor_bounds == ScreenRect(0, 0, 400, 300)
+    assert plan.monitor_index == 1 and plan.monitor_name == "Primary"
+
+
+def test_the_plan_is_exact_on_a_negative_virtual_desktop_origin() -> None:
+    backend = FakeBackend(
+        (_monitor(left=-1920, top=-200, width=1920, height=1080),),
+        pixels=bytes(200 * 100 * 3),
+    )
+    service = CaptureService(backend=backend, roi_size=(200, 100), roi_grid=32)
+
+    plan = _plan(service.capture_at_cursor(Point(-1000, 100)))
+
+    assert plan.ideal_region == ScreenRect(-1100, 50, 200, 100)
+    assert plan.desired_region == ScreenRect(-1088, 64, 200, 100)
+    assert plan.actual_region == plan.desired_region
+    assert plan.target == Point(-1000 - (-1088), 100 - 64)
+
+
+def test_the_plan_reports_how_far_the_target_sits_from_every_edge() -> None:
+    backend = FakeBackend((_monitor(width=200, height=120),), pixels=bytes(30 * 20 * 3))
+
+    plan = _plan(_service(backend).capture_at_cursor(Point(190, 60)))
+
+    left, top, right, bottom = plan.target_edge_distances
+    assert (left, top) == (plan.target.x, plan.target.y)
+    assert right == plan.actual_region.width - 1 - plan.target.x
+    assert bottom == plan.actual_region.height - 1 - plan.target.y
+    # The cursor is 10 px from the display's right edge, which is what makes a
+    # word extending rightwards unreadable rather than merely low confidence.
+    assert right == 9
+
+
+def test_the_plan_records_a_clamped_pre_clamp_cursor_as_both_coordinates() -> None:
+    backend = FakeBackend((_monitor(width=200, height=120),), pixels=bytes(21 * 20 * 3))
+
+    plan = _plan(_service(backend).capture_at_cursor(Point(500, 60)))
+
+    assert plan.requested_cursor == Point(500, 60)
+    assert plan.effective_cursor == Point(199, 60)
+    assert plan.cursor_clamped is True
+
+
+def test_the_plan_describes_the_image_without_retaining_its_pixels() -> None:
+    backend = FakeBackend((_monitor(),), pixels=bytes(40 * 20 * 3))
+
+    plan = _plan(_service(backend).capture_at_cursor(Point(100, 60)))
+
+    assert (plan.image_width, plan.image_height) == (40, 20)
+    assert plan.pixel_format is PixelFormat.RGB_888
+    assert plan.image_byte_length == 40 * 20 * 3
+    assert not any(
+        isinstance(getattr(plan, field), (bytes, bytearray))
+        for field in plan.__slots__
+    )
+
+
+def test_a_capture_result_still_constructs_without_a_plan() -> None:
+    """Narrow clients and test doubles must not have to reproduce ROI math."""
+
+    image = ROIImage(4, 2, PixelFormat.RGB_888, bytes(4 * 2 * 3))
+    result = CaptureResult(image=image, region=ScreenRect(0, 0, 4, 2), target=Point(1, 1))
+
+    assert result.plan is None
+
+
+def test_a_capture_result_rejects_a_plan_that_is_not_one() -> None:
+    image = ROIImage(4, 2, PixelFormat.RGB_888, bytes(4 * 2 * 3))
+
+    with pytest.raises(TypeError, match="plan must be a CapturePlan"):
+        CaptureResult(
+            image=image,
+            region=ScreenRect(0, 0, 4, 2),
+            target=Point(1, 1),
+            plan="not a plan",  # type: ignore[arg-type]
+        )

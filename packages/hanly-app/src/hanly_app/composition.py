@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from hashlib import blake2b
-from typing import Protocol
+from typing import Protocol, cast
 
 from hanly import (
     DictionaryEntry,
@@ -24,13 +25,20 @@ from hanly import (
     OCRResult,
     Point,
     ROIImage,
+    TargetResolution,
     TokenAnalysis,
 )
 from hanly.errors import LookupCancelled
-from hanly.word_resolver import TargetResolver, WordResolver
+from hanly.word_resolver import ResolutionEvidence, TargetResolver, WordResolver
 
 from .diagnostics import StartupTimeline
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from .lookup_evidence import (
+    encode_dictionary_evidence,
+    encode_morphology_evidence,
+    encode_ocr_evidence,
+    encode_resolution_evidence,
+)
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 
 _LOOKUP_CACHE_SIZE = 32
@@ -91,6 +99,7 @@ class LookupWorker:
         skip_flat_rois: bool = False,
         trace_sink: RuntimeTraceSink | None = None,
         timeline: StartupTimeline | None = None,
+        ocr_backend: str | None = None,
     ) -> None:
         for name, factory in (
             ("ocr_provider_factory", ocr_provider_factory),
@@ -130,12 +139,19 @@ class LookupWorker:
             # Caching sits under tracing so a hit reports as a real OCR stage
             # with a near-zero duration, which is what the developer overlay
             # shows.
-            gated_ocr = (
-                _TextPresenceGate(ocr_provider) if skip_flat_rois else ocr_provider
+            gate = _TextPresenceGate(ocr_provider) if skip_flat_rois else None
+            cached_ocr = _CachingOCRProvider(
+                gate if gate is not None else ocr_provider
             )
-            cached_ocr = _CachingOCRProvider(gated_ocr)
+            self._ocr_path = _OCRPathObserver(cached_ocr, gate)
             traced_ocr = (
-                _TracingOCRProvider(cached_ocr, trace_sink, ocr_path="full")
+                _TracingOCRProvider(
+                    cached_ocr,
+                    trace_sink,
+                    ocr_path="full",
+                    observer=self._ocr_path,
+                    backend=ocr_backend,
+                )
                 if trace_sink is not None
                 else cached_ocr
             )
@@ -150,7 +166,7 @@ class LookupWorker:
                 else dictionary_provider
             )
             traced_resolver = (
-                _TracingResolver(resolver, trace_sink)
+                _traced_resolver(resolver, trace_sink)
                 if trace_sink is not None
                 else resolver
             )
@@ -199,6 +215,9 @@ class LookupWorker:
         if item.is_cancelled():
             raise LookupCancelled("lookup was superseded before worker execution")
         started_ns = _trace_clock()
+        # Every downstream decision is re-observed from scratch, so a stage this
+        # lookup never reached reports nothing rather than the previous answer.
+        self._ocr_path.forget()
         cache_key = _lookup_cache_key(item)
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -209,6 +228,10 @@ class LookupWorker:
                 lookup_request_id=item.request_id,
                 hover_request_id=item.hover_request_id,
                 result_status=cached.status.value,
+                lookup_cache_fingerprint=_cache_key_fingerprint(cache_key),
+                ocr_stage_skipped=True,
+                provider_executed=False,
+                provider_skipped_reason="lookup_cache_hit",
             )
             emit_trace(
                 self._trace_sink,
@@ -226,6 +249,7 @@ class LookupWorker:
             "lookup_cache_miss",
             lookup_request_id=item.request_id,
             hover_request_id=item.hover_request_id,
+            lookup_cache_fingerprint=_cache_key_fingerprint(cache_key),
         )
         if self._trace_sink is None:
             result = self._lookup(item)
@@ -369,6 +393,7 @@ def create_lookup_worker_factory(
     skip_flat_rois: bool = False,
     trace_sink: RuntimeTraceSink | None = None,
     timeline: StartupTimeline | None = None,
+    ocr_backend: str | None = None,
 ) -> Callable[[], LookupWorker]:
     """Return a JobExecutor worker factory with deferred provider creation."""
 
@@ -381,6 +406,7 @@ def create_lookup_worker_factory(
         skip_flat_rois=skip_flat_rois,
         trace_sink=trace_sink,
         timeline=timeline,
+        ocr_backend=ocr_backend,
     )
 
 
@@ -469,6 +495,17 @@ def _prewarm_provider(
     )
 
 
+def _cache_key_fingerprint(key: LookupCacheKey) -> str:
+    """Identify a full-result cache key without carrying the pixels it holds."""
+
+    hover, width, height, pixel_format, target_x, target_y, data = key
+    digest = blake2b(data, digest_size=16)
+    digest.update(
+        f"|{hover}|{width}|{height}|{pixel_format}|{target_x!r}|{target_y!r}".encode()
+    )
+    return digest.hexdigest()
+
+
 def _lookup_cache_key(request: LookupRequest) -> LookupCacheKey:
     image = request.image
     return (
@@ -519,6 +556,35 @@ def _ocr_character_counts(results: Sequence[OCRResult]) -> dict[str, int]:
     return counts
 
 
+@dataclass(frozen=True, slots=True)
+class _GateMeasurement:
+    """One text-presence decision together with every input that produced it.
+
+    The decision and its inputs are one immutable value so a diagnostic cannot
+    report a threshold, a sample count, and a verdict that were never part of
+    the same calculation.
+    """
+
+    pixel_format: str
+    sampled_channel: int
+    method: str
+    row_step: int
+    column_step: int
+    sampled_rows: int
+    sampled_columns: int
+    delta_threshold: int
+    transition_target: int
+    observed_transitions: int
+    passed: bool
+    malformed: bool
+
+    @property
+    def early_exit(self) -> bool:
+        """Whether sampling stopped as soon as the target was reached."""
+
+        return self.passed and not self.malformed
+
+
 class _TextPresenceGate:
     """Skip OCR for an ROI that holds no text-like structure at all.
 
@@ -535,9 +601,22 @@ class _TextPresenceGate:
 
     def __init__(self, provider: OCRProvider) -> None:
         self._provider = provider
+        self.last_measurement: _GateMeasurement | None = None
+
+    def forget(self) -> None:
+        """Drop the previous decision so a bypassed gate reports nothing.
+
+        Without this a lookup served from the OCR cache would report whichever
+        ROI the gate last actually measured, which is a different request's
+        answer to a question this one never asked.
+        """
+
+        self.last_measurement = None
 
     def recognize(self, image: ROIImage) -> tuple[OCRResult, ...]:
-        if not _has_text_like_structure(image):
+        measurement = _measure_text_presence(image)
+        self.last_measurement = measurement
+        if not measurement.passed:
             return ()
         return tuple(self._provider.recognize(image))
 
@@ -552,30 +631,64 @@ class _TextPresenceGate:
             close()
 
 
-def _has_text_like_structure(image: ROIImage) -> bool:
-    """Return whether a sampled grid shows enough sharp luminance transitions."""
+def _measure_text_presence(image: ROIImage) -> _GateMeasurement:
+    """Sample a coarse grid for sharp luminance transitions and report both.
+
+    The algorithm is unchanged: the first byte of each sampled pixel stands in
+    for luminance, and an ROI too small or too short to sample is passed rather
+    than refused.
+    """
 
     stride = image.bytes_per_pixel
     row_bytes = image.width * stride
     data = image.data
-    if image.width < 2 or image.height < 1 or len(data) < row_bytes:
-        return True
-
+    malformed = image.width < 2 or image.height < 1 or len(data) < row_bytes
     column_step = max(1, image.width // _GATE_SAMPLES_PER_ROW)
     row_step = max(1, image.height // _GATE_SAMPLE_ROWS)
 
+    def measured(
+        transitions: int, rows: int, columns: int, passed: bool
+    ) -> _GateMeasurement:
+        return _GateMeasurement(
+            pixel_format=image.pixel_format.value,
+            sampled_channel=0,
+            method="first_channel_row_delta",
+            row_step=row_step,
+            column_step=column_step,
+            sampled_rows=rows,
+            sampled_columns=columns,
+            delta_threshold=_GATE_EDGE_DELTA,
+            transition_target=_GATE_MIN_TRANSITIONS,
+            observed_transitions=transitions,
+            passed=passed,
+            malformed=malformed,
+        )
+
+    if malformed:
+        return measured(0, 0, 0, True)
+
     transitions = 0
+    sampled_rows = 0
+    sampled_columns = 0
     for y in range(0, image.height, row_step):
         row_start = y * row_bytes
         previous = data[row_start]
+        sampled_rows += 1
         for x in range(column_step, image.width, column_step):
             value = data[row_start + x * stride]
+            sampled_columns += 1
             if abs(value - previous) >= _GATE_EDGE_DELTA:
                 transitions += 1
                 if transitions >= _GATE_MIN_TRANSITIONS:
-                    return True
+                    return measured(transitions, sampled_rows, sampled_columns, True)
             previous = value
-    return False
+    return measured(transitions, sampled_rows, sampled_columns, False)
+
+
+def _has_text_like_structure(image: ROIImage) -> bool:
+    """Return whether a sampled grid shows enough sharp luminance transitions."""
+
+    return _measure_text_presence(image).passed
 
 
 class _CachingOCRProvider:
@@ -595,17 +708,26 @@ class _CachingOCRProvider:
         self._provider = provider
         self._cache: OrderedDict[_OCRCacheKey, tuple[OCRResult, ...]] = OrderedDict()
         self.last_recognition_was_cached = False
+        self.last_image_fingerprint: str | None = None
+
+    def forget(self) -> None:
+        """Drop the previous decision so an unreached cache reports nothing."""
+
+        self.last_recognition_was_cached = False
+        self.last_image_fingerprint = None
 
     def recognize(self, image: ROIImage) -> tuple[OCRResult, ...]:
         # Digest rather than the pixels themselves: a retained ROI is 60 KB of
         # whatever was on screen, and the cache has no reason to hold a copy of
         # it once the results are known.
+        digest = blake2b(image.data, digest_size=16).digest()
         key = (
             image.width,
             image.height,
             image.pixel_format.value,
-            blake2b(image.data, digest_size=16).digest(),
+            digest,
         )
+        self.last_image_fingerprint = digest.hex()
         cached = self._cache.get(key)
         if cached is not None:
             self._cache.move_to_end(key)
@@ -631,6 +753,74 @@ class _CachingOCRProvider:
             close()
 
 
+class _OCRPathObserver:
+    """Report which of the gate, the OCR cache, and the provider actually ran.
+
+    An empty OCR result has three very different causes -- a rejected flat ROI,
+    a reused earlier answer, and a provider that genuinely read nothing -- and
+    they are indistinguishable from the result alone.
+    """
+
+    def __init__(
+        self, cache: _CachingOCRProvider, gate: _TextPresenceGate | None
+    ) -> None:
+        self._cache = cache
+        self._gate = gate
+
+    def forget(self) -> None:
+        """Clear every recorded decision before a lookup begins."""
+
+        self._cache.forget()
+        if self._gate is not None:
+            self._gate.forget()
+
+    def describe(self) -> dict[str, JSONPrimitive]:
+        """Summarize this lookup's OCR-path decisions as trace primitives."""
+
+        cached = self._cache.last_recognition_was_cached
+        fields: dict[str, JSONPrimitive] = {
+            "ocr_cache_consulted": self._cache.last_image_fingerprint is not None,
+            "ocr_cache_hit": cached,
+            "ocr_image_fingerprint": self._cache.last_image_fingerprint,
+            "gate_enabled": self._gate is not None,
+        }
+        measurement = self._gate.last_measurement if self._gate is not None else None
+        fields["gate_ran"] = measurement is not None
+        if measurement is not None:
+            fields.update(
+                {
+                    "gate_pixel_format": measurement.pixel_format,
+                    "gate_sampled_channel": measurement.sampled_channel,
+                    "gate_method": measurement.method,
+                    "gate_row_step": measurement.row_step,
+                    "gate_column_step": measurement.column_step,
+                    "gate_sampled_rows": measurement.sampled_rows,
+                    "gate_sampled_columns": measurement.sampled_columns,
+                    "gate_delta_threshold": measurement.delta_threshold,
+                    "gate_transition_target": measurement.transition_target,
+                    "gate_observed_transitions": measurement.observed_transitions,
+                    "gate_passed": measurement.passed,
+                    "gate_malformed_safe_pass": measurement.malformed,
+                    "gate_early_exit": measurement.early_exit,
+                }
+            )
+        fields["provider_executed"] = (
+            not cached and (measurement is None or measurement.passed)
+        )
+        fields["provider_skipped_reason"] = _provider_skipped_reason(cached, measurement)
+        return fields
+
+
+def _provider_skipped_reason(
+    cached: bool, measurement: _GateMeasurement | None
+) -> str | None:
+    if cached:
+        return "ocr_cache_hit"
+    if measurement is not None and not measurement.passed:
+        return "gate_rejected"
+    return None
+
+
 class _TracingOCRProvider:
     def __init__(
         self,
@@ -638,10 +828,17 @@ class _TracingOCRProvider:
         sink: RuntimeTraceSink,
         *,
         ocr_path: str,
+        observer: _OCRPathObserver | None = None,
+        backend: str | None = None,
     ) -> None:
         self._provider = provider
         self._sink = sink
         self._ocr_path = ocr_path
+        self._observer = observer
+        # Which recognizer actually read these pixels. It travels with the
+        # result rather than being inferred later from configuration, which on
+        # an ``auto`` runtime resolves differently per machine.
+        self._backend = backend
         self._request: LookupRequest | None = None
 
     def set_request(self, request: LookupRequest) -> None:
@@ -672,6 +869,7 @@ class _TracingOCRProvider:
         ]
         trace_fields: dict[str, JSONPrimitive] = {
             "ocr_path": self._ocr_path,
+            "ocr_backend": self._backend,
             "ocr_cached": getattr(
                 self._provider, "last_recognition_was_cached", False
             ),
@@ -690,6 +888,12 @@ class _TracingOCRProvider:
             )
         if getattr(self._sink, "retain_geometry", False) is True:
             trace_fields["ocr_boxes"] = _encoded_boxes(result)
+        if _wants_evidence(self._sink) and isinstance(result, Sequence):
+            trace_fields["ocr_evidence"] = encode_ocr_evidence(
+                [item for item in result if isinstance(item, OCRResult)]
+            )
+        if self._observer is not None:
+            trace_fields.update(self._observer.describe())
         _trace_stage_completed(
             self._sink,
             "ocr",
@@ -754,6 +958,87 @@ class _TracingResolver:
         return result
 
 
+class _TracingDetailResolver(_TracingResolver):
+    """Tracing for a resolver that answers the richer pointer-offset contract.
+
+    :meth:`LookupPipeline._resolve_target` probes for ``resolve_target_detail``
+    and falls back to the pair contract with ``cursor_index=0`` when it is
+    absent. A wrapper that dropped the method therefore moved the pointer to the
+    start of the resolved word, which is exactly the divergence instrumentation
+    must not introduce.
+
+    When the resolver can also explain itself, the explanation comes from the
+    same call that produced the answer rather than from a second pass.
+    """
+
+    def resolve_target_detail(
+        self,
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> TargetResolution | None:
+        request = self._request
+        started_ns = _trace_clock()
+        try:
+            resolution, evidence = self._resolve(ocr_results, target)
+        except BaseException as error:
+            _trace_stage_error(self._sink, "token_selection", request, started_ns, error)
+            raise
+
+        fields: dict[str, JSONPrimitive] = {
+            "resolved": resolution is not None,
+            "candidate_count": (
+                len(ocr_results) if isinstance(ocr_results, Sequence) else None
+            ),
+            "cursor_index": resolution.cursor_index if resolution is not None else None,
+            "region_start": resolution.region_start if resolution is not None else None,
+        }
+        if evidence is not None:
+            fields["resolution_reason"] = evidence.reason
+            fields["selected_region_index"] = evidence.selected_index
+            fields["horizontal_fraction"] = evidence.horizontal_fraction
+            fields["character_index"] = evidence.character_index
+            if _wants_evidence(self._sink):
+                fields["resolution_evidence"] = encode_resolution_evidence(evidence)
+        _trace_stage_completed(
+            self._sink, "token_selection", request, started_ns, **fields
+        )
+        return resolution
+
+    def _resolve(
+        self,
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> tuple[TargetResolution | None, ResolutionEvidence | None]:
+        """Resolve once, preferring the form that also explains the answer."""
+
+        explain = getattr(self._resolver, "resolve_target_evidence", None)
+        if callable(explain):
+            evidence = cast(ResolutionEvidence, explain(ocr_results, target))
+            return evidence.resolution, evidence
+
+        detail = getattr(self._resolver, "resolve_target_detail")
+        return cast(TargetResolution | None, detail(ocr_results, target)), None
+
+
+def _wants_evidence(sink: RuntimeTraceSink) -> bool:
+    """Whether this sink asked for the full, private diagnostic structures."""
+
+    return getattr(sink, "retain_evidence", False) is True
+
+
+def _traced_resolver(resolver: TargetResolver, sink: RuntimeTraceSink) -> TargetResolver:
+    """Wrap a resolver in exactly the contract it already implements.
+
+    Defining ``resolve_target_detail`` unconditionally would silently upgrade a
+    substituted pair-only resolver, which is the same class of semantic change
+    in the opposite direction.
+    """
+
+    if callable(getattr(resolver, "resolve_target_detail", None)):
+        return _TracingDetailResolver(resolver, sink)
+    return _TracingResolver(resolver, sink)
+
+
 class _TracingMorphologyProvider:
     def __init__(self, provider: MorphologyProvider, sink: RuntimeTraceSink) -> None:
         self._provider = provider
@@ -771,13 +1056,9 @@ class _TracingMorphologyProvider:
         except BaseException as error:
             _trace_stage_error(self._sink, "morphology", request, started_ns, error)
             raise
-        _trace_stage_completed(
-            self._sink,
-            "morphology",
-            request,
-            started_ns,
-            token_count=len(result) if isinstance(result, Sequence) else None,
-            hangul_token_count=(
+        fields: dict[str, JSONPrimitive] = {
+            "token_count": len(result) if isinstance(result, Sequence) else None,
+            "hangul_token_count": (
                 sum(
                     isinstance(item, TokenAnalysis) and _contains_hangul(item.token)
                     for item in result
@@ -785,6 +1066,11 @@ class _TracingMorphologyProvider:
                 if isinstance(result, Sequence)
                 else None
             ),
+        }
+        if _wants_evidence(self._sink):
+            fields["morphology_evidence"] = encode_morphology_evidence(text, result)
+        _trace_stage_completed(
+            self._sink, "morphology", request, started_ns, **fields
         )
         return result
 
@@ -806,13 +1092,17 @@ class _TracingDictionaryProvider:
         except BaseException as error:
             _trace_stage_error(self._sink, "dictionary", request, started_ns, error)
             raise
+        entry_count = len(result) if isinstance(result, Sequence) else None
+        fields: dict[str, JSONPrimitive] = {
+            "entry_count": entry_count,
+            "found": bool(result) if isinstance(result, Sequence) else None,
+        }
+        if _wants_evidence(self._sink):
+            fields["dictionary_evidence"] = encode_dictionary_evidence(
+                lemma, entry_count or 0
+            )
         _trace_stage_completed(
-            self._sink,
-            "dictionary",
-            request,
-            started_ns,
-            entry_count=len(result) if isinstance(result, Sequence) else None,
-            found=bool(result) if isinstance(result, Sequence) else None,
+            self._sink, "dictionary", request, started_ns, **fields
         )
         return result
 

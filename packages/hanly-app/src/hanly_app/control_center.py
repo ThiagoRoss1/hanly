@@ -33,6 +33,7 @@ from .config import (
     ConfigManager,
     HoverActivation,
     LookupPreload,
+    OCRBackend,
     PopupDefaultSize,
     TechnicalDetailLevel,
 )
@@ -213,7 +214,7 @@ class ControlCenterBridge:
         on_quit: Callable[[], None] | None = None,
         log_path: Path | None = None,
         permission_service: PermissionService | None = None,
-        ocr_provider: str = "EasyOCR",
+        ocr_provider: str | Callable[[], str] = "EasyOCR",
         engine_status: Callable[[], Mapping[str, str]] | None = None,
         registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
         application_snapshot: Callable[[], ApplicationSnapshot] | None = None,
@@ -222,8 +223,10 @@ class ControlCenterBridge:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")
 
-        if not isinstance(ocr_provider, str) or not ocr_provider.strip():
-            raise ValueError("ocr_provider must be a non-empty string")
+        if not callable(ocr_provider) and (
+            not isinstance(ocr_provider, str) or not ocr_provider.strip()
+        ):
+            raise ValueError("ocr_provider must be a non-empty string or a callable")
         if diagnostics is not None and not callable(diagnostics):
             raise TypeError("diagnostics must be callable")
         if on_lifecycle_changed is not None and not callable(on_lifecycle_changed):
@@ -251,7 +254,7 @@ class ControlCenterBridge:
         # Both arrive with the prepared runtime, through attach_runtime().
         self._capture_service: MonitorSource | CaptureService | None = None
         self._resource_manager = resource_manager
-        self._ocr_provider = ocr_provider.strip()
+        self._ocr_provider = ocr_provider
         self._diagnostics = diagnostics
         self._runtime_status = runtime_status
         self._engine_status = engine_status
@@ -292,7 +295,7 @@ class ControlCenterBridge:
             },
             "config": config.to_dict(),
             "runtime": {
-                "ocr_provider": self._ocr_provider,
+                "ocr_provider": self._ocr_name(),
                 "app_version": _installed_version(),
                 "hover_delay_bounds": {
                     "min": HOVER_DELAY_MIN_MS,
@@ -437,6 +440,7 @@ class ControlCenterBridge:
             "capture_hotkey",
             "hover_activation",
             "lookup_preload",
+            "ocr_backend",
             "hover_delay_ms",
             "capture_mode",
             "theme",
@@ -460,6 +464,10 @@ class ControlCenterBridge:
         if "lookup_preload" in values:
             values["lookup_preload"] = _validated_choice(
                 values["lookup_preload"], LookupPreload, "lookup engine preload"
+            )
+        if "ocr_backend" in values:
+            values["ocr_backend"] = _validated_choice(
+                values["ocr_backend"], OCRBackend, "text recognizer"
             )
         if "popup_default_size" in values:
             values["popup_default_size"] = _validated_choice(
@@ -644,7 +652,7 @@ class ControlCenterBridge:
             "hotkeys": self._registered_bindings(),
             "resources": self._resources(),
             "permissions": self._permissions_snapshot(),
-            "ocr_provider": self._ocr_provider,
+            "ocr_provider": self._ocr_name(),
         }
 
     def set_retry(self, on_retry_runtime: Callable[[], None]) -> None:
@@ -684,6 +692,12 @@ class ControlCenterBridge:
         """Reapply persisted config and transient target/region state."""
 
         self._apply_live_config()
+
+    def _ocr_name(self) -> str:
+        """The recognizer in use now, which the preference can change live."""
+
+        provider = self._ocr_provider
+        return provider().strip() if callable(provider) else provider.strip()
 
     def _current_config(self) -> AppConfig:
         return self._config_manager.config if self._config_manager is not None else self._config

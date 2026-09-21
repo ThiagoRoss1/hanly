@@ -106,12 +106,16 @@ class ControlCenterOptions:
     """Window geometry and debug flag, as one value the spawn boundary takes."""
 
     title: str = "Hanly · Control Center"
-    width: int = 1080
-    height: int = 760
+    #: ``None`` means the host derives the size from the work area it finds, so
+    #: a short display is not asked to hold a window built for a tall one.
+    width: int | None = None
+    height: int | None = None
     debug: bool = False
 
     def __post_init__(self) -> None:
-        if self.width <= 0 or self.height <= 0:
+        if (self.width is not None and self.width <= 0) or (
+            self.height is not None and self.height <= 0
+        ):
             raise ValueError("Control Center dimensions must be positive")
 
 

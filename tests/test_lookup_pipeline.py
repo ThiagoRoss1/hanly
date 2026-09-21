@@ -7,13 +7,16 @@ from hanly import (
     BoundingBox,
     DictionaryEntry,
     HanlyError,
+    LexicalCandidate,
     LookupStatus,
+    MorphologyAnalysis,
     MorphologyProvider,
     OCRResult,
     PixelFormat,
     Point,
     Quad,
     ROIImage,
+    TargetResolution,
     TokenAnalysis,
 )
 from hanly.providers import DictionaryProvider, OCRProvider
@@ -115,9 +118,12 @@ def _pipeline(
     )
 
 
-def test_multi_word_segment_reports_that_only_the_first_lemma_was_used() -> None:
-    """A substituted resolver may hand back a whole multi-word OCR region.
-    The first lemma still wins, but that reduction must not be silent."""
+def test_a_provider_without_spans_keeps_the_first_usable_lemma() -> None:
+    """A morphology provider written against the older contract stays valid.
+
+    Without spans nothing can be targeted, so the first usable lemma remains
+    the answer and no reduction is claimed that the evidence cannot support.
+    """
 
     line = OCRResult(
         text="책을 읽습니다.",
@@ -163,8 +169,72 @@ def test_multi_word_segment_reports_that_only_the_first_lemma_was_used() -> None
     assert result.status is LookupStatus.SUCCESS
     assert result.context is not None
     assert result.context.lemma == "책"
-    assert any("3 usable lemmas" in note for note in result.diagnostics)
-    assert any("holds several words" in note for note in result.diagnostics)
+    assert result.diagnostics == ()
+
+
+def test_the_pointer_chooses_among_several_lexical_units() -> None:
+    """Korean writes compounds without spaces, so counting words cannot find
+    the ambiguous cases. Spans can, and the unselected units stay visible."""
+
+    from hanly.lookup_pipeline import LookupPipeline
+
+    line = OCRResult(
+        text="책읽는",
+        confidence=0.95,
+        quad=Quad.from_bounding_box(BoundingBox(left=0, top=0, right=192, bottom=48)),
+    )
+    analysis = MorphologyAnalysis(
+        tokens=(
+            TokenAnalysis(token="책", lemma="책", part_of_speech="NNG", start=0, length=1),
+            TokenAnalysis(token="읽", lemma="읽다", part_of_speech="VV", start=1, length=1),
+        ),
+        candidates=(
+            LexicalCandidate(lemma="책", start=0, end=1, part_of_speech="NNG"),
+            LexicalCandidate(lemma="읽다", start=1, end=3, part_of_speech="VV"),
+        ),
+    )
+
+    class _Analysis:
+        def analyze(self, text: str) -> MorphologyAnalysis:
+            del text
+            return analysis
+
+    class _PointingResolver:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def resolve_target(
+            self,
+            ocr_results: Sequence[OCRResult] | None,
+            target: Point | None,
+        ) -> tuple[OCRResult, str] | None:
+            del ocr_results, target
+            return line, line.text
+
+        def resolve_target_detail(
+            self,
+            ocr_results: Sequence[OCRResult] | None,
+            target: Point | None,
+        ) -> TargetResolution:
+            del ocr_results, target
+            return TargetResolution(
+                region=line, text=line.text, cursor_index=self.index, region_start=0
+            )
+
+    for index, expected in ((0, "책"), (1, "읽다"), (2, "읽다")):
+        events: list[str] = []
+        pipeline = LookupPipeline(
+            ocr_provider=_OCR(events, (line,)),
+            morphology_provider=_Analysis(),
+            dictionary_provider=_Dictionary(events, (_ENTRY,)),
+            word_resolver=_PointingResolver(index),
+        )
+
+        result = pipeline.lookup(_IMAGE, Point(x=24, y=24))
+
+        assert result.context is not None
+        assert result.context.lemma == expected, index
+        assert any("2 lexical units" in note for note in result.diagnostics)
 
 
 def test_narrowed_word_with_several_lemmas_reports_no_reduction_diagnostic() -> None:

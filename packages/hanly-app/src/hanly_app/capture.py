@@ -131,12 +131,95 @@ class MonitorInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class CapturePlan:
+    """Every input and intermediate rectangle behind one captured ROI.
+
+    Purely descriptive. It reports the calculation :meth:`
+    CaptureService.capture_at_cursor` already performed so a diagnostic does not
+    have to reimplement ROI math to explain a capture, and it introduces no
+    scale factor, snapping rule, or clipping decision of its own.
+
+    The ROI bytes are deliberately absent: a digest of them belongs off the
+    capture path, where a developer tool can key it and pay for it on its own
+    thread.
+    """
+
+    requested_cursor: Point
+    effective_cursor: Point
+    monitor_index: int
+    monitor_name: str
+    monitor_bounds: ScreenRect
+    configured_region: ScreenRect | None
+    clip_bounds: ScreenRect
+    roi_size: tuple[int, int]
+    roi_grid: int
+    ideal_region: ScreenRect
+    desired_region: ScreenRect
+    actual_region: ScreenRect
+    target: Point
+    image_width: int
+    image_height: int
+    pixel_format: PixelFormat
+    image_byte_length: int
+
+    @property
+    def cursor_clamped(self) -> bool:
+        """Whether capture moved a pre-clamp cursor onto the selected display."""
+
+        return (
+            self.requested_cursor.x != self.effective_cursor.x
+            or self.requested_cursor.y != self.effective_cursor.y
+        )
+
+    @property
+    def snapped(self) -> bool:
+        """Whether grid snapping moved the ROI away from the centred rectangle."""
+
+        return self.desired_region != self.ideal_region
+
+    @property
+    def clipped(self) -> bool:
+        """Whether the clip area cut the ROI short of its full requested size."""
+
+        return self.actual_region != self.desired_region
+
+    @property
+    def clipped_edges(self) -> tuple[int, int, int, int]:
+        """Pixels lost to clipping on the left, top, right, and bottom edges."""
+
+        return (
+            self.actual_region.left - self.desired_region.left,
+            self.actual_region.top - self.desired_region.top,
+            self.desired_region.right - self.actual_region.right,
+            self.desired_region.bottom - self.actual_region.bottom,
+        )
+
+    @property
+    def target_edge_distances(self) -> tuple[float, float, float, float]:
+        """How far the target sits from each edge of the rectangle captured.
+
+        A small value on one side is what says a word may have been cut off
+        there. It is evidence about the rectangle, not a claim about the pixels.
+        """
+
+        return (
+            self.target.x,
+            self.target.y,
+            self.actual_region.width - 1 - self.target.x,
+            self.actual_region.height - 1 - self.target.y,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CaptureResult:
     """Normalized ROI, its screen-space origin, and the local target point."""
 
     image: ROIImage
     region: ScreenRect
     target: Point
+    #: How this ROI was arrived at. Optional so a narrow client or test double
+    #: can still build a result without reproducing the capture calculation.
+    plan: CapturePlan | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.image, ROIImage):
@@ -145,6 +228,8 @@ class CaptureResult:
             raise TypeError("region must be a ScreenRect")
         if not isinstance(self.target, Point):
             raise TypeError("target must be a Point")
+        if self.plan is not None and not isinstance(self.plan, CapturePlan):
+            raise TypeError("plan must be a CapturePlan or None")
         if not 0 <= self.target.x < self.region.width:
             raise ValueError("target x must lie inside captured region")
         if not 0 <= self.target.y < self.region.height:
@@ -340,21 +425,19 @@ class CaptureService:
 
         _validate_cursor(cursor)
 
-        monitors = self.enumerate_monitors()
-        selected = self._select_monitor(monitors, cursor, monitor)
-        if not selected.bounds.contains(cursor):
-            if monitor is not None:
-                raise CaptureError("cursor is outside selected monitor")
-            # The monitor was resolved as nearest to a pre-clamp coordinate, so
-            # capture the edge of that display the OS would have clamped to.
-            cursor = _clamped_to(selected.bounds, cursor)
-        clip_bounds = _resolve_clip_bounds(selected, cursor, region)
+        selected = self._resolve_monitor(cursor, monitor)
+        effective_cursor = self._effective_cursor(cursor, selected, monitor)
+        clip_bounds = _resolve_clip_bounds(selected, effective_cursor, region)
 
+        ideal = _centered_region(effective_cursor, self._roi_width, self._roi_height)
         desired = _centered_region(
-            cursor, self._roi_width, self._roi_height, self._roi_grid
+            effective_cursor, self._roi_width, self._roi_height, self._roi_grid
         )
         captured_region = _intersection(desired, clip_bounds)
-        target = Point(cursor.x - captured_region.left, cursor.y - captured_region.top)
+        target = Point(
+            effective_cursor.x - captured_region.left,
+            effective_cursor.y - captured_region.top,
+        )
         if not 0 <= target.x < captured_region.width or not 0 <= target.y < captured_region.height:
             raise CaptureError("cursor could not be translated into captured region")
 
@@ -365,7 +448,51 @@ class CaptureService:
             pixel_format=PixelFormat.RGB_888,
             data=capture.rgb,
         )
-        return CaptureResult(image=image, region=captured_region, target=target)
+        plan = CapturePlan(
+            requested_cursor=cursor,
+            effective_cursor=effective_cursor,
+            monitor_index=selected.index,
+            monitor_name=selected.name,
+            monitor_bounds=selected.bounds,
+            configured_region=region,
+            clip_bounds=clip_bounds,
+            roi_size=(self._roi_width, self._roi_height),
+            roi_grid=self._roi_grid,
+            ideal_region=ideal,
+            desired_region=desired,
+            actual_region=captured_region,
+            target=target,
+            image_width=image.width,
+            image_height=image.height,
+            pixel_format=image.pixel_format,
+            image_byte_length=len(image.data),
+        )
+        return CaptureResult(
+            image=image, region=captured_region, target=target, plan=plan
+        )
+
+    def _resolve_monitor(
+        self, cursor: Point, monitor: int | MonitorInfo | None
+    ) -> MonitorInfo:
+        return self._select_monitor(self.enumerate_monitors(), cursor, monitor)
+
+    @staticmethod
+    def _effective_cursor(
+        cursor: Point, selected: MonitorInfo, monitor: int | MonitorInfo | None
+    ) -> Point:
+        """Return the coordinate the ROI is actually centred on.
+
+        A global mouse hook can report a pre-clamp position outside every
+        display. An explicitly selected monitor makes that a request error; an
+        automatically resolved one captures the edge the OS would have clamped
+        to.
+        """
+
+        if selected.bounds.contains(cursor):
+            return cursor
+        if monitor is not None:
+            raise CaptureError("cursor is outside selected monitor")
+        return _clamped_to(selected.bounds, cursor)
 
     def _grab(self, region: ScreenRect) -> BackendCapture:
         """Capture ``region`` and reject anything the backend got wrong."""
@@ -638,6 +765,7 @@ __all__ = [
     "CaptureBackend",
     "CaptureBackendError",
     "CaptureError",
+    "CapturePlan",
     "CaptureResult",
     "CaptureService",
     "MSSBackend",

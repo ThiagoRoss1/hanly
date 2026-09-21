@@ -10,6 +10,7 @@ import pytest
 from hanly import (
     BoundingBox,
     DictionaryEntry,
+    DictionarySense,
     LookupPipeline,
     LookupResult,
     LookupStatus,
@@ -30,17 +31,47 @@ IMAGE = ROIImage(192, 48, PixelFormat.RGB_888, bytes(192 * 48 * 3))
 TARGET = Point(110, 24)
 READ_ENTRY = DictionaryEntry(
     headword="읽다",
-    definitions=(
-        "To see written words or letters, and utter them as they are pronounced.",
-        "To read written words and know their meaning.",
-        "To read a work of a writer.",
-        "To understand what a picture, sign, or sound indicates.",
-        "To understand the nature or characteristic of a certain object or situation.",
-        "To look at someone's facial expression or acts and then know how he/she feels.",
-        "In the game of go or janggi, Korean chess, to think about a move or guess "
-        "the move of the other party.",
-        "To grasp the data of a computer.",
-        "To interpret a certain writing or remark in a particular way.",
+    senses=(
+        DictionarySense(
+            definition="To see written words or letters, and utter them as they are "
+            "pronounced.",
+            gloss="read; read out",
+        ),
+        DictionarySense(
+            definition="To read written words and know their meaning.",
+            gloss="read",
+        ),
+        DictionarySense(
+            definition="To read a work of a writer.",
+            gloss="read",
+        ),
+        DictionarySense(
+            definition="To understand what a picture, sign, or sound indicates.",
+            gloss="read",
+        ),
+        DictionarySense(
+            definition="To understand the nature or characteristic of a certain object "
+            "or situation.",
+            gloss="read",
+        ),
+        DictionarySense(
+            definition="To look at someone's facial expression or acts and then know "
+            "how he/she feels.",
+            gloss="read; guess",
+        ),
+        DictionarySense(
+            definition="In the game of go or janggi, Korean chess, to think about a "
+            "move or guess the move of the other party.",
+            gloss="figure; guess",
+        ),
+        DictionarySense(
+            definition="To grasp the data of a computer.",
+            gloss="read",
+        ),
+        DictionarySense(
+            definition="To interpret a certain writing or remark in a particular way.",
+            gloss="construe",
+        ),
     ),
     part_of_speech="동사",
     source="krdict",

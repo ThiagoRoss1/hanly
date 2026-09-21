@@ -9,7 +9,7 @@ import os
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -459,6 +459,169 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                 prepared_image.close()
 
 
+def _ocr_provider_factory(
+    args: argparse.Namespace,
+) -> tuple[str, Callable[[], Any], Callable[[], Any] | None]:
+    """Build exactly one recognizer, and the raw reader a staged mode needs.
+
+    Selection is between recognizers that already exist. No mode here adds a
+    backend, and none changes which one the product would pick.
+    """
+
+    from .ocr_benchmark import EASYOCR, VISION
+
+    backend = str(args.backend)
+    if backend == VISION:
+        from hanly.vision_provider import VisionProvider
+
+        if not VisionProvider.is_available():
+            raise SystemExit("this machine provides no Apple Vision recognizer")
+        return backend, VisionProvider, None
+
+    config = EasyOCRConfig()
+    if args.config is not None:
+        runtime_config = load_runtime(args.config).easyocr_config
+        if runtime_config is not None:
+            config = runtime_config
+    config = _benchmark_ocr_config(config, args)
+
+    def reader() -> Any:
+        from easyocr import Reader
+
+        return Reader(**config.to_reader_kwargs())
+
+    shared: list[Any] = []
+
+    def shared_reader() -> Any:
+        if not shared:
+            shared.append(reader())
+        return shared[0]
+
+    return (
+        EASYOCR,
+        lambda: EasyOCRProvider(config, engine=shared_reader()),
+        shared_reader,
+    )
+
+
+def run_ocr_campaign(args: argparse.Namespace) -> int:
+    """Measure one OCR mode over a corpus, constructing nothing else."""
+
+    from .corpus import inventory, load_corpus
+    from .ocr_benchmark import run_campaign, write_samples
+
+    corpus = load_corpus(args.manifest)
+    if not corpus.cases:
+        print(
+            f"{args.manifest} holds no cases; see benchmarks/fixtures/ocr/README.md "
+            "for why the committed corpus can be empty and how to populate it"
+        )
+        return 2
+
+    backend, provider_factory, reader_factory = _ocr_provider_factory(args)
+    metadata = build_metadata(
+        repo_root=Path.cwd(),
+        config={
+            "mode": args.mode,
+            "backend": backend,
+            "manifest": str(args.manifest),
+            "warmup": args.warmup,
+            "samples": args.samples,
+            "iou_threshold": args.iou_threshold,
+            "cpu_threads": args.cpu_threads,
+        },
+        scenario={
+            "name": f"ocr_{args.mode.replace('-', '_')}",
+            "phases": ["cold", "warmup", "warm"],
+            "endpoint": "normalized_ocr_results",
+        },
+        versions=_versions(),
+    )
+    run_dir = Path(args.output_root) / str(metadata["run_id"])
+    run_dir.mkdir(parents=True, exist_ok=False)
+    _write_json(run_dir / "metadata.json", metadata)
+    _write_json(run_dir / "corpus-inventory.json", inventory(corpus))
+
+    report = run_campaign(
+        corpus,
+        mode=args.mode,
+        backend=backend,
+        provider_factory=provider_factory,
+        reader_factory=reader_factory,
+        warmup=args.warmup,
+        samples=args.samples,
+        iou_threshold=args.iou_threshold,
+    )
+    write_samples(report, run_dir / "samples.jsonl")
+    summary = report.summary()
+    _write_json(run_dir / "summary.json", summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    print(f"evidence: {run_dir}")
+    return 0
+
+
+def run_corpus_inventory(args: argparse.Namespace) -> int:
+    """Enumerate a corpus without loading an OCR runtime."""
+
+    from .corpus import inventory, load_corpus
+
+    corpus = load_corpus(args.manifest, require_assets=not args.skip_assets)
+    print(json.dumps(inventory(corpus), ensure_ascii=False, indent=2, sort_keys=True))
+    for case in corpus.cases:
+        print(f"  {case.case_id}  {case.provenance}  {','.join(case.tags)}")
+    return 0
+
+
+def run_corpus_generate(args: argparse.Namespace) -> int:
+    """Render the synthetic corpus, or say exactly why it cannot be rendered."""
+
+    from .synthetic_ocr import (
+        SyntheticFontError,
+        corpus_entry,
+        load_generator_config,
+        render_sample,
+        resolve_font,
+        write_sample,
+    )
+
+    font, samples = load_generator_config(args.generator)
+    try:
+        resolved = resolve_font(font)
+    except SyntheticFontError as error:
+        print(f"refused: {error}")
+        return 2
+
+    destination = Path(args.output)
+    cases = []
+    for spec in samples:
+        rendered = render_sample(spec)
+        relative = f"generated/{spec.case_id}.png"
+        write_sample(rendered, destination.parent / relative)
+        cases.append(
+            corpus_entry(rendered, relative, redistributable=resolved.redistributable)
+        )
+
+    manifest = {
+        "schema_version": 1,
+        "distribution": "committed" if resolved.redistributable else "local",
+        "description": (
+            f"Synthetic Korean samples rendered from {font.name} ({font.licence})."
+        ),
+        "cases": cases,
+    }
+    _write_json(destination, manifest)
+    print(
+        f"rendered {len(cases)} samples from {resolved.path} "
+        f"(sha256 {resolved.sha256[:16]}) into {destination}"
+    )
+    if not resolved.redistributable:
+        print(
+            f"{font.licence} does not permit redistribution, so these are "
+            "local_synthetic cases and cannot enter a committed manifest"
+        )
+    return 0
+
+
 def run_package(args: argparse.Namespace) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     report = write_package_report(
@@ -824,7 +987,9 @@ def _parser() -> argparse.ArgumentParser:
         help="measure the real desktop hover pipeline during a human session",
         description=(
             "Run a bounded interactive session over the real desktop. "
-            "Use Ctrl+Alt+Shift+B to advance the scenario marker."
+            "Ctrl+Alt+Shift+B advances the scenario marker, Ctrl+Alt+Shift+F "
+            "pins the newest completed lookup in memory, and Ctrl+Alt+Shift+E "
+            "exports that pinned lookup. Only the export writes screen content."
         ),
     )
     live.add_argument("--config", type=Path, required=True)
@@ -847,9 +1012,20 @@ def _parser() -> argparse.ArgumentParser:
         help="global scenario-marker hotkey (default: Ctrl+Alt+Shift+B)",
     )
     live.add_argument(
-        "--retain-text",
-        action="store_true",
-        help="retain raw OCR text fields in the live trace (privacy-sensitive)",
+        "--freeze-hotkey",
+        default="Ctrl+Alt+Shift+F",
+        help=(
+            "global hotkey that pins the newest completed lookup in memory "
+            "(default: Ctrl+Alt+Shift+F); it writes nothing"
+        ),
+    )
+    live.add_argument(
+        "--export-hotkey",
+        default="Ctrl+Alt+Shift+E",
+        help=(
+            "global hotkey that writes the pinned lookup's private evidence "
+            "under the run directory (default: Ctrl+Alt+Shift+E)"
+        ),
     )
     live.add_argument(
         "--dwell-ms",
@@ -888,6 +1064,67 @@ def _parser() -> argparse.ArgumentParser:
     )
     capture.set_defaults(handler=run_desktop_capture)
 
+    ocr = subcommands.add_parser(
+        "ocr-campaign",
+        help="measure one OCR mode over a corpus, constructing nothing else",
+        description=(
+            "Run OCR without Kiwi, KRDICT, LookupPipeline, hover, or UI. "
+            "detection-only and recognition-only need separately addressable "
+            "stages, which only EasyOCR exposes."
+        ),
+    )
+    ocr.add_argument(
+        "--mode",
+        choices=("ocr-only", "detection-only", "recognition-only", "frozen-replay"),
+        default="ocr-only",
+    )
+    ocr.add_argument("--backend", choices=("easyocr", "vision"), default="easyocr")
+    ocr.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path("benchmarks/fixtures/ocr/manifest.json"),
+        help="corpus manifest to score (default: the committed one)",
+    )
+    ocr.add_argument("--config", type=Path, help="runtime config supplying EasyOCR options")
+    ocr.add_argument("--warmup", type=int, default=1)
+    ocr.add_argument("--samples", type=int, default=3)
+    ocr.add_argument("--iou-threshold", type=float, default=0.5)
+    ocr.add_argument("--cpu-threads", type=_parse_cpu_threads)
+    ocr.add_argument(
+        "--output-root", type=Path, default=Path("artifacts/benchmarks/runs")
+    )
+    ocr.set_defaults(handler=run_ocr_campaign)
+
+    corpus = subcommands.add_parser(
+        "ocr-corpus", help="enumerate a corpus without loading an OCR runtime"
+    )
+    corpus.add_argument(
+        "--manifest", type=Path, default=Path("benchmarks/fixtures/ocr/manifest.json")
+    )
+    corpus.add_argument(
+        "--skip-assets",
+        action="store_true",
+        help="validate the manifest without requiring its images to be present",
+    )
+    corpus.set_defaults(handler=run_corpus_inventory)
+
+    generate = subcommands.add_parser(
+        "ocr-corpus-generate",
+        help="render the synthetic Korean corpus from a licensed face",
+        description=(
+            "Refuses rather than substituting a face when the named one is not "
+            "installed, and marks samples local_synthetic when its licence does "
+            "not permit redistribution."
+        ),
+    )
+    generate.add_argument(
+        "--generator", type=Path, default=Path("benchmarks/fixtures/ocr/generator.json")
+    )
+    generate.add_argument(
+        "--output", type=Path, default=Path("benchmarks/fixtures/ocr/manifest.json")
+    )
+    generate.set_defaults(handler=run_corpus_generate)
+
     package = subcommands.add_parser("package", help="analyze one frozen package tree")
     package.add_argument("--root", type=Path, required=True)
     package.add_argument("--output", type=Path, required=True)
@@ -918,8 +1155,11 @@ if __name__ == "__main__":  # pragma: no cover - exercised as a module
 __all__ = [
     "main",
     "prepare_roi",
+    "run_corpus_generate",
+    "run_corpus_inventory",
     "run_desktop_capture",
     "run_hover_rate",
+    "run_ocr_campaign",
     "run_live_hover",
     "run_package",
     "run_real_hover",

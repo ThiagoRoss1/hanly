@@ -3,7 +3,13 @@
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from .contracts import DictionaryEntry, OCRResult, ROIImage, TokenAnalysis
+from .contracts import (
+    DictionaryEntry,
+    MorphologyAnalysis,
+    OCRResult,
+    ROIImage,
+    TokenAnalysis,
+)
 
 
 @runtime_checkable
@@ -23,9 +29,14 @@ class OCRProvider(Protocol):
 
 @runtime_checkable
 class MorphologyProvider(Protocol):
-    """Analyzes Korean text into normalized token information."""
+    """Analyzes Korean text into normalized token information.
 
-    def analyze(self, text: str) -> Sequence[TokenAnalysis]:
+    Returning :class:`MorphologyAnalysis` also reports the lexical units a
+    lookup may address. A provider written against the older contract may
+    still return a plain sequence of tokens; the pipeline normalizes both.
+    """
+
+    def analyze(self, text: str) -> MorphologyAnalysis | Sequence[TokenAnalysis]:
         ...
 
 

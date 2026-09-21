@@ -23,12 +23,13 @@ def test_live_hover_parser_has_safe_defaults_and_does_not_import_runner() -> Non
     assert args.duration == 300
     assert args.output_root == Path("artifacts/benchmarks/runs")
     assert args.marker_hotkey == "Ctrl+Alt+Shift+B"
-    assert args.retain_text is False
+    assert args.freeze_hotkey == "Ctrl+Alt+Shift+F"
+    assert args.export_hotkey == "Ctrl+Alt+Shift+E"
     assert args.dwell_ms == 150.0
     assert args.cpu_threads is None
 
 
-def test_live_hover_parser_accepts_explicit_privacy_and_session_options() -> None:
+def test_live_hover_parser_accepts_explicit_session_and_microscope_options() -> None:
     args = _parser().parse_args(
         [
             "live-hover",
@@ -40,7 +41,10 @@ def test_live_hover_parser_accepts_explicit_privacy_and_session_options() -> Non
             "evidence",
             "--marker-hotkey",
             "Ctrl+Alt+M",
-            "--retain-text",
+            "--freeze-hotkey",
+            "Ctrl+Alt+P",
+            "--export-hotkey",
+            "Ctrl+Alt+X",
             "--dwell-ms",
             "175",
             "--cpu-threads",
@@ -51,9 +55,17 @@ def test_live_hover_parser_accepts_explicit_privacy_and_session_options() -> Non
     assert args.duration == 120
     assert args.output_root == Path("evidence")
     assert args.marker_hotkey == "Ctrl+Alt+M"
-    assert args.retain_text is True
+    assert args.freeze_hotkey == "Ctrl+Alt+P"
+    assert args.export_hotkey == "Ctrl+Alt+X"
     assert args.dwell_ms == 175.0
     assert args.cpu_threads == 4
+
+
+def test_the_live_session_no_longer_offers_a_raw_text_retention_flag() -> None:
+    """Raw text reaches disk through an explicit export, not through tracing."""
+
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["live-hover", "--config", "runtime.json", "--retain-text"])
 
 
 def test_benchmark_cpu_thread_override_leaves_other_ocr_options_untouched() -> None:

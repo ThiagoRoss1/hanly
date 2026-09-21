@@ -6,14 +6,22 @@ import sys
 from collections.abc import Callable
 from typing import Any, cast
 
-from hanly import LookupResult, LookupStatus, Point
-from PyQt6.QtCore import QObject, QPropertyAnimation, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCursor, QGuiApplication, QPainter, QPaintEvent, QPalette
+from hanly import DictionarySense, LookupResult, LookupStatus, Point
+from PyQt6.QtCore import QObject, QPoint, QPropertyAnimation, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import (
+    QCursor,
+    QGuiApplication,
+    QPainter,
+    QPaintEvent,
+    QPalette,
+    QScreen,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -28,6 +36,7 @@ from .popup import (
     LookupStopper,
     PopupContent,
     PopupController,
+    PopupEntryContent,
     PopupPosition,
     PopupRuntime,
     PopupSize,
@@ -81,6 +90,11 @@ _PALETTES = {
         "accent": "#E88CA1",
         "accent_ink": "#B75C76",
         "accent_wash": "rgba(232, 140, 161, 41)",
+        "accent_hover": "rgba(232, 140, 161, 66)",
+        "hover": "#E7E5E3",
+        "press": "#DAD8D5",
+        "scroll": "rgba(32, 33, 36, 46)",
+        "scroll_hover": "rgba(32, 33, 36, 92)",
         "danger": "#A0302A",
     },
     "dark": {
@@ -95,9 +109,23 @@ _PALETTES = {
         "accent": "#F08FA6",
         "accent_ink": "#F4A5B6",
         "accent_wash": "rgba(240, 143, 166, 36)",
+        "accent_hover": "rgba(240, 143, 166, 64)",
+        "hover": "#32343A",
+        "press": "#3A3D44",
+        "scroll": "rgba(242, 242, 243, 48)",
+        "scroll_hover": "rgba(242, 242, 243, 104)",
         "danger": "#F09086",
     },
 }
+
+
+def _entry_gloss(entry: PopupEntryContent) -> str:
+    """The shortest useful label for an alternate entry."""
+
+    for sense in entry.senses:
+        if sense.gloss:
+            return sense.gloss
+    return entry.definitions[0] if entry.definitions else ""
 
 
 def _label(text: str = "", *, name: str | None = None) -> QLabel:
@@ -106,6 +134,27 @@ def _label(text: str = "", *, name: str | None = None) -> QLabel:
     if name is not None:
         label.setObjectName(name)
     return label
+
+
+def _reveal(layout: QLayout) -> None:
+    """Show every widget a rebuild just added, before the card is measured.
+
+    ``QBoxLayout`` ignores hidden items, and a widget added to a layout is only
+    shown when the event loop next runs. Measuring before that reports the
+    height of an almost-empty layout, which is what shrank the card on expand
+    and collapse and hid most of the senses.
+    """
+
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None:
+            continue
+        nested = item.layout()
+        if nested is not None:
+            _reveal(nested)
+        widget = item.widget()
+        if widget is not None:
+            widget.setVisible(True)
 
 
 def _clear(layout: QVBoxLayout | QHBoxLayout) -> None:
@@ -118,6 +167,10 @@ def _clear(layout: QVBoxLayout | QHBoxLayout) -> None:
             _clear(nested)
         widget = item.widget()
         if widget is not None:
+            # Taking a widget out of a layout does not stop it painting, and
+            # deletion is deferred to the event loop, so an unhidden child keeps
+            # drawing at its old geometry underneath the rebuilt content.
+            widget.hide()
             widget.deleteLater()
 
 
@@ -141,6 +194,10 @@ class QtPopupView(QFrame):
         self._content: PopupContent | None = None
         self._prepared_result: LookupResult | None = None
         self._resize_handler: Callable[[PopupSize], None] | None = None
+        self._dismiss_handler: Callable[[], None] | None = None
+        #: The screen this result was placed on. Measurement and placement
+        #: must agree on one screen across an interactive resize.
+        self._screen: QScreen | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(1, 1, 1, 1)
@@ -235,17 +292,37 @@ class QtPopupView(QFrame):
             "border-radius:10px; padding:3px 9px; font-size:11px; }",
             f"QWidget#hanlyPopupFooter {{ background:{p['foot']}; "
             f"border-top:1px solid {p['line']}; }}",
-            f"QPushButton {{ color:{p['ink2']}; border:0; background:transparent; "
-            "padding:5px 8px; font-size:11px; }",
-            f"QPushButton:hover {{ color:{p['ink']}; background:{p['wash']}; "
-            "border-radius:7px; }",
-            f"QPushButton#hanlyPopupSize {{ border:1px solid {p['accent']}; "
-            "border-radius:12px; font-weight:600; padding:4px 10px; }",
+            # Footer controls read as one family: a filled pill for the primary
+            # action, a quiet outline for the secondary, both with the hover and
+            # pressed states a control needs to feel real under the pointer.
+            f"QPushButton {{ color:{p['ink2']}; border:1px solid transparent; "
+            f"background:{p['wash']}; border-radius:13px; padding:5px 13px; "
+            "font-size:11px; font-weight:600; }",
+            f"QPushButton:hover {{ color:{p['ink']}; background:{p['hover']}; }}",
+            f"QPushButton:pressed {{ background:{p['press']}; }}",
+            f"QPushButton#hanlyPopupSize {{ color:{p['accent_ink']}; "
+            f"background:{p['accent_wash']}; border-color:transparent; }}",
+            f"QPushButton#hanlyPopupSize:hover {{ background:{p['accent_hover']}; "
+            f"color:{p['accent_ink']}; }}",
+            # Pressing the primary action commits to the full accent, which is
+            # the one place the saturated brand colour earns its contrast.
+            f"QPushButton#hanlyPopupSize:pressed {{ background:{p['accent']}; "
+            f"color:{p['bg']}; }}",
+            f"QPushButton#hanlyPopupClose {{ background:transparent; "
+            f"border-color:{p['line']}; }}",
+            f"QPushButton#hanlyPopupClose:hover {{ background:{p['hover']}; "
+            f"border-color:{p['border']}; }}",
             f"QScrollArea#hanlyPopupScroll {{ border:0; background:{p['bg']}; }}",
-            f"QScrollBar:vertical {{ width:7px; background:{p['bg']}; }}",
-            f"QScrollBar::handle:vertical {{ background:{p['border']}; "
-            "border-radius:3px; min-height:24px; }",
+            # An overlay-style bar: no track, inset from the card edge, and a
+            # handle that only firms up under the pointer.
+            "QScrollBar:vertical { width:10px; background:transparent; "
+            "margin:4px 2px 4px 0; }",
+            f"QScrollBar::handle:vertical {{ background:{p['scroll']}; "
+            "border-radius:3px; min-height:28px; }",
+            f"QScrollBar::handle:vertical:hover {{ background:{p['scroll_hover']}; }}",
             "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }",
+            "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical "
+            "{ background:transparent; }",
         ]
         self.setStyleSheet("".join(rules))
 
@@ -259,6 +336,20 @@ class QtPopupView(QFrame):
 
     def set_resize_handler(self, handler: Callable[[PopupSize], None]) -> None:
         self._resize_handler = handler
+
+    def set_dismiss_handler(self, handler: Callable[[], None]) -> None:
+        """Called when the user dismisses this card from inside it."""
+
+        self._dismiss_handler = handler
+
+    def _request_dismiss(self) -> None:
+        handler = self._dismiss_handler
+        if handler is not None:
+            handler()
+            return
+        # Without a composed handler the view can still take itself off screen,
+        # which keeps a standalone view and the benchmark harness usable.
+        self.hide()
 
     def apply_preferences(self, config: AppConfig) -> None:
         """Apply theme/detail live; default density affects the next result."""
@@ -326,16 +417,14 @@ class QtPopupView(QFrame):
         self._content_layout.addSpacing(12)
         self._content_layout.addLayout(chips)
 
-        senses = content.entry.definitions if self._expanded else content.entry.definitions[:2]
+        senses = content.entry.senses if self._expanded else content.entry.senses[:2]
         self._content_layout.addSpacing(12)
-        for index, definition in enumerate(senses, start=1):
+        for index, sense in enumerate(senses, start=1):
             row = QHBoxLayout()
             number = _label(str(index), name="hanlyPopupAccent")
             number.setFixedWidth(15)
-            meaning = _label(definition, name="hanlyPopupSense")
-            meaning.setWordWrap(True)
             row.addWidget(number, 0, Qt.AlignmentFlag.AlignTop)
-            row.addWidget(meaning, 1)
+            row.addLayout(self._sense_body(sense), 1)
             self._content_layout.addLayout(row)
             self._content_layout.addSpacing(10)
 
@@ -368,7 +457,7 @@ class QtPopupView(QFrame):
         if self._expanded and self._others_open:
             self._content_layout.addWidget(self._divider())
             for other in content.other_entries:
-                gloss = other.definitions[0] if other.definitions else ""
+                gloss = _entry_gloss(other)
                 text = " · ".join(filter(None, (other.headword, other.part_of_speech, gloss)))
                 item = _label(text, name="hanlyPopupSecondary")
                 item.setWordWrap(True)
@@ -425,6 +514,15 @@ class QtPopupView(QFrame):
             size.clicked.connect(self._toggle_size)
             self._footer_layout.addWidget(size)
 
+        # The window never accepts focus, so it can receive neither a key press
+        # nor a click outside itself. A control inside the card is the one
+        # dismissal the user can always reach.
+        close = QPushButton("Close")
+        close.setObjectName("hanlyPopupClose")
+        close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close.clicked.connect(self._request_dismiss)
+        self._footer_layout.addWidget(close)
+
     def _divider(self) -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -446,22 +544,88 @@ class QtPopupView(QFrame):
         self._rebuild()
         self._resize_and_notify()
 
+    @staticmethod
+    def _sense_body(sense: DictionarySense) -> QVBoxLayout:
+        """Stack a sense's short gloss above its fuller definition.
+
+        A sense without a gloss shows the definition in the primary slot rather
+        than an empty row, so nothing is invented and nothing is repeated.
+        """
+
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(2)
+
+        if sense.gloss:
+            gloss = _label(sense.gloss, name="hanlyPopupSense")
+            gloss.setWordWrap(True)
+            body.addWidget(gloss)
+
+            definition = _label(sense.definition, name="hanlyPopupSecondary")
+        else:
+            definition = _label(sense.definition, name="hanlyPopupSense")
+
+        definition.setWordWrap(True)
+        body.addWidget(definition)
+        return body
+
     def _resize_to_content(self) -> PopupSize:
         width = 386 if self._expanded else 340
-        self._content_host.setFixedWidth(width - 2)
-        self._content_host.adjustSize()
+        _reveal(self._footer_layout)
         footer_height = self._footer.sizeHint().height()
-        desired = self._content_host.sizeHint().height() + footer_height + 2
-        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-        max_height = screen.availableGeometry().height() - 24 if screen is not None else desired
+        max_height = self._available_height()
+
+        desired = self._measure_content(width - 2) + footer_height + 2
+        scrolls = desired > max_height
+        if scrolls:
+            # A visible scrollbar takes width from the text, which makes it wrap
+            # taller. One further pass at the real content width settles it.
+            scrollbar = self._scroll.verticalScrollBar()
+            bar = scrollbar.sizeHint().width() if scrollbar is not None else 0
+            desired = self._measure_content(width - 2 - bar) + footer_height + 2
+
         height = max(96, min(desired, max_height))
         self._scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
-            if desired > max_height
+            if scrolls
             else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.setFixedSize(width, height)
         return PopupSize(width, height)
+
+    def _measure_content(self, width: int) -> int:
+        """The height the rebuilt content actually needs at ``width``.
+
+        Word-wrapped text has no single natural height, so the wrapped height
+        must be asked for at the width the content will occupy. Reading
+        ``sizeHint()`` straight after a rebuild reports the height of a layout
+        that has not been arranged yet, which is what shrank the card on every
+        expand and collapse.
+        """
+
+        host = self._content_host
+        host.setFixedWidth(width)
+        host.ensurePolished()
+
+        layout = self._content_layout
+        _reveal(layout)
+        layout.activate()
+        wrapped = layout.heightForWidth(width)
+        return wrapped if wrapped > 0 else layout.sizeHint().height()
+
+    def _available_height(self) -> int:
+        """Usable height on the screen this popup is being measured for.
+
+        Measurement and placement must agree on one screen. Asking for the
+        screen under the cursor during an interactive resize can pick a
+        different monitor than the one the result was placed on.
+        """
+
+        screen = self._screen or QApplication.screenAt(QCursor.pos())
+        screen = screen or QApplication.primaryScreen()
+        if screen is None:
+            return 2 ** 15
+        return screen.availableGeometry().height() - 24
 
     def _resize_and_notify(self) -> None:
         size = self._resize_to_content()
@@ -473,6 +637,7 @@ class QtPopupView(QFrame):
             self.prepare_result(result)
 
     def _show_at(self, result: LookupResult, position: PopupPosition) -> None:
+        self._screen = QApplication.screenAt(QPoint(position.x, position.y))
         self._render_if_needed(result)
         self.move(position.x, position.y)
         if not self.isVisible():

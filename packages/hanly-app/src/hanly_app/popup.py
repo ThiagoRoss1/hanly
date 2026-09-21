@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from math import floor
 from typing import Protocol
 
-from hanly import DictionaryEntry, LookupResult, LookupStatus, Point, TokenAnalysis
+from hanly import (
+    DictionaryEntry,
+    DictionarySense,
+    LookupResult,
+    LookupStatus,
+    Point,
+    TokenAnalysis,
+)
 
 from .config import TechnicalDetailLevel
 
@@ -71,6 +78,7 @@ class PopupEntryContent:
     part_of_speech: str | None = None
     hanja: str | None = None
     vocabulary_level: str | None = None
+    senses: tuple[DictionarySense, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,20 @@ class LookupStopper(Protocol):
     def stop(self, *, wait: bool) -> None: ...
 
 
+#: A popup appears for a Korean word that was read and looked up, and for a
+#: genuine fault. Everything else is silence by design: an empty crop, a
+#: picture, English text, or a word the dictionary does not carry are all
+#: "nothing to hover", and a card for each of those turns ordinary pointer
+#: movement into a stream of dismissable noise.
+_PRESENTED_STATUSES = frozenset({LookupStatus.SUCCESS, LookupStatus.ERROR})
+
+
+def should_present(result: LookupResult) -> bool:
+    """Whether this outcome is worth putting on screen at all."""
+
+    return isinstance(result, LookupResult) and result.status in _PRESENTED_STATUSES
+
+
 def _entry_content(entry: DictionaryEntry) -> PopupEntryContent:
     return PopupEntryContent(
         headword=entry.headword,
@@ -122,6 +144,7 @@ def _entry_content(entry: DictionaryEntry) -> PopupEntryContent:
         part_of_speech=entry.part_of_speech,
         hanja=entry.hanja,
         vocabulary_level=entry.vocabulary_level,
+        senses=entry.senses,
     )
 
 
@@ -295,9 +318,28 @@ class PopupController:
         self._cursor: Point | None = None
         self._screen: ScreenGeometry | None = None
 
+        self._on_dismissed: Callable[[], None] | None = None
+
         resize_handler = getattr(view, "set_resize_handler", None)
         if callable(resize_handler):
             resize_handler(self._handle_resize)
+        dismiss_handler = getattr(view, "set_dismiss_handler", None)
+        if callable(dismiss_handler):
+            dismiss_handler(self._handle_dismiss)
+
+    def set_dismissed_handler(self, handler: Callable[[], None] | None) -> None:
+        """Called after the user dismisses a card from inside it.
+
+        Composition uses it to tell the hover runtime to forget the answer, so
+        a dismissed card cannot be resurrected by geometry for a stale target.
+        """
+
+        self._on_dismissed = handler
+
+    def _handle_dismiss(self) -> None:
+        self.clear()
+        if self._on_dismissed is not None:
+            self._on_dismissed()
 
     @property
     def popup_size(self) -> PopupSize:

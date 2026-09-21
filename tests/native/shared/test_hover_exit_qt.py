@@ -87,7 +87,9 @@ def _settle() -> None:
     QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
 
 
-def _runtime(cleared: list[int]) -> tuple[HoverLookupRuntime, _Listeners, _Capture]:
+def _runtime(
+    cleared: list[int], *, sticky: bool = False
+) -> tuple[HoverLookupRuntime, _Listeners, _Capture]:
     listeners = _Listeners()
     capture = _Capture()
     runtime = HoverLookupRuntime(
@@ -98,6 +100,7 @@ def _runtime(cleared: list[int]) -> tuple[HoverLookupRuntime, _Listeners, _Captu
         exit_scheduler=QtHoverScheduler(),
         listener_factory=listeners,
         on_invalidate=lambda: cleared.append(1),
+        sticky=sticky,
     )
     runtime.start()
     assert runtime.controller.wait_until_ready(timeout=5.0)
@@ -108,8 +111,12 @@ def _runtime(cleared: list[int]) -> tuple[HoverLookupRuntime, _Listeners, _Captu
 def test_leaving_a_retained_word_dismisses_it_on_the_real_qt_scheduler(
     qt_application: QApplication,
 ) -> None:
-    """The measured failure: no dismissal at all, because the dwell scheduled
-    on the way out replaced the exit's callback on the one shared timer."""
+    """Continuous hover, where leaving the word is still a dismissal.
+
+    The measured failure this covers: no dismissal at all, because the dwell
+    scheduled on the way out replaced the exit's callback on the one shared
+    timer. Push to Hover keeps its answer instead; see the test below.
+    """
 
     del qt_application
     cleared: list[int] = []
@@ -124,6 +131,37 @@ def test_leaving_a_retained_word_dismisses_it_on_the_real_qt_scheduler(
 
         # The dwell armed by that same movement still belongs to the next word.
         _spin(_DWELL_MS + 60)
+        assert cleared == [1]
+    finally:
+        runtime.shutdown()
+
+
+def test_leaving_a_retained_word_keeps_a_sticky_answer_on_the_real_scheduler(
+    qt_application: QApplication,
+) -> None:
+    """Push to Hover on the real Qt timers: the card survives the exit.
+
+    Reaching the popup means leaving the word, so this movement must release
+    the protection without taking the answer off screen, and no later timer may
+    dismiss it either.
+    """
+
+    del qt_application
+    cleared: list[int] = []
+    runtime, listeners, _capture = _runtime(cleared, sticky=True)
+    try:
+        runtime.retain(RetainedTarget(1, _WORD, _POPUP))
+        listeners.listeners[0].on_move(120, 400)
+        _spin(20)
+
+        assert cleared == []
+        assert runtime.retained_target is None
+
+        _spin(_DWELL_MS + 60)
+        assert cleared == []
+
+        runtime.dismiss()
+        _spin(20)
         assert cleared == [1]
     finally:
         runtime.shutdown()

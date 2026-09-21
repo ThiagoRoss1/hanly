@@ -149,9 +149,14 @@ def test_origins_are_kept_per_request_and_bounded() -> None:
 
 
 class _Hover:
-    """One real hover runtime, with every timer under the test's control."""
+    """One real hover runtime, with every timer under the test's control.
 
-    def __init__(self) -> None:
+    ``sticky`` selects the hover activation's lifetime policy: Push to Hover
+    leaves an answer on screen until it is dismissed, Always Active drops it
+    when the cursor leaves the word.
+    """
+
+    def __init__(self, *, sticky: bool = True) -> None:
         self.dispatcher = _QueueDispatcher()
         self.scheduler = _Scheduler()
         self.exit_scheduler = _Scheduler()
@@ -170,6 +175,7 @@ class _Hover:
             dispatcher=self.dispatcher,
             listener_factory=self.listeners,
             on_invalidate=self._cleared,
+            sticky=sticky,
         )
 
     def _cleared(self) -> None:
@@ -228,7 +234,19 @@ class _Hover:
 
 @pytest.fixture
 def hover() -> Iterator[_Hover]:
+    """Push to Hover, the default: an answer waits to be dismissed."""
+
     harness = _Hover()
+    harness.start()
+    yield harness
+    harness.close()
+
+
+@pytest.fixture
+def continuous_hover() -> Iterator[_Hover]:
+    """Always Active hover, where leaving the word does dismiss the answer."""
+
+    harness = _Hover(sticky=False)
     harness.start()
     yield harness
     harness.close()
@@ -275,40 +293,75 @@ def test_crossing_the_gap_towards_the_popup_keeps_the_answer(hover: _Hover) -> N
     assert hover.runtime.retained_target is None
 
 
-def test_leaving_the_word_in_any_other_direction_dismisses_at_once(
+def test_leaving_the_word_keeps_a_push_to_hover_answer_on_screen(
     hover: _Hover,
 ) -> None:
-    """The defect this replaces: every exit paid a delay, and on the real Qt
-    scheduler the next dwell took the delay's timer, so nothing dismissed."""
+    """Reaching the popup means leaving the word, so leaving cannot dismiss.
+
+    The protection is released so the next word can be looked up, but the
+    answer the user deliberately asked for stays until they dismiss it.
+    """
 
     hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
 
     hover.move(120, 400)
 
+    assert hover.cleared == 0
+    assert hover.runtime.retained_target is None
+
+
+def test_leaving_the_word_dismisses_under_continuous_hover(
+    continuous_hover: _Hover,
+) -> None:
+    """Always Active hover is not a deliberate request, so the card gives way."""
+
+    continuous_hover.retain(
+        ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180)
+    )
+
+    continuous_hover.move(120, 400)
+
+    assert continuous_hover.cleared == 1
+    assert continuous_hover.runtime.retained_target is None
+
+
+def test_an_explicit_dismissal_takes_the_answer_off_screen(hover: _Hover) -> None:
+    """The Tier 1 routes -- footer close and a chord re-press -- come here."""
+
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    assert hover.cleared == 0
+
+    hover.runtime.dismiss()
+    hover.drain()
+
     assert hover.cleared == 1
     assert hover.runtime.retained_target is None
 
 
-def test_a_retained_word_with_no_popup_dismisses_on_the_first_exit(
+def test_a_retained_word_with_no_popup_is_released_but_not_dismissed(
     hover: _Hover,
 ) -> None:
     hover.retain(ScreenRect(100, 100, 40, 20))
 
     hover.move(200, 200)
 
-    assert hover.cleared == 1
-    assert hover.runtime.retained_target is None
-
-
-def test_turning_back_while_crossing_dismisses_the_answer(hover: _Hover) -> None:
-    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
-    hover.move(220, 110)
     assert hover.cleared == 0
-
-    hover.move(180, 110)
-
-    assert hover.cleared == 1
     assert hover.runtime.retained_target is None
+
+
+def test_turning_back_while_crossing_dismisses_under_continuous_hover(
+    continuous_hover: _Hover,
+) -> None:
+    continuous_hover.retain(
+        ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180)
+    )
+    continuous_hover.move(220, 110)
+    assert continuous_hover.cleared == 0
+
+    continuous_hover.move(180, 110)
+
+    assert continuous_hover.cleared == 1
+    assert continuous_hover.runtime.retained_target is None
 
 
 def test_entering_the_popup_ends_the_crossing(hover: _Hover) -> None:
@@ -377,12 +430,22 @@ def test_invalidating_forgets_the_retained_target(hover: _Hover) -> None:
     assert hover.runtime.retained_target is None
 
 
-def test_movement_with_nothing_retained_clears_immediately(hover: _Hover) -> None:
+def test_movement_with_nothing_retained_clears_under_continuous_hover(
+    continuous_hover: _Hover,
+) -> None:
     """Unchanged behaviour for the results that are never shown at all."""
 
+    continuous_hover.move(400, 400)
+
+    assert continuous_hover.cleared == 1
+
+
+def test_movement_with_nothing_retained_is_silent_under_push_to_hover(
+    hover: _Hover,
+) -> None:
     hover.move(400, 400)
 
-    assert hover.cleared == 1
+    assert hover.cleared == 0
 
 
 def _success_with_geometry() -> LookupResult:

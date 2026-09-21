@@ -357,6 +357,25 @@ def _wait_for_popup(
     assert len(popup.results) >= count
 
 
+def _wait_for_lookup(
+    dispatcher: _QueueDispatcher,
+    dictionary: object,
+    timeout: float = 2,
+) -> None:
+    """Drain until the pipeline has finished, whether or not a popup follows.
+
+    A not-found outcome never reaches the popup, so waiting on the popup would
+    wait for something that is designed not to happen.
+    """
+
+    deadline = monotonic() + timeout
+    while not getattr(dictionary, "calls", None) and monotonic() < deadline:
+        dispatcher.drain_one(timeout=min(0.05, max(0.0, deadline - monotonic())))
+    for _ in range(4):
+        dispatcher.drain_one(timeout=0.05)
+    assert getattr(dictionary, "calls", None)
+
+
 @pytest.mark.parametrize(
     ("definitions", "expected_status"),
     [
@@ -387,7 +406,7 @@ def test_hover_e2e_runs_real_pipeline_and_uses_manual_popup_sink(
         _await_hover_ready(manual, dispatcher)
         listener = listeners.listeners[0]
         _submit_hover(listener, _UI_POINT, dispatcher, scheduler)
-        _wait_for_popup(dispatcher, popup, 1)
+        _wait_for_lookup(dispatcher, dictionary)
 
         assert scheduler.calls[0][0] == 175
         assert capture.cursors == [_UI_POINT]
@@ -399,10 +418,17 @@ def test_hover_e2e_runs_real_pipeline_and_uses_manual_popup_sink(
         assert morphology.called_on[0] == ocr.called_on[0]
         assert dictionary.called_on[0] == ocr.called_on[0]
         assert resolver.targets == [_TARGET]
-        assert popup.results[0].status is expected_status
-        assert popup.opened_on == [ui_thread]
         assert manual.controller.current_request_id is not None
-        assert popup.results[0].context is not None
+
+        if expected_status is LookupStatus.SUCCESS:
+            assert popup.results[0].status is LookupStatus.SUCCESS
+            assert popup.opened_on == [ui_thread]
+            assert popup.results[0].context is not None
+        else:
+            # The whole pipeline ran, and the popup stayed silent on purpose:
+            # a word the dictionary does not carry is not worth a card.
+            assert popup.results == []
+            assert popup.opened_on == []
     finally:
         manual.shutdown()
 

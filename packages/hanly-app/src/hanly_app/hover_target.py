@@ -41,6 +41,11 @@ TRANSFER_CORRIDOR_PIXELS = 24
 #: to one running plus one latest pending, so this is already generous.
 ORIGIN_LIMIT = 8
 
+#: The ratio between captured image pixels and screen coordinates. See
+#: :func:`screen_rect`: it is the one place the two spaces could diverge, and on
+#: the platforms measured so far they do not.
+SCREEN_SCALE = 1.0
+
 
 @dataclass(frozen=True, slots=True)
 class RetainedTarget:
@@ -117,7 +122,7 @@ def expanded(rect: ScreenRect, margin: int) -> ScreenRect:
 
 
 def screen_rect(
-    region: ScreenRect, bounds: BoundingBox, *, scale: float = 1.0
+    region: ScreenRect, bounds: BoundingBox, *, scale: float = SCREEN_SCALE
 ) -> ScreenRect | None:
     """Place an ROI-local box on the screen the capture came from.
 
@@ -175,6 +180,7 @@ class CaptureOrigins:
 __all__ = [
     "ORIGIN_LIMIT",
     "POPUP_TRANSFER_MS",
+    "SCREEN_SCALE",
     "TRANSFER_CORRIDOR_PIXELS",
     "WORD_MARGIN_PIXELS",
     "CaptureOrigins",

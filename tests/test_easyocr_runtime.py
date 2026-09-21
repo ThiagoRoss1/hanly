@@ -46,6 +46,10 @@ def _easyocr_config(tmp_path: Path, **easyocr: object) -> Path:
     _krdict_database(tmp_path / "data" / "krdict.sqlite3")
     payload: dict[str, object] = {
         "resources": {"krdict": {"path": "data/krdict.sqlite3", "kind": "krdict"}},
+        # These cases are about the EasyOCR composition specifically, so the
+        # recognizer is pinned rather than left to the automatic choice, which
+        # prefers Apple Vision on a machine that has it.
+        "ocr_backend": "easyocr",
     }
     if easyocr:
         payload["easyocr"] = easyocr

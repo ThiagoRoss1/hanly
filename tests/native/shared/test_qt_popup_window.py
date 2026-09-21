@@ -10,7 +10,13 @@ top-level window rather than a child of the main window.
 from __future__ import annotations
 
 import pytest
-from hanly import DictionaryEntry, HanlyError, LookupResult, LookupStatus
+from hanly import (
+    DictionaryEntry,
+    DictionarySense,
+    HanlyError,
+    LookupResult,
+    LookupStatus,
+)
 
 from tests.hanly_fixtures.capabilities import require_modules
 
@@ -158,15 +164,54 @@ def test_the_popup_paints_its_own_panel_background() -> None:
         popup_view.close()
 
 
+def _many_sense_result() -> LookupResult:
+    """Twelve senses with text long enough to wrap, as a real entry does.
+
+    A single-definition entry cannot show a card that shrinks below its own
+    content, which is the defect these assertions exist for.
+    """
+
+    return LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(
+            DictionaryEntry(
+                headword="읽다",
+                part_of_speech="verb",
+                source="krdict",
+                senses=tuple(
+                    DictionarySense(
+                        definition=(
+                            f"Sense {index} with a definition long enough to wrap "
+                            "onto several lines inside the card."
+                        ),
+                        gloss=f"gloss {index}",
+                        sense_id=str(index),
+                    )
+                    for index in range(12)
+                ),
+            ),
+        ),
+    )
+
+
 def test_compact_and_expanded_sizes_follow_content_without_clipping(
     qt_application: QApplication,
 ) -> None:
+    """The card must keep its contract size across a real Cocoa event cycle.
+
+    The popup is shown first, because that is what ``PopupController`` does and
+    what a user sees; a top-level widget that has never been shown does not
+    retain an explicitly set size when its layout activates.
+    """
+
     view = QtPopupView(
         config=AppConfig(popup_default_size=PopupDefaultSize.COMPACT)
     )
     try:
-        compact = view.prepare_result(_result())
-        assert compact.width == 340
+        view.show_result(_many_sense_result(), PopupPosition(x=120, y=120))
+        qt_application.processEvents()
+        assert view.popup_size.width == 340
+
         button = view.findChild(QPushButton, "hanlyPopupSize")
         assert button is not None
 
@@ -175,9 +220,23 @@ def test_compact_and_expanded_sizes_follow_content_without_clipping(
 
         assert view.expanded is True
         assert view.popup_size.width == 386
+        expanded_height = view.height()
         layout = view.layout()
         assert layout is not None
         assert layout.sizeHint().height() <= view.height()
+
+        button.click()
+        qt_application.processEvents()
+
+        assert view.expanded is False
+        assert view.popup_size.width == 340
+
+        button.click()
+        qt_application.processEvents()
+
+        # A repeated round trip must land on the same size, not shrink away.
+        assert view.popup_size.width == 386
+        assert view.height() == expanded_height
     finally:
         view.close()
 

@@ -199,3 +199,4 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 - **CA-INV-13:** Application/composition wiring injects validated resource paths and configuration into concrete providers; providers and `LookupPipeline` do not depend directly on `ResourceManager`.
 - **CA-INV-14:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation before presentation.
 - **CA-INV-15:** `LookupResult` can model success, normal non-success, and processing-error outcomes without treating every non-success as an exception.
+- **CA-INV-16:** The language stage is acquisition-neutral: it accepts a `TextSelection` and never receives an image, screen geometry, or a desktop object, so one implementation serves pixel and non-pixel clients alike.

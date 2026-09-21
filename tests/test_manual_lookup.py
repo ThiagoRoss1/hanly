@@ -6,7 +6,15 @@ from threading import Event, Thread
 from typing import Any, cast
 
 import pytest
-from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
+from hanly import (
+    DictionaryEntry,
+    HanlyError,
+    LookupResult,
+    LookupStatus,
+    PixelFormat,
+    Point,
+    ROIImage,
+)
 from hanly_app.capture import CaptureResult, ScreenRect
 from hanly_app.hotkeys import (
     HotkeyAction,
@@ -195,6 +203,7 @@ def _composition(
     *,
     worker: _Worker | None = None,
     trace_sink: _TraceSink | None = None,
+    capture_observer: Any | None = None,
 ) -> tuple[ManualLookupRuntime, _QueueDispatcher, _HotkeyFactory, _Capture, _Popup, _Worker]:
     queue = _QueueDispatcher()
     hotkeys = _HotkeyFactory()
@@ -210,6 +219,7 @@ def _composition(
         dispatcher=queue,
         hotkey_factory=hotkeys,
         trace_sink=trace_sink,
+        capture_observer=capture_observer,
         # The one-shot lookup has no default shortcut any more, so a test that
         # is about that path has to bind it the way an embedding client would.
         lookup_hotkey=_LOOKUP_BINDING,
@@ -305,10 +315,43 @@ def test_superseded_manual_lookup_result_is_not_presented() -> None:
     composition.shutdown()
 
 
-def test_normal_non_success_result_reaches_the_same_popup_path() -> None:
+def test_a_word_the_dictionary_does_not_carry_shows_nothing() -> None:
+    """Silence is the design: a popup means a Korean word was looked up.
+
+    A card for every unreadable crop, picture, English word or OCR misreading
+    turns ordinary pointer movement into a stream of noise to dismiss.
+    """
+
     result = LookupResult(
         status=LookupStatus.NOT_FOUND,
         diagnostics=("Dictionary returned no entries",),
+    )
+    composition, queue, hotkeys, _capture, popup, worker = _composition(
+        worker=_Worker(result)
+    )
+    composition.start()
+    assert hotkeys.listener is not None
+
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
+    queue.drain_one()
+    assert worker.started.wait(timeout=2)
+    worker.release.set()
+    for _ in range(20):
+        if queue.pending:
+            break
+        Event().wait(0.01)
+    queue.drain_one()
+
+    assert popup.results == []
+    composition.shutdown()
+
+
+def test_a_processing_error_still_reaches_the_popup() -> None:
+    """A genuine fault must stay visible; silence would hide a broken install."""
+
+    result = LookupResult(
+        status=LookupStatus.ERROR,
+        error=HanlyError("dictionary database is unreadable"),
     )
     composition, queue, hotkeys, _capture, popup, worker = _composition(
         worker=_Worker(result)
@@ -572,3 +615,66 @@ def test_a_hotkey_that_arrives_before_the_session_is_prepared_is_ignored() -> No
     assert trace.kinds("manual_") == ["manual_action_ignored"]
     assert capture.called_on == []
     composition.shutdown()
+
+
+# --- Capture observation ----------------------------------------------------
+
+
+class _RecordingCaptureObserver:
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.seen: list[tuple[CaptureResult, int | None, int | None]] = []
+        self._error = error
+
+    def observe(
+        self,
+        capture: CaptureResult,
+        *,
+        hover_request_id: int | None = None,
+        lookup_request_id: int | None = None,
+    ) -> None:
+        self.seen.append((capture, hover_request_id, lookup_request_id))
+        if self._error is not None:
+            raise self._error
+
+
+def _one_manual_lookup(
+    observer: _RecordingCaptureObserver,
+) -> tuple[_Popup, int | None]:
+    composition, queue, hotkeys, _capture, popup, worker = _composition(
+        capture_observer=observer
+    )
+    worker.release.set()
+    composition.start()
+    assert hotkeys.listener is not None
+    hotkeys.listener.trigger(_CANONICAL_LOOKUP_BINDING)
+    queue.drain_one()
+
+    assert worker.started.wait(timeout=2)
+    for _ in range(200):
+        if queue.pending:
+            queue.drain_one()
+            break
+        Event().wait(0.01)
+    observed_request_id = composition.controller.current_request_id
+    composition.shutdown()
+    return popup, observed_request_id
+
+
+def test_a_manual_capture_is_observed_with_its_own_lookup_request_id() -> None:
+    observer = _RecordingCaptureObserver()
+    _popup, submitted_request_id = _one_manual_lookup(observer)
+
+    assert len(observer.seen) == 1
+    observed, hover_request_id, lookup_request_id = observer.seen[0]
+    # Correlation is by identifier, not by the order events happened to arrive.
+    assert observed is _CAPTURE
+    assert hover_request_id is None
+    assert lookup_request_id == submitted_request_id
+
+
+def test_a_failing_capture_observer_cannot_stop_a_manual_lookup() -> None:
+    observer = _RecordingCaptureObserver(error=RuntimeError("observer exploded"))
+    popup, _submitted_request_id = _one_manual_lookup(observer)
+
+    assert len(observer.seen) == 1
+    assert [result.status for result in popup.results] == [LookupStatus.SUCCESS]

@@ -140,7 +140,8 @@ hover (while the push chord is held, or for the whole session)
   → across the pipe into the lookup child     lookup_process.py
       → OCR                                   easyocr_provider.py
       → pick the word under the cursor        word_resolver.py
-      → Hangul-only gate                      lookup_pipeline.py
+      → TextSelection (text + cursor index)   lookup_pipeline.py
+      → Hangul-only gate                      language_pipeline.py
       → morphology (lemma)                    kiwi_provider.py
       → dictionary                            krdict_provider.py
   → final request-currency check              lookup_controller.py
@@ -150,6 +151,15 @@ hover (while the push chord is held, or for the whole session)
 `LookupPipeline` (`packages/hanly/src/hanly/lookup_pipeline.py`) is the only
 place that knows the *order*. It has never heard of EasyOCR, Kiwi, or SQLite —
 only the three interfaces in `providers.py`.
+
+**Acquisition stops at `TextSelection`.** `lookup_pipeline.py` owns what only
+pixels can decide — recognition, which region the pointer is in, OCR confidence
+— and then hands a surface word plus a cursor index to
+`language_pipeline.py`, which owns everything after. A caller that already knows
+the word constructs `LanguagePipeline` directly and needs no recognizer; both
+paths run that one implementation, which is what makes them answer identically.
+`TextSelection` carries no rectangle, window, or element handle, so the engine
+stays usable by a client that has none.
 
 Two rules that are easy to break:
 
@@ -172,15 +182,19 @@ before they cross it.
 
 | Interface (`hanly/providers.py`) | V1 adapter | Returns |
 |---|---|---|
-| `OCRProvider` | `easyocr_provider.py` | `OCRResult` |
-| `MorphologyProvider` | `kiwi_provider.py` | `TokenAnalysis` |
+| `OCRProvider` | `easyocr_provider.py`, `vision_provider.py` | `OCRResult` |
+| `MorphologyProvider` | `kiwi_provider.py` | `MorphologyAnalysis` |
 | `DictionaryProvider` | `krdict_provider.py` | `DictionaryEntry` |
 
 Providers **never** consult `ResourceManager`. Composition asks the manager for
 validated paths and passes them into constructors explicitly.
 
-**EasyOCR is the only OCR backend.** There is no backend selector. `OCRProvider`
-remains the seam if a second adapter is ever wanted.
+**Two OCR backends.** `config.OCRBackend` selects: `auto` (default) prefers
+Apple Vision where the platform has it and falls back to EasyOCR; `vision` and
+`easyocr` pin one. `auto` is resolved in the shell —
+`HanlyRuntime.resolved_ocr_backend()` — and the lookup child receives a concrete
+backend in `LookupSettings`, because loading a framework from a spawned process
+to ask about it hangs. Vision ships with macOS and downloads no model.
 
 ---
 
@@ -318,9 +332,10 @@ the migration routes.
 
 | File | What it does |
 |---|---|
-| `contracts.py` | The value types that cross every seam: `OCRResult`, `TokenAnalysis`, `DictionaryEntry`, `LookupResult`, `ROIImage` |
+| `contracts.py` | The value types that cross every seam: `OCRResult`, `TokenAnalysis`, `DictionaryEntry`, `LookupResult`, `ROIImage`, `TextSelection` |
 | `providers.py` | The three provider interfaces |
-| `lookup_pipeline.py` | ROI → `LookupResult`; owns the Hangul-only gate |
+| `lookup_pipeline.py` | The pixel facade: ROI → `TextSelection` → `LookupResult` |
+| `language_pipeline.py` | `TextSelection` → `LookupResult`; owns the Hangul-only gate, candidate selection, and the dictionary query. Knows nothing about pixels |
 | `word_resolver.py` | Which word is under the cursor, including inside one line-level quad |
 | `easyocr_provider.py` | EasyOCR adapter, plus the sensitive-retry options |
 | `kiwi_provider.py` | Kiwi adapter (surface form → lemma) |

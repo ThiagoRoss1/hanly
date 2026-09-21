@@ -534,3 +534,51 @@ def test_reader_eof_reaps_child_before_forgetting_ownership() -> None:
     assert child.process.joined
     assert not child.process.is_alive()
     assert not manager.running
+
+
+def test_a_dock_reactivation_reopens_only_a_live_control_center() -> None:
+    """Command-Tab back to Hanly must not resurrect a window the user closed.
+
+    The child is an accessory process with no Dock tile, so activating Hanly
+    reaches the shell; routing that to the existing open path is what makes the
+    Dock icon work while the window sits minimized.
+    """
+
+    from hanly_app.app_reopen_darwin import ApplicationReopenFilter
+
+    opened: list[str] = []
+    live = {"running": True}
+    clock = {"now": 100.0}
+    reopen = ApplicationReopenFilter(
+        lambda: opened.append("show"),
+        lambda: live["running"],
+        clock=lambda: clock["now"],
+    )
+
+    assert reopen.application_activated() is True
+    assert opened == ["show"]
+
+    clock["now"] += 10.0
+    live["running"] = False
+    assert reopen.application_activated() is False
+    assert opened == ["show"], "a closed Control Center stays closed"
+
+
+def test_repeated_activations_are_debounced() -> None:
+    """macOS delivers several activations while a window comes forward."""
+
+    from hanly_app.app_reopen_darwin import ApplicationReopenFilter
+
+    opened: list[str] = []
+    clock = {"now": 0.0}
+    reopen = ApplicationReopenFilter(
+        lambda: opened.append("show"), lambda: True, clock=lambda: clock["now"]
+    )
+
+    assert reopen.application_activated() is True
+    clock["now"] += 0.1
+    assert reopen.application_activated() is False
+    clock["now"] += 5.0
+    assert reopen.application_activated() is True
+
+    assert opened == ["show", "show"]

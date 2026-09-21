@@ -9,12 +9,14 @@ from hanly_app.config import (
     DEFAULT_CAPTURE_HOTKEY,
     DEFAULT_HOVER_HOTKEY,
     HOVER_HOTKEY_FALLBACKS,
+    SETTABLE_FIELDS,
     AppConfig,
     CaptureMode,
     CaptureRegion,
     ConfigManager,
     HoverActivation,
     LookupPreload,
+    OCRBackend,
     PopupDefaultSize,
     TechnicalDetailLevel,
     Theme,
@@ -323,3 +325,47 @@ def test_migration_is_idempotent_across_a_save_and_reload(tmp_path: Path) -> Non
 
     assert second.load() == first
     assert second.migrations == ()
+
+
+_SETTABLE_SAMPLES: dict[str, object] = {
+    "hotkey": "ctrl+alt+k",
+    "hover_hotkey": "ctrl+alt+h",
+    "capture_hotkey": "ctrl+alt+c",
+    "hover_activation": HoverActivation.ALWAYS_ACTIVE,
+    "lookup_preload": LookupPreload.ALWAYS,
+    "ocr_backend": OCRBackend.EASYOCR,
+    "hover_delay_ms": 220,
+    "capture_mode": CaptureMode.REGION,
+    "capture_monitor": 1,
+    "capture_region": CaptureRegion(left=1, top=2, width=3, height=4),
+    "theme": Theme.DARK,
+    "popup_enabled": False,
+    "popup_default_size": PopupDefaultSize.EXPANDED,
+    "technical_details": TechnicalDetailLevel.FULL,
+    "update_checks_enabled": False,
+}
+
+
+def test_every_settable_field_has_a_sample_so_this_test_cannot_rot() -> None:
+    assert set(_SETTABLE_SAMPLES) == set(SETTABLE_FIELDS)
+
+
+@pytest.mark.parametrize("field", sorted(SETTABLE_FIELDS))
+def test_a_settable_field_actually_survives_being_set(
+    tmp_path: Path, field: str
+) -> None:
+    """``candidate()`` builds the new config field by field.
+
+    A field listed as settable but missing from that constructor is accepted
+    without error and then silently discarded, so the interface offers a
+    control that does nothing. ``ocr_backend`` shipped in exactly that state.
+    """
+
+    manager = ConfigManager(tmp_path / "settings.json")
+    manager.load()
+    value = _SETTABLE_SAMPLES[field]
+
+    updated = manager.update(**{field: value})
+
+    assert getattr(updated, field) == value, f"{field} was dropped by candidate()"
+    assert getattr(ConfigManager(tmp_path / "settings.json").load(), field) == value

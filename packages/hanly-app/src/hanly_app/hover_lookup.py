@@ -16,7 +16,7 @@ from typing import Protocol
 
 from hanly import Point
 
-from .capture import CaptureResult, ScreenRect
+from .capture import CapturePlan, CaptureResult, ScreenRect
 from .hover_controller import Cancellable, HoverController, HoverRequest, HoverScheduler
 from .hover_target import (
     POPUP_TRANSFER_MS,
@@ -28,7 +28,7 @@ from .hover_target import (
 )
 from .lookup_controller import LookupController
 from .mouse_observer import MouseListenerFactory, MouseObserver
-from .runtime_trace import RuntimeTraceSink, emit_trace
+from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 
 
 class CaptureSource(Protocol):
@@ -36,6 +36,24 @@ class CaptureSource(Protocol):
 
     def capture_at_cursor(self, cursor: Point) -> CaptureResult:
         """Capture a small cursor-centered ROI."""
+
+
+class CaptureObserver(Protocol):
+    """Developer-only seam that watches captures without participating in them.
+
+    Only the callback shape is defined here. Retention, digesting, and storage
+    belong to the benchmark tooling; an implementation must return promptly and
+    may not mutate the capture it is handed.
+    """
+
+    def observe(
+        self,
+        capture: CaptureResult,
+        *,
+        hover_request_id: int | None = None,
+        lookup_request_id: int | None = None,
+    ) -> object:
+        """Receive one completed capture and the request IDs it belongs to."""
 
 
 HoverErrorHandler = Callable[[str, BaseException], None]
@@ -48,6 +66,34 @@ def _inline_dispatch(callback: Callable[[], None]) -> None:
 
 def _centre(rect: ScreenRect) -> Point:
     return Point(rect.left + rect.width / 2, rect.top + rect.height / 2)
+
+
+def _plan_trace_fields(plan: CapturePlan | None) -> dict[str, JSONPrimitive]:
+    """Summarize a capture plan as primitives a trace event can carry.
+
+    Enough to say whether the ROI was clipped or moved and how much room the
+    target had; the full plan reaches a developer tool through the capture
+    observer instead of through the trace.
+    """
+
+    if plan is None:
+        return {}
+    left, top, right, bottom = plan.target_edge_distances
+    clipped_left, clipped_top, clipped_right, clipped_bottom = plan.clipped_edges
+    return {
+        "roi_snapped": plan.snapped,
+        "roi_clipped": plan.clipped,
+        "roi_clipped_left": clipped_left,
+        "roi_clipped_top": clipped_top,
+        "roi_clipped_right": clipped_right,
+        "roi_clipped_bottom": clipped_bottom,
+        "target_distance_left": left,
+        "target_distance_top": top,
+        "target_distance_right": right,
+        "target_distance_bottom": bottom,
+        "cursor_clamped": plan.cursor_clamped,
+        "monitor_index": plan.monitor_index,
+    }
 
 
 class HoverLookupRuntime:
@@ -72,10 +118,12 @@ class HoverLookupRuntime:
         on_error: HoverErrorHandler | None = None,
         on_invalidate: Callable[[], None] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
+        capture_observer: CaptureObserver | None = None,
         origins: CaptureOrigins | None = None,
         exit_scheduler: HoverScheduler | None = None,
         transfer_ms: float = POPUP_TRANSFER_MS,
         word_margin: int = WORD_MARGIN_PIXELS,
+        sticky: bool = True,
     ) -> None:
         if not isinstance(controller, LookupController):
             raise TypeError("controller must be a LookupController")
@@ -94,6 +142,7 @@ class HoverLookupRuntime:
         self._on_error = on_error
         self._on_invalidate = on_invalidate
         self._trace_sink = trace_sink
+        self._capture_observer = capture_observer
         self._dispatcher = dispatch
         self._lock = RLock()
         self._running = False
@@ -117,6 +166,10 @@ class HoverLookupRuntime:
         self._scheduler = scheduler
         self._transfer_ms = float(transfer_ms)
         self._word_margin = int(word_margin)
+        # A lookup the user deliberately asked for with a held chord stays
+        # on screen until they dismiss it. Leaving the word is not a
+        # dismissal, because reaching the popup means leaving the word.
+        self._sticky = bool(sticky)
         self._retained: RetainedTarget | None = None
         self._target_generation = 0
         self._transfer_timer: Cancellable | None = None
@@ -465,20 +518,49 @@ class HoverLookupRuntime:
         return True
 
     def _leave_retained_target(self) -> None:
-        """Leave for good: the answer goes now, not after a delay.
+        """Handle the cursor leaving the word an answer describes.
 
-        Crossing to the popup was already decided against by the caller, so
-        there is nothing left to wait for. A cursor moving away from the word
-        it was reading about wants the next word, and a popup that lingers is
-        covering it.
+        Under the sticky policy this releases the protection so the next word
+        can be looked up, but the answer stays on screen: the user asked for it
+        with a deliberate chord, and dismissal is their explicit act. Without
+        the policy it is an immediate dismissal, as it was before.
         """
 
         with self._lock:
             retained = self._retained
+            sticky = self._sticky
         if retained is None:
-            self._notify_invalidation()
+            if not sticky:
+                self._notify_invalidation()
+            return
+        if sticky:
+            self._release_retained()
             return
         self._dismiss_retained()
+
+    def _release_retained(self) -> None:
+        """Stop protecting the word without taking the answer off screen."""
+
+        with self._lock:
+            self._retained = None
+            self._target_generation += 1
+            self._protected_point = None
+            self._transfer_distance = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
+        if timer is not None:
+            timer.cancel()
+        self._stop_observing_if_idle()
+
+    def dismiss(self) -> None:
+        """Take the answer off screen: the explicit dismissal Tier 1 provides.
+
+        Reached by the footer close control, a re-press of the hover chord, and
+        shutdown. A new current result replaces the answer through ``retain``
+        instead, so it does not come through here.
+        """
+
+        self._dispatcher(self._dismiss_retained)
 
     def _arm_transfer(self) -> None:
         """Bound the crossing, so a cursor parked in the gap does not hold it."""
@@ -647,6 +729,7 @@ class HoverLookupRuntime:
         emit_trace(
             self._trace_sink,
             "hover_capture_completed",
+            lookup_request_id=None,
             hover_request_id=request.request_id,
             duration_ns=(
                 perf_counter_ns() - capture_started_ns
@@ -659,7 +742,11 @@ class HoverLookupRuntime:
             region_top=capture.region.top,
             target_x=capture.target.x,
             target_y=capture.target.y,
+            **_plan_trace_fields(capture.plan),
         )
+        # Before the currency check, so a capture that goes stale still leaves
+        # the evidence explaining what it saw.
+        self._observe_capture(capture, hover_request_id=request.request_id)
 
         if not self._hover.is_current(request):
             emit_trace(
@@ -717,6 +804,23 @@ class HoverLookupRuntime:
                 lookup_request_id=lookup_request.request_id,
             )
 
+    def _observe_capture(
+        self, capture: CaptureResult, *, hover_request_id: int
+    ) -> None:
+        """Hand a capture to the developer observer, if one is attached.
+
+        A failing or slow observer must not become a hover failure, so its
+        exceptions are swallowed exactly as trace-sink exceptions are.
+        """
+
+        observer = self._capture_observer
+        if observer is None:
+            return
+        try:
+            observer.observe(capture, hover_request_id=hover_request_id)
+        except BaseException:
+            pass
+
     def _fail(self, error: BaseException) -> None:
         """Disable hover for the rest of the process after a fatal failure."""
 
@@ -762,6 +866,7 @@ class HoverLookupRuntime:
 
 
 __all__ = [
+    "CaptureObserver",
     "CaptureSource",
     "HoverDispatcher",
     "HoverErrorHandler",

@@ -104,6 +104,39 @@ The hover delay is configurable and must be tuned empirically. Initial experimen
 - **RF-INV-10:** The V1 OCR implementation is `EasyOCRProvider`; `LookupPipeline` remains coupled only to `OCRProvider`, leaving a future approved second adapter behind the same seam.
 - **RF-INV-11:** Desktop lookup execution is bounded / latest-wins, while final request-currency validation remains mandatory before presentation.
 - **RF-INV-12:** `LookupResult` represents successful, normal non-success, and processing-error outcomes without requiring every non-success to be an exception.
+- **RF-INV-13:** Surface text plus a cursor index is the whole input to the language stage, and pixel OCR and any future direct-text acquisition reach that one stage rather than each running their own.
+
+## Where acquisition ends and language begins
+
+The flow above reads a word off the screen, but nothing after target resolution
+depends on the fact that it came from pixels. That split is now explicit.
+
+```text
+capture -> OCR -> target resolution ─┐
+                                     ├─> TextSelection -> Hangul policy -> morphology
+future direct-text acquisition ──────┘        -> lexical candidate -> lemma -> KRDICT
+                                                                   -> LookupResult
+```
+
+`TextSelection` carries surface text and a cursor index, and nothing else that
+could only come from a screen. Rectangles, window handles, element references
+and desktop lifecycle stay with the client that owns them, so a consumer with no
+display can still run the language stage.
+
+`LookupPipeline.lookup(image, target)` is unchanged and remains the pixel
+facade. It still owns what only pixels can decide -- recognition, which region
+the pointer is in, and OCR confidence -- and then hands the resulting selection
+to the shared stage. A caller that already knows the word calls that stage
+directly and constructs no recognizer at all.
+
+This changes no presented outcome. `NOT_FOUND` remains a language result, an
+unusable selection remains normal non-success, OCR-provider selection is
+untouched, and the popup sees the same `LookupResult` it always did. Two
+diagnostic strings on unusable selections did move: the Hangul-policy message no
+longer says "OCR", since the stage no longer knows whether OCR produced the
+text, and a low-confidence non-Korean region now reports the confidence reason
+rather than the script reason, because confidence is judged in the facade before
+the selection is handed over. Neither status is ever presented.
 
 ## Failure and state considerations
 

@@ -34,11 +34,19 @@ from .hotkeys import (
     HotkeyService,
 )
 from .hover_controller import Cancellable, HoverScheduler
-from .hover_lookup import HoverErrorHandler, HoverLookupRuntime
-from .hover_target import CaptureOrigins, RetainedTarget, screen_rect
+from .hover_lookup import CaptureObserver, HoverErrorHandler, HoverLookupRuntime
+from .hover_target import (
+    SCREEN_SCALE,
+    TRANSFER_CORRIDOR_PIXELS,
+    WORD_MARGIN_PIXELS,
+    CaptureOrigins,
+    RetainedTarget,
+    expanded,
+    screen_rect,
+)
 from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
 from .mouse_observer import MouseListenerFactory
-from .popup import PopupController
+from .popup import PopupController, should_present
 from .runtime_trace import RuntimeTraceSink, emit_trace
 
 
@@ -196,6 +204,7 @@ class ManualLookupRuntime:
         hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
         trace_sink: RuntimeTraceSink | None = None,
+        capture_observer: CaptureObserver | None = None,
         engine: LookupResidency | None = None,
         preload: LookupPreload = LookupPreload.WHEN_CAPTURE_STARTS,
         on_toggle_hover: Callable[[], None] | None = None,
@@ -242,6 +251,7 @@ class ManualLookupRuntime:
         self._shutdown_scheduler = shutdown_scheduler or _schedule_shutdown
         self._hover_runtime: HoverLookupRuntime | None = None
         self._trace_sink = trace_sink
+        self._capture_observer = capture_observer
         self._engine = engine
         self._preload = preload
         self._on_toggle_hover = on_toggle_hover
@@ -873,6 +883,7 @@ class ManualLookupRuntime:
             # The origin belongs to this request, not to whatever was captured
             # most recently by the time the answer comes back.
             self._origins.remember(request.request_id, capture.region)
+            self._observe_capture(capture, lookup_request_id=request.request_id)
         except Exception as error:
             emit_trace(
                 self._trace_sink,
@@ -892,6 +903,20 @@ class ManualLookupRuntime:
         # A lookup with nothing watching the screen keeps the engine only as
         # long as it is still being used.
         self._arm_idle_expiry()
+
+    def _observe_capture(
+        self, capture: CaptureResult, *, lookup_request_id: int
+    ) -> None:
+        """Hand a capture to the developer observer, if one is attached."""
+
+        observer = self._capture_observer
+        if observer is None:
+            return
+        try:
+            observer.observe(capture, lookup_request_id=lookup_request_id)
+        except BaseException:
+            # Instrumentation must never turn a working lookup into an error.
+            pass
 
     def _capture_refused(self) -> str | None:
         """Say why a capture cannot work, rather than reading the wallpaper.
@@ -922,9 +947,63 @@ class ManualLookupRuntime:
             return
         word = self._word_rect(result, lookup_request_id)
         if word is None or lookup_request_id is None:
+            emit_trace(
+                self._trace_sink,
+                "retained_target_cleared",
+                lookup_request_id=lookup_request_id,
+                reason=_no_retention_reason(result, lookup_request_id, word),
+            )
             hover.clear_target()
             return
+        self._trace_retention(result, lookup_request_id, word, popup)
         hover.retain(RetainedTarget(lookup_request_id, word, popup))
+
+    def _trace_retention(
+        self,
+        result: LookupResult,
+        lookup_request_id: int,
+        word: ScreenRect,
+        popup: ScreenRect | None,
+    ) -> None:
+        """Record the ROI-local bounds and the screen rectangle they became.
+
+        A wrong retained rectangle suppresses the next capture, so the two
+        coordinate spaces and the transform between them are recorded together
+        rather than left to be inferred from the result.
+        """
+
+        if self._trace_sink is None:
+            return
+        context = result.context
+        bounds = context.word_region if context is not None else None
+        region = self._origins.origin(lookup_request_id)
+        protected = expanded(word, WORD_MARGIN_PIXELS)
+        emit_trace(
+            self._trace_sink,
+            "retained_target",
+            lookup_request_id=lookup_request_id,
+            roi_word_left=bounds.left if bounds is not None else None,
+            roi_word_top=bounds.top if bounds is not None else None,
+            roi_word_right=bounds.right if bounds is not None else None,
+            roi_word_bottom=bounds.bottom if bounds is not None else None,
+            capture_origin_left=region.left if region is not None else None,
+            capture_origin_top=region.top if region is not None else None,
+            screen_scale=SCREEN_SCALE,
+            word_left=word.left,
+            word_top=word.top,
+            word_width=word.width,
+            word_height=word.height,
+            protected_left=protected.left,
+            protected_top=protected.top,
+            protected_width=protected.width,
+            protected_height=protected.height,
+            word_margin=WORD_MARGIN_PIXELS,
+            transfer_corridor=TRANSFER_CORRIDOR_PIXELS,
+            popup_left=popup.left if popup is not None else None,
+            popup_top=popup.top if popup is not None else None,
+            popup_width=popup.width if popup is not None else None,
+            popup_height=popup.height if popup is not None else None,
+        )
 
     def update_popup_geometry(self, popup: ScreenRect) -> None:
         """Keep hover protection aligned with an expanded or collapsed popup."""
@@ -982,6 +1061,10 @@ class ManualLookupRuntime:
         )
         if hover_runtime is None:
             return
+        if held:
+            # A sticky answer outlives the chord, so a fresh press is the user
+            # asking for the next word rather than the one still on screen.
+            hover_runtime.dismiss()
         hover_runtime.set_accepting(held)
         if held:
             # A press with a stationary cursor still has to look something up,
@@ -1068,6 +1151,7 @@ def create_manual_lookup(
     hover_on_error: HoverErrorHandler | None = None,
     on_initialization_error: InitializationErrorHandler | None = None,
     trace_sink: RuntimeTraceSink | None = None,
+    capture_observer: CaptureObserver | None = None,
     on_toggle_hover: Callable[[], None] | None = None,
     on_error: ErrorReporter | None = None,
     capture_refusal: CaptureRefusal | None = None,
@@ -1091,6 +1175,11 @@ def create_manual_lookup(
     manual_holder: list[ManualLookupRuntime] = []
 
     def present(result: LookupResult) -> None:
+        # Nothing readable under the cursor stays silent; the answer already on
+        # screen is left alone rather than replaced by a card saying nothing.
+        if not should_present(result):
+            _trace_suppressed(trace_sink, result, controller.current_request_id)
+            return
         popup(result)
         if manual_holder:
             manual_holder[0].note_presented(result, controller.current_request_id)
@@ -1126,6 +1215,7 @@ def create_manual_lookup(
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
         trace_sink=trace_sink,
+        capture_observer=capture_observer,
         engine=engine,
         preload=_configured_preload(app_config),
         on_toggle_hover=on_toggle_hover,
@@ -1148,7 +1238,9 @@ def create_manual_lookup(
                 on_error=hover_on_error,
                 on_invalidate=clear_popup or close_popup,
                 trace_sink=trace_sink,
+                capture_observer=capture_observer,
                 origins=origins,
+                sticky=_hover_is_sticky(app_config),
             )
         )
     if app_config is not None:
@@ -1171,6 +1263,7 @@ def create_qt_manual_lookup(
     hover_on_error: HoverErrorHandler | None = None,
     on_initialization_error: InitializationErrorHandler | None = None,
     trace_sink: RuntimeTraceSink | None = None,
+    capture_observer: CaptureObserver | None = None,
     on_toggle_hover: Callable[[], None] | None = None,
     on_error: ErrorReporter | None = None,
     capture_refusal: CaptureRefusal | None = None,
@@ -1213,6 +1306,9 @@ def create_qt_manual_lookup(
     popup_controller.set_geometry_handler(popup_geometry_changed)
 
     def present_result(result: LookupResult) -> object:
+        if not should_present(result):
+            _trace_suppressed(trace_sink, result, controller.current_request_id)
+            return None
         lookup_request_id = controller.current_request_id
         position = popup_trigger.open(result, lookup_request_id=lookup_request_id)
         if manual_holder:
@@ -1264,6 +1360,7 @@ def create_qt_manual_lookup(
         hotkey_factory=hotkey_factory,
         shutdown_scheduler=shutdown_scheduler,
         trace_sink=trace_sink,
+        capture_observer=capture_observer,
         engine=engine,
         preload=_configured_preload(app_config),
         on_toggle_hover=on_toggle_hover,
@@ -1292,9 +1389,14 @@ def create_qt_manual_lookup(
                 on_error=hover_on_error,
                 on_invalidate=popup_controller.clear,
                 trace_sink=trace_sink,
+                capture_observer=capture_observer,
                 origins=origins,
+                sticky=_hover_is_sticky(app_config),
             )
         )
+        hover = manual.hover_runtime
+        if hover is not None:
+            popup_controller.set_dismissed_handler(hover.clear_target)
     if app_config is not None:
         manual.apply_config(app_config)
     return manual
@@ -1311,6 +1413,20 @@ def _popup_rect(position: object, size: object) -> ScreenRect | None:
         width=int(getattr(size, "width")),
         height=int(getattr(size, "height")),
     )
+
+
+def _hover_is_sticky(app_config: AppConfig | None) -> bool:
+    """Whether an answer stays on screen after the cursor leaves its word.
+
+    Push to Hover is a deliberate request, so its answer waits to be dismissed;
+    reaching the popup means leaving the word, and dismissing on that movement
+    is what made the card unreachable. Always Active hover is continuous, so a
+    card that never left would sit on top of the next thing being read.
+    """
+
+    if app_config is None:
+        return True
+    return app_config.hover_activation is HoverActivation.PUSH_TO_HOVER
 
 
 def _hover_delay(delay_ms: float | None, app_config: AppConfig | None) -> float:
@@ -1423,6 +1539,42 @@ def _create_hotkey(
     return HotkeyService(on_action, bindings=bindings, dispatcher=dispatcher)
 
 
+def _trace_suppressed(
+    trace_sink: RuntimeTraceSink | None,
+    result: LookupResult,
+    lookup_request_id: int | None,
+) -> None:
+    """Record a current result that was deliberately not put on screen.
+
+    Without this a silent outcome looks the same as a stale one, and the two
+    have completely different causes.
+    """
+
+    emit_trace(
+        trace_sink,
+        "popup_suppressed",
+        stage="popup_visible",
+        lookup_request_id=lookup_request_id,
+        result_status=result.status.value if isinstance(result, LookupResult) else None,
+    )
+
+
+def _no_retention_reason(
+    result: LookupResult, lookup_request_id: int | None, word: ScreenRect | None
+) -> str:
+    """Name why an answer on screen protects no region of it."""
+
+    if lookup_request_id is None:
+        return "no_request_id"
+    if result.status is not LookupStatus.SUCCESS:
+        return "not_a_success"
+    if result.context is None or result.context.word_region is None:
+        return "no_word_region"
+    if word is None:
+        return "no_capture_origin"
+    return "unknown"
+
+
 def _refusal_result(message: str) -> LookupResult:
     """Present a permission refusal as itself, never as an empty lookup."""
 
@@ -1447,6 +1599,7 @@ def _schedule_shutdown(callback: Callable[[], None]) -> None:
 
 __all__ = [
     "IDLE_TIMEOUT_SECONDS",
+    "CaptureObserver",
     "CaptureOrigins",
     "CaptureRefusal",
     "CaptureSource",

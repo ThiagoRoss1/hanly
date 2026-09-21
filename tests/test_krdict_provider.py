@@ -4,10 +4,19 @@ import sqlite3
 import threading
 
 import pytest
-from hanly import DictionaryEntry, DictionaryProvider, ProviderError
+from hanly import (
+    DictionaryEntry,
+    DictionaryProvider,
+    DictionarySense,
+    ProviderError,
+)
 from hanly.krdict_provider import KRDICTProvider, KRDICTProviderError
 
-from tests.hanly_fixtures.krdict import build_fixture_krdict, build_krdict_database
+from tests.hanly_fixtures.krdict import (
+    SHARED_DEFINITION_XML,
+    build_fixture_krdict,
+    build_krdict_database,
+)
 
 
 def _database(tmp_path):
@@ -54,12 +63,14 @@ def test_provider_is_protocol_conformant_and_normalizes_entries(tmp_path) -> Non
     assert entries == (
         DictionaryEntry(
             headword="먹다",
-            definitions=("to eat",),
             part_of_speech="동사",
             source="krdict",
+            senses=(DictionarySense(definition="to eat", gloss="eat", sense_id="1"),),
+            entry_id="1",
         ),
     )
     assert all(isinstance(entry, DictionaryEntry) for entry in entries)
+    assert entries[0].definitions == ("to eat",)
 
 
 def test_provider_returns_all_definitions_and_empty_for_not_found(tmp_path) -> None:
@@ -141,3 +152,34 @@ def test_provider_exposes_real_hanja_without_relabeling_plain_origin_text(tmp_pa
     assert culture.vocabulary_level == "초급"
     assert culture.source == "krdict"
     assert robot.hanja is None
+
+
+
+
+def test_senses_sharing_a_definition_stay_separate_when_their_glosses_differ(
+    tmp_path,
+) -> None:
+    """Deduplicating on the definition alone is what used to discard a sense."""
+
+    database = build_krdict_database(tmp_path, SHARED_DEFINITION_XML)
+
+    with KRDICTProvider(database) as provider:
+        entry = provider.lookup("예쁘다")[0]
+
+    assert [(sense.gloss, sense.definition) for sense in entry.senses] == [
+        ("pretty; beautiful", "looking good"),
+        ("lovely", "looking good"),
+    ]
+    assert entry.entry_id is not None
+
+
+def test_entries_pair_each_short_gloss_with_its_own_definition(tmp_path) -> None:
+    database = _database(tmp_path)
+
+    with KRDICTProvider(database) as provider:
+        entry = provider.lookup("책")[0]
+
+    assert [(sense.gloss, sense.definition) for sense in entry.senses] == [
+        ("book", "a book"),
+        ("volume", "book"),
+    ]

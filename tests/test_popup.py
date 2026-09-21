@@ -8,6 +8,7 @@ import pytest
 from hanly import (
     BoundingBox,
     DictionaryEntry,
+    DictionarySense,
     HanlyError,
     LookupContext,
     LookupResult,
@@ -379,3 +380,67 @@ def test_a_widget_with_no_native_window_is_reported_rather_than_crashing() -> No
 
     assert keep_visible_when_inactive(0) is False
     assert hides_when_inactive(0) is None
+
+
+def test_presentation_carries_short_glosses_without_inventing_them() -> None:
+    """A gloss-less provider must reach the popup as a plain definition."""
+
+    glossed = format_lookup_result(
+        LookupResult(
+            status=LookupStatus.SUCCESS,
+            entries=(
+                DictionaryEntry(
+                    headword="사과하다",
+                    senses=(
+                        DictionarySense(
+                            definition="To admit one's own mistakes.",
+                            gloss="apologize",
+                            sense_id="1",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    assert glossed.entry is not None
+    assert glossed.entry.senses[0].gloss == "apologize"
+    assert glossed.entry.definitions == ("To admit one's own mistakes.",)
+
+    plain = format_lookup_result(
+        LookupResult(
+            status=LookupStatus.SUCCESS,
+            entries=(DictionaryEntry("책", ("a book",)),),
+        )
+    )
+    assert plain.entry is not None
+    assert plain.entry.senses[0].gloss is None
+    assert plain.entry.senses[0].definition == "a book"
+
+
+class _DismissableView(_ResizableView):
+    def __init__(self) -> None:
+        super().__init__()
+        self.dismiss_handler: Callable[[], None] | None = None
+
+    def set_dismiss_handler(self, handler: Callable[[], None]) -> None:
+        self.dismiss_handler = handler
+
+
+def test_an_in_card_dismissal_clears_the_popup_and_notifies_composition() -> None:
+    """The popup never accepts focus, so a control inside it is the only
+    dismissal a user can always reach. It must also tell the hover runtime."""
+
+    view = _DismissableView()
+    controller = PopupController(view)
+    dismissed: list[str] = []
+    controller.set_dismissed_handler(lambda: dismissed.append("forget"))
+
+    controller.open(_success(), Point(10, 10), ScreenGeometry(0, 0, 1000, 800))
+    assert controller.visible is True
+    assert view.dismiss_handler is not None
+
+    view.dismiss_handler()
+
+    assert controller.visible is False
+    assert controller.result is None
+    assert dismissed == ["forget"]

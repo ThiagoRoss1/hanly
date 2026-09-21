@@ -199,6 +199,8 @@ def _runtime(
     worker: _Worker | None = None,
     capture: _Capture | None = None,
     on_invalidate: Callable[[], None] | None = None,
+    capture_observer: Any | None = None,
+    sticky: bool = True,
 ) -> tuple[
     HoverLookupRuntime,
     _Scheduler,
@@ -227,6 +229,8 @@ def _runtime(
         dispatcher=dispatcher,
         listener_factory=listeners,
         on_invalidate=on_invalidate,
+        capture_observer=capture_observer,
+        sticky=sticky,
     )
     return runtime, scheduler, listeners, dispatcher, actual_capture, actual_worker, results
 
@@ -276,7 +280,24 @@ def test_stable_hover_captures_cursor_roi_and_uses_worker_popup_path() -> None:
     runtime.shutdown()
 
 
-def test_cursor_movement_clears_any_previous_popup_immediately() -> None:
+def test_cursor_movement_clears_a_previous_popup_under_continuous_hover() -> None:
+    cleared: list[str] = []
+    runtime, _scheduler, listeners, dispatcher, _capture, _worker, _results = _runtime(
+        on_invalidate=lambda: cleared.append("clear"), sticky=False
+    )
+    runtime.start()
+    _await_hover_ready(runtime, dispatcher)
+
+    listeners.listeners[0].emit(10, 20)
+    dispatcher.drain_one()
+
+    assert cleared == ["clear"]
+    runtime.shutdown()
+
+
+def test_cursor_movement_leaves_a_push_to_hover_popup_alone() -> None:
+    """Moving the cursor is how the user reaches the card, not a dismissal."""
+
     cleared: list[str] = []
     runtime, _scheduler, listeners, dispatcher, _capture, _worker, _results = _runtime(
         on_invalidate=lambda: cleared.append("clear")
@@ -287,7 +308,7 @@ def test_cursor_movement_clears_any_previous_popup_immediately() -> None:
     listeners.listeners[0].emit(10, 20)
     dispatcher.drain_one()
 
-    assert cleared == ["clear"]
+    assert cleared == []
     runtime.shutdown()
 
 
@@ -914,3 +935,79 @@ def test_the_capture_shortcut_reaches_whoever_owns_the_session() -> None:
     # One tap, one toggle: the release is not a second press.
     assert toggles == ["toggle"]
     manual.shutdown()
+
+
+# --- Capture observation ----------------------------------------------------
+
+
+class _RecordingCaptureObserver:
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.seen: list[tuple[CaptureResult, int | None, int | None]] = []
+        self._error = error
+
+    def observe(
+        self,
+        capture: CaptureResult,
+        *,
+        hover_request_id: int | None = None,
+        lookup_request_id: int | None = None,
+    ) -> None:
+        self.seen.append((capture, hover_request_id, lookup_request_id))
+        if self._error is not None:
+            raise self._error
+
+
+def _hover_once(
+    observer: Any | None,
+) -> tuple[HoverLookupRuntime, _Capture, list[LookupResult]]:
+    """Drive one complete hover, from movement to a delivered result."""
+
+    runtime, scheduler, listeners, dispatcher, capture, worker, results = _runtime(
+        capture_observer=observer
+    )
+    worker.release.set()
+    runtime.start()
+    _await_hover_ready(runtime, dispatcher)
+    listeners.listeners[0].emit(120, 80)
+    dispatcher.drain_one()
+    scheduler.fire()
+    dispatcher.drain_one()
+
+    assert worker.started.wait(timeout=2)
+    for _ in range(200):
+        if dispatcher.pending:
+            dispatcher.drain_one()
+            break
+        Event().wait(0.01)
+    return runtime, capture, results
+
+
+def test_a_capture_observer_receives_the_exact_roi_and_its_hover_request_id() -> None:
+    observer = _RecordingCaptureObserver()
+    runtime, capture, _results = _hover_once(observer)
+    hover_request_id = runtime.hover_controller.current_request_id
+    runtime.shutdown()
+
+    assert len(observer.seen) == 1
+    observed, observed_hover_id, observed_lookup_id = observer.seen[0]
+    # Correlation is by identifier, not by the order events happened to arrive.
+    assert observed is capture.result
+    assert observed_hover_id == hover_request_id
+    assert observed_lookup_id is None
+
+
+def test_a_failing_capture_observer_cannot_stop_a_lookup() -> None:
+    observer = _RecordingCaptureObserver(error=RuntimeError("observer exploded"))
+    runtime, _capture, results = _hover_once(observer)
+    runtime.shutdown()
+
+    assert len(observer.seen) == 1
+    assert [result.status for result in results] == [LookupStatus.SUCCESS]
+
+
+def test_no_observer_leaves_the_hover_path_exactly_as_it_was() -> None:
+    runtime, capture, results = _hover_once(None)
+    runtime.shutdown()
+
+    assert capture.cursors == [Point(120, 80)]
+    assert [result.status for result in results] == [LookupStatus.SUCCESS]

@@ -17,6 +17,7 @@ from hanly_app.config import (
     CaptureMode,
     CaptureRegion,
     ConfigManager,
+    OCRBackend,
 )
 from hanly_app.control_center import (
     ControlCenterBridge,
@@ -1117,3 +1118,30 @@ def test_the_activity_tail_is_bounded_rather_than_appended_to() -> None:
     body = javascript.split("function renderActivity(", 1)[1].split("// ---- readiness", 1)[0]
     assert "clear(list)" in body
     assert "appendChild(list)" not in body
+
+
+def test_the_readiness_panel_names_the_recognizer_actually_in_use() -> None:
+    """The panel showed a hardcoded "EasyOCR" whatever the preference said.
+
+    The label is resolved on read rather than captured at construction, because
+    the recognizer is a live setting and the bridge outlives a change to it.
+    """
+
+    from hanly_app.runtime import ocr_display_name
+
+    selected = {"backend": OCRBackend.AUTO}
+    bridge = ControlCenterBridge(
+        ocr_provider=lambda: ocr_display_name(selected["backend"])
+    )
+
+    selected["backend"] = OCRBackend.EASYOCR
+    assert bridge.get_state()["runtime"]["ocr_provider"] == "EasyOCR"
+
+    selected["backend"] = OCRBackend.VISION
+    assert bridge.get_state()["runtime"]["ocr_provider"] == "Apple Vision"
+
+
+def test_a_plain_string_recognizer_label_still_works() -> None:
+    state = ControlCenterBridge(ocr_provider="EasyOCR").get_state()
+
+    assert state["runtime"]["ocr_provider"] == "EasyOCR"

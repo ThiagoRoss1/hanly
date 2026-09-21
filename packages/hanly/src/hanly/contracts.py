@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from enum import Enum
 from math import ceil, floor, isfinite
+from typing import overload
 
 from .errors import HanlyError
 
@@ -205,34 +207,213 @@ class LookupContext:
     #: not the whole recognized line. A client that protects the word the user
     #: is reading needs the word, not the sentence around it.
     word_region: BoundingBox | None = None
+    #: The lexical unit the pointer selected, when the morphology provider
+    #: reported spans. It names which part of ``text`` the answer is about.
+    candidate: LexicalCandidate | None = None
 
 
 @dataclass(frozen=True)
 class TokenAnalysis:
-    """Normalized morphology information for one analyzed token."""
+    """Normalized morphology information for one analyzed token.
+
+    ``start`` and ``length`` locate the token in the analyzed text when the
+    provider reports them. Korean contractions make spans overlap — in
+    ``예뻤어요`` the stem covers ``(0, 2)`` while the past marker covers
+    ``(1, 1)`` — so consumers must never require them to be disjoint, nor
+    rebuild the source text by concatenating token forms.
+    """
 
     token: str
     lemma: str
     part_of_speech: str | None = None
     morphology: str | None = None
+    start: int | None = None
+    length: int | None = None
+
+
+
+
+@dataclass(frozen=True)
+class TargetResolution:
+    """Where a pointer landed inside one recognized OCR region.
+
+    ``cursor_index`` is an estimate: the OCR contract exposes a line quad
+    rather than per-character boxes, so the position is derived from per-script
+    advance weights. It is accurate enough to choose a word and must not be
+    treated as ground truth.
+    """
+
+    region: OCRResult
+    text: str
+    cursor_index: int
+    region_start: int
+
+@dataclass(frozen=True)
+class TextSelection:
+    """One surface word and where inside it the reader is pointing.
+
+    This is the whole input the language stage needs, and deliberately the
+    whole of it. Pixels arrive at it through OCR and target resolution; a
+    future accessibility or DOM reader would arrive at it from an API that
+    already knows the word. Neither is visible here.
+
+    Nothing about *where on a screen* the text was may be added to this value.
+    Rectangles, window handles, element references, and desktop lifecycle stay
+    in the client that owns them: an engine that knew about them could no
+    longer be consumed by a caller that has none.
+
+    ``cursor_index`` is an offset into ``text``, counted in characters. It
+    selects which lexical unit of a compound the answer is about -- Korean
+    writes them without spaces, so ``초대받았어요`` is one surface word holding
+    more than one addressable unit.
+
+    ``source`` is a free-form label naming what produced the selection, for
+    diagnostics only. The pipeline never reads it, so no behaviour can come to
+    depend on which acquisition a caller used.
+    """
+
+    text: str
+    cursor_index: int = 0
+    source: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str):
+            raise TypeError("selection text must be a string")
+        if isinstance(self.cursor_index, bool) or not isinstance(self.cursor_index, int):
+            raise TypeError("cursor_index must be an integer")
+        if self.cursor_index < 0:
+            raise ValueError("cursor_index must not be negative")
+        if self.source is not None and not isinstance(self.source, str):
+            raise TypeError("source must be a string or None")
+
+
+@dataclass(frozen=True)
+class LexicalCandidate:
+    """One dictionary-addressable unit inside an analyzed text.
+
+    ``start`` and ``end`` are Python string offsets covering the unit *and* the
+    endings or particles attached to it, so a cursor anywhere in ``사과했어요``
+    selects ``사과하다`` and a cursor on ``을`` in ``책을`` still selects ``책``.
+    """
+
+    lemma: str
+    start: int
+    end: int
+    part_of_speech: str | None = None
+    token_indices: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.lemma:
+            raise ValueError("lexical candidates require a lemma")
+        if self.start < 0 or self.end <= self.start:
+            raise ValueError("lexical candidates require a non-empty forward span")
+
+    def contains(self, index: int) -> bool:
+        return self.start <= index < self.end
+
+    def distance_to(self, index: int) -> int:
+        """How far ``index`` sits outside this span; zero when inside."""
+
+        if self.contains(index):
+            return 0
+        return self.start - index if index < self.start else index - self.end + 1
+
+
+@dataclass(frozen=True)
+class MorphologyAnalysis(Sequence[TokenAnalysis]):
+    """Raw morphemes plus the lexical units a lookup may address.
+
+    The type is a sequence of its own ``tokens`` so that every consumer written
+    against the older ``Sequence[TokenAnalysis]`` contract keeps working, while
+    a caller that knows about lexical selection reads ``candidates``.
+    """
+
+    tokens: tuple[TokenAnalysis, ...] = ()
+    candidates: tuple[LexicalCandidate, ...] = ()
+
+    def __len__(self) -> int:
+        return len(self.tokens)
+
+    @overload
+    def __getitem__(self, index: int) -> TokenAnalysis: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[TokenAnalysis]: ...
+
+    def __getitem__(self, index: int | slice) -> TokenAnalysis | Sequence[TokenAnalysis]:
+        return self.tokens[index]
+
+    def candidate_at(self, index: int) -> LexicalCandidate | None:
+        """The candidate owning ``index``, or the nearest one when none does.
+
+        Punctuation is never a candidate, so a cursor resting on a quotation
+        mark falls outside every span. Choosing the nearest unit answers with
+        the word the reader is plainly pointing at instead of refusing.
+        """
+
+        if not self.candidates:
+            return None
+        return min(
+            self.candidates,
+            key=lambda candidate: (candidate.distance_to(index), candidate.start),
+        )
+
+@dataclass(frozen=True)
+class DictionarySense:
+    """One sense of an entry: its definition and the short gloss naming it."""
+
+    definition: str
+    gloss: str | None = None
+    #: Provider-local row identity, for telling senses apart in a client. It is
+    #: a build artifact rather than dictionary content, so two senses with the
+    #: same gloss and definition stay equal across a database rebuild.
+    sense_id: str | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if not self.definition:
+            raise ValueError("dictionary senses require a definition")
 
 
 @dataclass(frozen=True)
 class DictionaryEntry:
-    """Normalized dictionary information for one headword."""
+    """Normalized dictionary information for one headword.
+
+    ``senses`` carries the full content; ``definitions`` is the flat view that
+    providers and clients without a short gloss still use. A caller supplies
+    either one and the other is derived, so the two representations cannot
+    drift apart.
+    """
 
     headword: str
-    definitions: tuple[str, ...]
+    definitions: tuple[str, ...] = ()
     part_of_speech: str | None = None
     source: str | None = None
     hanja: str | None = None
     vocabulary_level: str | None = None
+    senses: tuple[DictionarySense, ...] = ()
+    entry_id: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if not self.headword:
             raise ValueError("dictionary entries require a headword")
-        if not self.definitions:
+        if not self.senses and not self.definitions:
             raise ValueError("dictionary entries require at least one definition")
+
+        if self.senses:
+            object.__setattr__(self, "definitions", self._definitions_from_senses())
+        else:
+            object.__setattr__(self, "senses", self._senses_from_definitions())
+
+    def _definitions_from_senses(self) -> tuple[str, ...]:
+        derived = tuple(sense.definition for sense in self.senses)
+        if self.definitions and tuple(self.definitions) != derived:
+            raise ValueError(
+                "dictionary entries cannot carry senses and definitions that disagree"
+            )
+        return derived
+
+    def _senses_from_definitions(self) -> tuple[DictionarySense, ...]:
+        return tuple(DictionarySense(definition=text) for text in self.definitions)
 
 
 class LookupStatus(Enum):

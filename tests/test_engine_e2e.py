@@ -10,6 +10,7 @@ import pytest
 from hanly import (
     BoundingBox,
     DictionaryEntry,
+    DictionarySense,
     HanlyError,
     LookupPipeline,
     LookupStatus,
@@ -117,9 +118,9 @@ def test_engine_e2e_returns_success_from_roi_to_dictionary_entry(
     assert result.entries == (
         DictionaryEntry(
             headword="읽다",
-            definitions=("to read",),
             part_of_speech="동사",
             source="krdict",
+            senses=(DictionarySense(definition="to read", gloss="read"),),
         ),
     )
     assert result.diagnostics == ()
@@ -146,9 +147,9 @@ def test_engine_e2e_real_kiwi_looks_up_the_word_targeted_inside_a_line_region(
     assert result.entries == (
         DictionaryEntry(
             headword="읽다",
-            definitions=("to read",),
             part_of_speech="동사",
             source="krdict",
+            senses=(DictionarySense(definition="to read", gloss="read"),),
         ),
     )
     assert result.context is not None

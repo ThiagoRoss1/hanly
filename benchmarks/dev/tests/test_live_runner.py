@@ -7,20 +7,31 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from hanly import PixelFormat, Point, ROIImage
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.capture import (
+    BackendCapture,
+    BackendMonitor,
+    CaptureResult,
+    ScreenRect,
+)
 
 from benchmarks.dev.live_runner import (
     DeferredRoiObserver,
     MarkerHotkey,
     ObservedCaptureSource,
     RuntimeTraceAdapter,
+    SessionEvidenceCounts,
+    _export_message,
+    _freeze_message,
     _run_cleanup_steps,
+    freeze_lookup_into,
+    production_capture_service,
 )
 from benchmarks.dev.live_telemetry import (
     LiveTraceRecorder,
     ScenarioPhaseController,
     SessionPrivacy,
 )
+from benchmarks.dev.microscope import build_ring
 
 
 def _rows(path: Path) -> list[dict[str, object]]:
@@ -215,3 +226,176 @@ def test_cleanup_steps_continue_after_one_resource_fails() -> None:
 
     assert called == ["first", "fail", "last"]
     assert errors == ["failing:RuntimeError"]
+
+
+class _GridBackend:
+    """A capture backend that only records which rectangle was asked for."""
+
+    def __init__(self) -> None:
+        self.regions: list[ScreenRect] = []
+
+    def enumerate_monitors(self) -> tuple[BackendMonitor, ...]:
+        return (BackendMonitor(name="Monitor 1", bounds=ScreenRect(0, 0, 1920, 1080)),)
+
+    def grab(self, region: ScreenRect) -> BackendCapture:
+        self.regions.append(region)
+        return BackendCapture(
+            width=region.width,
+            height=region.height,
+            rgb=bytes(region.width * region.height * 3),
+        )
+
+
+def test_live_capture_snaps_roi_origins_to_the_production_grid() -> None:
+    """A benchmark measuring an unsnapped grid measures a different runtime."""
+
+    backend = _GridBackend()
+    service = production_capture_service(backend)
+
+    service.capture_at_cursor(Point(500, 400))
+    service.capture_at_cursor(Point(508, 404))
+
+    assert len(backend.regions) == 2
+    assert backend.regions[0] == backend.regions[1]
+    assert backend.regions[0].left % 32 == 0
+    assert backend.regions[0].top % 32 == 0
+    assert (backend.regions[0].width, backend.regions[0].height) == (200, 100)
+
+
+# --- Microscope wiring ------------------------------------------------------
+
+
+def test_freezing_remembers_the_pinned_lookup_for_a_later_export() -> None:
+    ring = build_ring()
+    ring.observe_event(
+        {"event_kind": "popup_visible", "lookup_request_id": 3, "result_status": "SUCCESS"},
+        1,
+    )
+    holder: list[object] = []
+
+    report = freeze_lookup_into(ring, holder)
+
+    assert report.frozen is not None
+    assert holder == [report.frozen]
+    assert "pinned lookup 3" in _freeze_message(report)
+
+
+def test_freezing_nothing_says_so_and_remembers_nothing() -> None:
+    holder: list[object] = []
+
+    report = freeze_lookup_into(build_ring(), holder)
+
+    assert report.frozen is None
+    assert holder == []
+    assert "nothing to pin" in _freeze_message(report)
+
+
+def test_exporting_before_freezing_asks_for_a_freeze_instead_of_writing(
+    tmp_path: Path,
+) -> None:
+    message = _export_message([], tmp_path, tmp_path)
+
+    assert "press the freeze hotkey first" in message
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_exporting_a_pinned_lookup_writes_it_under_the_run_directory(
+    tmp_path: Path,
+) -> None:
+    ring = build_ring()
+    ring.observe_event(
+        {"event_kind": "popup_visible", "lookup_request_id": 3, "result_status": "SUCCESS"},
+        1,
+    )
+    holder: list[object] = []
+    freeze_lookup_into(ring, holder)
+    run_dir = tmp_path / "run-1"
+
+    message = _export_message(holder, run_dir, tmp_path)
+
+    assert message.startswith("export: ")
+    assert (run_dir / "frozen-3" / "diagnostic.json").exists()
+
+
+def test_the_live_adapter_never_persists_raw_text(tmp_path: Path) -> None:
+    """Retention is an explicit export of one frozen lookup, not a trace mode."""
+
+    output = tmp_path / "events.jsonl"
+    recorder = LiveTraceRecorder(output)
+    adapter = RuntimeTraceAdapter(
+        recorder, ScenarioPhaseController(), SessionPrivacy(key=b"session")
+    )
+
+    adapter.emit(
+        {
+            "event": "lookup_stage_completed",
+            "stage": "ocr",
+            "lookup_request_id": 1,
+            "ocr_text": "비밀번호",
+            "monotonic_ns": 5,
+        }
+    )
+    adapter.record("benchmark_note", text="비밀번호")
+    recorder.close()
+
+    persisted = output.read_text(encoding="utf-8")
+    assert "비밀번호" not in persisted
+    assert '"has_hangul":true' in persisted
+
+
+# --- Freeze and export are counted apart ------------------------------------
+
+
+def test_freezes_exports_and_reexports_are_counted_separately(tmp_path: Path) -> None:
+    """An earlier run reported nine exports against eight directories."""
+
+    ring = build_ring()
+    counts = SessionEvidenceCounts()
+    holder: list[object] = []
+
+    # An export before any freeze is refused and writes nothing.
+    _export_message(holder, tmp_path / "r", tmp_path, counts)
+
+    for identifier in (1, 2):
+        ring.observe_event(
+            {
+                "event_kind": "popup_visible",
+                "lookup_request_id": identifier,
+                "result_status": "SUCCESS",
+            },
+            identifier,
+        )
+        freeze_lookup_into(ring, holder, counts)
+        _export_message(holder, tmp_path / "r", tmp_path, counts)
+
+    # A second freeze of the same lookup, then a re-export of it.
+    freeze_lookup_into(ring, holder, counts)
+    _export_message(holder, tmp_path / "r", tmp_path, counts)
+
+    summary = counts.as_dict()
+
+    assert summary["frozen_lookups_pinned"] == 3
+    assert summary["frozen_lookup_export_attempts"] == 4
+    assert summary["frozen_lookup_exports_refused_nothing_frozen"] == 1
+    assert summary["frozen_lookup_exports_succeeded"] == 3
+    assert summary["frozen_lookup_reexports"] == 1
+    # Two distinct lookups were exported, whatever the attempt count says.
+    assert summary["frozen_lookups_exported"] == 2
+    assert summary["frozen_lookup_exports_failed"] == 0
+
+
+def test_the_counts_carry_no_identifiers_or_screen_content(tmp_path: Path) -> None:
+    ring = build_ring()
+    counts = SessionEvidenceCounts()
+    holder: list[object] = []
+    ring.observe_event(
+        {"event_kind": "popup_visible", "lookup_request_id": 42, "result_status": "SUCCESS"},
+        1,
+    )
+    freeze_lookup_into(ring, holder, counts)
+    _export_message(holder, tmp_path / "r", tmp_path, counts)
+
+    encoded = json.dumps(counts.as_dict())
+
+    assert all(isinstance(value, int) for value in counts.as_dict().values())
+    assert "42" not in encoded

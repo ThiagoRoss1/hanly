@@ -10,7 +10,7 @@
     },
     config: {
       hover_delay_ms: 80, hotkey: "", hover_hotkey: "", capture_hotkey: "",
-      hover_activation: "push_to_hover", lookup_preload: "when_capture_starts",
+      hover_activation: "push_to_hover", lookup_preload: "when_capture_starts", ocr_backend: "auto",
       theme: "system", popup_default_size: "compact", technical_details: "off"
     },
     runtime: {
@@ -105,6 +105,12 @@
     when_capture_starts: "Loaded while watching the screen, retired on pause.",
     always: "Loaded at launch and kept loaded, including through pause.",
     on_demand: "Nothing is loaded until a lookup needs it."
+  };
+
+  const OCR_HELP = {
+    auto: "Picks the best recognizer this machine has.",
+    vision: "Built into macOS. Reads Korean verb endings most accurately.",
+    easyocr: "Bundled model. Works everywhere, less accurate on conjugations."
   };
 
   const THEMES = [
@@ -409,6 +415,10 @@
     const preload = byId("lookup-preload");
     if (preload) preload.value = config().lookup_preload || "when_capture_starts";
     setText("preload-help", PRELOAD_HELP[config().lookup_preload] || "");
+
+    const backend = byId("ocr-backend");
+    if (backend) backend.value = config().ocr_backend || "auto";
+    setText("ocr-help", OCR_HELP[config().ocr_backend] || "");
   }
 
   function renderTargets(targets, selected) {
@@ -1352,6 +1362,9 @@
   on("capture-target", "change", function (event) { invoke("set_target", event.target.value); });
   on("lookup-preload", "change", function (event) {
     settings({ lookup_preload: event.target.value });
+  });
+  on("ocr-backend", "change", function (event) {
+    settings({ ocr_backend: event.target.value });
   });
 
   on("hover-delay-slider", "input", function (event) { slideDelay(event.target.value); });

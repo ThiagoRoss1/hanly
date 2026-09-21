@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from hanly import DictionaryEntry
+from hanly import DictionaryEntry, DictionarySense
 from hanly.krdict_provider import KRDICTProvider, KRDICTProviderError
 from hanly.krdict_schema import KRDICT_REQUIRED_INDEXES, validate_krdict_connection
 
@@ -32,12 +32,14 @@ def test_provider_looks_up_primary_lemmas_and_inflected_word_forms(tmp_path) -> 
     database = build_fixture_krdict(tmp_path)
 
     with KRDICTProvider(database) as provider:
-        assert provider.lookup(" 먹다 ") == (
-            DictionaryEntry("먹다", ("to eat",), "동사", source="krdict"),
+        expected = DictionaryEntry(
+            "먹다",
+            part_of_speech="동사",
+            source="krdict",
+            senses=(DictionarySense(definition="to eat", gloss="eat"),),
         )
-        assert provider.lookup("먹어요") == (
-            DictionaryEntry("먹다", ("to eat",), "동사", source="krdict"),
-        )
+        assert provider.lookup(" 먹다 ") == (expected,)
+        assert provider.lookup("먹어요") == (expected,)
 
 
 def test_provider_rejects_a_seed_with_inconsistent_metadata_count(tmp_path) -> None:

@@ -29,10 +29,11 @@ from queue import Empty, Queue
 from time import monotonic
 from typing import Literal
 
-from hanly import LookupResult, PixelFormat, Point, ROIImage
+from hanly import LookupResult, OCRProvider, PixelFormat, Point, ROIImage
 from hanly.easyocr_provider import EasyOCRConfig
 from hanly.errors import HanlyError, LookupCancelled, ProviderError
 
+from .config import OCRBackend
 from .job_executor import Worker
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher, ResultHandler
 from .process_transport import (
@@ -94,17 +95,44 @@ class LookupSettings:
 
     krdict_path: Path
     easyocr: EasyOCRConfig
+    #: Which recognizer the child builds. It has to travel: the child never
+    #: reads the runtime configuration, so a choice made only in the parent
+    #: would leave every lookup running the other recognizer.
+    ocr_backend: OCRBackend = OCRBackend.AUTO
     confidence_threshold: float | None = None
     skip_flat_rois: bool = False
     #: Whether the child should report per-stage timings back for the
     #: developer-only trace sink. Off is the shipped path and costs nothing.
     trace: bool = False
+    #: Whether those reports should also carry the encoded private diagnostic
+    #: structures. It has to travel for the same reason ``ocr_backend`` does:
+    #: the child builds its own tracing wrappers and cannot see what kind of
+    #: sink the parent attached.
+    trace_evidence: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.krdict_path, Path):
             raise TypeError("krdict_path must be a Path")
         if not isinstance(self.easyocr, EasyOCRConfig):
             raise TypeError("easyocr must be an EasyOCRConfig")
+
+
+def _ocr_provider_factory(settings: LookupSettings) -> Callable[[], OCRProvider]:
+    """Build the recognizer the parent decided on.
+
+    ``auto`` is resolved before the settings are sent, so this never probes for
+    a framework: the child only ever receives ``vision`` or ``easyocr``. A
+    stored ``auto`` still behaves as EasyOCR, which is the historical default.
+    """
+
+    if settings.ocr_backend is OCRBackend.VISION:
+        from hanly.vision_provider import VisionProvider
+
+        return VisionProvider
+
+    from hanly.easyocr_provider import EasyOCRProvider
+
+    return lambda: EasyOCRProvider(config=settings.easyocr)
 
 
 class LookupProcess:
@@ -669,7 +697,12 @@ def create_lookup_engine(
 
     replay = _trace_replay(trace_sink)
     return LookupEngine(
-        replace(settings, trace=replay is not None),
+        replace(
+            settings,
+            trace=replay is not None,
+            trace_evidence=replay is not None
+            and getattr(trace_sink, "retain_evidence", False) is True,
+        ),
         preload=preload,
         spawn=spawn,
         on_diagnostic=on_diagnostic,
@@ -875,17 +908,23 @@ class _LookupChild:
 
         settings = self._settings
         try:
-            from hanly.easyocr_provider import EasyOCRProvider
             from hanly.kiwi_provider import KiwiProvider
             from hanly.krdict_provider import KRDICTProvider
 
             factory = create_lookup_worker_factory(
-                lambda: EasyOCRProvider(config=settings.easyocr),
+                _ocr_provider_factory(settings),
                 KiwiProvider,
                 lambda: KRDICTProvider(settings.krdict_path),
                 confidence_threshold=settings.confidence_threshold,
                 skip_flat_rois=settings.skip_flat_rois,
-                trace_sink=_ChildTraceSink(self._transport) if settings.trace else None,
+                ocr_backend=settings.ocr_backend.value,
+                trace_sink=(
+                    _ChildTraceSink(
+                        self._transport, retain_evidence=settings.trace_evidence
+                    )
+                    if settings.trace
+                    else None
+                ),
             )
             worker = factory()
         except BaseException as error:
@@ -931,10 +970,16 @@ class _LookupChild:
 
 
 class _ChildTraceSink:
-    """Forward the child's stage events to the developer sink in the parent."""
+    """Forward the child's stage events to the developer sink in the parent.
 
-    def __init__(self, transport: Transport) -> None:
+    ``retain_evidence`` is the parent's answer, carried across the spawn: the
+    tracing wrappers this child builds read it to decide whether to encode the
+    private diagnostic structures at all.
+    """
+
+    def __init__(self, transport: Transport, *, retain_evidence: bool = False) -> None:
         self._transport = transport
+        self.retain_evidence = retain_evidence
 
     def emit(self, event: Mapping[str, JSONPrimitive]) -> object:
         try:

@@ -1,8 +1,8 @@
 """Provider-only orchestration for normalized Hanly lookups."""
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from math import isfinite
-from unicodedata import category
 
 from .contracts import (
     BoundingBox,
@@ -12,9 +12,9 @@ from .contracts import (
     OCRResult,
     Point,
     ROIImage,
-    TokenAnalysis,
+    TextSelection,
 )
-from .errors import HanlyError, LookupCancelled
+from .language_pipeline import LanguagePipeline, abort_if_cancelled, error_result
 from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
 from .word_resolver import TargetResolver, WordResolver
 
@@ -48,10 +48,35 @@ class LookupPipeline:
             raise ValueError("confidence_threshold must be between 0 and 1")
 
         self._ocr_provider = ocr_provider
-        self._morphology_provider = morphology_provider
-        self._dictionary_provider = dictionary_provider
         self._word_resolver = word_resolver or WordResolver()
         self._confidence_threshold = confidence_threshold
+        # One language implementation, shared with every non-pixel caller.
+        self._language = LanguagePipeline(morphology_provider, dictionary_provider)
+
+    def _resolve_target(
+        self,
+        ocr_results: Sequence[OCRResult],
+        target: Point,
+    ) -> tuple[OCRResult | None, str, int]:
+        """Resolve the pointer through the richest API the resolver offers.
+
+        A resolver that only implements the pair contract still works; its
+        answer simply carries no pointer offset, so selection falls back to the
+        start of the resolved word.
+        """
+
+        detailed = getattr(self._word_resolver, "resolve_target_detail", None)
+        if callable(detailed):
+            resolution = detailed(ocr_results, target)
+            if resolution is None:
+                return None, "", 0
+            return resolution.region, resolution.text, resolution.cursor_index
+
+        pair = self._word_resolver.resolve_target(ocr_results, target)
+        # A resolver that returns a malformed pair fails here and becomes an
+        # ordinary word-resolution error rather than a shape ladder.
+        region, text = pair if pair is not None else (None, "")
+        return region, text, 0
 
     @property
     def confidence_threshold(self) -> float | None:
@@ -68,19 +93,24 @@ class LookupPipeline:
     ) -> LookupResult:
         """Return a normalized result for ``image`` at ``target``.
 
+        The compatible pixel facade, unchanged for every existing caller. It
+        owns what only pixels can decide -- recognition, which region the
+        pointer is in, and OCR confidence -- and then hands the resulting
+        selection to the same language stage a non-pixel caller would use.
+
         Empty, unresolved, low-confidence, and not-found outcomes are ordinary
         results.  Exceptions from a provider or processing stage are converted
         into an ``ERROR`` result carrying a ``HanlyError`` so callers do not
         need exception handling for normal lookup execution.
         """
 
-        _abort_if_cancelled(cancelled)
+        abort_if_cancelled(cancelled)
         try:
             ocr_results = tuple(self._ocr_provider.recognize(image))
         except Exception as exc:
-            return self._error_result("OCR", exc)
+            return error_result("OCR", exc)
 
-        _abort_if_cancelled(cancelled)
+        abort_if_cancelled(cancelled)
         context = LookupContext(ocr_results=ocr_results)
         if not ocr_results:
             return LookupResult(
@@ -90,14 +120,11 @@ class LookupPipeline:
             )
 
         try:
-            resolution = self._word_resolver.resolve_target(ocr_results, target)
-            # A resolver that returns a malformed pair fails here and becomes
-            # an ordinary word-resolution error rather than a shape ladder.
-            region, text = resolution if resolution is not None else (None, "")
+            region, text, cursor_index = self._resolve_target(ocr_results, target)
         except Exception as exc:
-            return self._error_result("word resolution", exc, context)
+            return error_result("word resolution", exc, context)
 
-        _abort_if_cancelled(cancelled)
+        abort_if_cancelled(cancelled)
         if region is None or not text.strip():
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
@@ -105,150 +132,58 @@ class LookupPipeline:
                 context=context,
             )
 
-        text = text.strip()
-        word_region = _word_region(self._word_resolver, region, target)
-        context = LookupContext(
-            text=text,
+        evidence = LookupContext(
             ocr_results=ocr_results,
             selected_ocr=region,
-            word_region=word_region,
+            word_region=_word_region(self._word_resolver, region, target),
         )
-
-        # Hanly's downstream language services are Korean-only. OCR must run
-        # before we can know what the pixels contain, but Latin text, numbers,
-        # and punctuation must not wake Kiwi or KRDICT.
-        if not _is_korean_segment(text):
-            return LookupResult(
-                status=LookupStatus.UNUSABLE,
-                diagnostics=(
-                    "Resolved OCR target must contain Hangul and may otherwise "
-                    "contain only whitespace or punctuation",
-                ),
-                context=context,
-            )
 
         try:
             low_confidence = self._is_low_confidence(region)
         except Exception as exc:
-            return self._error_result("confidence processing", exc, context)
+            return error_result(
+                "confidence processing", exc, replace(evidence, text=text.strip())
+            )
         if low_confidence:
             threshold = self._confidence_threshold
             assert threshold is not None
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
                 diagnostics=(
-                    f"OCR confidence for {text!r} is below the configured "
+                    f"OCR confidence for {text.strip()!r} is below the configured "
                     f"threshold {threshold:g}",
                 ),
-                context=context,
+                context=replace(evidence, text=text.strip()),
             )
 
-        try:
-            analyses = tuple(self._morphology_provider.analyze(text))
-        except Exception as exc:
-            return self._error_result("morphology", exc, context)
-
-        _abort_if_cancelled(cancelled)
-        try:
-            lemmas = _usable_lemmas(analyses)
-        except Exception as exc:
-            return self._error_result("morphology processing", exc, context)
-        if not lemmas:
-            return LookupResult(
-                status=LookupStatus.UNUSABLE,
-                diagnostics=("Morphology returned no usable lemma",),
-                context=LookupContext(
-                    text=text,
-                    ocr_results=ocr_results,
-                    selected_ocr=region,
-                    analyses=analyses,
-                    word_region=word_region,
-                ),
-            )
-
-        lemma = lemmas[0]
-        diagnostics: tuple[str, ...] = ()
-        if len(lemmas) > 1 and len(text.split()) > 1:
-            # One resolved word analyzing into several lemmas is ordinary
-            # Korean morphology. A segment still holding several words is not:
-            # the answer may be for a word the user is not pointing at, so that
-            # reduction stays visible instead of silent.
-            diagnostics = (
-                f"Resolved segment {text!r} holds several words and "
-                f"{len(lemmas)} usable lemmas; looked up the first ({lemma!r}) "
-                f"because the pipeline does not re-target inside a segment",
-            )
-
-        _abort_if_cancelled(cancelled)
-        context = LookupContext(
-            text=text,
-            lemma=lemma,
-            ocr_results=ocr_results,
-            selected_ocr=region,
-            analyses=analyses,
-            word_region=word_region,
+        return self._language.lookup(
+            TextSelection(text=text, cursor_index=cursor_index, source="ocr"),
+            cancelled=cancelled,
+            evidence=evidence,
         )
-        try:
-            entries = tuple(self._dictionary_provider.lookup(lemma))
-        except Exception as exc:
-            return self._error_result("dictionary", exc, context)
 
-        if not entries:
-            return LookupResult(
-                status=LookupStatus.NOT_FOUND,
-                diagnostics=diagnostics
-                + (f"Dictionary returned no entries for lemma {lemma!r}",),
-                context=context,
-            )
+    def lookup_selection(
+        self,
+        selection: TextSelection,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> LookupResult:
+        """Look one already-selected surface word up, without an image.
 
-        return LookupResult(
-            status=LookupStatus.SUCCESS,
-            entries=entries,
-            diagnostics=diagnostics,
-            context=context,
-        )
+        The same language stage :meth:`lookup` reaches after OCR. A caller that
+        obtained the word some other way needs no pixels, no target point, and
+        no OCR provider -- though one built through this class still had to
+        supply one, which is why :class:`~hanly.language_pipeline.LanguagePipeline`
+        is separately constructible.
+        """
+
+        return self._language.lookup(selection, cancelled=cancelled)
 
     def _is_low_confidence(self, region: OCRResult) -> bool:
         """Apply confidence policy to the OCR region that contains the target."""
 
         threshold = self._confidence_threshold
         return threshold is not None and region.confidence < threshold
-
-    @staticmethod
-    def _error_result(
-        stage: str,
-        exception: Exception,
-        context: LookupContext | None = None,
-    ) -> LookupResult:
-        message = f"{stage} failed: {exception}"
-        error = exception if isinstance(exception, HanlyError) else HanlyError(message)
-        return LookupResult(
-            status=LookupStatus.ERROR,
-            # Built from the original exception so a synthesized error does not
-            # repeat the stage prefix twice in the diagnostic.
-            diagnostics=(message,),
-            error=error,
-            context=context,
-        )
-
-
-def _usable_lemmas(analyses: Sequence[TokenAnalysis]) -> tuple[str, ...]:
-    """Return the provider-ordered non-empty lemmas.
-
-    The pipeline uses the first one; the rest are counted so a multi-token
-    segment can be reported rather than silently reduced.
-    """
-
-    lemmas: list[str] = []
-    for analysis in analyses:
-        if not isinstance(analysis, TokenAnalysis):
-            continue
-        if not isinstance(analysis.lemma, str):
-            continue
-        lemma = analysis.lemma.strip()
-        if lemma:
-            lemmas.append(lemma)
-    return tuple(lemmas)
 
 
 def _word_region(
@@ -271,34 +206,6 @@ def _word_region(
         # never turn a successful lookup into an error.
         return None
     return found if isinstance(found, BoundingBox) else None
-
-
-def _abort_if_cancelled(cancelled: Callable[[], bool] | None) -> None:
-    if cancelled is not None and cancelled():
-        raise LookupCancelled("lookup was superseded")
-
-
-def _is_korean_segment(text: str) -> bool:
-    """Accept Hangul text with whitespace/punctuation, rejecting other scripts."""
-
-    return any(_is_hangul_character(character) for character in text) and all(
-        _is_hangul_character(character)
-        or character.isspace()
-        or category(character).startswith("P")
-        for character in text
-    )
-
-
-def _is_hangul_character(character: str) -> bool:
-    """Return whether a character belongs to a supported Hangul codepoint range."""
-
-    return (
-        "\u1100" <= character <= "\u11ff"
-        or "\u3130" <= character <= "\u318f"
-        or "\ua960" <= character <= "\ua97f"
-        or "\uac00" <= character <= "\ud7a3"
-        or "\ud7b0" <= character <= "\ud7ff"
-    )
 
 
 __all__ = ["LookupPipeline"]

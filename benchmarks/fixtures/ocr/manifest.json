@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "distribution": "committed",
+  "description": "Committed OCR corpus. Empty until a Korean face whose licence permits redistribution is installed; see benchmarks/fixtures/ocr/README.md. tests/hanly_fixtures/assets/korean_reading_roi.png is deliberately excluded: it is a correctness-regression fixture, not accuracy evidence.",
+  "cases": []
+}

@@ -55,7 +55,9 @@ def run_hud_session(
     from .capture_overlay import CaptureOverlay
     from .hover_hud import HoverHUD
 
-    panel = HoverHUD(dwell_ms=dwell_ms, backend="easyocr")
+    resolved_config = resolve_runtime_config(runtime_config)
+
+    panel = HoverHUD(dwell_ms=dwell_ms, backend=_resolved_backend(resolved_config))
     panel.show()
     sinks: list[RuntimeTraceSink] = [panel]
 
@@ -67,7 +69,7 @@ def run_hud_session(
 
     try:
         return run_desktop(
-            resolve_runtime_config(runtime_config),
+            resolved_config,
             app_config=app_config,
             roi_size=roi_size,
             trace_sink=_Broadcast(*sinks),
@@ -76,6 +78,25 @@ def run_hud_session(
         panel.close()
         if overlay is not None:
             overlay.close()
+
+
+def _resolved_backend(config_path: Path) -> str:
+    """Name the recognizer this configuration actually selects.
+
+    ``auto`` resolves differently per machine, so a hard-coded label reports the
+    wrong provider on exactly the platform the label exists to disambiguate.
+    Loading the runtime validates resources and constructs no provider, so the
+    desktop launch that follows repeats no work worth avoiding.
+    """
+
+    from hanly_app.runtime import load_runtime
+
+    try:
+        return str(load_runtime(config_path).resolved_ocr_backend().value)
+    except Exception:
+        # The desktop launch below reports the real configuration failure; the
+        # HUD must not claim a backend it could not resolve.
+        return "unresolved"
 
 
 def _virtual_desktop(application: Any) -> Any:

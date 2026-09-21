@@ -1,10 +1,11 @@
 """Resolve the OCR word under an engine-level target point."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from math import ceil, floor
 from typing import Protocol, runtime_checkable
 
-from .contracts import BoundingBox, OCRResult, Point, Quad
+from .contracts import BoundingBox, OCRResult, Point, Quad, TargetResolution
 
 _GEOMETRY_EPSILON = 1e-9
 
@@ -87,35 +88,36 @@ class WordResolver:
         evidence contains several whitespace-delimited words.
         """
 
-        if target is None or not isinstance(target, Point) or ocr_results is None:
-            return None
+        resolution = _resolve(ocr_results, target).resolution
+        return None if resolution is None else (resolution.region, resolution.text)
 
-        try:
-            candidates = tuple(ocr_results)
-        except TypeError:
-            return None
+    @staticmethod
+    def resolve_target_detail(
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> TargetResolution | None:
+        """Return the selected region, its word, and where the pointer sits.
 
-        hits: list[OCRResult] = []
-        for result in candidates:
-            if not isinstance(result, OCRResult):
-                continue
-            text = result.text
-            if not isinstance(text, str):
-                continue
-            text = text.strip()
-            if not text or not _usable_quad(result.quad):
-                continue
-            if _contains(result.quad, target):
-                hits.append(result)
+        This is the richer form of :meth:`resolve_target`, which stays
+        unchanged for the resolvers and callers that only need the pair.
+        """
 
-        if not hits:
-            return None
+        return _resolve(ocr_results, target).resolution
 
-        result = hits[0] if len(hits) == 1 else _most_interior(hits, target)
-        word = _word_at_target(result.text, result.quad, target)
-        if word is None:
-            return None
-        return result, word
+    @staticmethod
+    def resolve_target_evidence(
+        ocr_results: Sequence[OCRResult] | None,
+        target: Point | None,
+    ) -> "ResolutionEvidence":
+        """Return the resolution together with the reasoning that produced it.
+
+        The evidence is emitted by the resolution itself rather than rebuilt
+        afterwards, so an explanation cannot disagree with the answer it
+        describes. It is developer-facing diagnostic detail and deliberately
+        stays out of the package's exported contracts.
+        """
+
+        return _resolve(ocr_results, target)
 
     @staticmethod
     def word_bounds(region: OCRResult, target: Point) -> BoundingBox | None:
@@ -145,6 +147,223 @@ class WordResolver:
             return None
         start, end = _word_span(text, index)
         return _span_bounds(region.quad, text, start, end)
+
+
+@dataclass(frozen=True)
+class CandidateEvidence:
+    """One OCR region as the resolver judged it, in provider reading order."""
+
+    index: int
+    text: str
+    confidence: float
+    quad: Quad
+    usable: bool
+    #: Why an unusable candidate was never considered: ``not_an_ocr_result``,
+    #: ``blank_text``, or ``degenerate_quad``.
+    unusable_reason: str | None
+    contains_target: bool
+    #: Interior margin as a fraction of the region's own height, and its area.
+    #: Both are ``None`` unless several candidates contained the target, which
+    #: is the only situation in which they decide anything.
+    vertical_margin: float | None = None
+    area: float | None = None
+
+
+@dataclass(frozen=True)
+class ResolutionEvidence:
+    """How one target point became -- or failed to become -- a surface word.
+
+    Developer-facing diagnostic detail produced by the resolution it describes.
+    Deliberately not part of the package's exported contracts: clients consume
+    :class:`~hanly.contracts.TargetResolution`.
+    """
+
+    resolution: TargetResolution | None
+    candidates: tuple[CandidateEvidence, ...] = ()
+    selected_index: int | None = None
+    text_axis: tuple[Point, Point] | None = None
+    horizontal_fraction: float | None = None
+    advance_weights: tuple[float, ...] = ()
+    cumulative_advances: tuple[float, ...] = ()
+    character_index: int | None = None
+    word_span: tuple[int, int] | None = None
+    word_bounds: BoundingBox | None = None
+    #: Why nothing resolved, or ``None`` when something did.
+    reason: str | None = None
+
+
+def _resolve(
+    ocr_results: Sequence[OCRResult] | None,
+    target: Point | None,
+) -> ResolutionEvidence:
+    """Select the region and word at ``target``, recording every step taken."""
+
+    if target is None or not isinstance(target, Point):
+        return ResolutionEvidence(resolution=None, reason="no_target")
+    if ocr_results is None:
+        return ResolutionEvidence(resolution=None, reason="no_ocr_results")
+    try:
+        results = tuple(ocr_results)
+    except TypeError:
+        return ResolutionEvidence(resolution=None, reason="ocr_results_not_iterable")
+
+    candidates = _judged_candidates(results, target)
+    hits = [candidate for candidate in candidates if candidate.contains_target]
+    if not hits:
+        return ResolutionEvidence(
+            resolution=None,
+            candidates=candidates,
+            reason="no_candidate_contains_target",
+        )
+
+    selected, candidates = _select_hit(hits, candidates, target)
+    region = results[selected.index]
+    return _locate_within(region, selected.index, candidates, target)
+
+
+def _judged_candidates(
+    results: Sequence[OCRResult], target: Point
+) -> tuple[CandidateEvidence, ...]:
+    """Record each region's usability and whether its quad holds the target."""
+
+    judged: list[CandidateEvidence] = []
+    for index, result in enumerate(results):
+        if not isinstance(result, OCRResult) or not isinstance(result.text, str):
+            judged.append(
+                CandidateEvidence(
+                    index=index,
+                    text="",
+                    confidence=0.0,
+                    quad=_PLACEHOLDER_QUAD,
+                    usable=False,
+                    unusable_reason="not_an_ocr_result",
+                    contains_target=False,
+                )
+            )
+            continue
+
+        reason = None
+        if not result.text.strip():
+            reason = "blank_text"
+        elif not _usable_quad(result.quad):
+            reason = "degenerate_quad"
+        judged.append(
+            CandidateEvidence(
+                index=index,
+                text=result.text,
+                confidence=result.confidence,
+                quad=result.quad,
+                usable=reason is None,
+                unusable_reason=reason,
+                contains_target=reason is None and _contains(result.quad, target),
+            )
+        )
+    return tuple(judged)
+
+
+def _select_hit(
+    hits: list[CandidateEvidence],
+    candidates: tuple[CandidateEvidence, ...],
+    target: Point,
+) -> tuple[CandidateEvidence, tuple[CandidateEvidence, ...]]:
+    """Choose among overlapping hits, scoring them only when there are several.
+
+    A single hit needs no tie-break, so scoring it would record numbers that
+    decided nothing.
+    """
+
+    if len(hits) == 1:
+        return hits[0], candidates
+
+    scored = {hit.index: _interior_rank(hit, target) for hit in hits}
+    winner = min(hits, key=lambda hit: scored[hit.index])
+    recorded = tuple(
+        candidate
+        if candidate.index not in scored
+        else replace(
+            candidate,
+            vertical_margin=-scored[candidate.index][0],
+            area=scored[candidate.index][1],
+        )
+        for candidate in candidates
+    )
+    return winner, recorded
+
+
+def _locate_within(
+    region: OCRResult,
+    selected_index: int,
+    candidates: tuple[CandidateEvidence, ...],
+    target: Point,
+) -> ResolutionEvidence:
+    """Map the target's position along the selected line onto one word.
+
+    Every step is recorded as it is taken, so a partial answer says exactly how
+    far the resolution got before it stopped.
+    """
+
+    text = region.text
+    axis = _text_axis(region.quad)
+    partial = ResolutionEvidence(
+        resolution=None,
+        candidates=candidates,
+        selected_index=selected_index,
+        text_axis=axis,
+    )
+    if not text:
+        return replace(partial, reason="empty_region_text")
+
+    fraction = _horizontal_fraction(region.quad, target)
+    if fraction is None:
+        return replace(partial, reason="target_outside_text_axis")
+
+    weights = tuple(_advance_weight(character) for character in text)
+    partial = replace(
+        partial,
+        horizontal_fraction=fraction,
+        advance_weights=weights,
+        cumulative_advances=_cumulative(weights),
+    )
+
+    index = _character_index(text, fraction)
+    partial = replace(partial, character_index=index)
+    if text[index].isspace():
+        return replace(partial, reason="target_on_whitespace")
+
+    start, end = _word_span(text, index)
+    partial = replace(partial, word_span=(start, end))
+    word = text[start:end].strip()
+    if not word:
+        return replace(partial, reason="empty_word")
+
+    return replace(
+        partial,
+        resolution=TargetResolution(
+            region=region,
+            text=word,
+            cursor_index=index - start,
+            region_start=start,
+        ),
+        word_bounds=_span_bounds(region.quad, text, start, end),
+    )
+
+
+def _cumulative(weights: tuple[float, ...]) -> tuple[float, ...]:
+    """Return the running advance total after each character."""
+
+    running = 0.0
+    totals: list[float] = []
+    for weight in weights:
+        running += weight
+        totals.append(running)
+    return tuple(totals)
+
+
+#: Stands in for the geometry of a sequence member that is not an OCR result at
+#: all, so every candidate can be recorded in provider order.
+_PLACEHOLDER_QUAD = Quad(
+    p1=Point(0.0, 0.0), p2=Point(1.0, 0.0), p3=Point(1.0, 1.0), p4=Point(0.0, 1.0)
+)
 
 
 def _usable_quad(quad: Quad) -> bool:
@@ -218,8 +437,10 @@ def _contains(quad: Quad, target: Point) -> bool:
     return inside
 
 
-def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
-    """Map a target's local horizontal position to one OCR word.
+def _locate_word_at_target(
+    text: str, quad: Quad, target: Point
+) -> tuple[str, int, int] | None:
+    """Map a target's local horizontal position to one OCR word and its offset.
 
     The axis derived by :func:`_text_axis` is stable for the tilted
     quadrilaterals emitted by an OCR adapter. The OCR contract exposes only the
@@ -244,7 +465,9 @@ def _word_at_target(text: str, quad: Quad, target: Point) -> str | None:
 
     start, end = _word_span(text, index)
     word = text[start:end].strip()
-    return word or None
+    if not word:
+        return None
+    return word, index - start, start
 
 
 def _word_span(text: str, index: int) -> tuple[int, int]:
@@ -275,8 +498,10 @@ def _span_bounds(quad: Quad, text: str, start: int, end: int) -> BoundingBox:
     return BoundingBox(left, box.top, max(right, left + 1), box.bottom)
 
 
-def _most_interior(hits: list[OCRResult], target: Point) -> OCRResult:
-    """Return the candidate whose text line the target sits furthest inside.
+def _interior_rank(
+    candidate: CandidateEvidence, target: Point
+) -> tuple[float, float, int]:
+    """Score how far inside its own line the target sits.
 
     Overlap between OCR line quads is vertical, so vertical margin separates
     them, but measured as a fraction of the line's own height, otherwise a
@@ -286,15 +511,11 @@ def _most_interior(hits: list[OCRResult], target: Point) -> OCRResult:
     still equal.
     """
 
-    def rank(indexed: tuple[int, OCRResult]) -> tuple[float, float, int]:
-        index, result = indexed
-        box = result.bounding_box
-        height = max(1, box.bottom - box.top)
-        margin = min(target.y - box.top, box.bottom - target.y) / height
-        area = (box.right - box.left) * (box.bottom - box.top)
-        return (-margin, area, index)
-
-    return min(enumerate(hits), key=rank)[1]
+    box = candidate.quad.bounding_box()
+    height = max(1, box.bottom - box.top)
+    margin = min(target.y - box.top, box.bottom - target.y) / height
+    area = float((box.right - box.left) * (box.bottom - box.top))
+    return (-margin, area, candidate.index)
 
 
 def _character_index(text: str, fraction: float) -> int:

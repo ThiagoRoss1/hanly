@@ -14,11 +14,12 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from .frozen_lookup import FreezeReport, LookupRing
 from .live_telemetry import (
     LiveResourceSampler,
     LiveSummary,
@@ -27,6 +28,13 @@ from .live_telemetry import (
     SessionPrivacy,
 )
 from .metadata import build_metadata
+from .microscope import (
+    MicroscopeCaptureObserver,
+    MicroscopeSink,
+    build_ring,
+    export_frozen,
+    freeze,
+)
 
 
 class _Listener(Protocol):
@@ -41,21 +49,23 @@ MarkerListenerFactory = Callable[[Mapping[str, Callable[[], None]]], _Listener]
 
 
 class RuntimeTraceAdapter:
-    """Add phase/privacy data and derive request-correlated perceived timing."""
+    """Add phase/privacy data and derive request-correlated perceived timing.
+
+    Nothing that reaches this recorder carries screen content. Raw text and
+    recognized geometry are privacy-minimized on the way through, whether or not
+    a lookup is later frozen; persisting them is an explicit export of one
+    pinned lookup, never a property of tracing.
+    """
 
     def __init__(
         self,
         recorder: LiveTraceRecorder,
         phases: ScenarioPhaseController,
         privacy: SessionPrivacy,
-        *,
-        retain_text: bool = False,
     ) -> None:
         self._recorder = recorder
         self._phases = phases
         self._privacy = privacy
-        self._retain_text = retain_text
-        self.retain_text = retain_text
         self._lock = threading.Lock()
         self._hover_started: dict[int, int] = {}
         self._lookup_to_hover: dict[int, int] = {}
@@ -84,7 +94,7 @@ class RuntimeTraceAdapter:
                 "timestamp_ns",
             }
         }
-        fields = self._privacy.redact(raw_fields, retain_text=self._retain_text)
+        fields = self._privacy.redact(raw_fields)
         fields["phase"] = self._phases.current
 
         hover_id = _integer_id(fields.get("hover_request_id"))
@@ -130,7 +140,7 @@ class RuntimeTraceAdapter:
     def record(self, event: str, **fields: object) -> bool:
         """Record a benchmark-owned event with the current phase."""
 
-        safe = self._privacy.redact(fields, retain_text=self._retain_text)
+        safe = self._privacy.redact(fields)
         safe["phase"] = self._phases.current
         return self._recorder.record(event, **safe)
 
@@ -364,6 +374,112 @@ def _marker_listener_factory(
     return keyboard.GlobalHotKeys(dict(callbacks))
 
 
+def freeze_lookup_into(
+    ring: LookupRing, holder: list[Any], counts: SessionEvidenceCounts | None = None
+) -> FreezeReport:
+    """Pin the newest completed lookup and remember it for a later export.
+
+    The hotkey callback runs on the listener thread, so this only selects and
+    copies an in-memory record. Encoding and writing belong to the separate
+    export action.
+    """
+
+    report = freeze(ring)
+    if report.frozen is not None:
+        holder.append(report.frozen)
+        if counts is not None:
+            counts.frozen += 1
+    return report
+
+
+def _freeze_message(report: FreezeReport) -> str:
+    if report.frozen is None:
+        return f"freeze: nothing to pin ({report.reason})"
+    frozen = report.frozen
+    gaps = f"; unavailable: {', '.join(report.notes)}" if report.notes else ""
+    return (
+        f"freeze: pinned lookup {frozen.lookup_request_id} "
+        f"({frozen.result_status or 'no status'}) from {report.records_held} held{gaps}"
+    )
+
+
+@dataclass
+class SessionEvidenceCounts:
+    """How many times each act happened, kept apart because they differ.
+
+    Freezing pins a lookup in memory; exporting writes it. Counting one as the
+    other is what made an earlier run report nine exports against eight
+    directories. Only counts live here -- no identifiers, no screen content.
+    """
+
+    frozen: int = 0
+    export_attempts: int = 0
+    exports_succeeded: int = 0
+    exports_failed: int = 0
+    exports_refused_nothing_frozen: int = 0
+    reexports: int = 0
+    exported_directories: set[str] = field(default_factory=set)
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "frozen_lookups_pinned": self.frozen,
+            "frozen_lookup_export_attempts": self.export_attempts,
+            "frozen_lookup_exports_succeeded": self.exports_succeeded,
+            "frozen_lookup_exports_failed": self.exports_failed,
+            "frozen_lookup_exports_refused_nothing_frozen": (
+                self.exports_refused_nothing_frozen
+            ),
+            "frozen_lookup_reexports": self.reexports,
+            "frozen_lookups_exported": len(self.exported_directories),
+        }
+
+
+def _export_message(
+    holder: list[Any],
+    run_dir: Path,
+    artifact_root: Path,
+    counts: SessionEvidenceCounts | None = None,
+) -> str:
+    """Write the pinned lookup, which is the only path to private artifacts."""
+
+    tally = counts if counts is not None else SessionEvidenceCounts()
+    tally.export_attempts += 1
+    if not holder:
+        tally.exports_refused_nothing_frozen += 1
+        return "export: nothing is frozen; press the freeze hotkey first"
+    frozen = holder[-1]
+    destination = run_dir / f"frozen-{frozen.lookup_request_id}"
+    try:
+        exported = export_frozen(
+            frozen, destination, artifact_root=Path(artifact_root)
+        )
+    except BaseException as error:
+        tally.exports_failed += 1
+        return f"export failed: {type(error).__name__}: {error}"
+    tally.exports_succeeded += 1
+    directory = str(exported.directory)
+    if directory in tally.exported_directories:
+        tally.reexports += 1
+    tally.exported_directories.add(directory)
+    return f"export: {len(exported.files)} files in {exported.directory}"
+
+
+def production_capture_service(backend: Any | None = None) -> Any:
+    """Build capture exactly as the desktop composition does.
+
+    ``CaptureService`` defaults to an unsnapped grid, while the desktop passes
+    ``DEFAULT_ROI_GRID``. The snap is what lets nearby cursor positions reuse
+    one ROI and hit the OCR cache, so a benchmark that leaves it at the default
+    measures a runtime the product does not ship.
+    """
+
+    from hanly_app.capture import DEFAULT_ROI_GRID, CaptureService
+
+    if backend is None:
+        return CaptureService(roi_grid=DEFAULT_ROI_GRID)
+    return CaptureService(backend=backend, roi_grid=DEFAULT_ROI_GRID)
+
+
 def _integer_id(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -408,7 +524,8 @@ def run_live_hover(args: Any) -> int:
             "dwell_ms": args.dwell_ms,
             "cpu_threads": args.cpu_threads,
             "marker_hotkey": args.marker_hotkey,
-            "retain_text": args.retain_text,
+            "freeze_hotkey": args.freeze_hotkey,
+            "export_hotkey": args.export_hotkey,
             "stationary_cursor_polling": False,
             "trace_sink": "bounded_best_effort",
         },
@@ -445,12 +562,12 @@ def run_live_hover(args: Any) -> int:
 
     recorder = LiveTraceRecorder(run_dir / "live-events.jsonl")
     privacy = SessionPrivacy()
-    adapter = RuntimeTraceAdapter(
-        recorder,
-        phases,
-        privacy,
-        retain_text=bool(args.retain_text),
-    )
+    adapter = RuntimeTraceAdapter(recorder, phases, privacy)
+    ring = build_ring()
+    # The microscope tees: full structures into the ring, privacy-minimized
+    # events onwards to the adapter that writes them.
+    trace_sink = MicroscopeSink(ring, adapter)
+    capture_observer = MicroscopeCaptureObserver(ring, privacy)
     sampler = LiveResourceSampler(
         run_dir / "process.csv",
         phase=lambda: phases.current,
@@ -460,9 +577,14 @@ def run_live_hover(args: Any) -> int:
         privacy,
         phase=lambda: phases.current,
     )
+    frozen_holder: list[Any] = []
+    evidence_counts = SessionEvidenceCounts()
+    resolved_backend: list[str | None] = [None]
     manual: Any | None = None
     capture: Any | None = None
     marker: MarkerHotkey | None = None
+    freezer: MarkerHotkey | None = None
+    exporter: MarkerHotkey | None = None
     previous_sigint: Any = None
     exit_reason = ["qt_event_loop_exit"]
     cleanup_errors: list[str] = []
@@ -477,7 +599,6 @@ def run_live_hover(args: Any) -> int:
         from hanly_app.ocr_preload import preload_ocr_runtime
 
         preload_ocr_runtime()
-        from hanly_app.capture import CaptureService
         from hanly_app.manual_lookup import (
             create_qt_manual_lookup,
         )
@@ -492,14 +613,17 @@ def run_live_hover(args: Any) -> int:
                 runtime,
                 easyocr_config=replace(runtime.easyocr_config, cpu_threads=args.cpu_threads),
             )
-        capture = CaptureService()
+        resolved_backend[0] = runtime.resolved_ocr_backend().value
+        adapter.record("resolved_ocr_backend", backend=resolved_backend[0])
+        capture = production_capture_service()
         observed_capture = ObservedCaptureSource(capture, roi_observer)
         manual = create_qt_manual_lookup(
             runtime,
             observed_capture,
             hover_enabled=True,
             hover_delay_ms=float(args.dwell_ms),
-            trace_sink=adapter,
+            trace_sink=trace_sink,
+            capture_observer=capture_observer,
         )
 
         def mark_phase() -> None:
@@ -507,7 +631,23 @@ def run_live_hover(args: Any) -> int:
             adapter.record("phase_marker", **transition.as_dict())
             report(f"phase -> {transition.phase}")
 
+        def freeze_lookup() -> None:
+            report(
+                _freeze_message(
+                    freeze_lookup_into(ring, frozen_holder, evidence_counts)
+                )
+            )
+
+        def export_lookup() -> None:
+            report(
+                _export_message(
+                    frozen_holder, run_dir, args.output_root, evidence_counts
+                )
+            )
+
         marker = MarkerHotkey(args.marker_hotkey, mark_phase)
+        freezer = MarkerHotkey(args.freeze_hotkey, freeze_lookup)
+        exporter = MarkerHotkey(args.export_hotkey, export_lookup)
         manual.start()
         session_started = [False]
         startup_error: list[str | None] = [None]
@@ -529,7 +669,9 @@ def run_live_hover(args: Any) -> int:
             if manual.controller.worker_ready:
                 readiness_timer.stop()
                 try:
-                    marker.start()
+                    for hotkey in (marker, freezer, exporter):
+                        if hotkey is not None:
+                            hotkey.start()
                 except BaseException as error:
                     startup_error[0] = (
                         f"marker hotkey startup failed: {type(error).__name__}: {error}"
@@ -544,6 +686,7 @@ def run_live_hover(args: Any) -> int:
                 )
                 report(
                     f"READY: phase={phases.current}; marker={args.marker_hotkey}; "
+                    f"freeze={args.freeze_hotkey}; export={args.export_hotkey}; "
                     f"duration={args.duration}s"
                 )
                 QTimer.singleShot(
@@ -582,8 +725,14 @@ def run_live_hover(args: Any) -> int:
                     lambda: signal.signal(signal.SIGINT, previous_sigint),
                 )
             )
-        if marker is not None:
-            steps.append(("marker_stop", marker.stop))
+        for name, hotkey in (
+            ("marker", marker),
+            ("freeze_hotkey", freezer),
+            ("export_hotkey", exporter),
+        ):
+            if hotkey is not None:
+                steps.append((f"{name}_stop", hotkey.stop))
+        steps.append(("capture_observer_close", capture_observer.close))
         if manual is not None:
             steps.append(("manual_begin_shutdown", manual.begin_shutdown))
         elif capture is not None:
@@ -608,12 +757,19 @@ def run_live_hover(args: Any) -> int:
             )
             summary.update(
                 {
+                    "resolved_ocr_backend": resolved_backend[0],
                     "exit_reason": exit_reason[0],
                     "trace_events_dropped": recorder.dropped_events,
                     "trace_write_errors": recorder.write_errors,
                     "roi_observations_dropped": roi_observer.dropped_observations,
                     "stationary_cursor_polling": False,
-                    "raw_text_retained": bool(args.retain_text),
+                    # Raw screen content never reaches this run directory unless
+                    # a developer explicitly exported one frozen lookup.
+                    "raw_text_retained": False,
+                    **evidence_counts.as_dict(),
+                    "microscope_captures_dropped": (
+                        capture_observer.dropped_observations
+                    ),
                     "cleanup_errors": cleanup_errors,
                 }
             )
@@ -632,5 +788,8 @@ __all__ = [
     "MarkerHotkey",
     "ObservedCaptureSource",
     "RuntimeTraceAdapter",
+    "SessionEvidenceCounts",
+    "freeze_lookup_into",
+    "production_capture_service",
     "run_live_hover",
 ]

@@ -31,10 +31,12 @@ from hanly.resource_manager import (
     ResourceManifest,
     ResourceSpec,
 )
+from hanly.vision_provider import VisionConfig, VisionProvider
 
 from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
 from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
 from .composition import create_lookup_controller as _create_in_process_controller
+from .config import OCRBackend
 from .diagnostics import StartupTimeline
 from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
 from .lookup_process import (
@@ -55,7 +57,27 @@ class RuntimeConfigError(ValueError):
 
 
 #: The provider name the Control Center shows.
-OCR_DISPLAY_NAME = "EasyOCR"
+#: What the interface calls each recognizer.
+EASYOCR_DISPLAY_NAME = "EasyOCR"
+VISION_DISPLAY_NAME = "Apple Vision"
+#: Retained for callers that predate the recognizer choice.
+OCR_DISPLAY_NAME = EASYOCR_DISPLAY_NAME
+
+
+def ocr_display_name(backend: OCRBackend | None) -> str:
+    """Name the recognizer a launch with this preference actually constructs.
+
+    ``auto`` resolves the same way the runtime factory does, so the interface
+    reports what is really in use rather than what was asked for.
+    """
+
+    if backend is OCRBackend.EASYOCR:
+        return EASYOCR_DISPLAY_NAME
+    if backend is OCRBackend.VISION:
+        return VISION_DISPLAY_NAME
+    return (
+        VISION_DISPLAY_NAME if VisionProvider.is_available() else EASYOCR_DISPLAY_NAME
+    )
 #: EasyOCR resolves its own models, so KRDICT is the only managed resource.
 KRDICT_RESOURCE_ID = "krdict"
 
@@ -89,6 +111,9 @@ class HanlyRuntime:
     resource_manager: ResourceManager
     krdict_path: Path
     easyocr_config: EasyOCRConfig | None = None
+    #: Which recognizer to construct. ``None`` means the historical behaviour,
+    #: EasyOCR, so a runtime written before the choice existed is unchanged.
+    ocr_backend: OCRBackend | None = None
     confidence_threshold: float | None = None
     skip_flat_rois: bool = False
     #: Where worker-thread provider construction reports what it cost. The
@@ -96,10 +121,43 @@ class HanlyRuntime:
     timeline: StartupTimeline | None = None
 
     def _ocr_factory(self) -> OCRProviderFactory:
+        """Build the recognizer this runtime asks for.
+
+        ``AUTO`` prefers Vision on a machine that has it because it reads
+        Korean conjugation endings EasyOCR's bundled model cannot, and falls
+        back rather than leaving a launch with no recognizer at all.
+        """
+
+        if self._wants_vision():
+            return lambda: VisionProvider(config=VisionConfig())
+
         easyocr_config = self.easyocr_config
         if easyocr_config is None:
             raise RuntimeConfigError(f"{self.config_path} carries no EasyOCR configuration")
         return lambda: EasyOCRProvider(config=easyocr_config)
+
+    def resolved_ocr_backend(self) -> OCRBackend:
+        """The concrete recognizer this runtime selects, never ``auto``.
+
+        Resolving here keeps framework probing in the shell, which already has
+        an application context. The lookup child receives a decision rather
+        than a policy, so it never loads a framework just to ask about one.
+        """
+
+        return OCRBackend.VISION if self._wants_vision() else OCRBackend.EASYOCR
+
+    def _wants_vision(self) -> bool:
+        backend = self.ocr_backend or OCRBackend.EASYOCR
+        if backend is OCRBackend.VISION:
+            if not VisionProvider.is_available():
+                # Refuse here rather than letting every single lookup fail with
+                # the same provider error on a machine that has no Vision.
+                raise RuntimeConfigError(
+                    f"{self.config_path} pins the Apple Vision recognizer, which "
+                    "this machine does not provide; use \"auto\" or \"easyocr\""
+                )
+            return True
+        return backend is OCRBackend.AUTO and VisionProvider.is_available()
 
     def create_worker_factory(
         self,
@@ -128,6 +186,7 @@ class HanlyRuntime:
             skip_flat_rois=self.skip_flat_rois,
             trace_sink=trace_sink,
             timeline=self.timeline,
+            ocr_backend=self.resolved_ocr_backend().value,
         )
 
     def lookup_settings(self, confidence_threshold: float | None = None) -> LookupSettings:
@@ -151,6 +210,7 @@ class HanlyRuntime:
         return LookupSettings(
             krdict_path=self.krdict_path,
             easyocr=easyocr_config,
+            ocr_backend=self.resolved_ocr_backend(),
             confidence_threshold=threshold,
             skip_flat_rois=self.skip_flat_rois,
         )
@@ -278,6 +338,7 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
         easyocr_config = _easyocr_config(raw, root)
         confidence_threshold = _confidence_threshold(raw, _easyocr_values(raw))
         skip_flat_rois = _skip_flat_rois(raw)
+        ocr_backend = _ocr_backend(raw)
     except RuntimeConfigError:
         raise
     except (TypeError, ValueError, KeyError) as exc:
@@ -288,9 +349,32 @@ def load_runtime(config_path: str | Path) -> HanlyRuntime:
         resource_manager=manager,
         krdict_path=manager.validated_path(KRDICT_RESOURCE_ID),
         easyocr_config=easyocr_config,
+        ocr_backend=ocr_backend,
         confidence_threshold=confidence_threshold,
         skip_flat_rois=skip_flat_rois,
     )
+
+
+def _ocr_backend(raw: Mapping[str, object]) -> OCRBackend:
+    """Read which recognizer to use, defaulting to the best one available.
+
+    A configuration written before the choice existed selects ``auto``, which
+    is a deliberate upgrade: EasyOCR's bundled Korean model cannot read the
+    conjugation endings Hanly is for, and Vision can.
+    """
+
+    value = raw.get("ocr_backend")
+    if value is None:
+        return OCRBackend.AUTO
+    if not isinstance(value, str):
+        raise RuntimeConfigError("ocr_backend must be a string")
+    try:
+        return OCRBackend(value.strip().lower())
+    except ValueError as error:
+        supported = ", ".join(backend.value for backend in OCRBackend)
+        raise RuntimeConfigError(
+            f"ocr_backend must be one of {supported}"
+        ) from error
 
 
 def _skip_flat_rois(raw: Mapping[str, object]) -> bool:
@@ -649,7 +733,10 @@ def _mapping_field(value: object, field_name: str, resource_id: str) -> Mapping[
 
 __all__ = [
     "KRDICT_RESOURCE_ID",
+    "EASYOCR_DISPLAY_NAME",
     "OCR_DISPLAY_NAME",
+    "VISION_DISPLAY_NAME",
+    "ocr_display_name",
     "PACKAGED_MODEL_DIRECTORY",
     "PACKAGED_MODEL_FILES",
     "HanlyRuntime",

@@ -21,6 +21,7 @@ from hanly_app.lookup_process import (
     LookupEngine,
     LookupProcessError,
     LookupSettings,
+    create_lookup_engine,
     create_process_lookup_controller,
 )
 
@@ -485,3 +486,70 @@ def test_lookup_waiting_for_start_cannot_resurrect_a_stopped_engine(
         assert engine.state == "sleeping"
     finally:
         engine.close()
+
+
+# --- Diagnostic evidence across the spawn boundary --------------------------
+
+
+class _EvidenceSink:
+    """The kind of sink the microscope attaches in the shell."""
+
+    retain_evidence = True
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def emit(self, event: Any) -> None:
+        self.events.append(dict(event))
+
+
+class _PlainSink(_EvidenceSink):
+    retain_evidence = False
+
+
+def _spawned_settings(sink: Any) -> LookupSettings:
+    """Return the settings the child was actually spawned with."""
+
+    spawned: list[LookupSettings] = []
+    ready = threading.Event()
+
+    def record(child_settings: LookupSettings) -> None:
+        spawned.append(child_settings)
+        ready.set()
+
+    spawner = ThreadChildSpawner(on_start=record)
+    engine = create_lookup_engine(settings(), trace_sink=sink, spawn=spawner)
+    engine.attach()
+    try:
+        assert ready.wait(_WAIT_SECONDS)
+    finally:
+        engine.close()
+    return spawned[-1]
+
+
+def test_a_sink_that_wants_evidence_says_so_to_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The child builds its own tracing wrappers and cannot see the sink."""
+
+    RecordingProviders().install(monkeypatch)
+
+    assert _spawned_settings(_EvidenceSink()).trace_evidence is True
+
+
+def test_an_ordinary_trace_sink_leaves_evidence_off_in_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    RecordingProviders().install(monkeypatch)
+    spawned = _spawned_settings(_PlainSink())
+
+    assert spawned.trace is True
+    assert spawned.trace_evidence is False
+
+
+def test_tracing_disabled_carries_neither_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    RecordingProviders().install(monkeypatch)
+    spawned = _spawned_settings(None)
+
+    assert spawned.trace is False
+    assert spawned.trace_evidence is False
