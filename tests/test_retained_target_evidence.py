@@ -156,6 +156,19 @@ class _Hotkeys:
         pass
 
 
+class _MouseListener:
+    """A portable listener; these tests drive lookup directly, not by motion."""
+
+    def __init__(self, _on_move: Callable[[int, int], None]) -> None:
+        pass
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
 def _lookup_once(result: LookupResult) -> _Sink:
     """Run one manual lookup end to end and return everything it traced."""
 
@@ -170,6 +183,7 @@ def _lookup_once(result: LookupResult) -> _Sink:
         current_cursor=lambda: _CURSOR,
         dispatcher=dispatcher,
         hotkey_factory=_Hotkeys(),
+        hover_listener_factory=_MouseListener,
         trace_sink=sink,
         hover_enabled=True,
         app_config=_ALWAYS_ACTIVE,
