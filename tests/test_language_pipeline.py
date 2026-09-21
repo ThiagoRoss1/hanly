@@ -143,7 +143,8 @@ def test_pixel_and_direct_selections_agree_at_every_cursor_offset(
     assert direct.context is not None and via_facade.context is not None
     assert direct.context.lemma == via_facade.context.lemma == lemma
     assert direct.context.candidate == via_facade.context.candidate
-    assert direct_dictionary.queries == pixel_dictionary.queries == [lemma]
+    # The complete form is probed once, then the component the cursor is on.
+    assert direct_dictionary.queries == pixel_dictionary.queries == ["초대받다", lemma]
 
 
 def test_a_real_pixel_lookup_and_an_equivalent_direct_selection_agree() -> None:

@@ -24,6 +24,7 @@ from dataclasses import replace
 from unicodedata import category
 
 from .contracts import (
+    DictionaryEntry,
     LexicalCandidate,
     LookupContext,
     LookupResult,
@@ -120,15 +121,18 @@ class LanguagePipeline:
                 context=context,
             )
 
+        abort_if_cancelled(cancelled)
+        # A dictionary failure still has to explain which unit was being looked
+        # up, and the whole form is not known until the probe has answered.
+        attempted = replace(context, lemma=selected.lemma, candidate=selected)
+        try:
+            selected, entries = self._resolve_entries(analysis, selected, text)
+        except Exception as exc:
+            return error_result("dictionary", exc, attempted)
+
         lemma = selected.lemma
         diagnostics = _selection_diagnostics(analysis, selected, text)
-
-        abort_if_cancelled(cancelled)
         context = replace(context, lemma=lemma, candidate=selected)
-        try:
-            entries = tuple(self._dictionary_provider.lookup(lemma))
-        except Exception as exc:
-            return error_result("dictionary", exc, context)
 
         if not entries:
             return LookupResult(
@@ -140,10 +144,31 @@ class LanguagePipeline:
 
         return LookupResult(
             status=LookupStatus.SUCCESS,
-            entries=entries,
+            entries=_rank_entries(entries, selected.part_of_speech),
             diagnostics=diagnostics,
             context=context,
         )
+
+    def _resolve_entries(
+        self,
+        analysis: MorphologyAnalysis,
+        selected: LexicalCandidate,
+        text: str,
+    ) -> tuple[LexicalCandidate, tuple[DictionaryEntry, ...]]:
+        """Prefer a real dictionary entry for the whole form over one component.
+
+        The dictionary is asked at most twice: once for the complete form when
+        the surface holds several lexical units, and once for the component the
+        cursor is on when the dictionary does not have that complete form.
+        """
+
+        whole = _complete_form(analysis, text)
+        if whole is not None:
+            entries = tuple(self._dictionary_provider.lookup(whole.lemma))
+            if entries:
+                return whole, entries
+
+        return selected, tuple(self._dictionary_provider.lookup(selected.lemma))
 
 
 def error_result(
@@ -230,6 +255,101 @@ def _select_candidate(
         if lemma:
             return LexicalCandidate(lemma=lemma, start=0, end=max(1, len(lemma)))
     return None
+
+
+#: KRDICT grades every entry. The common sense of a homograph is the one a
+#: reader hovering ordinary text almost always means, and this grading is the
+#: dictionary's own answer to which that is.
+_LEVEL_ORDER = {"초급": 0, "중급": 1, "고급": 2}
+
+#: Kiwi tag family -> the KRDICT part-of-speech naming the same class. Only the
+#: families that actually open a lexical unit appear; anything absent simply
+#: contributes no ordering signal.
+_POS_EQUIVALENTS = {
+    "NNG": "명사",
+    "NNP": "명사",
+    "NNB": "의존 명사",
+    "NP": "대명사",
+    "NR": "수사",
+    "VV": "동사",
+    "VA": "형용사",
+    "MAG": "부사",
+    "MAJ": "부사",
+    "MM": "관형사",
+    "IC": "감탄사",
+}
+
+
+def _complete_form(
+    analysis: MorphologyAnalysis, text: str
+) -> LexicalCandidate | None:
+    """The whole form the units spell out, when they spell out one word.
+
+    Kiwi lexicalizes some compounds itself and splits others, so ``인정받다``
+    arrives whole while ``초대받다`` arrives as two units. Joining the leading
+    surface to the final unit's lemma reconstructs the dictionary form without
+    appending an ending to a stem, which would be wrong for every irregular.
+    Whether the result is a word is decided by the dictionary, not here.
+    """
+
+    candidates = analysis.candidates
+    if len(candidates) < 2:
+        return None
+
+    first, last = candidates[0], candidates[-1]
+    if last.start <= first.start or last.end > len(text):
+        return None
+
+    span = text[first.start : last.end]
+    # Whitespace means these are separate words that happen to share a
+    # selection, and they must keep selecting independently.
+    if any(character.isspace() for character in span):
+        return None
+
+    lemma = text[first.start : last.start] + last.lemma
+    if not lemma:
+        return None
+
+    return LexicalCandidate(
+        lemma=lemma,
+        start=first.start,
+        end=last.end,
+        part_of_speech=last.part_of_speech,
+        token_indices=tuple(
+            index for candidate in candidates for index in candidate.token_indices
+        ),
+    )
+
+
+def _rank_entries(
+    entries: tuple[DictionaryEntry, ...], part_of_speech: str | None
+) -> tuple[DictionaryEntry, ...]:
+    """Order one lemma's homographs by signals the lookup already computed.
+
+    Provider order is insertion order, which put ``초대 · 初代`` ahead of
+    ``초대 · 招待``. Matching the morphology's part of speech first, then the
+    dictionary's own difficulty grading, replaces that with the reading a
+    hovering reader means, without inspecting any definition text.
+    """
+
+    if len(entries) < 2:
+        return entries
+
+    wanted = _POS_EQUIVALENTS.get(_tag_family(part_of_speech))
+
+    def rank(item: tuple[int, DictionaryEntry]) -> tuple[int, int, int]:
+        index, entry = item
+        matched = 0 if wanted is not None and entry.part_of_speech == wanted else 1
+        level = _LEVEL_ORDER.get(entry.vocabulary_level or "", len(_LEVEL_ORDER))
+        return (matched, level, index)
+
+    return tuple(entry for _index, entry in sorted(enumerate(entries), key=rank))
+
+
+def _tag_family(tag: str | None) -> str:
+    """The tag without Kiwi's irregular-conjugation suffix, e.g. ``VV-R``."""
+
+    return (tag or "").split("-", 1)[0].upper()
 
 
 def _selection_diagnostics(

@@ -259,8 +259,10 @@ def test_the_kiwi_analysis_and_the_krdict_query_are_both_recorded() -> None:
 
     dictionary = decode_evidence(_stage(sink, "dictionary")["dictionary_evidence"])
     assert dictionary is not None
-    # The pointer is on the second syllable, so the query is the unit there.
-    assert dictionary["query"] == "상"
+    # `책상` is a word in its own right, so the whole form is what gets asked
+    # for; only when the dictionary does not have it does the unit under the
+    # pointer become the query.
+    assert dictionary["query"] == "책상"
     assert dictionary["entry_count"] == 1
     assert dictionary["found"] is True
 

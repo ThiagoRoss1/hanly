@@ -221,12 +221,19 @@ def test_the_pointer_chooses_among_several_lexical_units() -> None:
                 region=line, text=line.text, cursor_index=self.index, region_start=0
             )
 
+    class _NoCompoundDictionary(_Dictionary):
+        """`책읽다` is not a word, so only the units themselves are found."""
+
+        def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
+            found = super().lookup(lemma)
+            return () if lemma == "책읽다" else found
+
     for index, expected in ((0, "책"), (1, "읽다"), (2, "읽다")):
         events: list[str] = []
         pipeline = LookupPipeline(
             ocr_provider=_OCR(events, (line,)),
             morphology_provider=_Analysis(),
-            dictionary_provider=_Dictionary(events, (_ENTRY,)),
+            dictionary_provider=_NoCompoundDictionary(events, (_ENTRY,)),
             word_resolver=_PointingResolver(index),
         )
 
