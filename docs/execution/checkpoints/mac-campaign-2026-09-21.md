@@ -228,3 +228,68 @@ secure field is refused by reason and carries no text at all.
 **Commit:** `feat: add macos accessible text acquisition`
 **Next boundary ready:** yes.
 
+---
+
+## Boundary 3 — Wave 7 bounded research verdict
+
+Evidence-only. Nothing in production changed; no candidate was added, no model
+downloaded or trained, no selector or packaging touched.
+
+Both shipped backends were re-run through the existing `ocr-campaign` path
+against the local 8-case Wave 2 corpus (1 warmup, 3 samples, `ocr-only`).
+
+| | Vision | EasyOCR |
+|---|---|---|
+| Target surface correct | **1.000** | 0.375 |
+| Hangul syllable error rate | 0.000 | 0.215 |
+| Character error rate | 0.000 | 0.177 |
+| Target region recall | 1.000 | 1.000 |
+| Warm p50 / p95 | 23.0 / 27.2 ms | 25.7 / 40.4 ms |
+| Peak RSS growth | 45.8 MB | 1,010.4 MB |
+
+**Verdict: change nothing now.** The incumbent already scores 1.000 on this
+corpus, so a candidate evaluated today would measure the corpus rather than the
+model. The report names the dataset, labeling, cross-platform, licensing and
+budget evidence a future HanlyOCR decision needs.
+
+Report: `docs/execution/reports/ocr-research-verdict-2026-09-21.md`.
+Raw runs stayed under the gitignored `artifacts/benchmarks/runs/`.
+
+**Commit:** `docs: record OCR research verdict` (`b0851a8`).
+
+---
+
+## Convergence gates
+
+```
+pytest                  -> 2089 passed, 2 skipped
+pytest --suite native   -> 72 passed
+pytest --suite packaged -> 3 passed
+package boundary / exports / packaging -> 139 passed
+privacy and trace serialization        -> 62 passed
+ruff  -> All checks passed
+mypy  -> Success, 277 source files
+```
+
+Worktree clean. No failure was dismissed as pre-existing; the only failures
+encountered during the campaign were expectation changes caused by this work,
+each reproduced and classified before being updated.
+
+## Commit history
+
+```
+b0851a8 docs: record OCR research verdict
+c083d62 feat: add macos accessible text acquisition
+573b115 feat: show lexical component context
+22bb4be fix: harden whole-form dictionary selection     (unchanged ancestor)
+0ec5008 feat: prefer whole-form dictionary results      (unchanged ancestor)
+9c4cfea test: keep retained evidence tests portable
+```
+
+Nothing was amended, squashed, rebased or pushed.
+
+## Wave 6
+
+**NOT STARTED — requires a real Windows environment.** No Windows code,
+abstraction or placeholder was created. The continuation procedure is in the
+Review Handoff.
