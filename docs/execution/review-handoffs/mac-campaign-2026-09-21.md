@@ -213,3 +213,163 @@ separate and human-authorized.
 
 Human-selected. Not started. This handoff prepares the review; it does not
 perform one.
+
+---
+
+# Post-Bundle Review Outcome
+
+- **Reviewer / ecosystem / date:** Claude Opus 5, single run, macOS 26.6.2,
+  `.venv/bin/python` 3.13.11, 2026-09-21.
+- **Scope:** `22bb4be..ae3bccc`, reviewed against the worktree and commit graph
+  rather than the handoff's claims.
+- **Verdict:** **Accept, with the hardening in `1dbe8e8` applied.** Three
+  defects were found at the native and trace boundaries, all fixed under review
+  authority. Wave 6 was not started, nothing was pushed, and no existing commit
+  was amended, squashed, rebased or reordered.
+
+## Independently reproduced
+
+| Claim | Verdict |
+|---|---|
+| Component bounds, ordering and the ≤5 query bound | **Confirmed** — 14 real-provider words and 7 adversarial provider shapes (spans past the end, negative and zero-length spans, `None` spans, empty lemmas, duplicates, 6 candidates) all held `0 <= start < end <= len(text)`, stable `start` order, ≤5 distinct queries, no duplicate query |
+| `초대받다` is never invented | **Confirmed** — absent from KRDICT, and never appears as a headword or component at either cursor position |
+| `초대받았어요` cursor sensitivity with the decomposition retained | **Confirmed** at indices 0 and 3 |
+| `예뻤어요` overlapping spans | **Confirmed** — `예쁘다` [0,4), `었` [1,2), `어요` [2,4) |
+| `깜짝이야`, `고소득층`, `고차원적`, `구시대적`, `꿀꿀이` answered as themselves | **Confirmed**, 1 query each |
+| Engine free of desktop/AX/geometry, `LanguagePipeline` needs no recognizer | **Confirmed** — only prose mentions; constructing it loads neither torch nor easyocr |
+| Public export surface changed deliberately and minimally | **Confirmed** — `LexicalComponent` plus one additive field, both guarded by updated tests |
+| Transport and pickling | **Confirmed** both ways, including hostile labels up to 100k characters |
+| TextEdit containment, including blank space below the last line | **Confirmed** — 52/66 direct, and it is containment, not a threshold, that rejects the false target |
+| No CoreFoundation leak | **Confirmed** — 6,000 acquisitions, **0 bytes** peak-RSS growth |
+| ctypes constants and structures | **Confirmed by round-trip** — CFRange(4), CGRect(3), CGPoint(1), kCFNumberLongType(10); a wrong-type read returns `False`, not garbage |
+| Wave 7 correctness figures | **Reproduced exactly** — Vision 1.000/0.000/0.000, EasyOCR 0.375/0.215/0.177, region recall 1.000 for both, 0 errors |
+| Wave 7 changed no production code | **Confirmed** — `b0851a8` touches one documentation file |
+| Invariant IDs synchronized | **Confirmed** — RF-INV 13/13, CA-INV 16/16, identical and in order |
+| Freeze, Export, artifact tracking | **Confirmed** — nothing private tracked in any campaign commit; `artifacts/benchmarks/` ignored and empty in the index |
+| Wave 6 `NOT STARTED` and no speculative UIA code | **Confirmed** |
+
+## Fixed now — `1dbe8e8`
+
+**1. Accessibility offsets are UTF-16 code units, not Python indices.**
+`CFStringGetLength("🙂초대받았어요")` is 8 while Python's length is 7. The adapter
+used the AX index directly as a Python index, so on the real line
+`🙂🙂초대받았어요` in TextEdit the pointer on `초` produced `cursor_index=4`, which
+is `받` — the popup would define "receive" while the reader points at
+"invitation". Reproduced in the wild at x=180. Fixed conservatively: a reading
+whose offsets cannot be used as Python indices is refused and the caller falls
+back to OCR. Pure-Korean lines are unchanged (52 direct before and after).
+Guarded by `tests/native/macos/test_text_acquisition_units.py`, confirmed to
+**fail** against the reviewed implementation.
+
+**2. The timeout was measured but never enforced.** The adapter documented that
+`timeout_ms` "is not enforced here", and `_on_stable` runs on the **Qt UI
+thread** via `QtHoverScheduler`'s timer, so an unresponsive target application
+could hold the interface for as long as it liked while the coordinator only
+discarded the answer afterwards. Fixed by giving both the system-wide element
+and the hit element their own `AXUIElementSetMessagingTimeout`. Results
+unchanged (52 direct, 14 not-containing).
+
+**3. The acquisition trace copied an unbounded, unsanitised label.** A 200,000
+character `source` produced a 202 KB trace event for one lookup, and a label
+containing recognized text put that text into a trace which must never carry
+it. Only one producer sets the field today, so this was not reachable in
+production, but the guarantee rested on nobody ever putting content there.
+Fixed by emitting only a bounded route label (`[A-Za-z0-9_-]{1,32}`, otherwise
+`unknown`). Guarded by a parametrized test confirmed to fail against the
+reviewed implementation.
+
+## Corrected measurements and overclaims
+
+- **The checkpoint's "18 elements support `AXRangeForPosition`" in Discord does
+  not reproduce.** A finer probe of 874 points found **zero** elements
+  supporting it; every point fails at the index stage. The conclusion (falls
+  back to OCR) is unaffected.
+- **Safari's classification is correct and now has stronger evidence than Phase
+  A had.** Walking the tree — the hit `AXStaticText`, five ancestors and its
+  zero children — found no element supporting the range attribute, so it is a
+  WebKit limitation rather than an adapter traversal omission. No
+  browser-specific workaround was implemented.
+- **EasyOCR peak RSS varies run to run**: the re-run measured **889.6 MB**
+  against the reported 1,010.4 MB. The reported figure is a single-run peak
+  presented as a firm number; the order of magnitude and the comparison with
+  Vision (47.6 MB re-measured) stand.
+- Warm latency re-measured as Vision 21.1/25.7 ms and EasyOCR 26.8/40.8 ms
+  against the reported 23.0/27.2 and 25.7/40.4 — ordinary variance.
+- **The corpus is 8 cases, every one `local_synthetic`, one font
+  (Apple SD Gothic Neo, Apple-Proprietary), zero real captures.** The verdict's
+  self-imposed limitation is therefore accurate and not overstated. Both
+  backends ran in `ocr-only` mode, so no staged replay is described as
+  production evidence.
+- The Wave 5 browser/Electron gap is correctly presented as an acquisition
+  limitation, not something an OCR recognizer would solve.
+
+## Deferred considerations
+
+1. **The suppression rule hides roughly twice as many useful decompositions as
+   misleading ones.** Of 165 sampled verbatim-headword splits, **114 (69%)** had
+   parts that are all real dictionary words whose surfaces match their spans —
+   `두통거리` (두통 + 거리), `동력선` (동력 + 선), `고종사촌` — and those panels
+   are now hidden; only 51 were genuinely misleading (`여행가` → 여행 + 가다).
+   The distinguishing signal is visible in the measurement: span-aligned parts
+   that are themselves entries. *Revisit trigger:* when component-panel
+   behaviour is next revised, gate suppression on span alignment rather than on
+   the surface being an entry.
+2. **Proper UTF-16 to code-point conversion**, instead of the refusal applied
+   above, would restore direct text on lines containing emoji. *Revisit
+   trigger:* if emoji-adjacent Korean is observed to matter, or when Wave 6
+   settles the equivalent Windows offset units.
+3. **Acquisition runs on the Qt UI thread.** Capture already does, so this is
+   consistent rather than new, but the master plan's Wave 5 policy says these
+   calls run away from the UI thread. The messaging deadline bounds the damage.
+   *Revisit trigger:* moving hover capture off the UI thread, which should carry
+   acquisition with it.
+4. **Retina, multi-display, negative-origin and mixed-scale coordinates are
+   unvalidated.** This machine has one display at scale 1.00, where AX points
+   and capture pixels coincide. On a Retina display they may not, which would
+   either refuse everything (safe) or misplace the retained-word rectangle.
+   *Revisit trigger:* first run on a Retina or multi-display machine.
+5. **The panel grows the compact card by 47%** (340×200 → 340×293 for a
+   four-component word), because rendering is not gated on expansion.
+   *Revisit trigger:* the next popup sizing or density pass.
+6. **Two grammatical components can share one surface and span** — `사과했어요`
+   yields `했 · verb-forming suffix` and `했 · tense or honorific` at [2,3).
+   Both morphemes are real and the contract permits overlap, but it reads as a
+   duplicate. *Revisit trigger:* same as 5.
+
+## Dismissed
+
+- **CoreFoundation ownership and release paths.** Every `Copy`/`Create` result
+  is released on success, failure and exception paths; 6,000 acquisitions grew
+  peak RSS by 0 bytes. The attribute-name `CFString` cache is deliberately
+  retained and bounded by the number of attribute names.
+- **ctypes signature errors.** All widths, structures and return types verified
+  by round-trip. (A segfault during review came from the reviewer's own untyped
+  probe, not from the adapter, which types `CFRelease` correctly.)
+- **`TextSelection.source` influencing results.** Identical status, entries,
+  lemma and components across seven labels including a 200,000-character one.
+- **Stale direct results.** The coordinator re-checks currency after the call
+  and the hover runtime re-checks before submitting; a request built outside the
+  hover state machine is correctly treated as not current.
+
+## Final gates
+
+```
+pytest                  -> 2098 passed, 2 skipped
+pytest --suite native   -> 75 passed   (+3 from this review)
+pytest --suite packaged -> 3 passed
+ruff                    -> All checks passed
+mypy                    -> Success, 278 source files
+```
+
+No failure was dismissed as pre-existing; the only failures during this review
+were the two regression tests written to demonstrate defects 1 and 3, each
+confirmed to fail against the reviewed implementation and pass after the fix.
+
+## Commits created during review
+
+| Hash | Subject |
+|---|---|
+| `1dbe8e8` | fix: bound accessibility offsets, deadline and trace label |
+
+`0ec5008`, `22bb4be`, `573b115`, `c083d62`, `b0851a8` and `ae3bccc` are
+unchanged. **Wave 6 was not started, and nothing was pushed or merged.**
