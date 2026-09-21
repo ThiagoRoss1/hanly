@@ -12,6 +12,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from hashlib import blake2b
+from re import compile as re_compile
 from typing import Protocol, cast
 
 from hanly import (
@@ -299,8 +300,7 @@ class LookupWorker:
                 "lookup_acquisition",
                 lookup_request_id=item.request_id,
                 hover_request_id=item.hover_request_id,
-                # The label only, never the word it was read from.
-                acquisition_source=item.selection.source,
+                acquisition_source=_acquisition_label(item.selection.source),
                 ocr_stage_skipped=True,
             )
             return self._pipeline.lookup_selection(
@@ -513,6 +513,20 @@ def _prewarm_provider(
         stage=stage,
         duration_ns=_trace_clock() - started_ns,
     )
+
+
+#: An acquisition label names a route, not content. Anything else is reported
+#: as unknown rather than copied into a trace, so a caller cannot make the
+#: trace carry recognized text or grow without bound through this field.
+_LABEL_PATTERN = re_compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
+
+
+def _acquisition_label(source: str | None) -> str | None:
+    """The route a selection came from, bounded and free of content."""
+
+    if source is None:
+        return None
+    return source if _LABEL_PATTERN.match(source) else "unknown"
 
 
 def _cache_key_fingerprint(key: LookupCacheKey) -> str:

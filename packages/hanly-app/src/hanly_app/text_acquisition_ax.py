@@ -77,6 +77,10 @@ class _AccessibilityBridge:
             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_void_p),
         ]
+        services.AXUIElementSetMessagingTimeout.restype = ctypes.c_int
+        services.AXUIElementSetMessagingTimeout.argtypes = [
+            ctypes.c_void_p, ctypes.c_float,
+        ]
         services.AXValueCreate.restype = ctypes.c_void_p
         services.AXValueCreate.argtypes = [ctypes.c_int, ctypes.c_void_p]
         services.AXValueGetValue.restype = ctypes.c_bool
@@ -160,18 +164,34 @@ class _AccessibilityBridge:
 
     # --- accessibility ----------------------------------------------------
 
-    def element_at(self, x: float, y: float) -> ctypes.c_void_p | None:
+    def element_at(
+        self, x: float, y: float, timeout_seconds: float
+    ) -> ctypes.c_void_p | None:
         system = ctypes.c_void_p(self._services.AXUIElementCreateSystemWide())
         if not system:
             return None
         try:
+            # These calls are synchronous and cross into the target
+            # application, so a deadline has to be given to the API itself.
+            # Measuring elapsed time afterwards discards a late answer but does
+            # nothing about an unresponsive application holding the caller.
+            self._services.AXUIElementSetMessagingTimeout(
+                system, ctypes.c_float(timeout_seconds)
+            )
             element = ctypes.c_void_p()
             status = self._services.AXUIElementCopyElementAtPosition(
                 system, ctypes.c_float(x), ctypes.c_float(y), ctypes.byref(element)
             )
         finally:
             self.release(system)
-        return element if status == _AX_SUCCESS and element else None
+        if status != _AX_SUCCESS or not element:
+            return None
+        # The element is a separate object; the system-wide deadline does not
+        # travel with it.
+        self._services.AXUIElementSetMessagingTimeout(
+            element, ctypes.c_float(timeout_seconds)
+        )
+        return element
 
     def attribute(
         self, element: ctypes.c_void_p, name: str
@@ -228,18 +248,19 @@ class AccessibilityTextProvider:
     def read_at(self, point: Point, *, timeout_ms: int) -> DirectText | None:
         """Return what accessibility says is at ``point``.
 
-        ``timeout_ms`` is not enforced here. The accessibility calls are
-        synchronous and the system applies its own per-call deadline, so the
-        coordinator measures the elapsed time and discards a late answer
-        instead of this module pretending to interrupt one.
+        ``timeout_ms`` becomes the accessibility API's own messaging deadline,
+        so an unresponsive application returns an error instead of holding the
+        caller. The coordinator separately discards an answer that still
+        arrived too late to be about where the pointer is now.
         """
 
-        del timeout_ms
         bridge = _bridge_once()
         if bridge is None:
             return None
 
-        element = bridge.element_at(float(point.x), float(point.y))
+        element = bridge.element_at(
+            float(point.x), float(point.y), max(timeout_ms, 1) / 1000.0
+        )
         if element is None:
             return None
         try:
@@ -269,6 +290,13 @@ class AccessibilityTextProvider:
         text = self._string_for_range(bridge, element, start, length)
         if text is None:
             return None
+        # Accessibility counts in UTF-16 code units and Python counts code
+        # points. They agree for Korean, and diverge by one per surrogate pair,
+        # so a line holding an emoji would hand back an index naming a
+        # different character than the one under the pointer.
+        if not text.isascii() and len(text.encode("utf-16-le")) != len(text) * 2:
+            return None
+
         bounds = self._bounds_for_range(bridge, element, start, length)
         return DirectText(
             text=text,

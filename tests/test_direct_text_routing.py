@@ -355,3 +355,45 @@ def test_without_a_reader_the_runtime_never_tries_direct_text() -> None:
         controller.stop(wait=True)
 
     assert submitted == []
+
+
+# --- the acquisition label is a route, not content ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("accessibility", "accessibility"),
+        ("ocr", "ocr"),
+        ("A" * 200_000, "unknown"),
+        ("초대받았어요-secret", "unknown"),
+        ("\x00\x01evil", "unknown"),
+        ('{"json":"injection"}', "unknown"),
+    ],
+)
+def test_only_a_bounded_route_label_reaches_the_trace(
+    source: str, expected: str
+) -> None:
+    """A trace must not grow without bound, nor carry recognized text."""
+
+    sink = _Sink()
+    worker = LookupWorker(
+        lambda: _ExplodingOCR(), _Morphology, _Dictionary, trace_sink=sink
+    )
+    try:
+        worker(
+            LookupRequest(
+                1,
+                None,
+                _TARGET,
+                selection=TextSelection(text=_KOREAN, cursor_index=0, source=source),
+            )
+        )
+    finally:
+        worker.close()
+
+    events = [e for e in sink.events if e.get("event_kind") == "lookup_acquisition"]
+    assert [e["acquisition_source"] for e in events] == [expected]
+    blob = repr(sink.events)
+    assert _KOREAN not in blob
+    assert len(blob) < 10_000
