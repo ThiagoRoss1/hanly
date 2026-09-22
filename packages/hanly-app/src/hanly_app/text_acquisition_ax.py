@@ -40,7 +40,7 @@ _CF_NUMBER_LONG = 10
 #: instead be reported as too late to use.
 _NATIVE_DEADLINE_SHARE = 0.5
 
-#: Roles whose contents are a secret the user typed.
+#: Secure text is normally a subrole; retain the role check for custom controls.
 _SECURE_ROLES = frozenset({"AXSecureTextField"})
 
 
@@ -331,6 +331,9 @@ class AccessibilityTextProvider:
         if element is None:
             return None
         try:
+            role = self._string_attribute(bridge, element, "AXRole")
+            if role is None or self._secure_element(bridge, element, role):
+                return None
             return self._span_bounds(bridge, element, point, start, end)
         finally:
             bridge.release(element)
@@ -376,7 +379,9 @@ class AccessibilityTextProvider:
         point: Point,
     ) -> DirectText | None:
         role = self._string_attribute(bridge, element, "AXRole")
-        if role in _SECURE_ROLES:
+        if role is None:
+            return None
+        if self._secure_element(bridge, element, role):
             # Reported without its contents, so the caller can refuse it by
             # reason rather than by an empty answer it cannot explain.
             return DirectText(text="", cursor_index=0, secure=True, role=role)
@@ -405,6 +410,14 @@ class AccessibilityTextProvider:
             cursor_index=cursor_index,
             bounds=bounds,
             role=role,
+        )
+
+    def _secure_element(
+        self, bridge: _AccessibilityBridge, element: ctypes.c_void_p, role: str
+    ) -> bool:
+        return (
+            role in _SECURE_ROLES
+            or self._string_attribute(bridge, element, "AXSubrole") in _SECURE_ROLES
         )
 
     @staticmethod
