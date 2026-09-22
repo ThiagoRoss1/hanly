@@ -512,3 +512,144 @@ available from the morphology or dictionary evidence already computed.
 
 **Wave 6 remains `NOT STARTED — requires a real Windows environment`, and
 nothing was pushed or merged.**
+
+---
+
+# Focused Correction Delta Review Outcome
+
+- **Reviewer / ecosystem / date:** Claude Opus 5, single run, macOS 26.6.2,
+  `.venv/bin/python` 3.13.11, 2026-09-22.
+- **Scope:** `fced4e1..abca3a9` only, plus its integration with the accepted
+  Wave 5 behaviour. Not a re-audit of the campaign.
+- **Verdict:** **Accept, with the hardening in `b31b4b3`.** The three
+  corrections do what they claim. Three further defects were found at the
+  concurrency boundary and fixed under review authority, and two reported
+  details are corrected below. Wave 6 not started; nothing pushed or merged;
+  no existing commit amended, squashed, rebased or reordered.
+
+## Independently reproduced
+
+| Claim | Verdict |
+|---|---|
+| Acquisition never runs on the submitting thread | **Confirmed** — the provider records its thread, and scheduling returns while the provider is still blocked inside `read_at` |
+| One worker and one watcher, no thread per hover | **Confirmed** — 500 submits during a blocked call produced **1 native call, 2 service threads, 1 outcome** |
+| Bounded state, replaced jobs never publish | **Confirmed** by the same probe |
+| One-shot latch yields exactly one outcome | **Confirmed** — 200 rounds with the release landing on the deadline, and 300 two-thread supersession races, all delivered exactly once |
+| Late answers never published | **Confirmed**, including after close |
+| Timeout drives exactly one fallback; superseded jobs drive none | **Confirmed** |
+| Direct success makes no OCR call; a validated dictionary miss makes none | **Confirmed** (existing routing tests re-run) |
+| Monotonic clock | **Confirmed** — `monotonic_ns` |
+| Double close, submit-after-close, close-while-pending | **Confirmed** safe |
+| UTF-16 conversion | **Confirmed** against a from-scratch model: **144 offsets, 0 mismatches**, covering emoji before/after/inside, a non-emoji supplementary character, combining marks, multiline, punctuation, empty text, and offsets before, inside and after surrogate pairs |
+| `🙂🙂초대받았어요` | **Confirmed** — every Korean position yields the identical selection to the pure line; a pointer on an emoji falls back rather than naming a neighbour |
+| `Hello 초대받았어요` and multi-run lines | **Confirmed** — each Korean run selects independently with an index relative to its own narrowed surface; pointers on Latin, space and punctuation fall back |
+| No platform offsets leak into `hanly` | **Confirmed** — conversion is at the adapter only; the engine has no AX, Qt, threading or desktop reference, and no public contract changed in this delta |
+| Classification 165 / 114 / 51, 0 duplicate queries | **Confirmed exactly** at the reported seed, and stable at 67.5–69.0% across other seeds and a 4,000-word sample |
+| Rule is generic | **Confirmed** — no word-specific case and no gloss-text inspection; all-or-nothing per decomposition, so partial evidence cannot leak a misleading part |
+| `전우애` false positive, `맏사위` false negative | **Confirmed** — `전 · former` is form-faithful but the wrong reading; `맏사위` loses the useful `사위` because its bound prefix is not an entry |
+| Privacy on the async path | **Confirmed** — an exception message containing recognized text is reduced to its type name on every path, secure fields carry neither text nor geometry, the route label stays bounded, nothing private is tracked |
+| Wave 6 statement | **Confirmed** verbatim in both documents |
+
+Real TextEdit through the service: **195 direct reads**, p50 **1.264 ms**,
+p95 4.654 ms, p99 7.043 ms, max 10.676 ms, with **3 timeouts in 15,980 probes**.
+
+## Fixed now — `b31b4b3`
+
+**1. The deadline watcher spun at 99% of a core.** Once a deadline was
+answered, `_active` still held the blocked job with no time remaining, so the
+watcher re-decided it in a tight loop for as long as the target stayed
+unresponsive — measured at **99.1% of one core over one second**, now **0.2%**.
+Exactly one outcome was still delivered, so this was pure CPU burn at the worst
+possible moment. Guarded by a deterministic test that counts decisions rather
+than timing them.
+
+**2. A delivery that raised killed the worker thread.** `job.deliver` ran
+unguarded inside the worker loop, so one failing dispatcher callback terminated
+the worker permanently and silently. Nothing then consumed later jobs, and
+because `_start_direct_text` had already returned "handled", the hover would
+wait for an outcome that never came **and never fall back to capture** — hover
+would stop answering entirely. Delivery failures are now contained.
+
+**3. `close()` from a delivered callback raised `RuntimeError: cannot join
+current thread`.** Delivery runs on a service thread, so a caller closing from
+its own callback self-joined. `close` now skips joining the calling thread.
+
+All three were demonstrated failing against `abca3a9` before the fix.
+
+**4. A wall-clock assertion was replaced by an ordering one.** The `< 25 ms`
+scheduling check would be the first thing to flake on a loaded CI host; the same
+claim is now proved by the provider still being blocked when scheduling returns.
+
+## Corrected measurements
+
+- **`책상` is not a real-provider example.** The correction outcome and
+  `64dd24d`'s message list it among words that regained their parts. Real Kiwi
+  does **not** split `책상` at all — it yields the single candidate `책상`, so
+  there is no decomposition either way. The restored-parts behaviour for it
+  comes from a scripted double in `test_app_composition.py`. The other four
+  examples (`두통거리`, `동력선`, `고종사촌`, `가공식품`) are genuine.
+- **The dictionary maximum is 5, not 4.** "A measured maximum of four" is true
+  of the 1,200-word sample; a 4,000-word sample reaches **5**, which is the
+  documented contract bound and is never exceeded. Duplicates remain **0**.
+
+## Deferred
+
+1. **The narrowed run carries the whole line's rectangle.** For
+   `Hello 초대받았어요` the retained-target geometry spans `Hello` as well, so
+   the answer is held while the pointer is over non-Korean text on that line.
+   Correcting it needs a second `AXBoundsForRange` call on the narrowed range.
+   *Revisit trigger:* when the retained-target region is next revised, or when a
+   second platform needs the same narrowing.
+2. **The faithfulness rule judges form, not sense** — the `전우애` and `맏사위`
+   cases above. *Revisit trigger:* if a sense-aware signal becomes available
+   from evidence the lookup already computes. Not implemented here, as required.
+3. **Emoji and mixed-script documents were validated through the coordinator and
+   the adapter, not through a frontmost TextEdit window**, because AX
+   hit-testing only reaches the frontmost document. *Revisit trigger:* the next
+   session with a real desktop and one window per case.
+4. Previously deferred items stand unchanged with their existing triggers:
+   Windows/Wave 6, DOM and browser extensions, Safari and Discord limits,
+   Retina and multi-display validation, popup redesign, the 47% compact-panel
+   height, overlapping grammatical annotations, and Wave 7.
+
+## Dismissed
+
+- **Lost wakeups, lock ordering, deadlock and callbacks under locks.**
+  Delivery happens outside `self._condition`; the worker now notifies when it
+  clears the active job; 500 rounds of races produced no double delivery and no
+  hang.
+- **Unbounded queues or retained completed jobs.** At most one pending job
+  exists and it is dropped when replaced.
+- **Native cancellation misrepresented.** The code states plainly that a
+  synchronous call cannot be stopped and relies on the latch instead.
+- **The half-budget native deadline is a defensible policy, not a fixture
+  workaround.** The watcher remains the authoritative deadline; the native share
+  exists only so a call that reaches its messaging timeout returns early enough
+  to be classified. Reproduced on a 148-point sweep: **130 timeouts at 1.0×,
+  0 at 0.5× and at 0.25×**, with those points correctly `unsupported`.
+- **Daemon threads hiding leaked state.** `close` joins them, and the service
+  suite asserts neither thread survives; no `hanly-*` thread remained after any
+  probe.
+
+## Gates
+
+```
+pytest                                 -> 2162 passed, 2 skipped
+pytest --suite native                  -> 94 passed
+pytest --suite packaged                -> 3 passed
+boundary / export / privacy suites     -> 161 passed
+ruff                                   -> All checks passed
+mypy                                   -> Success, 279 source files
+```
+
+No failure was dismissed as pre-existing; the only failures were the three
+regression tests written to demonstrate the defects above.
+
+## Commits created during this review
+
+| Hash | Subject |
+|---|---|
+| `b31b4b3` | fix: stop the acquisition watcher spinning and surviving callers |
+
+`981a718`, `64dd24d` and `abca3a9` are unchanged, as is everything through
+`fced4e1`. **Wave 6 was not started, and nothing was pushed or merged.**
