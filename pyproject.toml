@@ -57,5 +57,9 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = ["Foundation", "objc"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["numpy.*"]
 follow_imports = "skip"

@@ -132,7 +132,7 @@ class VisionProvider:
     def _run(
         self, request_class: Any, handler_class: Any, payload: bytes
     ) -> Sequence[Any]:
-        from Foundation import NSData  # type: ignore[import-untyped]
+        from Foundation import NSData
 
         request = request_class.alloc().init()
         request.setRecognitionLevel_(_LEVEL_ACCURATE)
@@ -155,7 +155,7 @@ class VisionProvider:
         if sys.platform != "darwin":
             raise VisionProviderError("Vision text recognition requires macOS")
         try:
-            import objc  # type: ignore[import-untyped]
+            import objc
             from Foundation import NSBundle
         except Exception as exc:
             raise VisionProviderError("pyobjc is unavailable") from exc
