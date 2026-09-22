@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from threading import Condition, Event, Thread
+from threading import Condition, Event, Thread, current_thread
 from typing import Protocol
 
 from hanly import BoundingBox, Point, TextSelection
@@ -371,8 +371,13 @@ class DirectTextService:
             self._closed = True
             self._pending = None
             self._condition.notify_all()
-        self._worker.join(timeout=5.0)
-        self._watcher.join(timeout=5.0)
+        # Delivery runs on a service thread, so a caller may well be closing
+        # from inside its own callback. Joining the thread doing the closing
+        # would raise; the rest of the shutdown is already done.
+        current = current_thread()
+        for thread in (self._worker, self._watcher):
+            if thread is not current:
+                thread.join(timeout=5.0)
 
     def _work(self) -> None:
         while True:
@@ -391,6 +396,9 @@ class DirectTextService:
             with self._condition:
                 if self._active is job:
                     self._active = None
+                # The watcher is waiting on this job; tell it the job is over
+                # rather than leaving it to notice on a timeout.
+                self._condition.notify_all()
             self._deliver(job, outcome)
 
     def _run(self, job: _Job) -> Acquisition:
@@ -411,6 +419,12 @@ class DirectTextService:
                 if remaining > 0:
                     self._condition.wait(timeout=remaining)
                     continue
+                if job.delivered.is_set():
+                    # Its deadline has already been answered and the native
+                    # call cannot be stopped, so there is nothing left to
+                    # decide until the worker moves on to another job.
+                    self._condition.wait(timeout=0.05)
+                    continue
             # The native call is still running and cannot be stopped. The
             # caller is released to capture instead of waiting for it, and the
             # answer it eventually produces is dropped by the latch.
@@ -426,7 +440,14 @@ class DirectTextService:
             closed = self._closed
         if closed:
             return
-        job.deliver(outcome)
+        try:
+            job.deliver(outcome)
+        except Exception:
+            # The caller's delivery is not this service's business, and a
+            # failure in it must not take the worker down: nothing would
+            # consume later jobs, so a hover would wait for an outcome that
+            # never came and never fall back to capture either.
+            pass
 
     def _superseded(self, job: _Job) -> bool:
         with self._condition:

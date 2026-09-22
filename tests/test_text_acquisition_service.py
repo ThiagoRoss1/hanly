@@ -227,31 +227,25 @@ def test_submitting_after_close_is_refused() -> None:
 def test_the_submitting_thread_keeps_working_while_a_read_is_blocked() -> None:
     """The thread that draws must not wait on accessibility IPC."""
 
-    from time import perf_counter_ns
-
     block = Event()
     reader = _Reader(block=block)
     service = _service(reader, timeout_ms=5_000)
     try:
-        started = perf_counter_ns()
         service.submit(_POINT, lambda _a: None)
-        scheduling_ns = perf_counter_ns() - started
+        # Scheduling returned while the provider is still inside read_at, which
+        # is the whole claim: it handed the work over rather than performing it.
+        # Proved by ordering rather than by a clock, so a loaded host cannot
+        # turn this into a flake.
         assert reader.entered.wait(timeout=5.0), "the read never started"
+        assert not block.is_set(), "the reader was released before the check"
 
-        # The provider is now stuck inside read_at. The submitting thread must
-        # still be free, which it proves by completing work of its own.
-        ticks = 0
-        working = perf_counter_ns()
-        while perf_counter_ns() - working < 50_000_000:
-            ticks += 1
-        assert ticks > 0
-        assert reader.block is not None and not reader.block.is_set()
+        # The submitting thread is free to keep working while it is stuck.
+        ticks = sum(1 for _ in range(10_000))
+        assert ticks == 10_000
+        assert not block.is_set()
     finally:
         block.set()
         service.close()
-
-    # Scheduling is a handoff, not the call: it cannot have waited for it.
-    assert scheduling_ns < 25_000_000, scheduling_ns
 
 
 def test_a_native_deadline_shorter_than_the_budget_leaves_room_to_classify() -> None:
@@ -264,3 +258,98 @@ def test_a_native_deadline_shorter_than_the_budget_leaves_room_to_classify() -> 
     from hanly_app.text_acquisition_ax import _NATIVE_DEADLINE_SHARE
 
     assert 0 < _NATIVE_DEADLINE_SHARE < 1
+
+
+def test_the_watcher_stops_working_once_a_deadline_is_answered() -> None:
+    """A blocked call must not keep the deadline watcher busy.
+
+    The deadline has passed and the native call cannot be stopped, so there is
+    nothing left to decide until the job changes. Re-deciding it in a loop
+    burns a core for as long as the target stays unresponsive.
+    """
+
+    from time import monotonic, sleep
+
+    block = Event()
+    reader = _Reader(block=block)
+    service = _service(reader, timeout_ms=20)
+    attempts = 0
+    original = service._deliver
+
+    def counting(job: object, outcome: Acquisition) -> None:
+        nonlocal attempts
+        attempts += 1
+        original(job, outcome)  # type: ignore[arg-type]
+
+    service._deliver = counting  # type: ignore[method-assign]
+    collector = _collect()
+    try:
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0)
+        settled = attempts
+
+        # The call is still stuck. Nothing further should be decided about it.
+        deadline = monotonic() + 0.4
+        while monotonic() < deadline:
+            sleep(0.02)
+        assert attempts - settled <= 2, attempts - settled
+    finally:
+        block.set()
+        service.close()
+
+    assert [a.outcome for a in collector.outcomes] == [Outcome.TIMED_OUT]
+
+
+def test_a_failing_callback_does_not_disable_the_service() -> None:
+    """A delivery that raises must not take the worker down with it.
+
+    If it did, nothing would consume later jobs, no outcome would ever arrive,
+    and the hover that scheduled one would never fall back to capture either.
+    """
+
+    reader = _Reader()
+    service = _service(reader)
+    collector = _collect()
+    try:
+
+        refused = Event()
+
+        def refuse(_acquired: Acquisition) -> None:
+            refused.set()
+            raise RuntimeError("the dispatcher refused")
+
+        service.submit(_POINT, refuse)
+        # Wait for the failure to actually happen; latest-wins would otherwise
+        # replace this job before it ever ran.
+        assert refused.wait(timeout=5.0)
+
+        # The next hover still has to be answered.
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0), "the service stopped delivering"
+    finally:
+        service.close()
+
+    assert collector.outcomes[0].outcome is Outcome.DIRECT
+
+
+def test_closing_from_a_delivered_callback_does_not_fail() -> None:
+    """Delivery runs on a service thread, so closing there must not self-join."""
+
+    service = _service(_Reader())
+    failure: list[BaseException] = []
+    done = Event()
+
+    def close_from_callback(_acquired: Acquisition) -> None:
+        try:
+            service.close()
+        except BaseException as error:  # noqa: BLE001
+            failure.append(error)
+        finally:
+            done.set()
+
+    service.submit(_POINT, close_from_callback)
+    assert done.wait(timeout=5.0)
+
+    assert failure == []
+    # And a second close from an ordinary thread is still safe.
+    service.close()
