@@ -572,8 +572,9 @@ def test_tracing_does_not_change_the_selected_candidate_or_queried_lemma() -> No
     untraced, untraced_dictionary = _compound_lookup(None)
     traced, traced_dictionary = _compound_lookup(_RecordingSink())
 
-    # `책상` is a word, so the whole form is what the dictionary is asked for.
-    assert untraced_dictionary.queries == ["책상"]
+    # `책상` is a word, so the whole form is what is asked for first; its parts
+    # are then asked about to judge whether they explain it.
+    assert untraced_dictionary.queries == ["책상", "책", "상"]
     assert traced_dictionary.queries == untraced_dictionary.queries
     assert traced.status is untraced.status is LookupStatus.SUCCESS
     assert traced.context is not None and untraced.context is not None
@@ -658,7 +659,7 @@ def test_tracing_does_not_upgrade_a_pair_only_resolver() -> None:
     (untraced, untraced_dictionary), (traced, traced_dictionary) = results
     # The pair contract carries no pointer offset, so both paths fall back to
     # the start of the resolved word rather than one of them gaining an offset.
-    assert untraced_dictionary.queries == ["책상"]
+    assert untraced_dictionary.queries == ["책상", "책", "상"]
     assert traced_dictionary.queries == untraced_dictionary.queries
     assert traced.context is not None and untraced.context is not None
     assert traced.context.candidate == untraced.context.candidate

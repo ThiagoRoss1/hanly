@@ -189,3 +189,61 @@ def test_overlapping_real_spans_are_preserved(language: LanguagePipeline) -> Non
     spans = [(c.lemma, c.start, c.end) for c in result.context.components]
     assert ("예쁘다", 0, 4) in spans
     assert ("었", 1, 2) in spans
+
+
+@pytest.mark.parametrize(
+    ("surface", "parts"),
+    [
+        ("두통거리", ["두통", "거리"]),
+        ("동력선", ["동력", "선"]),
+        ("고종사촌", ["고종", "사촌"]),
+        ("가공식품", ["가공", "식품"]),
+    ],
+)
+def test_a_listed_word_whose_parts_read_as_themselves_keeps_them(
+    language: LanguagePipeline, surface: str, parts: list[str]
+) -> None:
+    result = language.lookup(TextSelection(surface, 0))
+
+    assert result.entries[0].headword == surface
+    assert result.context is not None
+    lexical = [c for c in result.context.components if not c.grammatical]
+    assert [surface[c.start : c.end] for c in lexical] == parts
+    assert all(c.gloss for c in lexical)
+
+
+@pytest.mark.parametrize(
+    "surface", ["여행가", "고소득층", "깜짝이야", "고차원적", "구시대적", "꿀꿀이"]
+)
+def test_a_listed_word_whose_parts_name_other_words_shows_none(
+    language: LanguagePipeline, surface: str
+) -> None:
+    """These parts are the morphology substituting a different word."""
+
+    result = language.lookup(TextSelection(surface, 0))
+
+    assert result.entries[0].headword == surface
+    assert result.context is not None
+    assert [c for c in result.context.components if not c.grammatical] == []
+
+
+def test_the_dictionary_is_never_asked_more_than_five_times(
+    language: LanguagePipeline,
+) -> None:
+    dictionary = KRDICTProvider(_database())
+    asked: list[str] = []
+
+    class _Counting:
+        def lookup(self, lemma: str) -> tuple:
+            asked.append(lemma)
+            return dictionary.lookup(lemma)
+
+    try:
+        counted = LanguagePipeline(KiwiProvider(), _Counting())
+        for surface in ("두통거리", "초대받았어요", "고소득층", "예뻤어요", "학교"):
+            asked.clear()
+            counted.lookup(TextSelection(surface, 0))
+            assert len(asked) <= 5, (surface, asked)
+            assert len(set(asked)) == len(asked), (surface, asked)
+    finally:
+        dictionary.close()

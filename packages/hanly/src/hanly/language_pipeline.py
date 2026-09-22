@@ -129,9 +129,6 @@ class LanguagePipeline:
         probes = _DictionaryProbes(self._dictionary_provider)
         try:
             selected, entries = self._resolve_entries(probes, analysis, selected, text)
-            # The dictionary listing the whole surface settles what it is; the
-            # morphology's split of it into other words is then a worse reading,
-            # not extra information.
             listed_whole = bool(entries) and selected.lemma == text
             components = _components(
                 probes, analysis, text, selection.cursor_index, listed_whole
@@ -373,14 +370,19 @@ def _components(
     """Describe how ``text`` is built, with a gloss for each part.
 
     A surface that does not decompose has nothing to explain, so it returns
-    nothing and a client has no panel to show. When the dictionary lists the
-    surface itself, its parts are dropped: ``고소득층`` is one word, and naming
-    its first syllable ``고 · the late`` would explain it wrongly. The endings
+    nothing and a client has no panel to show.
+
+    When the dictionary lists the surface itself, the word is already settled
+    and its morphological split is only worth showing if every part genuinely
+    explains the characters it covers. ``두통거리`` is ``두통`` and ``거리``,
+    which is worth knowing; ``고소득층`` is not ``고 · the late``. The endings
     are kept either way, because they describe the form rather than rename it.
     """
 
     lexical = (
-        [] if listed_whole else _lexical_components(probes, analysis, text, cursor_index)
+        _lexical_components(probes, analysis, text, cursor_index)
+        if not listed_whole or _decomposition_is_faithful(probes, analysis, text)
+        else []
     )
     grammatical = _grammatical_components(analysis, text)
     if len(lexical) + len(grammatical) < 2:
@@ -389,6 +391,35 @@ def _components(
     # Stable in morphology order for equal offsets, which keeps a stem ahead of
     # the ending that fuses into the same characters.
     return tuple(sorted(lexical + grammatical, key=lambda item: item.start))
+
+
+def _decomposition_is_faithful(
+    probes: _DictionaryProbes, analysis: MorphologyAnalysis, text: str
+) -> bool:
+    """Whether every part explains exactly the characters it covers.
+
+    A part earns its place when the dictionary holds its lemma *and* that lemma
+    is what the span actually reads. Both halves are needed: a lemma the
+    dictionary lacks explains nothing, and a lemma that differs from its own
+    surface is the morphology having substituted a different word -- ``가다``
+    for the ``가`` of ``여행가``, ``이다`` for the ``이야`` of ``깜짝이야``, or a
+    bare ``소득`` for the ``소득층`` of ``고소득층``.
+
+    Running out of dictionary budget answers no as well, since an unglossed
+    part cannot be shown to explain anything.
+    """
+
+    candidates = analysis.candidates
+    if len(candidates) < 2:
+        return False
+
+    for candidate in candidates:
+        span = _clamp_span(candidate.start, candidate.end, text)
+        if span is None or text[span[0] : span[1]] != candidate.lemma:
+            return False
+        if not probes.lookup(candidate.lemma):
+            return False
+    return True
 
 
 def _lexical_components(

@@ -247,7 +247,8 @@ def test_a_surface_the_dictionary_lists_whole_keeps_no_misleading_split() -> Non
     assert result.entries[0].headword == "고소득층"
     assert result.context is not None
     assert [c.lemma for c in result.context.components if not c.grammatical] == []
-    assert "고" not in dictionary.queries
+    # The parts are asked about in order to judge them, and then not shown.
+    assert len(dictionary.queries) <= 5
 
 
 # --- the dictionary budget --------------------------------------------------
@@ -260,7 +261,8 @@ def test_the_exact_surface_is_probed_before_anything_is_reconstructed() -> None:
     result = language.lookup(TextSelection(_SURFACE, 0))
 
     assert result.entries[0].headword == _SURFACE
-    assert dictionary.queries == [_SURFACE]
+    assert dictionary.queries[0] == _SURFACE
+    assert len(dictionary.queries) <= 5
 
 
 def test_a_repeated_lemma_is_asked_for_only_once() -> None:
@@ -305,3 +307,131 @@ def test_no_lookup_exceeds_five_dictionary_queries() -> None:
 
     assert len(dictionary.queries) <= 5
     assert len(set(dictionary.queries)) == len(dictionary.queries)
+
+
+# --- a decomposition has to explain the characters it covers -----------------
+
+
+def _split(parts: list[tuple[str, int, int, str]], text: str) -> MorphologyAnalysis:
+    """An analysis whose candidates are (lemma, start, end, pos)."""
+
+    return MorphologyAnalysis(
+        tokens=tuple(
+            TokenAnalysis(
+                token=text[start:end], lemma=lemma, part_of_speech=pos,
+                start=start, length=end - start,
+            )
+            for lemma, start, end, pos in parts
+        ),
+        candidates=tuple(
+            LexicalCandidate(lemma=lemma, start=start, end=end, part_of_speech=pos)
+            for lemma, start, end, pos in parts
+        ),
+    )
+
+
+def test_a_listed_word_keeps_parts_that_read_as_themselves() -> None:
+    """`두통거리` is `두통` and `거리`, which is worth knowing."""
+
+    text = "두통거리"
+    analysis = _split([("두통", 0, 2, "NNG"), ("거리", 2, 4, "NNG")], text)
+    dictionary = _Dictionary(
+        {"두통거리": "a source of headaches", "두통": "headache", "거리": "material"}
+    )
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    result = language.lookup(TextSelection(text, 0))
+
+    assert result.entries[0].headword == text
+    assert [c.lemma for c in result.context.components] == ["두통", "거리"]  # type: ignore[union-attr]
+
+
+def test_a_listed_word_drops_a_part_that_names_a_different_word() -> None:
+    """`여행가` is not `여행` and `가다`; the span reads `가`, not `가다`."""
+
+    text = "여행가"
+    analysis = _split([("여행", 0, 2, "NNG"), ("가다", 2, 3, "VV")], text)
+    dictionary = _Dictionary({"여행가": "traveller", "여행": "travel", "가다": "go"})
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    result = language.lookup(TextSelection(text, 0))
+
+    assert result.entries[0].headword == text
+    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+
+
+def test_a_listed_word_drops_a_part_whose_span_swallowed_a_suffix() -> None:
+    """`고소득층` is one word; its span reads `소득층`, not `소득`."""
+
+    text = "고소득층"
+    analysis = _split([("고", 0, 1, "XPN"), ("소득", 1, 4, "NNG")], text)
+    dictionary = _Dictionary(
+        {"고소득층": "high-income bracket", "고": "the late", "소득": "income"}
+    )
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    result = language.lookup(TextSelection(text, 0))
+
+    assert result.entries[0].headword == text
+    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+
+
+def test_a_listed_word_drops_a_part_the_dictionary_does_not_hold() -> None:
+    """A part with no entry explains nothing, however well its span reads."""
+
+    text = "맏사위"
+    analysis = _split([("맏", 0, 1, "XPN"), ("사위", 1, 3, "NNG")], text)
+    dictionary = _Dictionary({"맏사위": "oldest son-in-law", "사위": "son-in-law"})
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    result = language.lookup(TextSelection(text, 0))
+
+    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+
+
+def test_a_surface_the_dictionary_lacks_still_decomposes() -> None:
+    """`초대받았어요` has no entry of its own, so its parts are the answer."""
+
+    dictionary = _Dictionary(_KNOWN)
+    language = LanguagePipeline(_Morphology(_SPLIT), dictionary)
+
+    result = language.lookup(TextSelection(_SURFACE, 0))
+
+    assert [c.lemma for c in result.context.components] == [  # type: ignore[union-attr]
+        "초대",
+        "받다",
+        "었",
+        "어요",
+    ]
+
+
+def test_cursor_movement_inside_a_listed_word_keeps_the_same_entry() -> None:
+    text = "두통거리"
+    analysis = _split([("두통", 0, 2, "NNG"), ("거리", 2, 4, "NNG")], text)
+    dictionary = _Dictionary(
+        {"두통거리": "a source of headaches", "두통": "headache", "거리": "material"}
+    )
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    headwords = {
+        language.lookup(TextSelection(text, index)).entries[0].headword
+        for index in range(len(text))
+    }
+
+    assert headwords == {text}
+
+
+def test_an_exhausted_budget_shows_only_the_complete_form() -> None:
+    """An unglossed part cannot be shown to explain anything."""
+
+    text = "가나다라마바"
+    parts = [(text[i], i, i + 1, "NNG") for i in range(len(text))]
+    analysis = _split(parts, text)
+    dictionary = _Dictionary({text: "a listed word"})
+    language = LanguagePipeline(_Morphology(analysis), dictionary)
+
+    result = language.lookup(TextSelection(text, 0))
+
+    assert result.entries[0].headword == text
+    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+    assert len(dictionary.queries) <= 5
