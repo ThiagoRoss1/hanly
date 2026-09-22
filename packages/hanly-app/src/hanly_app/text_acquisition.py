@@ -115,6 +115,7 @@ class DirectTextCoordinator:
         self._timeout_ms = timeout_ms
         self._permitted = permitted
         self._clock = clock or _monotonic_ns
+        self._binding_failed = False
 
     @property
     def timeout_ms(self) -> int:
@@ -128,24 +129,22 @@ class DirectTextCoordinator:
         leave it after the last. An adapter that needs nothing says nothing.
         """
 
-        self._notify_provider("bind_thread")
+        self._binding_failed = not self._notify_provider("bind_thread")
 
     def release_worker(self) -> None:
         """Undo :meth:`bind_worker`, on that same thread."""
 
         self._notify_provider("release_thread")
 
-    def _notify_provider(self, hook: str) -> None:
+    def _notify_provider(self, hook: str) -> bool:
         callback = getattr(self._provider, hook, None)
         if not callable(callback):
-            return
+            return True
         try:
             callback()
         except Exception:
-            # A platform that cannot prepare its thread simply answers nothing
-            # later; it must not stop the worker from running at all, because
-            # then no hover would ever reach its fallback.
-            pass
+            return False
+        return True
 
     def acquire(
         self,
@@ -162,6 +161,8 @@ class DirectTextCoordinator:
 
         if self._provider is None:
             return Acquisition(Outcome.NO_PROVIDER, duration_ns=elapsed())
+        if self._binding_failed:
+            return Acquisition(Outcome.FAILED, duration_ns=elapsed())
         if self._permitted is not None and not self._permitted():
             return Acquisition(Outcome.NO_PERMISSION, duration_ns=elapsed())
 
@@ -505,28 +506,31 @@ class DirectTextService:
             self._deliver(job, outcome)
 
     def _run(self, job: _Job) -> Acquisition:
-        return self._coordinator.acquire(
-            job.point, cancelled=lambda: self._superseded(job)
-        )
+        if job.delivered.is_set() or self._clock() >= job.deadline_ns:
+            return Acquisition(Outcome.TIMED_OUT)
+        try:
+            return self._coordinator.acquire(
+                job.point, cancelled=lambda: self._superseded(job)
+            )
+        except Exception as error:
+            return Acquisition(Outcome.FAILED, detail=type(error).__name__)
 
     def _watch(self) -> None:
         while True:
             with self._condition:
                 if self._closed:
                     return
-                job = self._active
+                jobs = [
+                    candidate for candidate in (self._active, self._pending)
+                    if candidate is not None and not candidate.delivered.is_set()
+                ]
+                job = min(jobs, key=lambda candidate: candidate.deadline_ns) if jobs else None
                 if job is None:
-                    self._condition.wait(timeout=0.05)
+                    self._condition.wait()
                     continue
                 remaining = (job.deadline_ns - self._clock()) / 1_000_000_000
                 if remaining > 0:
                     self._condition.wait(timeout=remaining)
-                    continue
-                if job.delivered.is_set():
-                    # Its deadline has already been answered and the native
-                    # call cannot be stopped, so there is nothing left to
-                    # decide until the worker moves on to another job.
-                    self._condition.wait(timeout=0.05)
                     continue
             # The native call is still running and cannot be stopped. The
             # caller is released to capture instead of waiting for it, and the
@@ -541,6 +545,10 @@ class DirectTextService:
                 return
             job.delivered.set()
             closed = self._closed
+            if self._generation != job.generation:
+                outcome = Acquisition(Outcome.SUPERSEDED)
+            elif self._clock() >= job.deadline_ns:
+                outcome = Acquisition(Outcome.TIMED_OUT)
         if closed:
             return
         try:

@@ -408,14 +408,16 @@ def test_a_provider_that_cannot_prepare_its_thread_still_reaches_the_fallback() 
             raise RuntimeError("nothing to leave")
 
     collector = _collect()
-    service = _service(_Unpreparable())
+    reader = _Unpreparable()
+    service = _service(reader)
     try:
         service.submit(_POINT, collector)
         assert collector.done.wait(timeout=5.0), "the worker never started"
     finally:
         service.close()
 
-    assert collector.outcomes[0].outcome is Outcome.DIRECT
+    assert collector.outcomes[0].outcome is Outcome.FAILED
+    assert reader.calls == 0
 
 
 def test_a_provider_with_nothing_to_prepare_is_left_alone() -> None:
@@ -430,3 +432,37 @@ def test_a_provider_with_nothing_to_prepare_is_left_alone() -> None:
         service.close()
 
     assert collector.outcomes[0].outcome is Outcome.DIRECT
+
+
+def test_pending_deadline_is_answered_while_the_worker_remains_blocked() -> None:
+    block = Event()
+    reader = _Reader(block=block)
+    service = _service(reader, timeout_ms=20)
+    first, latest = _collect(), _collect()
+    try:
+        service.submit(_POINT, first)
+        assert reader.entered.wait(timeout=1)
+        assert first.done.wait(timeout=1)
+        service.submit(_POINT, latest)
+        assert latest.done.wait(timeout=1), "pending hover never reached fallback"
+        assert latest.outcomes[0].outcome is Outcome.TIMED_OUT
+        assert reader.calls == 1
+    finally:
+        block.set()
+        service.close()
+
+
+def test_completion_checks_deadline_even_if_watcher_has_not_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hanly_app.text_acquisition import _Job
+
+    service = _service(_Reader())
+    collector = _collect()
+    try:
+        job = _Job(0, _POINT, 10, collector, Event())
+        monkeypatch.setattr(service, "_clock", lambda: 11)
+        service._deliver(job, Acquisition(Outcome.DIRECT))
+        assert collector.outcomes[0].outcome is Outcome.TIMED_OUT
+    finally:
+        service.close()
