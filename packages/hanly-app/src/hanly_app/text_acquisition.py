@@ -189,16 +189,53 @@ class DirectTextCoordinator:
             # else on the line. Both are for OCR to answer.
             return Acquisition(Outcome.NOT_KOREAN, duration_ns=duration)
 
-        word, cursor_index = narrowed
+        word, cursor_index, start = narrowed
+        bounds = self._precise_bounds(point, reading, start, start + len(word))
+        if bounds is None:
+            # The line's own rectangle would retain everything beside the word,
+            # including text this lookup is not about. Better to let OCR answer
+            # than to claim a region this word does not occupy.
+            return Acquisition(Outcome.AMBIGUOUS, duration_ns=duration)
+
         selection = TextSelection(
             text=word, cursor_index=cursor_index, source="accessibility"
         )
         return Acquisition(
             Outcome.DIRECT,
             selection=selection,
-            bounds=reading.bounds,
+            bounds=bounds,
             duration_ns=duration,
         )
+
+    def _precise_bounds(
+        self, point: Point, reading: DirectText, start: int, end: int
+    ) -> BoundingBox | None:
+        """The rectangle of the narrowed word, or ``None`` to refuse the read.
+
+        A provider that cannot answer about a span keeps the rectangle it gave,
+        which is the whole line; that is only right when the line *is* the word,
+        so anything narrower is refused rather than approximated.
+        """
+
+        refine = getattr(self._provider, "refine_bounds", None)
+        line = reading.bounds
+        if not callable(refine):
+            return line if (start, end) == (0, len(reading.text)) else None
+
+        try:
+            bounds = refine(point, start, end, timeout_ms=self._timeout_ms)
+        except Exception:
+            return None
+        if not isinstance(bounds, BoundingBox):
+            return None
+        # It must be the pointer's own word, and it must sit inside the line it
+        # was taken from; either failure means the control answered about
+        # something else.
+        if not _contains(bounds, point):
+            return None
+        if line is not None and not _encloses(line, bounds):
+            return None
+        return bounds
 
 
 def _contains(bounds: BoundingBox, point: Point) -> bool:
@@ -208,12 +245,13 @@ def _contains(bounds: BoundingBox, point: Point) -> bool:
     )
 
 
-def _korean_run(text: str, cursor_index: int) -> tuple[str, int] | None:
-    """The unbroken Korean the pointer is inside, and where it sits in it.
+def _korean_run(text: str, cursor_index: int) -> tuple[str, int, int] | None:
+    """The unbroken Korean the pointer is inside, where it sits, and where it starts.
 
     ``None`` when the pointer rests on anything that is not Korean, so a reader
     pointing at an emoji or a Latin word is answered by OCR rather than by the
-    nearest Hangul that happens to share the line.
+    nearest Hangul that happens to share the line. The start offset lets the
+    caller ask the platform about exactly this span.
     """
 
     if not 0 <= cursor_index < len(text) or not _is_hangul(text[cursor_index]):
@@ -225,7 +263,16 @@ def _korean_run(text: str, cursor_index: int) -> tuple[str, int] | None:
     end = cursor_index + 1
     while end < len(text) and _is_hangul(text[end]):
         end += 1
-    return text[start:end], cursor_index - start
+    return text[start:end], cursor_index - start, start
+
+
+def _encloses(outer: BoundingBox, inner: BoundingBox) -> bool:
+    return (
+        outer.left <= inner.left
+        and outer.top <= inner.top
+        and inner.right <= outer.right
+        and inner.bottom <= outer.bottom
+    )
 
 
 def _is_hangul(character: str) -> bool:

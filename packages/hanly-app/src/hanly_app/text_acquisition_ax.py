@@ -254,6 +254,19 @@ def _code_point_index(text: str, utf16_offset: int) -> int | None:
         return None
 
 
+def _utf16_offset(text: str, code_point_index: int) -> int | None:
+    """The UTF-16 offset of ``code_point_index``, the inverse of the above.
+
+    The accessibility API is asked about ranges in its own units, so a span the
+    caller expressed in characters has to be converted back before it can be
+    used to ask anything.
+    """
+
+    if not 0 <= code_point_index <= len(text):
+        return None
+    return len(text[:code_point_index].encode("utf-16-le")) // 2
+
+
 def _bridge_once() -> _AccessibilityBridge | None:
     global _bridge
     with _lock:
@@ -297,6 +310,64 @@ class AccessibilityTextProvider:
             return self._read_element(bridge, element, point)
         finally:
             bridge.release(element)
+
+    def refine_bounds(
+        self, point: Point, start: int, end: int, *, timeout_ms: int
+    ) -> BoundingBox | None:
+        """The rectangle of one span of the line previously read at ``point``.
+
+        ``start`` and ``end`` are character offsets into that line. Asking the
+        control itself is the only honest way to get this: a rectangle derived
+        by dividing the line's own rectangle would be a guess that happens to
+        look right in a monospaced font.
+        """
+
+        bridge = _bridge_once()
+        if bridge is None:
+            return None
+
+        native_deadline = max(timeout_ms * _NATIVE_DEADLINE_SHARE, 1.0) / 1000.0
+        element = bridge.element_at(float(point.x), float(point.y), native_deadline)
+        if element is None:
+            return None
+        try:
+            return self._span_bounds(bridge, element, point, start, end)
+        finally:
+            bridge.release(element)
+
+    def _span_bounds(
+        self,
+        bridge: _AccessibilityBridge,
+        element: ctypes.c_void_p,
+        point: Point,
+        start: int,
+        end: int,
+    ) -> BoundingBox | None:
+        """Convert a character span of the line back into an accessibility range."""
+
+        if end <= start:
+            return None
+
+        index = self._index_at(bridge, element, point)
+        if index is None:
+            return None
+        line = self._line_range(bridge, element, index)
+        if line is None:
+            return None
+        line_start, line_length = line
+        text = self._string_for_range(bridge, element, line_start, line_length)
+        if text is None:
+            return None
+
+        # The line may have changed under the pointer between the two calls;
+        # a span that no longer fits it cannot be asked about.
+        first = _utf16_offset(text, start)
+        last = _utf16_offset(text, end)
+        if first is None or last is None or last <= first:
+            return None
+        return self._bounds_for_range(
+            bridge, element, line_start + first, last - first
+        )
 
     def _read_element(
         self,

@@ -18,21 +18,41 @@ from hanly_app.text_acquisition import (
 
 _KOREAN = "초대받았어요"
 _BOUNDS = BoundingBox(left=100, top=100, right=200, bottom=120)
+_UNSET = object()
 _INSIDE = Point(150, 110)
 _OUTSIDE = Point(400, 400)
 
 
 class _Provider:
-    def __init__(self, reading: DirectText | None = None, error: Exception | None = None):
+    """A reader that can also answer about one span, as the real adapter does."""
+
+    def __init__(
+        self,
+        reading: DirectText | None = None,
+        error: Exception | None = None,
+        *,
+        span_bounds: BoundingBox | None | object = _UNSET,
+    ):
         self.reading = reading
         self.error = error
         self.calls: list[tuple[Point, int]] = []
+        self.spans: list[tuple[int, int]] = []
+        self._span_bounds = span_bounds
 
     def read_at(self, point: Point, *, timeout_ms: int) -> DirectText | None:
         self.calls.append((point, timeout_ms))
         if self.error is not None:
             raise self.error
         return self.reading
+
+    def refine_bounds(
+        self, point: Point, start: int, end: int, *, timeout_ms: int
+    ) -> BoundingBox | None:
+        self.spans.append((start, end))
+        if self._span_bounds is not _UNSET:
+            return self._span_bounds  # type: ignore[return-value]
+        # A plausible sub-rectangle inside the line it came from.
+        return _BOUNDS
 
 
 def _reading(**overrides: object) -> DirectText:
@@ -229,3 +249,135 @@ def test_a_pointer_resting_outside_korean_falls_back(
     assert _acquire(_reading(text=text, cursor_index=cursor_index)).outcome is (
         Outcome.NOT_KOREAN
     )
+
+
+# --- the retained rectangle belongs to the word, not the line ----------------
+
+_WORD_BOUNDS = BoundingBox(left=150, top=100, right=190, bottom=120)
+
+
+def _mixed(span_bounds: BoundingBox | None | object = _UNSET) -> _Provider:
+    """`Hello 초대받았어요`, whose line rectangle spans the Latin too."""
+
+    return _Provider(
+        DirectText(text="Hello 초대받았어요", cursor_index=8, bounds=_BOUNDS),
+        span_bounds=span_bounds,
+    )
+
+
+def test_a_narrowed_word_is_retained_by_its_own_rectangle() -> None:
+    provider = _mixed(_WORD_BOUNDS)
+
+    result = DirectTextCoordinator(provider).acquire(_INSIDE)
+
+    assert result.outcome is Outcome.DIRECT
+    assert result.selection is not None and result.selection.text == "초대받았어요"
+    assert result.bounds == _WORD_BOUNDS
+    # The span asked about is the Korean run, in characters of the line.
+    assert provider.spans == [(6, 12)]
+
+
+def test_the_whole_line_rectangle_is_never_reused_for_a_part_of_it() -> None:
+    """Retaining the line would hold the answer over `Hello` as well."""
+
+    result = DirectTextCoordinator(_mixed(_WORD_BOUNDS)).acquire(_INSIDE)
+
+    assert result.bounds != _BOUNDS
+
+
+@pytest.mark.parametrize(
+    "span_bounds",
+    [
+        None,                                        # the control cannot say
+        BoundingBox(left=300, top=300, right=340, bottom=320),  # elsewhere entirely
+        BoundingBox(left=0, top=0, right=1000, bottom=500),     # outside the line
+    ],
+)
+def test_bounds_that_are_missing_or_wrong_fall_back_to_ocr(
+    span_bounds: BoundingBox | None,
+) -> None:
+    result = DirectTextCoordinator(_mixed(span_bounds)).acquire(_INSIDE)
+
+    assert result.outcome is Outcome.AMBIGUOUS
+    assert result.selection is None
+
+
+def test_a_failure_while_asking_for_bounds_falls_back_to_ocr() -> None:
+    class _Failing(_Provider):
+        def refine_bounds(
+            self, point: Point, start: int, end: int, *, timeout_ms: int
+        ) -> BoundingBox | None:
+            raise RuntimeError("the control stopped answering")
+
+    provider = _Failing(
+        DirectText(text="Hello 초대받았어요", cursor_index=8, bounds=_BOUNDS)
+    )
+
+    assert DirectTextCoordinator(provider).acquire(_INSIDE).outcome is (
+        Outcome.AMBIGUOUS
+    )
+
+
+def test_asking_for_bounds_is_given_the_same_deadline() -> None:
+    provider = _mixed(_WORD_BOUNDS)
+    seen: list[int] = []
+
+    def refine(point: Point, start: int, end: int, *, timeout_ms: int) -> BoundingBox:
+        seen.append(timeout_ms)
+        return _WORD_BOUNDS
+
+    provider.refine_bounds = refine  # type: ignore[method-assign]
+
+    DirectTextCoordinator(provider, timeout_ms=25).acquire(_INSIDE)
+
+    assert seen == [25]
+
+
+def test_a_pure_korean_line_keeps_its_own_rectangle() -> None:
+    """The line is the word, so nothing narrower has to be asked about."""
+
+    provider = _Provider(_reading(text=_KOREAN, cursor_index=2))
+
+    result = DirectTextCoordinator(provider).acquire(_INSIDE)
+
+    assert result.outcome is Outcome.DIRECT
+    assert result.bounds == _BOUNDS
+
+
+def test_a_reader_without_precise_geometry_refuses_a_narrowed_word() -> None:
+    """Approximating the rectangle would retain text this answer is not about."""
+
+    class _LineOnly:
+        def read_at(self, point: Point, *, timeout_ms: int) -> DirectText:
+            return DirectText(
+                text="Hello 초대받았어요", cursor_index=8, bounds=_BOUNDS
+            )
+
+    assert DirectTextCoordinator(_LineOnly()).acquire(_INSIDE).outcome is (
+        Outcome.AMBIGUOUS
+    )
+
+
+def test_a_reader_without_precise_geometry_still_answers_a_whole_line_word() -> None:
+    class _LineOnly:
+        def read_at(self, point: Point, *, timeout_ms: int) -> DirectText:
+            return DirectText(text=_KOREAN, cursor_index=2, bounds=_BOUNDS)
+
+    result = DirectTextCoordinator(_LineOnly()).acquire(_INSIDE)
+
+    assert result.outcome is Outcome.DIRECT
+    assert result.bounds == _BOUNDS
+
+
+def test_emoji_prefixed_korean_is_retained_by_its_own_rectangle() -> None:
+    provider = _Provider(
+        DirectText(text="🙂🙂초대받았어요", cursor_index=2, bounds=_BOUNDS),
+        span_bounds=_WORD_BOUNDS,
+    )
+
+    result = DirectTextCoordinator(provider).acquire(_INSIDE)
+
+    assert result.selection is not None
+    assert (result.selection.text, result.selection.cursor_index) == ("초대받았어요", 0)
+    assert result.bounds == _WORD_BOUNDS
+    assert provider.spans == [(2, 8)]

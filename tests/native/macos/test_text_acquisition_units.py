@@ -127,3 +127,53 @@ def test_an_offset_inside_a_surrogate_pair_refuses_the_whole_reading() -> None:
     )
 
     assert reading is None
+
+
+@pytest.mark.parametrize(
+    ("text", "code_point_index", "expected"),
+    [
+        ("초대받았어요", 0, 0),
+        ("초대받았어요", 3, 3),
+        ("초대받았어요", 6, 6),
+        ("🙂초대", 0, 0),
+        ("🙂초대", 1, 2),
+        ("🙂🙂초대", 2, 4),
+        ("초대🙂받다", 3, 4),
+        ("Hello 초대", 6, 6),
+        ("", 0, 0),
+    ],
+)
+def test_a_character_span_converts_back_into_accessibility_units(
+    text: str, code_point_index: int, expected: int
+) -> None:
+    """Asking about a span means expressing it in the platform's own units."""
+
+    from hanly_app.text_acquisition_ax import _utf16_offset
+
+    assert _utf16_offset(text, code_point_index) == expected
+
+
+@pytest.mark.parametrize(("text", "index"), [("초대", 3), ("초대", -1), ("", 1)])
+def test_a_span_outside_the_text_cannot_be_asked_about(text: str, index: int) -> None:
+    from hanly_app.text_acquisition_ax import _utf16_offset
+
+    assert _utf16_offset(text, index) is None
+
+
+@pytest.mark.parametrize("text", ["초대받았어요", "🙂🙂초대받았어요", "Hello 초대받았어요"])
+def test_the_two_offset_conversions_are_inverses(text: str) -> None:
+    from hanly_app.text_acquisition_ax import _utf16_offset
+
+    for index in range(len(text) + 1):
+        units = _utf16_offset(text, index)
+        assert units is not None
+        assert _code_point_index(text, units) == index
+
+
+def test_an_empty_or_reversed_span_is_refused() -> None:
+    """A span with nothing in it names no rectangle."""
+
+    adapter = _adapter_for("초대받았어요", utf16_index=0)
+
+    assert adapter._span_bounds(_bridge(), ctypes.c_void_p(1), Point(1, 1), 2, 2) is None
+    assert adapter._span_bounds(_bridge(), ctypes.c_void_p(1), Point(1, 1), 3, 1) is None
