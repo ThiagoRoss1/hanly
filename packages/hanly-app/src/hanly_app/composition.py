@@ -12,7 +12,6 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from hashlib import blake2b
-from re import compile as re_compile
 from typing import Protocol, cast
 
 from hanly import (
@@ -518,7 +517,7 @@ def _prewarm_provider(
 #: An acquisition label names a route, not content. Anything else is reported
 #: as unknown rather than copied into a trace, so a caller cannot make the
 #: trace carry recognized text or grow without bound through this field.
-_LABEL_PATTERN = re_compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
+_ACQUISITION_LABELS = frozenset({"ocr", "accessibility"})
 
 
 def _acquisition_label(source: str | None) -> str | None:
@@ -526,7 +525,7 @@ def _acquisition_label(source: str | None) -> str | None:
 
     if source is None:
         return None
-    return source if _LABEL_PATTERN.match(source) else "unknown"
+    return source if source in _ACQUISITION_LABELS else "unknown"
 
 
 def _cache_key_fingerprint(key: LookupCacheKey) -> str:

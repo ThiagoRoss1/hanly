@@ -425,11 +425,13 @@ def test_shutdown_closes_the_acquisition_service() -> None:
     [
         ("accessibility", "accessibility"),
         ("ocr", "ocr"),
+        ("private_ascii_text", "unknown"),
         ("A" * 200_000, "unknown"),
         ("초대받았어요-secret", "unknown"),
         ("\x00\x01evil", "unknown"),
         ('{"json":"injection"}', "unknown"),
     ],
+    ids=["accessibility", "ocr", "ascii-content", "oversized", "korean", "control", "json"],
 )
 def test_only_a_bounded_route_label_reaches_the_trace(
     source: str, expected: str
