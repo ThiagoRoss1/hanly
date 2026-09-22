@@ -128,6 +128,26 @@ class _QueueDispatcher:
     def drain_one(self) -> None:
         self.pending.pop(0)()
 
+    def drain_until(self, ready: Callable[[], bool], timeout: float = 2.0) -> bool:
+        """Run queued callbacks until ``ready``, as a real event loop would.
+
+        A hover now asks the platform for text before capturing, and that answer
+        returns through this dispatcher, so the capture is one callback further
+        along than it used to be.
+        """
+
+        from time import monotonic, sleep
+
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            if ready():
+                return True
+            if self.pending:
+                self.drain_one()
+            else:
+                sleep(0.005)
+        return ready()
+
 
 class _HotkeyRuntime:
     def __init__(self) -> None:
@@ -362,8 +382,7 @@ def test_mouse_move_supersedes_hover_and_stale_result_is_not_presented() -> None
     listeners.listeners[0].emit(100, 100)
     dispatcher.drain_one()
     scheduler.fire()
-    dispatcher.drain_one()
-    assert worker.started.wait(timeout=2)
+    assert dispatcher.drain_until(worker.started.is_set)
 
     listeners.listeners[0].emit(200, 200)
     dispatcher.drain_one()
@@ -394,8 +413,7 @@ def test_hover_forwards_normal_non_success_result_to_the_existing_popup_sink() -
     listeners.listeners[0].emit(100, 100)
     dispatcher.drain_one()
     scheduler.fire()
-    dispatcher.drain_one()
-    assert worker.started.wait(timeout=2)
+    assert dispatcher.drain_until(worker.started.is_set)
     worker.release.set()
     for _ in range(20):
         if dispatcher.pending:
@@ -423,8 +441,7 @@ def test_pause_cancels_pending_hover_and_shutdown_suppresses_queued_work() -> No
     listeners.listeners[0].emit(30, 40)
     dispatcher.drain_one()
     scheduler.fire()
-    dispatcher.drain_one()
-    assert worker.started.wait(timeout=2)
+    assert dispatcher.drain_until(worker.started.is_set)
 
     runtime.shutdown()
     worker.release.set()
@@ -546,8 +563,7 @@ def test_manual_composition_attaches_hover_to_the_same_controller_capture_and_po
     listeners.listeners[0].emit(50, 60)
     dispatcher.drain_one()
     scheduler.fire()
-    dispatcher.drain_one()
-    assert worker.started.wait(timeout=2)
+    assert dispatcher.drain_until(worker.started.is_set)
     worker.release.set()
     for _ in range(20):
         if dispatcher.pending:

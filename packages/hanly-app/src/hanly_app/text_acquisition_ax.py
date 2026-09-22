@@ -34,6 +34,12 @@ _AX_VALUE_CFRANGE = 4
 #: ``kCFNumberLongType``.
 _CF_NUMBER_LONG = 10
 
+#: The native deadline has to be strictly inside the caller's own budget. A
+#: call that reaches its messaging timeout still has to return, be classified,
+#: and fall back to OCR; if the two deadlines were equal, every such call would
+#: instead be reported as too late to use.
+_NATIVE_DEADLINE_SHARE = 0.5
+
 #: Roles whose contents are a secret the user typed.
 _SECURE_ROLES = frozenset({"AXSecureTextField"})
 
@@ -224,6 +230,30 @@ class _AccessibilityBridge:
         )
 
 
+def _code_point_index(text: str, utf16_offset: int) -> int | None:
+    """Where ``utf16_offset`` falls in ``text``, counted in characters.
+
+    macOS counts UTF-16 code units, so one emoji before the Korean shifts every
+    later offset by one. An offset landing inside a surrogate pair names no
+    character at all and is refused rather than moved to a neighbouring one,
+    because quietly choosing the adjacent character is how the wrong word gets
+    defined.
+    """
+
+    if utf16_offset < 0:
+        return None
+    units = text.encode("utf-16-le")
+    if utf16_offset * 2 > len(units):
+        return None
+
+    prefix = units[: utf16_offset * 2]
+    try:
+        return len(prefix.decode("utf-16-le"))
+    except UnicodeDecodeError:
+        # A lone surrogate: the offset is halfway through one character.
+        return None
+
+
 def _bridge_once() -> _AccessibilityBridge | None:
     global _bridge
     with _lock:
@@ -248,19 +278,19 @@ class AccessibilityTextProvider:
     def read_at(self, point: Point, *, timeout_ms: int) -> DirectText | None:
         """Return what accessibility says is at ``point``.
 
-        ``timeout_ms`` becomes the accessibility API's own messaging deadline,
-        so an unresponsive application returns an error instead of holding the
-        caller. The coordinator separately discards an answer that still
-        arrived too late to be about where the pointer is now.
+        A share of ``timeout_ms`` becomes the accessibility API's own messaging
+        deadline, so an unresponsive application returns an error instead of
+        holding the caller, and still returns early enough for that error to be
+        classified as an ordinary fallback. The coordinator separately discards
+        an answer that arrived too late to be about where the pointer is now.
         """
 
         bridge = _bridge_once()
         if bridge is None:
             return None
 
-        element = bridge.element_at(
-            float(point.x), float(point.y), max(timeout_ms, 1) / 1000.0
-        )
+        native_deadline = max(timeout_ms * _NATIVE_DEADLINE_SHARE, 1.0) / 1000.0
+        element = bridge.element_at(float(point.x), float(point.y), native_deadline)
         if element is None:
             return None
         try:
@@ -290,17 +320,18 @@ class AccessibilityTextProvider:
         text = self._string_for_range(bridge, element, start, length)
         if text is None:
             return None
-        # Accessibility counts in UTF-16 code units and Python counts code
-        # points. They agree for Korean, and diverge by one per surrogate pair,
-        # so a line holding an emoji would hand back an index naming a
-        # different character than the one under the pointer.
-        if not text.isascii() and len(text.encode("utf-16-le")) != len(text) * 2:
+        # Everything above counts in UTF-16 code units, which is what the
+        # accessibility API speaks. Everything below counts code points, which
+        # is what Python and the engine contracts speak. This is the boundary,
+        # so the conversion happens here and nowhere else.
+        cursor_index = _code_point_index(text, index - start)
+        if cursor_index is None:
             return None
 
         bounds = self._bounds_for_range(bridge, element, start, length)
         return DirectText(
             text=text,
-            cursor_index=max(0, index - start),
+            cursor_index=cursor_index,
             bounds=bounds,
             role=role,
         )

@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from threading import Condition, Event, Thread
 from typing import Protocol
 
 from hanly import BoundingBox, Point, TextSelection
@@ -178,13 +179,19 @@ class DirectTextCoordinator:
             return Acquisition(Outcome.NOT_CONTAINING, duration_ns=duration)
         if reading.cursor_index >= len(text):
             return Acquisition(Outcome.AMBIGUOUS, duration_ns=duration)
-        if not _has_hangul(text):
-            # Hanly looks up Korean. Latin or numeric text is a correct reading
-            # of something this product does not answer.
+        # A control hands back a whole line, while the engine answers one word.
+        # The pixel path narrows a recognized line with its resolver; here the
+        # equivalent is the run of Korean the pointer is inside, so a line that
+        # mixes scripts answers exactly as that word alone would.
+        narrowed = _korean_run(text, reading.cursor_index)
+        if narrowed is None:
+            # Either there is no Korean here, or the pointer rests on something
+            # else on the line. Both are for OCR to answer.
             return Acquisition(Outcome.NOT_KOREAN, duration_ns=duration)
 
+        word, cursor_index = narrowed
         selection = TextSelection(
-            text=text, cursor_index=reading.cursor_index, source="accessibility"
+            text=word, cursor_index=cursor_index, source="accessibility"
         )
         return Acquisition(
             Outcome.DIRECT,
@@ -201,14 +208,33 @@ def _contains(bounds: BoundingBox, point: Point) -> bool:
     )
 
 
-def _has_hangul(text: str) -> bool:
-    return any(
+def _korean_run(text: str, cursor_index: int) -> tuple[str, int] | None:
+    """The unbroken Korean the pointer is inside, and where it sits in it.
+
+    ``None`` when the pointer rests on anything that is not Korean, so a reader
+    pointing at an emoji or a Latin word is answered by OCR rather than by the
+    nearest Hangul that happens to share the line.
+    """
+
+    if not 0 <= cursor_index < len(text) or not _is_hangul(text[cursor_index]):
+        return None
+
+    start = cursor_index
+    while start > 0 and _is_hangul(text[start - 1]):
+        start -= 1
+    end = cursor_index + 1
+    while end < len(text) and _is_hangul(text[end]):
+        end += 1
+    return text[start:end], cursor_index - start
+
+
+def _is_hangul(character: str) -> bool:
+    return (
         "ᄀ" <= character <= "ᇿ"
         or "㄰" <= character <= "㆏"
         or "ꥠ" <= character <= "꥿"
         or "가" <= character <= "힣"
         or "ힰ" <= character <= "퟿"
-        for character in text
     )
 
 
@@ -220,6 +246,7 @@ def _monotonic_ns() -> int:
 
 __all__ = [
     "Acquisition",
+    "DirectTextService",
     "default_text_acquisition",
     "DEFAULT_TIMEOUT_MS",
     "DirectText",
@@ -229,7 +256,7 @@ __all__ = [
 ]
 
 
-def default_text_acquisition() -> DirectTextCoordinator | None:
+def default_text_acquisition() -> DirectTextService | None:
     """The reader this platform offers, or ``None`` where there is not one.
 
     Only macOS has an implementation today. Everywhere else this returns
@@ -246,6 +273,161 @@ def default_text_acquisition() -> DirectTextCoordinator | None:
         from .text_acquisition_ax import AccessibilityTextProvider
     except Exception:
         return None
-    return DirectTextCoordinator(
-        AccessibilityTextProvider(), permitted=accessibility_trusted
+    return DirectTextService(
+        DirectTextCoordinator(
+            AccessibilityTextProvider(), permitted=accessibility_trusted
+        )
     )
+
+
+@dataclass(frozen=True)
+class _Job:
+    """One scheduled acquisition and the deadline it must answer by."""
+
+    generation: int
+    point: Point
+    deadline_ns: int
+    deliver: Callable[[Acquisition], None]
+    delivered: Event
+
+
+class DirectTextService:
+    """Run native acquisitions away from the caller's thread, one at a time.
+
+    Accessibility calls are synchronous IPC into another application, so they
+    must not execute on the thread that draws. They are also not reliably
+    interruptible: a messaging deadline makes the ordinary case return, but the
+    caller still cannot be left waiting on a target that never answers. So a
+    worker performs the call and a watcher answers the deadline, whichever
+    happens first delivers exactly one outcome, and the other is discarded.
+
+    Only the newest request matters. A hover that supersedes another replaces
+    the pending job rather than queueing behind it, so a slow target cannot
+    build up a backlog of calls against stale pointer positions.
+    """
+
+    def __init__(
+        self,
+        coordinator: DirectTextCoordinator,
+        *,
+        clock: Callable[[], int] | None = None,
+    ) -> None:
+        self._coordinator = coordinator
+        self._clock = clock or _monotonic_ns
+        self._condition = Condition()
+        self._pending: _Job | None = None
+        self._active: _Job | None = None
+        self._generation = 0
+        self._closed = False
+        # Daemon threads: a composition that is built and dropped without a
+        # shutdown must not keep the interpreter alive, and a native call that
+        # cannot be interrupted must not delay exit either. An orderly
+        # :meth:`close` still joins them.
+        self._worker = Thread(
+            target=self._work, name="hanly-text-acquisition", daemon=True
+        )
+        self._watcher = Thread(
+            target=self._watch, name="hanly-acquisition-deadline", daemon=True
+        )
+        self._worker.start()
+        self._watcher.start()
+
+    @property
+    def timeout_ms(self) -> int:
+        return self._coordinator.timeout_ms
+
+    def submit(self, point: Point, deliver: Callable[[Acquisition], None]) -> int:
+        """Schedule one acquisition, superseding any request not yet started.
+
+        Returns the generation that identifies it, which the caller can compare
+        against its own currency before acting on the outcome.
+        """
+
+        with self._condition:
+            if self._closed:
+                raise RuntimeError("text acquisition service is closed")
+            self._generation += 1
+            generation = self._generation
+            self._pending = _Job(
+                generation=generation,
+                point=point,
+                deadline_ns=self._clock() + self._coordinator.timeout_ms * 1_000_000,
+                deliver=deliver,
+                delivered=Event(),
+            )
+            self._condition.notify_all()
+            return generation
+
+    def close(self) -> None:
+        """Stop both threads and abandon anything still running.
+
+        A native call already in progress cannot be cancelled, so its answer is
+        simply never delivered; the job's latch makes that safe.
+        """
+
+        with self._condition:
+            if self._closed:
+                return
+            self._closed = True
+            self._pending = None
+            self._condition.notify_all()
+        self._worker.join(timeout=5.0)
+        self._watcher.join(timeout=5.0)
+
+    def _work(self) -> None:
+        while True:
+            with self._condition:
+                while not self._closed and self._pending is None:
+                    self._condition.wait()
+                if self._closed:
+                    return
+                job = self._pending
+                self._pending = None
+                self._active = job
+            if job is None:
+                continue
+
+            outcome = self._run(job)
+            with self._condition:
+                if self._active is job:
+                    self._active = None
+            self._deliver(job, outcome)
+
+    def _run(self, job: _Job) -> Acquisition:
+        return self._coordinator.acquire(
+            job.point, cancelled=lambda: self._superseded(job)
+        )
+
+    def _watch(self) -> None:
+        while True:
+            with self._condition:
+                if self._closed:
+                    return
+                job = self._active
+                if job is None:
+                    self._condition.wait(timeout=0.05)
+                    continue
+                remaining = (job.deadline_ns - self._clock()) / 1_000_000_000
+                if remaining > 0:
+                    self._condition.wait(timeout=remaining)
+                    continue
+            # The native call is still running and cannot be stopped. The
+            # caller is released to capture instead of waiting for it, and the
+            # answer it eventually produces is dropped by the latch.
+            self._deliver(job, Acquisition(Outcome.TIMED_OUT))
+
+    def _deliver(self, job: _Job, outcome: Acquisition) -> None:
+        if job.delivered.is_set():
+            return
+        with self._condition:
+            if job.delivered.is_set():
+                return
+            job.delivered.set()
+            closed = self._closed
+        if closed:
+            return
+        job.deliver(outcome)
+
+    def _superseded(self, job: _Job) -> bool:
+        with self._condition:
+            return self._closed or self._generation != job.generation

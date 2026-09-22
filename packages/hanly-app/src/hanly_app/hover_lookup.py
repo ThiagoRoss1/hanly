@@ -29,7 +29,7 @@ from .hover_target import (
 from .lookup_controller import LookupController
 from .mouse_observer import MouseListenerFactory, MouseObserver
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
-from .text_acquisition import DirectTextCoordinator
+from .text_acquisition import Acquisition, DirectTextService
 
 
 class CaptureSource(Protocol):
@@ -120,7 +120,7 @@ class HoverLookupRuntime:
         on_invalidate: Callable[[], None] | None = None,
         trace_sink: RuntimeTraceSink | None = None,
         capture_observer: CaptureObserver | None = None,
-        acquisition: DirectTextCoordinator | None = None,
+        acquisition: DirectTextService | None = None,
         origins: CaptureOrigins | None = None,
         exit_scheduler: HoverScheduler | None = None,
         transfer_ms: float = POPUP_TRANSFER_MS,
@@ -394,6 +394,10 @@ class HoverLookupRuntime:
         )
         self._cancel_transfer()
         self._invalidate_active_hover()
+        if self._acquisition is not None:
+            # Its threads outlive one hover, so they are joined here rather
+            # than left to publish an answer into a stopped runtime.
+            self._acquisition.close()
         self._controller.stop(wait=False)
 
     @property
@@ -706,8 +710,13 @@ class HoverLookupRuntime:
             hover_request_id=request.request_id,
         )
 
-        if self._submit_direct_text(request):
+        if self._start_direct_text(request):
             return
+
+        self._capture_and_submit(request)
+
+    def _capture_and_submit(self, request: HoverRequest) -> None:
+        """Capture the screen and submit it, the path direct text falls back to."""
 
         capture_started_ns = perf_counter_ns() if self._trace_sink is not None else 0
         emit_trace(
@@ -863,19 +872,46 @@ class HoverLookupRuntime:
         if self._controller.is_current(request_id):
             self._controller.invalidate()
 
-    def _submit_direct_text(self, request: HoverRequest) -> bool:
-        """Try to read the word without capturing, and say whether that worked.
+    def _start_direct_text(self, request: HoverRequest) -> bool:
+        """Schedule a native read, and say whether the caller should wait for it.
 
-        Every refusal is ordinary: the caller simply captures and runs OCR as
-        it always has, and the reason is traced so coverage can be measured.
+        This runs on the thread that draws, so it must only hand the work over.
+        The answer arrives later on a worker and is marshalled back through the
+        same dispatcher every other hover callback uses.
         """
 
-        if self._acquisition is None:
+        service = self._acquisition
+        if service is None:
             return False
 
-        acquired = self._acquisition.acquire(
-            request.point, cancelled=lambda: not self._hover.is_current(request)
-        )
+        def deliver(acquired: Acquisition) -> None:
+            self._dispatcher(lambda: self._on_direct_text(request, acquired))
+
+        try:
+            service.submit(request.point, deliver)
+        except Exception:
+            # A closed or unusable service is not a lookup failure; the
+            # ordinary capture path still answers.
+            return False
+        return True
+
+    def _on_direct_text(self, request: HoverRequest, acquired: Acquisition) -> None:
+        """Act on a completed native read, back on the caller's own thread."""
+
+        if not self._submit_direct_text(request, acquired):
+            # Every refusal is ordinary: capture and OCR exactly as before.
+            if self._hover.is_current(request):
+                self._capture_and_submit(request)
+
+    def _submit_direct_text(
+        self, request: HoverRequest, acquired: Acquisition
+    ) -> bool:
+        """Submit a validated direct reading, or decline it.
+
+        Declining is ordinary, and the reason is traced so coverage can be
+        measured without the word itself entering a trace.
+        """
+
         emit_trace(
             self._trace_sink,
             "hover_direct_text",

@@ -230,7 +230,7 @@ def test_a_selection_message_carries_no_pixel_fields() -> None:
     assert pickle.loads(pickle.dumps(message))["selection_text"] == _KOREAN
 
 
-# --- the hover runtime chooses between the two paths -------------------------
+# --- the hover runtime schedules, then acts on the outcome -------------------
 
 
 class _Capture:
@@ -248,9 +248,29 @@ class _Capture:
         )
 
 
-def _hover_runtime(coordinator: object) -> tuple[Any, _Capture, list[Any], Any]:
-    """A real controller, so the runtime's own validation applies."""
+class _Service:
+    """Stands in for the threaded service, delivering on demand."""
 
+    def __init__(self, outcome: Any = None) -> None:
+        self.outcome = outcome
+        self.submissions = 0
+        self.closed = False
+        self._deliver: Any = None
+
+    def submit(self, point: Point, deliver: Any) -> int:
+        self.submissions += 1
+        self._deliver = deliver
+        return self.submissions
+
+    def deliver_now(self) -> None:
+        assert self._deliver is not None
+        self._deliver(self.outcome)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _hover_runtime(service: Any) -> tuple[Any, _Capture, list[Any], Any]:
     from hanly_app.hover_lookup import HoverLookupRuntime
     from hanly_app.lookup_controller import LookupController
 
@@ -258,7 +278,6 @@ def _hover_runtime(coordinator: object) -> tuple[Any, _Capture, list[Any], Any]:
 
     class _Worker:
         def __call__(self, request: LookupRequest) -> Any:
-            submitted.append(request)
             from hanly import LookupResult
 
             return LookupResult(status=LookupStatus.NOT_FOUND)
@@ -268,9 +287,6 @@ def _hover_runtime(coordinator: object) -> tuple[Any, _Capture, list[Any], Any]:
 
     controller = LookupController(_Worker)
     controller.start()
-
-    # Record what the runtime asks for, rather than what the executor later
-    # manages to run: shutdown cancels an in-flight request by design.
     original = controller.submit_selection
 
     def _spy(selection: TextSelection, target: Point, **kwargs: Any) -> Any:
@@ -280,8 +296,9 @@ def _hover_runtime(coordinator: object) -> tuple[Any, _Capture, list[Any], Any]:
     controller.submit_selection = _spy  # type: ignore[method-assign]
     capture = _Capture()
     runtime = HoverLookupRuntime(
-        controller, capture, delay_ms=1, acquisition=coordinator  # type: ignore[arg-type]
+        controller, capture, delay_ms=1, acquisition=service
     )
+    runtime._hover.is_current = lambda request: True  # type: ignore[method-assign]
     return runtime, capture, submitted, controller
 
 
@@ -291,6 +308,23 @@ def _hover_request() -> Any:
     return HoverRequest(request_id=1, point=Point(20, 10))
 
 
+def test_the_ui_thread_only_schedules_and_never_performs_the_read() -> None:
+    """Scheduling must return before the native call has produced anything."""
+
+    from hanly_app.text_acquisition import Acquisition, Outcome
+
+    service = _Service(Acquisition(Outcome.UNSUPPORTED))
+    runtime, capture, _submitted, controller = _hover_runtime(service)
+    try:
+        assert runtime._start_direct_text(_hover_request()) is True
+        assert service.submissions == 1
+        # Nothing has been decided yet, so nothing has been captured either.
+        assert capture.calls == 0
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+
+
 @pytest.mark.parametrize(
     "outcome",
     [
@@ -298,47 +332,42 @@ def _hover_request() -> Any:
         "ambiguous", "not_korean", "empty", "timed_out", "failed", "superseded",
     ],
 )
-def test_every_refusal_leaves_the_capture_path_to_run(outcome: str) -> None:
+def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
     """A refusal is never a failure: it is the ordinary OCR lookup."""
 
     from hanly_app.text_acquisition import Acquisition, Outcome
 
-    class _Refusing:
-        def acquire(self, point: Point, *, cancelled: Any = None) -> Acquisition:
-            return Acquisition(Outcome(outcome))
-
-    runtime, _capture, submitted, controller = _hover_runtime(_Refusing())
+    service = _Service(Acquisition(Outcome(outcome)))
+    runtime, capture, submitted, controller = _hover_runtime(service)
     try:
-        assert runtime._submit_direct_text(_hover_request()) is False
+        runtime._start_direct_text(_hover_request())
+        service.deliver_now()
     finally:
         runtime.shutdown()
         controller.stop(wait=True)
 
     assert submitted == []
+    assert capture.calls == 1
 
 
 def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
     from hanly_app.text_acquisition import Acquisition, Outcome
 
-    class _Direct:
-        def acquire(self, point: Point, *, cancelled: Any = None) -> Acquisition:
-            return Acquisition(
-                Outcome.DIRECT,
-                selection=TextSelection(
-                    text=_KOREAN, cursor_index=0, source="accessibility"
-                ),
-                bounds=BoundingBox(10, 10, 60, 30),
-            )
-
-    runtime, capture, submitted, controller = _hover_runtime(_Direct())
-    # The hover state machine normally makes a request current; this test
-    # exercises the submission branch directly.
-    runtime._hover.is_current = lambda request: True
+    service = _Service(
+        Acquisition(
+            Outcome.DIRECT,
+            selection=TextSelection(
+                text=_KOREAN, cursor_index=0, source="accessibility"
+            ),
+            bounds=BoundingBox(10, 10, 60, 30),
+        )
+    )
+    runtime, capture, submitted, controller = _hover_runtime(service)
     try:
-        assert runtime._submit_direct_text(_hover_request()) is True
+        runtime._start_direct_text(_hover_request())
+        service.deliver_now()
     finally:
         runtime.shutdown()
-        # The executor runs the request on its own thread; drain it first.
         controller.stop(wait=True)
 
     assert capture.calls == 0
@@ -346,15 +375,46 @@ def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
     assert all(item.source == "accessibility" for item in submitted)
 
 
-def test_without_a_reader_the_runtime_never_tries_direct_text() -> None:
-    runtime, _capture, submitted, controller = _hover_runtime(None)
+def test_an_outcome_arriving_after_the_hover_moved_on_is_discarded() -> None:
+    from hanly_app.text_acquisition import Acquisition, Outcome
+
+    service = _Service(
+        Acquisition(
+            Outcome.DIRECT,
+            selection=TextSelection(text=_KOREAN, cursor_index=0),
+        )
+    )
+    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime._hover.is_current = lambda request: False
     try:
-        assert runtime._submit_direct_text(_hover_request()) is False
+        runtime._start_direct_text(_hover_request())
+        service.deliver_now()
     finally:
         runtime.shutdown()
         controller.stop(wait=True)
 
     assert submitted == []
+    assert capture.calls == 0
+
+
+def test_without_a_reader_the_runtime_never_tries_direct_text() -> None:
+    runtime, capture, submitted, controller = _hover_runtime(None)
+    try:
+        assert runtime._start_direct_text(_hover_request()) is False
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+
+    assert submitted == []
+
+
+def test_shutdown_closes_the_acquisition_service() -> None:
+    service = _Service()
+    runtime, _capture, _submitted, controller = _hover_runtime(service)
+    runtime.shutdown()
+    controller.stop(wait=True)
+
+    assert service.closed is True
 
 
 # --- the acquisition label is a route, not content ---------------------------

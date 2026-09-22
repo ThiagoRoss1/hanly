@@ -330,6 +330,10 @@ def _submit_hover(
     assert dispatcher.drain_one()
     scheduler.fire_latest()
     assert dispatcher.drain_one()
+    # A hover asks the platform for text before capturing. Where a reader
+    # exists its answer returns through this dispatcher as one more callback;
+    # where none does, there is nothing further to run.
+    dispatcher.drain_one(timeout=0.5)
 
 
 def _await_hover_ready(

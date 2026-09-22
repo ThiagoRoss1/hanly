@@ -175,3 +175,57 @@ def test_every_outcome_other_than_direct_declines_to_supply_a_selection() -> Non
 def test_the_timeout_must_be_positive() -> None:
     with pytest.raises(ValueError):
         DirectTextCoordinator(None, timeout_ms=0)
+
+
+# --- narrowing a line to the word the pointer is inside ----------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "cursor_index", "word", "narrowed_index"),
+    [
+        ("초대받았어요", 2, "초대받았어요", 2),
+        ("🙂🙂초대받았어요", 2, "초대받았어요", 0),
+        ("🙂🙂초대받았어요", 4, "초대받았어요", 2),
+        ("Hello 초대받았어요", 8, "초대받았어요", 2),
+        ("초대받았어요 (2026)", 1, "초대받았어요", 1),
+        ("초대 받다", 4, "받다", 1),
+    ],
+)
+def test_a_line_is_narrowed_to_the_korean_the_pointer_is_inside(
+    text: str, cursor_index: int, word: str, narrowed_index: int
+) -> None:
+    """A control returns a whole line; the engine answers one word."""
+
+    result = _acquire(_reading(text=text, cursor_index=cursor_index))
+
+    assert result.outcome is Outcome.DIRECT
+    assert result.selection is not None
+    assert (result.selection.text, result.selection.cursor_index) == (
+        word,
+        narrowed_index,
+    )
+
+
+def test_a_mixed_line_answers_exactly_as_the_word_alone_would() -> None:
+    mixed = _acquire(_reading(text="🙂🙂초대받았어요", cursor_index=2))
+    alone = _acquire(_reading(text="초대받았어요", cursor_index=0))
+
+    assert mixed.selection == alone.selection
+
+
+@pytest.mark.parametrize(
+    ("text", "cursor_index"),
+    [
+        ("🙂🙂초대받았어요", 0),   # the pointer is on the emoji
+        ("Hello 초대", 1),        # the pointer is on the Latin word
+        ("초대 받다", 2),          # the pointer is on the space between words
+    ],
+)
+def test_a_pointer_resting_outside_korean_falls_back(
+    text: str, cursor_index: int
+) -> None:
+    """The nearest Hangul on the line is not what the reader is pointing at."""
+
+    assert _acquire(_reading(text=text, cursor_index=cursor_index)).outcome is (
+        Outcome.NOT_KOREAN
+    )
