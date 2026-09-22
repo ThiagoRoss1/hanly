@@ -373,3 +373,142 @@ confirmed to fail against the reviewed implementation and pass after the fix.
 
 `0ec5008`, `22bb4be`, `573b115`, `c083d62`, `b0851a8` and `ae3bccc` are
 unchanged. **Wave 6 was not started, and nothing was pushed or merged.**
+
+---
+
+# Human-Requested Correction Outcome
+
+- **Date:** 2026-09-22. Claude Opus 5, macOS 26.6.2, `.venv/bin/python` 3.13.11.
+- **Scope:** the three findings the Phase B review raised. Not another review;
+  no Wave 6, nothing pushed or merged, no existing commit amended, squashed,
+  rebased or reordered.
+- **Commits created:** `981a718` (corrections 1 and 2), `64dd24d`
+  (correction 3), plus this documentation update.
+
+## Implementation decisions
+
+**Acquisition moved off the UI thread.** A `DirectTextService` owns one worker
+and one deadline watcher — long-lived, daemon, joined on `close()`. The hover
+handler only schedules; the outcome returns through the dispatcher every other
+hover callback already uses, and the capture path runs from there on a refusal.
+No thread is created per hover, at most one job is pending, and a newer hover
+replaces a job that has not started. A one-shot latch per job means exactly one
+outcome is ever delivered, which is what makes a late native answer safe: the
+call cannot be cancelled, so it is simply never published.
+
+**UTF-16 conversion replaced the refusal.** `_code_point_index` converts at the
+adapter boundary and nowhere else; `TextSelection`, component spans and every
+engine contract stay in code points. An offset inside a surrogate pair, negative
+or past the end refuses the whole reading rather than naming a neighbour.
+
+**Decomposition is judged, not blanket-suppressed.** A part earns its place when
+the dictionary holds its lemma *and* that lemma is exactly what its span reads.
+
+## Evidence for off-UI-thread execution
+
+The provider records the thread it runs on, and a test asserts it is never the
+submitting thread. A second test blocks the provider inside `read_at`, then
+proves the submitting thread completes work of its own while it is stuck, and
+that scheduling itself returned in under 25 ms. Real TextEdit through the
+service: **335 of 338 on-text points direct**, p50 **2.634 ms**, p95 8.785 ms,
+p99 13.612 ms, max 20.859 ms, n=335 — slower than the 0.5 ms synchronous median,
+which is the cost of the handoff and invisible against a 150 ms dwell.
+
+## Timeout, cancellation and late-result behaviour
+
+A blocked read releases the caller at the deadline with exactly one
+`TIMED_OUT` outcome; when the call later finishes, the latch discards it. A
+superseded job reports supersession, shutdown during an active call delivers
+nothing and leaves neither thread behind, and submitting after close is
+refused. Cancellation of the job is never treated as proof the native call
+stopped.
+
+**A defect in the review's own `1dbe8e8` surfaced here.** The native messaging
+deadline equalled the caller's whole budget, so any call reaching it necessarily
+breached the overall deadline and was reported as too late instead of being
+classified. A 148-point sweep produced **130 timeouts**; with the native
+deadline at half the budget, **zero**, and those points are correctly
+`unsupported`. The earlier measurement missed this because it sampled points
+that answered quickly.
+
+## UTF-16 conversion evidence
+
+Fifteen parametrized conversions cover Korean alone, one and several emoji
+before the Korean, an emoji after and inside the text, combining marks,
+multiline values and both string edges; five more cover mid-surrogate, negative
+and out-of-range offsets. On real TextEdit, `🙂🙂초대받았어요` now yields the
+**identical selection to the pure Korean line** at every Korean index, and a
+pointer resting on an emoji falls back.
+
+Narrowing was needed to make that true end to end, and it fixed a latent defect
+predating this pass: a control returns a whole **line**, the Korean-only gate
+rejects a line that mixes scripts, and because the direct path had already
+"succeeded" no OCR ran — so `Hello 초대받았어요` silently produced nothing. The
+coordinator now narrows to the Korean run under the pointer.
+
+## Component-classification evidence
+
+| | Count |
+|---|---|
+| Sampled headwords | 1,200 |
+| Exact-surface entries that Kiwi splits | **165** |
+| Decomposition kept as useful | **114** |
+| Decomposition suppressed as misleading | **51** |
+| Maximum dictionary queries / duplicates | **4** / **0** |
+
+This reproduces the review's classification exactly, including the same example
+words on both sides. `두통거리`, `동력선`, `고종사촌`, `가공식품` and `책상` keep
+their parts; `여행가`, `고소득층`, `깜짝이야`, `고차원적`, `구시대적` and
+`꿀꿀이` are suppressed while their complete entry remains primary.
+
+**The rule tests faithfulness of form, not of sense, and is not perfect.**
+False positive: `전우애` keeps `전 · former` + `우애 · friendship`, though the
+real split is `전우` + `애`. False negative: `맏사위` loses the useful
+`사위 · son-in-law` because its bound prefix `맏` is not an entry.
+
+## Tests and gates
+
+New: `tests/test_text_acquisition_service.py` (11), covering off-thread
+execution, a blocked reader, UI responsiveness, the deadline, late-answer
+discard, no queue growth, supersession, shutdown, exceptions and denied
+permission — all with events and barriers rather than sleeps. Extended:
+`tests/native/macos/test_text_acquisition_units.py` (22),
+`tests/test_text_acquisition.py` (29), `tests/test_lexical_components.py` (29),
+`tests/krdict/test_whole_form.py` (46), `tests/test_direct_text_routing.py` (32).
+
+```
+pytest                  -> 2159 passed, 2 skipped
+pytest --suite native   -> 94 passed
+pytest --suite packaged -> 3 passed
+ruff                    -> All checks passed
+mypy                    -> Success, 279 source files
+```
+
+Three failures were reproduced and classified rather than dismissed: two hover
+tests hung because the service's threads were non-daemon, which also meant any
+composition built without a shutdown blocked interpreter exit (fixed; those
+tests now drain the one further dispatcher hop the asynchronous outcome needs),
+and `test_app_composition` saw `책상` legitimately keep its parts.
+
+## Privacy
+
+Unchanged and re-verified on the new paths. An exception message containing
+recognized text is reduced to its type name, so nothing but a reason and a
+duration is ever traced; a secure field carries no text or geometry; the
+acquisition label remains a bounded route token; Freeze stays memory-only and
+no export path changed. No private artifact entered any commit.
+
+## Deferred, still deferred with their existing triggers
+
+Windows UIA and Wave 6; DOM or browser-extension integration; the Safari and
+Discord accessibility limitations; Retina, mixed-DPI and multi-display
+validation, which this one-display machine still cannot provide; general popup
+redesign; the 47% compact-panel height; consolidating overlapping grammatical
+annotations; PaddleOCR, HanlyOCR and Wave 7 production changes.
+
+Newly deferred: the faithfulness rule's form-only judgement, with the `전우애`
+and `맏사위` examples above. *Revisit trigger:* if a sense-aware signal becomes
+available from the morphology or dictionary evidence already computed.
+
+**Wave 6 remains `NOT STARTED — requires a real Windows environment`, and
+nothing was pushed or merged.**

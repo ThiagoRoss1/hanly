@@ -293,3 +293,82 @@ Nothing was amended, squashed, rebased or pushed.
 **NOT STARTED — requires a real Windows environment.** No Windows code,
 abstraction or placeholder was created. The continuation procedure is in the
 Review Handoff.
+
+---
+
+## Human-requested corrections (2026-09-22)
+
+Three findings from the Phase B review, corrected under a bounded authorization.
+Every earlier commit is unchanged; nothing was pushed.
+
+### Correction 1 — acquisition off the Qt UI thread (`981a718`)
+
+`DirectTextService` owns one worker and one deadline watcher, both long-lived
+and daemon, joined on `close()`. `_on_stable` now only schedules; the outcome
+returns through the same dispatcher every other hover callback uses, and the
+capture path runs from there when the reading is refused.
+
+A one-shot latch per job guarantees exactly one outcome. A newer hover replaces
+a job that has not started, so a slow target cannot build a backlog. A native
+call cannot be cancelled, so a late answer is dropped rather than published.
+
+**A second defect surfaced while measuring.** The native messaging deadline
+added in `1dbe8e8` equalled the caller's whole budget, so any call that reached
+it necessarily breached the overall deadline and was reported as `timed_out`
+rather than classified. Over a 148-point screen sweep this produced **130
+timeouts**; with the native deadline at half the budget, **zero**, and the same
+points are correctly `unsupported`.
+
+### Correction 2 — UTF-16 offsets converted, not refused (`981a718`)
+
+`_code_point_index` converts at the adapter boundary only; everything above it
+stays in code points. An offset inside a surrogate pair, negative, or past the
+end refuses the reading rather than naming a neighbouring character.
+
+Narrowing was also required: a control returns a whole **line**, and the
+Korean-only gate rejects a line that mixes scripts, which made a mixed line
+answer nothing at all while suppressing the OCR fallback. The coordinator now
+narrows to the Korean run under the pointer, so `🙂🙂초대받았어요` produces the
+identical selection to `초대받았어요`. This was a latent defect predating the
+correction: `Hello 초대받았어요` was accepted and then silently produced nothing.
+
+### Correction 3 — useful decompositions preserved (`64dd24d`)
+
+The blanket rule is replaced by a faithfulness test: a part earns its place when
+the dictionary holds its lemma **and** that lemma is exactly what its span
+reads. Both halves are needed, and running out of budget answers no.
+
+### Evidence
+
+| Measurement | Result |
+|---|---|
+| Real TextEdit, on-text points, through the service | **335/338 direct**, p50 **2.634 ms**, p95 8.785 ms, p99 13.612 ms, max 20.859 ms |
+| Screen sweep, native deadline = whole budget | 130 of 148 points `timed_out` |
+| Screen sweep, native deadline = half budget | **0** timeouts; 142 `unsupported` |
+| Emoji line `🙂🙂초대받았어요` | selection identical to the pure line at every Korean index; pointer on an emoji falls back |
+| Classification, 1,200 sampled headwords | 165 verbatim splits → **114 kept**, **51 suppressed**, reproducing the review exactly |
+| Dictionary budget | maximum **4** queries, **0** duplicates |
+| Privacy | an exception message containing the text is reduced to its type name; secure fields carry nothing |
+
+**Known imperfection, recorded rather than smoothed over.** The rule tests
+faithfulness of form, not of sense. False positive: `전우애` keeps
+`전 · former` + `우애 · friendship`, though the real split is `전우` + `애`.
+False negative: `맏사위` loses the useful `사위 · son-in-law` because its bound
+prefix `맏` is not an entry.
+
+### Gates
+
+```
+pytest                  -> 2159 passed, 2 skipped
+pytest --suite native   -> 94 passed
+pytest --suite packaged -> 3 passed
+ruff                    -> All checks passed
+mypy                    -> Success, 279 source files
+```
+
+Three failures appeared and were each reproduced and classified, never
+dismissed: two hover tests hung because the service's threads were non-daemon
+(fixed, and they now need one further dispatcher hop for the asynchronous
+outcome), and `test_app_composition` saw `책상` legitimately keep its parts.
+
+**Wave 6 remains `NOT STARTED — requires a real Windows environment.`**
