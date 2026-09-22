@@ -111,3 +111,15 @@ Every failure was reproduced and attributed; the table is in the checkpoint. Twe
 ## Review assignment
 
 Human-selected after implementation. Not started.
+
+## Final cross-platform review — 2026-09-22
+
+**Changes required.** The final review committed six narrow fixes, including
+pending deadlines, failed-bind refusal, COM/security hardening and secure AX
+subroles. Earlier claims that pending work is bounded by the 50 ms native floor
+and that failed binding can safely continue are superseded. Snapshot/cursor
+validation and dispatcher recovery remain merge blockers; fresh Windows OCR
+fallback and current-source frozen-artifact evidence are still required.
+See [the final review report](../reports/final-text-acquisition-review-2026-09-22.md)
+for reproductions, all gate results, dispositions and exact next actions. Nothing
+was pushed or merged.
