@@ -653,3 +653,59 @@ regression tests written to demonstrate the defects above.
 
 `981a718`, `64dd24d` and `abca3a9` are unchanged, as is everything through
 `fced4e1`. **Wave 6 was not started, and nothing was pushed or merged.**
+
+---
+
+# Precise Retained Bounds (2026-09-22)
+
+A narrow follow-up to the delta review's first deferred item, authorized on its
+own. Commit `d561667`. Everything earlier is unchanged; nothing pushed, and
+Wave 6 remains `NOT STARTED — requires a real Windows environment`.
+
+**The problem.** Narrowing selected the right word but retained the wrong
+region: the rectangle was still the whole accessibility line, so a lookup on
+`Hello 초대받았어요` held its answer across `Hello` and the empty area beside it.
+
+**The fix.** The adapter gained a precise-bounds capability: given a character
+span of the line it just read, it converts that span back into UTF-16 units and
+asks the control for `AXBoundsForRange` on exactly that range. The narrowing
+policy stays in the platform-neutral coordinator, which passes the span down and
+then validates what comes back — the rectangle must exist, be a real
+`BoundingBox`, contain the pointer, and lie inside the line it came from.
+Anything else refuses the read and lets OCR answer. Nothing is estimated or
+scaled from the line's rectangle.
+
+A reader with no precise-bounds capability keeps its line rectangle only when
+the line *is* the word, and refuses anything narrower.
+
+**Evidence, real TextEdit.**
+
+| | Before | After |
+|---|---|---|
+| Line `Hello 초대받았어요` rectangle | 147–783 (**636 px**) | unchanged as the source |
+| Retained rectangle for `초대받았어요` | 147–783 (**636 px**) | **186–243 (57 px)** |
+| Share of the line retained | 100% | **9%** |
+
+Sweeping that line: x 187–243 answers `초대받았어요` with the 57 px rectangle,
+and every other position — on `Hello`, the space, and past the text — reports
+`not_korean` and falls back to OCR. `refine_bounds` was also confirmed against a
+second real element, returning 283–321 inside a 237–321 line.
+
+**Tests.** `tests/test_text_acquisition.py` (40) gains the narrowed-rectangle
+case, the line-rectangle-never-reused case, missing / elsewhere / outside-line
+bounds falling back, a failure while asking, the shared deadline, pure Korean
+keeping its own rectangle, emoji-prefixed Korean, and both reader-without-
+geometry cases. `tests/native/macos/test_text_acquisition_units.py` (38) gains
+the inverse conversion, its round-trip against the forward one, out-of-range
+spans and empty or reversed spans.
+
+```
+pytest                -> 2189 passed, 2 skipped
+pytest --suite native -> 110 passed
+ruff                  -> All checks passed
+mypy                  -> Success, 279 source files
+```
+
+Privacy, request currency, the bounded deadline and the UTF-16/code-point
+contract are unchanged; the extra call shares the same acquisition budget and no
+engine contract moved.
