@@ -1521,3 +1521,23 @@ def test_a_packaging_tool_that_names_no_file_writes_none(tmp_path: Path) -> None
 
     assert not Path("-force").exists()
     assert sorted(item.name for item in tmp_path.iterdir()) == []
+
+
+def test_the_windows_reader_needs_no_dependency_and_no_hidden_import() -> None:
+    """UI Automation is bound through ``ctypes``, so nothing was added to ship it.
+
+    ``collect_submodules("hanly_app")`` already carries the module into every
+    artifact, exactly as it carries the macOS adapter; a COM binding such as
+    ``comtypes`` would have been a runtime dependency on all three platforms.
+    """
+
+    manifest = (ROOT / "packages" / "hanly-app" / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    source = SPEC.read_text(encoding="utf-8")
+
+    assert "comtypes" not in manifest
+    assert "pywinauto" not in manifest
+    assert "uiautomation" not in manifest
+    assert "text_acquisition_uia" not in source
+    assert 'collect_submodules("hanly_app")' in source

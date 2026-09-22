@@ -120,6 +120,33 @@ class DirectTextCoordinator:
     def timeout_ms(self) -> int:
         return self._timeout_ms
 
+    def bind_worker(self) -> None:
+        """Let the adapter prepare the thread that will perform every read.
+
+        Windows needs this: COM apartments belong to a thread rather than to a
+        process, so the one worker has to enter one before the first read and
+        leave it after the last. An adapter that needs nothing says nothing.
+        """
+
+        self._notify_provider("bind_thread")
+
+    def release_worker(self) -> None:
+        """Undo :meth:`bind_worker`, on that same thread."""
+
+        self._notify_provider("release_thread")
+
+    def _notify_provider(self, hook: str) -> None:
+        callback = getattr(self._provider, hook, None)
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            # A platform that cannot prepare its thread simply answers nothing
+            # later; it must not stop the worker from running at all, because
+            # then no hover would ever reach its fallback.
+            pass
+
     def acquire(
         self,
         point: Point,
@@ -306,25 +333,47 @@ __all__ = [
 def default_text_acquisition() -> DirectTextService | None:
     """The reader this platform offers, or ``None`` where there is not one.
 
-    Only macOS has an implementation today. Everywhere else this returns
-    ``None`` and every hover captures and runs OCR exactly as before, which is
-    also what happens on macOS without the accessibility grant.
+    macOS reads through accessibility and Windows through UI Automation.
+    Anywhere else this returns ``None`` and every hover captures and runs OCR
+    exactly as before, which is also what happens on macOS without the
+    accessibility grant.
     """
 
     from sys import platform
 
-    if platform != "darwin":
+    if platform == "darwin":
+        coordinator = _darwin_coordinator()
+    elif platform == "win32":
+        coordinator = _windows_coordinator()
+    else:
         return None
+    return None if coordinator is None else DirectTextService(coordinator)
+
+
+def _darwin_coordinator() -> DirectTextCoordinator | None:
     try:
         from .permissions_darwin import accessibility_trusted
         from .text_acquisition_ax import AccessibilityTextProvider
     except Exception:
         return None
-    return DirectTextService(
-        DirectTextCoordinator(
-            AccessibilityTextProvider(), permitted=accessibility_trusted
-        )
+    return DirectTextCoordinator(
+        AccessibilityTextProvider(), permitted=accessibility_trusted
     )
+
+
+def _windows_coordinator() -> DirectTextCoordinator | None:
+    """Windows needs no grant: UI Automation is readable by any process.
+
+    What it can read is bounded by integrity level instead, and a window this
+    process may not query simply answers nothing, which is an ordinary refusal
+    rather than a permission the user could give.
+    """
+
+    try:
+        from .text_acquisition_uia import UIAutomationTextProvider
+    except Exception:
+        return None
+    return DirectTextCoordinator(UIAutomationTextProvider())
 
 
 @dataclass(frozen=True)
@@ -427,6 +476,13 @@ class DirectTextService:
                 thread.join(timeout=5.0)
 
     def _work(self) -> None:
+        self._coordinator.bind_worker()
+        try:
+            self._consume()
+        finally:
+            self._coordinator.release_worker()
+
+    def _consume(self) -> None:
         while True:
             with self._condition:
                 while not self._closed and self._pending is None:

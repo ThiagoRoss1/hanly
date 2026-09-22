@@ -353,3 +353,80 @@ def test_closing_from_a_delivered_callback_does_not_fail() -> None:
     assert failure == []
     # And a second close from an ordinary thread is still safe.
     service.close()
+
+
+class _BoundReader(_Reader):
+    """A provider that has to prepare the thread it will be called on.
+
+    Windows needs this: a COM apartment belongs to a thread, so the worker has
+    to enter one before the first read and leave it after the last.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bound: list[str] = []
+        self.released: list[str] = []
+
+    def bind_thread(self) -> None:
+        self.bound.append(current_thread().name)
+
+    def release_thread(self) -> None:
+        self.released.append(current_thread().name)
+
+
+def test_the_worker_is_prepared_before_its_first_read_and_undone_after_its_last() -> None:
+    reader = _BoundReader()
+    collector = _collect()
+    service = _service(reader)
+    try:
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0)
+    finally:
+        service.close()
+
+    assert reader.bound == reader.threads == reader.released
+    assert len(reader.bound) == 1
+
+
+def test_a_service_that_was_never_used_still_undoes_its_preparation() -> None:
+    reader = _BoundReader()
+    service = _service(reader)
+    service.close()
+
+    assert reader.bound == reader.released
+    assert reader.calls == 0
+
+
+def test_a_provider_that_cannot_prepare_its_thread_still_reaches_the_fallback() -> None:
+    """Refusing to start would leave every hover waiting for an outcome forever."""
+
+    class _Unpreparable(_Reader):
+        def bind_thread(self) -> None:
+            raise RuntimeError("no apartment")
+
+        def release_thread(self) -> None:
+            raise RuntimeError("nothing to leave")
+
+    collector = _collect()
+    service = _service(_Unpreparable())
+    try:
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0), "the worker never started"
+    finally:
+        service.close()
+
+    assert collector.outcomes[0].outcome is Outcome.DIRECT
+
+
+def test_a_provider_with_nothing_to_prepare_is_left_alone() -> None:
+    """The reviewed macOS adapter offers no hooks and must not be asked for any."""
+
+    collector = _collect()
+    service = _service(_Reader())
+    try:
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0)
+    finally:
+        service.close()
+
+    assert collector.outcomes[0].outcome is Outcome.DIRECT
