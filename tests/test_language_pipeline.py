@@ -16,6 +16,7 @@ from hanly import (
     DictionaryEntry,
     LanguagePipeline,
     LexicalCandidate,
+    LexicalComponent,
     LookupContext,
     LookupPipeline,
     LookupResult,
@@ -428,6 +429,7 @@ def test_stale_language_fields_in_caller_evidence_never_survive_an_early_return(
         lemma="stale",
         analyses=(TokenAnalysis(token="stale", lemma="stale"),),
         candidate=LexicalCandidate(lemma="stale", start=0, end=5),
+        components=(LexicalComponent(lemma="stale", start=0, end=5),),
         ocr_results=(_region(),),
         word_region=BoundingBox(1, 2, 3, 4),
     )
@@ -438,6 +440,7 @@ def test_stale_language_fields_in_caller_evidence_never_survive_an_early_return(
         assert context.lemma is None
         assert context.candidate is None
         assert context.analyses == ()
+        assert context.components == ()
         assert context.text != "stale"
         # The pixel evidence the stage does not own is still untouched.
         assert context.word_region == stale.word_region

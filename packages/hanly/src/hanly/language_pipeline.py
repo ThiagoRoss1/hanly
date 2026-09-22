@@ -78,7 +78,9 @@ class LanguagePipeline:
         base = (
             LookupContext()
             if evidence is None
-            else replace(evidence, text=None, lemma=None, analyses=(), candidate=None)
+            else replace(
+                evidence, text=None, lemma=None, analyses=(), candidate=None, components=()
+            )
         )
         text = selection.text.strip()
         if not text:
