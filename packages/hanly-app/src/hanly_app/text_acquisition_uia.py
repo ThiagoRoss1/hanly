@@ -45,7 +45,7 @@ _S_OK = 0
 _S_FALSE = 1
 #: ``CoInitializeEx`` refusing because this thread is already in another
 #: apartment. The apartment is not ours, so it must not be torn down either.
-_RPC_E_CHANGED_MODE = 0x80010106
+_RPC_E_CHANGED_MODE = ctypes.c_int32(0x80010106).value
 _COINIT_MULTITHREADED = 0x0
 _CLSCTX_INPROC_SERVER = 1
 
@@ -150,14 +150,17 @@ class _UIABridge:
         self._automation = automation
         self._owns_apartment = owns_apartment
 
-    def limit_calls(self, milliseconds: int) -> None:
+    def limit_calls(self, milliseconds: int) -> bool:
         for slot in (
             _AUTOMATION_PUT_CONNECTION_TIMEOUT,
             _AUTOMATION_PUT_TRANSACTION_TIMEOUT,
         ):
-            self._method(self._automation, slot, ctypes.c_int)(
+            status = self._method(self._automation, slot, ctypes.c_uint32)(
                 self._automation, milliseconds
             )
+            if status != _S_OK:
+                return False
+        return True
 
     # --- COM plumbing -----------------------------------------------------
 
@@ -370,6 +373,7 @@ def _bridge_for_thread() -> _UIABridge | None:
 
     if not getattr(_thread_state, "attempted", False):
         _thread_state.attempted = True
+        _thread_state.bridge = None
         _thread_state.bridge = _create_bridge()
     bridge: _UIABridge | None = _thread_state.bridge
     return bridge
@@ -390,15 +394,26 @@ def _create_bridge() -> _UIABridge | None:
         return None
     owns_apartment = entered != _RPC_E_CHANGED_MODE
 
-    automation, timed = _create_automation(ole32)
+    try:
+        automation, timed = _create_automation(ole32)
+    except Exception:
+        if owns_apartment:
+            ole32.CoUninitialize()
+        raise
     if automation is None:
         if owns_apartment:
             ole32.CoUninitialize()
         return None
 
     bridge = _UIABridge(ole32, oleaut32, automation, owns_apartment=owns_apartment)
-    if timed:
-        bridge.limit_calls(_NATIVE_TIMEOUT_MS)
+    try:
+        bounded = timed and bridge.limit_calls(_NATIVE_TIMEOUT_MS)
+    except Exception:
+        bridge.dispose()
+        raise
+    if not bounded:
+        bridge.dispose()
+        return None
     return bridge
 
 
@@ -591,6 +606,10 @@ class UIAutomationTextProvider:
         if element is None:
             return None
         try:
+            if bridge.flag(element, _UIA_IS_PASSWORD_PROPERTY) is not False:
+                return None
+            if bridge.flag(element, _UIA_IS_OFFSCREEN_PROPERTY) is not False:
+                return None
             return self._span_bounds(bridge, element, point, start, end)
         finally:
             bridge.release(element)
@@ -600,12 +619,15 @@ class UIAutomationTextProvider:
     def _read_element(
         self, bridge: _UIABridge, element: ctypes.c_void_p, point: Point
     ) -> DirectText | None:
-        if bridge.flag(element, _UIA_IS_PASSWORD_PROPERTY):
+        password = bridge.flag(element, _UIA_IS_PASSWORD_PROPERTY)
+        if password is True:
             # Reported without its contents, so the caller refuses it by reason
             # rather than by an empty answer it cannot explain. Chromium really
             # does expose a text pattern on a password field.
             return DirectText(text="", cursor_index=0, secure=True)
-        if bridge.flag(element, _UIA_IS_OFFSCREEN_PROPERTY):
+        if password is not False:
+            return None
+        if bridge.flag(element, _UIA_IS_OFFSCREEN_PROPERTY) is not False:
             # Scrolled away or behind another window: whatever it would report
             # is not what the pointer is over.
             return None
