@@ -1410,6 +1410,89 @@ def test_both_packages_agreeing_with_the_source_is_the_whole_check() -> None:
     assert identity["problems"] == []
 
 
+_CURRENT = "9" * 40
+_STALE = "cb2d437bbb7b856b0839c0a1907b0a3d96f54c27"
+
+
+def _stamped_bundle(root: Path, **fields: object) -> Path:
+    """A macOS-shaped bundle whose only content is its build stamp."""
+
+    stamp: dict[str, object] = {
+        "product": "hanly-desktop",
+        "platform": "macos",
+        "architecture": "arm64",
+        "version": "0.5.3",
+        "build_id": "d0a15bba-4da8-4cee-b65a-6dc363c6c0da",
+        "source_commit": _CURRENT,
+        "built_at": "2026-09-22T00:00:00+00:00",
+    }
+    stamp.update(fields)
+    assets = root / "Hanly.app" / "Contents" / "Resources" / "hanly_app" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "hanly-build.json").write_text(json.dumps(stamp), encoding="utf-8")
+    return root / "Hanly.app"
+
+
+def _source_identity(bundle: Path, **overrides: str) -> dict[str, object]:
+    expected = {
+        "expected_commit": _CURRENT,
+        "expected_version": "0.5.3",
+        "expected_platform": "macos",
+        "expected_architecture": "arm64",
+    }
+    expected.update(overrides)
+    return smoke_packaged_runtime.verify_source_identity(bundle, **expected)
+
+
+def test_a_same_version_bundle_from_an_older_commit_fails_the_source_check(
+    tmp_path: Path,
+) -> None:
+    """The stale bundle that passed the version-only gate at 0.5.3."""
+
+    identity = _source_identity(_stamped_bundle(tmp_path, source_commit=_STALE))
+
+    assert identity["ok"] is False
+    assert _STALE in cast(list[str], identity["problems"])[0]
+
+
+def test_a_bundle_from_the_expected_commit_passes_the_source_check(tmp_path: Path) -> None:
+    identity = _source_identity(_stamped_bundle(tmp_path))
+
+    assert identity["ok"] is True
+    assert identity["problems"] == []
+
+
+@pytest.mark.parametrize(
+    ("fields", "overrides"),
+    [
+        ({"version": "0.5.2"}, {}),
+        ({"architecture": "x86_64"}, {}),
+        ({"platform": "windows"}, {}),
+        ({"source_commit": None}, {}),
+        ({}, {"expected_commit": "cb2d437"}),
+    ],
+    ids=["version", "architecture", "platform", "no-commit", "abbreviated-expectation"],
+)
+def test_any_other_identity_mismatch_fails_the_source_check(
+    tmp_path: Path, fields: dict[str, object], overrides: dict[str, str]
+) -> None:
+    identity = _source_identity(_stamped_bundle(tmp_path, **fields), **overrides)
+
+    assert identity["ok"] is False
+
+
+def test_a_bundle_without_a_readable_stamp_fails_the_source_check(tmp_path: Path) -> None:
+    empty = tmp_path / "empty" / "Hanly.app"
+    empty.mkdir(parents=True)
+    garbled = _stamped_bundle(tmp_path / "garbled")
+    (garbled / "Contents" / "Resources" / "hanly_app" / "assets" / "hanly-build.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+
+    assert _source_identity(empty)["ok"] is False
+    assert _source_identity(garbled)["ok"] is False
+
+
 def test_an_identity_check_that_never_runs_the_executable_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

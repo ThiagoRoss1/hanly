@@ -213,8 +213,17 @@ uses the platform's build output (`dist/<platform>/hanly-desktop`, or
 `HANLY_PACKAGED_APP`:
 
 ```bash
-python -m pytest --suite packaged
+HANLY_EXPECTED_SOURCE_COMMIT="$(git rev-parse HEAD)" python -m pytest --suite packaged
 ```
+
+`HANLY_EXPECTED_SOURCE_COMMIT` names the full commit the bundle must have been
+built from, and the gate compares it with the `source_commit` in the bundle's
+own `hanly_app/assets/hanly-build.json`, together with its version, platform
+and architecture. Package versions alone cannot tell two builds of one version
+apart, so a stale bundle of the current version would otherwise pass. The
+commit is supplied by whoever runs the gate -- CI passes the commit it built --
+and is never inferred from the checkout running the tests. Without it the
+identity case skips locally and fails under `HANLY_REQUIRE_PACKAGED`.
 
 ## Three suites, three machines
 

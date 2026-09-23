@@ -388,6 +388,70 @@ def verify_frozen_identity(
     }
 
 
+#: Names the commit a packaged gate requires its artifact to have been built
+#: from. It is given explicitly, never read from whatever checkout runs the gate.
+EXPECTED_SOURCE_VARIABLE = "HANLY_EXPECTED_SOURCE_COMMIT"
+
+_BUILD_STAMP_FILE = "hanly_app/assets/hanly-build.json"
+
+
+def verify_source_identity(
+    bundle: Path,
+    *,
+    expected_commit: str,
+    expected_version: str,
+    expected_platform: str,
+    expected_architecture: str,
+) -> dict[str, object]:
+    """Compare the build stamp a frozen bundle carries with the build expected.
+
+    Versions alone cannot tell two builds of one version apart, so a bundle
+    frozen from an older commit passes every version check. The stamp written
+    before the freeze names the exact commit, and it is read from the files on
+    disk rather than asked of the program, which a stale build might predate.
+    """
+
+    expected = {
+        "source_commit": expected_commit.strip().lower(),
+        "version": expected_version,
+        "platform": expected_platform,
+        "architecture": expected_architecture,
+    }
+    result: dict[str, object] = {"expected": expected, "stamp": None, "ok": False}
+    if not _is_full_commit(expected["source_commit"]):
+        result["problems"] = ["the expected source commit is not a full 40-character hash"]
+        return result
+
+    stamp_file = _find_data_file(bundle, _BUILD_STAMP_FILE)
+    if stamp_file is None:
+        result["problems"] = ["the frozen bundle carries no build stamp"]
+        return result
+    try:
+        stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        result["problems"] = [f"the frozen bundle's build stamp is unreadable: {error}"]
+        return result
+    if not isinstance(stamp, dict):
+        result["problems"] = ["the frozen bundle's build stamp is not a JSON object"]
+        return result
+
+    # A missing field is a mismatch rather than an absence, as with versions.
+    found = {name: stamp.get(name) for name in expected}
+    if isinstance(found["source_commit"], str):
+        found["source_commit"] = found["source_commit"].lower()
+    problems = [
+        f"the frozen bundle was built with {name} {found[name]!r}, expected {value!r}"
+        for name, value in expected.items()
+        if found[name] != value
+    ]
+    result.update(stamp=found, ok=not problems, problems=problems)
+    return result
+
+
+def _is_full_commit(value: str) -> bool:
+    return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
+
+
 def _collection_roots(root: Path) -> tuple[Path, ...]:
     return tuple(root.joinpath(*parts) for parts in _COLLECTION_ROOTS)
 
@@ -1137,6 +1201,7 @@ __all__ = [
     "BUNDLE_SIGNATURE",
     "DEFAULT_TIMEOUT_SECONDS",
     "EASYOCR_MODEL_SUBDIRECTORY",
+    "EXPECTED_SOURCE_VARIABLE",
     "EASYOCR_PATH_VARIABLES",
     "HEADLESS_QT_PLATFORM",
     "HEADLESS_SELF_CHECK_MODES",
@@ -1163,4 +1228,5 @@ __all__ = [
     "run_packaged_self_check",
     "verify_disk_image",
     "verify_frozen_identity",
+    "verify_source_identity",
 ]
