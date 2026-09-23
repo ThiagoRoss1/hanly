@@ -11,7 +11,6 @@ thread is not something a double can prove.
 
 from __future__ import annotations
 
-import ctypes
 import faulthandler
 from threading import Thread
 from typing import Any
@@ -22,188 +21,22 @@ from hanly_app import text_acquisition_uia as uia
 from hanly_app.text_acquisition import DirectTextCoordinator, Outcome
 from hanly_app.text_acquisition_uia import UIAutomationTextProvider
 
-_UIA_IS_PASSWORD = 30019
-_UIA_IS_OFFSCREEN = 30022
+from tests.hanly_fixtures.uia import (
+    CHARACTER_WIDTH,
+    LINE_BOTTOM,
+    LINE_LEFT,
+    LINE_TOP,
+    FakeBridge,
+    FakeControl,
+    point_at,
+)
 
-_LINE_TOP = 100
-_LINE_BOTTOM = 130
-_LINE_LEFT = 200
-#: Every fixture line is laid out at ten pixels per character, so a pointer's
-#: x coordinate names a character and a character span names a rectangle.
-_CHARACTER_WIDTH = 10
-
-
-class _Range:
-    """A start/end pair over the fake control's text, in Python characters."""
-
-    def __init__(self, control: _Control, start: int, end: int) -> None:
-        self.control = control
-        self.start = start
-        self.end = end
-
-    def text(self) -> str:
-        return self.control.text[self.start : self.end]
-
-
-class _Control:
-    """One line of text answering the way a real UIA provider answers.
-
-    ``unit`` names what this control thinks ``MoveEndpointByUnit`` counts:
-    Chromium was measured counting code points and RichEdit UTF-16 code units,
-    and the adapter has to reach the same span through either.
-    """
-
-    def __init__(
-        self,
-        text: str,
-        *,
-        unit: str = "code_points",
-        password: bool = False,
-        offscreen: bool = False,
-        has_pattern: bool = True,
-        denied: bool = False,
-        rectangles: list[BoundingBox] | None = None,
-        nearest: bool = False,
-    ) -> None:
-        self.text = text
-        self.unit = unit
-        self.password = password
-        self.offscreen = offscreen
-        self.has_pattern = has_pattern
-        self.denied = denied
-        self.rectangles = rectangles
-        self.nearest = nearest
-
-    def index_at(self, point: Point) -> int:
-        offset = int((point.x - _LINE_LEFT) // _CHARACTER_WIDTH)
-        if self.nearest:
-            # The failure that would silently define the wrong word: the
-            # control answers about whatever is closest instead of refusing.
-            return 0
-        return max(0, min(offset, max(len(self.text) - 1, 0)))
-
-    def offsets_of(self, index: int) -> int:
-        if self.unit == "code_points":
-            return index
-        return len(self.text[:index].encode("utf-16-le")) // 2
-
-    def index_of(self, offset: int) -> int | None:
-        for index in range(len(self.text) + 1):
-            if self.offsets_of(index) == offset:
-                return index
-        return None
-
-    def box_for(self, start: int, end: int) -> list[BoundingBox]:
-        if self.rectangles is not None:
-            return self.rectangles
-        if end <= start:
-            return []
-        return [
-            BoundingBox(
-                left=_LINE_LEFT + start * _CHARACTER_WIDTH,
-                top=_LINE_TOP,
-                right=_LINE_LEFT + end * _CHARACTER_WIDTH,
-                bottom=_LINE_BOTTOM,
-            )
-        ]
-
-
-class _Bridge:
-    """Stands in for the COM bridge and counts what the adapter fails to free."""
-
-    def __init__(self, control: _Control | None) -> None:
-        self.control = control
-        self._objects: dict[int, Any] = {}
-        self._next = 1
-        self.live = 0
-
-    # --- handle bookkeeping ----------------------------------------------
-
-    def _hold(self, value: Any) -> ctypes.c_void_p:
-        handle = self._next
-        self._next += 1
-        self._objects[handle] = value
-        self.live += 1
-        return ctypes.c_void_p(handle)
-
-    def _get(self, pointer: ctypes.c_void_p) -> Any:
-        assert pointer.value is not None, "the adapter passed back a null interface"
-        return self._objects[pointer.value]
-
-    def release(self, pointer: ctypes.c_void_p | None) -> None:
-        if pointer and pointer.value in self._objects:
-            del self._objects[pointer.value]
-            self.live -= 1
-
-    # --- the surface the adapter calls -----------------------------------
-
-    def element_at(self, point: Point) -> ctypes.c_void_p | None:
-        return None if self.control is None else self._hold(self.control)
-
-    def flag(self, element: ctypes.c_void_p, property_id: int) -> bool | None:
-        control = self._get(element)
-        if control.denied:
-            return None
-        if property_id == _UIA_IS_PASSWORD:
-            return control.password
-        if property_id == _UIA_IS_OFFSCREEN:
-            return control.offscreen
-        return None
-
-    def text_pattern(self, element: ctypes.c_void_p) -> ctypes.c_void_p | None:
-        control = self._get(element)
-        if control.denied or not control.has_pattern:
-            return None
-        return self._hold(control)
-
-    def range_at(
-        self, pattern: ctypes.c_void_p, point: Point
-    ) -> ctypes.c_void_p | None:
-        control = self._get(pattern)
-        index = control.index_at(point)
-        return self._hold(_Range(control, index, index))
-
-    def clone(self, pointer: ctypes.c_void_p) -> ctypes.c_void_p | None:
-        found = self._get(pointer)
-        return self._hold(_Range(found.control, found.start, found.end))
-
-    def expand(self, pointer: ctypes.c_void_p, unit: int) -> bool:
-        found = self._get(pointer)
-        found.start, found.end = 0, len(found.control.text)
-        return True
-
-    def text_of(self, pointer: ctypes.c_void_p, limit: int) -> str | None:
-        return self._get(pointer).text()[:limit]
-
-    def align_endpoint(
-        self,
-        pointer: ctypes.c_void_p,
-        endpoint: int,
-        other: ctypes.c_void_p,
-        other_endpoint: int,
-    ) -> bool:
-        found, source = self._get(pointer), self._get(other)
-        found.end = source.start if other_endpoint == 0 else source.end
-        return True
-
-    def move_endpoint(
-        self, pointer: ctypes.c_void_p, endpoint: int, unit: int, count: int
-    ) -> bool:
-        found = self._get(pointer)
-        control = found.control
-        current = found.start if endpoint == 0 else found.end
-        moved = control.index_of(control.offsets_of(current) + count)
-        if moved is None:
-            return False
-        if endpoint == 0:
-            found.start = moved
-        else:
-            found.end = moved
-        return True
-
-    def rectangles(self, pointer: ctypes.c_void_p) -> list[BoundingBox]:
-        found = self._get(pointer)
-        return found.control.box_for(found.start, found.end)
+_LINE_TOP = LINE_TOP
+_LINE_BOTTOM = LINE_BOTTOM
+_LINE_LEFT = LINE_LEFT
+_CHARACTER_WIDTH = CHARACTER_WIDTH
+_Control = FakeControl
+_Bridge = FakeBridge
 
 
 @pytest.fixture
@@ -221,13 +54,7 @@ def bridge(monkeypatch: pytest.MonkeyPatch) -> Any:
     return use
 
 
-def _point(index: int) -> Point:
-    """The pointer sitting on the ``index``-th character of a fixture line."""
-
-    return Point(
-        _LINE_LEFT + index * _CHARACTER_WIDTH + _CHARACTER_WIDTH / 2,
-        (_LINE_TOP + _LINE_BOTTOM) / 2,
-    )
+_point = point_at
 
 
 def _read(control: _Control, index: int, bridge: Any) -> Any:
@@ -350,7 +177,7 @@ def test_the_adapter_has_nothing_to_say_without_a_bridge(
     provider = UIAutomationTextProvider()
 
     assert provider.read_at(_point(2), timeout_ms=40) is None
-    assert provider.refine_bounds(_point(2), 0, 3, timeout_ms=40) is None
+    assert provider.refine_bounds(_point(2), 0, 3, line="초대받", timeout_ms=40) is None
 
 
 # --- narrowing a line to one word ----------------------------------------
@@ -375,7 +202,7 @@ def test_a_span_is_isolated_however_the_provider_counts_characters(
     ledger = bridge(_Control(line, unit=unit))
 
     bounds = UIAutomationTextProvider().refine_bounds(
-        _point(start), start, end, timeout_ms=40
+        _point(start), start, end, line=line, timeout_ms=40
     )
 
     assert bounds == BoundingBox(
@@ -398,7 +225,10 @@ def test_a_span_whose_text_is_not_the_text_asked_for_is_refused(
     )
 
     assert (
-        UIAutomationTextProvider().refine_bounds(_point(0), 0, 3, timeout_ms=40) is None
+        UIAutomationTextProvider().refine_bounds(
+            _point(0), 0, 3, line="초대받았어요", timeout_ms=40
+        )
+        is None
     )
 
 
@@ -415,7 +245,7 @@ def test_a_span_that_does_not_fit_the_line_cannot_be_asked_about(
 
     assert (
         UIAutomationTextProvider().refine_bounds(
-            _point(0), start, end, timeout_ms=40
+            _point(0), start, end, line="초대받았어요", timeout_ms=40
         )
         is None
     )
@@ -428,7 +258,10 @@ def test_a_control_that_cannot_move_an_endpoint_refuses_the_span(
     monkeypatch.setattr(ledger, "move_endpoint", lambda *args: False)
 
     assert (
-        UIAutomationTextProvider().refine_bounds(_point(0), 0, 3, timeout_ms=40) is None
+        UIAutomationTextProvider().refine_bounds(
+            _point(0), 0, 3, line="초대받았어요", timeout_ms=40
+        )
+        is None
     )
     assert ledger.live == 0
 
@@ -644,7 +477,9 @@ def test_a_real_read_at_an_arbitrary_point_never_raises(quiet_com_teardown: Any)
         try:
             for point in (Point(0, 0), Point(-1, -1), Point(5, 5), Point(10**6, 10**6)):
                 outcomes.append(provider.read_at(point, timeout_ms=40))
-                outcomes.append(provider.refine_bounds(point, 0, 1, timeout_ms=40))
+                outcomes.append(
+                    provider.refine_bounds(point, 0, 1, line="초", timeout_ms=40)
+                )
         finally:
             provider.release_thread()
 

@@ -312,14 +312,15 @@ class AccessibilityTextProvider:
             bridge.release(element)
 
     def refine_bounds(
-        self, point: Point, start: int, end: int, *, timeout_ms: int
+        self, point: Point, start: int, end: int, *, line: str, timeout_ms: int
     ) -> BoundingBox | None:
-        """The rectangle of one span of the line previously read at ``point``.
+        """The rectangle of one span of ``line``, the text read earlier at ``point``.
 
         ``start`` and ``end`` are character offsets into that line. Asking the
         control itself is the only honest way to get this: a rectangle derived
         by dividing the line's own rectangle would be a guess that happens to
-        look right in a monospaced font.
+        look right in a monospaced font. ``None`` unless the control still shows
+        exactly ``line`` there.
         """
 
         bridge = _bridge_once()
@@ -334,7 +335,7 @@ class AccessibilityTextProvider:
             role = self._string_attribute(bridge, element, "AXRole")
             if role is None or self._secure_element(bridge, element, role):
                 return None
-            return self._span_bounds(bridge, element, point, start, end)
+            return self._span_bounds(bridge, element, point, start, end, line)
         finally:
             bridge.release(element)
 
@@ -345,6 +346,7 @@ class AccessibilityTextProvider:
         point: Point,
         start: int,
         end: int,
+        expected: str,
     ) -> BoundingBox | None:
         """Convert a character span of the line back into an accessibility range."""
 
@@ -359,11 +361,12 @@ class AccessibilityTextProvider:
             return None
         line_start, line_length = line
         text = self._string_for_range(bridge, element, line_start, line_length)
-        if text is None:
+        # The line may have changed under the pointer between the two calls,
+        # even to text of the same length; a rectangle for other content would
+        # retain a word this lookup is not about.
+        if text is None or text != expected:
             return None
 
-        # The line may have changed under the pointer between the two calls;
-        # a span that no longer fits it cannot be asked about.
         first = _utf16_offset(text, start)
         last = _utf16_offset(text, end)
         if first is None or last is None or last <= first:

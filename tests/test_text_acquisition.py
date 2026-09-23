@@ -37,6 +37,7 @@ class _Provider:
         self.error = error
         self.calls: list[tuple[Point, int]] = []
         self.spans: list[tuple[int, int]] = []
+        self.lines: list[str] = []
         self._span_bounds = span_bounds
 
     def read_at(self, point: Point, *, timeout_ms: int) -> DirectText | None:
@@ -46,9 +47,10 @@ class _Provider:
         return self.reading
 
     def refine_bounds(
-        self, point: Point, start: int, end: int, *, timeout_ms: int
+        self, point: Point, start: int, end: int, *, line: str, timeout_ms: int
     ) -> BoundingBox | None:
         self.spans.append((start, end))
+        self.lines.append(line)
         if self._span_bounds is not _UNSET:
             return self._span_bounds  # type: ignore[return-value]
         # A plausible sub-rectangle inside the line it came from.
@@ -277,6 +279,34 @@ def test_a_narrowed_word_is_retained_by_its_own_rectangle() -> None:
     assert provider.spans == [(6, 12)]
 
 
+def test_refinement_is_handed_the_exact_line_that_was_read() -> None:
+    """The adapter can only refuse changed content if it knows what was read."""
+
+    provider = _mixed(_WORD_BOUNDS)
+
+    DirectTextCoordinator(provider).acquire(_INSIDE)
+
+    assert provider.lines == ["Hello 초대받았어요"]
+
+
+def test_a_reader_that_cannot_check_the_line_is_refused() -> None:
+    """An adapter unaware of the line could return bounds for other content."""
+
+    class _Unchecked(_Provider):
+        def refine_bounds(  # type: ignore[override]
+            self, point: Point, start: int, end: int, *, timeout_ms: int
+        ) -> BoundingBox | None:
+            return _WORD_BOUNDS
+
+    provider = _Unchecked(
+        DirectText(text="Hello 초대받았어요", cursor_index=8, bounds=_BOUNDS)
+    )
+
+    assert DirectTextCoordinator(provider).acquire(_INSIDE).outcome is (
+        Outcome.AMBIGUOUS
+    )
+
+
 def test_the_whole_line_rectangle_is_never_reused_for_a_part_of_it() -> None:
     """Retaining the line would hold the answer over `Hello` as well."""
 
@@ -305,7 +335,7 @@ def test_bounds_that_are_missing_or_wrong_fall_back_to_ocr(
 def test_a_failure_while_asking_for_bounds_falls_back_to_ocr() -> None:
     class _Failing(_Provider):
         def refine_bounds(
-            self, point: Point, start: int, end: int, *, timeout_ms: int
+            self, point: Point, start: int, end: int, *, line: str, timeout_ms: int
         ) -> BoundingBox | None:
             raise RuntimeError("the control stopped answering")
 
@@ -322,7 +352,9 @@ def test_asking_for_bounds_is_given_the_same_deadline() -> None:
     provider = _mixed(_WORD_BOUNDS)
     seen: list[int] = []
 
-    def refine(point: Point, start: int, end: int, *, timeout_ms: int) -> BoundingBox:
+    def refine(
+        point: Point, start: int, end: int, *, line: str, timeout_ms: int
+    ) -> BoundingBox:
         seen.append(timeout_ms)
         return _WORD_BOUNDS
 

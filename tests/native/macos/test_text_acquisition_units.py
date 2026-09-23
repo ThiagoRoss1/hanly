@@ -174,6 +174,7 @@ def test_an_empty_or_reversed_span_is_refused() -> None:
     """A span with nothing in it names no rectangle."""
 
     adapter = _adapter_for("초대받았어요", utf16_index=0)
+    element = ctypes.c_void_p(1)
 
-    assert adapter._span_bounds(_bridge(), ctypes.c_void_p(1), Point(1, 1), 2, 2) is None
-    assert adapter._span_bounds(_bridge(), ctypes.c_void_p(1), Point(1, 1), 3, 1) is None
+    assert adapter._span_bounds(_bridge(), element, Point(1, 1), 2, 2, "초대받았어요") is None
+    assert adapter._span_bounds(_bridge(), element, Point(1, 1), 3, 1, "초대받았어요") is None

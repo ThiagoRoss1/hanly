@@ -242,7 +242,9 @@ class DirectTextCoordinator:
 
         A provider that cannot answer about a span keeps the rectangle it gave,
         which is the whole line; that is only right when the line *is* the word,
-        so anything narrower is refused rather than approximated.
+        so anything narrower is refused rather than approximated. A provider
+        that can answer is handed the line it read, and must refuse if the
+        control no longer shows exactly that line.
         """
 
         refine = getattr(self._provider, "refine_bounds", None)
@@ -251,7 +253,9 @@ class DirectTextCoordinator:
             return line if (start, end) == (0, len(reading.text)) else None
 
         try:
-            bounds = refine(point, start, end, timeout_ms=self._timeout_ms)
+            bounds = refine(
+                point, start, end, line=reading.text, timeout_ms=self._timeout_ms
+            )
         except Exception:
             return None
         if not isinstance(bounds, BoundingBox):

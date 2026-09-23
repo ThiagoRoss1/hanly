@@ -588,14 +588,15 @@ class UIAutomationTextProvider:
             bridge.release(element)
 
     def refine_bounds(
-        self, point: Point, start: int, end: int, *, timeout_ms: int
+        self, point: Point, start: int, end: int, *, line: str, timeout_ms: int
     ) -> BoundingBox | None:
-        """The rectangle of one span of the line previously read at ``point``.
+        """The rectangle of one span of ``line``, the text read earlier at ``point``.
 
         ``start`` and ``end`` are character offsets into that line. The control
         is asked about the span rather than the line's own rectangle being
         divided up, which would be a guess that only looks right in a
-        monospaced font.
+        monospaced font. ``None`` unless the control still shows exactly
+        ``line`` there.
         """
 
         bridge = _bridge_for_thread()
@@ -610,7 +611,7 @@ class UIAutomationTextProvider:
                 return None
             if bridge.flag(element, _UIA_IS_OFFSCREEN_PROPERTY) is not False:
                 return None
-            return self._span_bounds(bridge, element, point, start, end)
+            return self._span_bounds(bridge, element, point, start, end, line)
         finally:
             bridge.release(element)
 
@@ -730,6 +731,7 @@ class UIAutomationTextProvider:
         point: Point,
         start: int,
         end: int,
+        expected: str,
     ) -> BoundingBox | None:
         pattern = bridge.text_pattern(element)
         if pattern is None:
@@ -745,7 +747,7 @@ class UIAutomationTextProvider:
             if line is None:
                 return None
             try:
-                return self._narrowed(bridge, line, point, start, end)
+                return self._narrowed(bridge, line, point, start, end, expected)
             finally:
                 bridge.release(line)
         finally:
@@ -758,11 +760,13 @@ class UIAutomationTextProvider:
         point: Point,
         start: int,
         end: int,
+        expected: str,
     ) -> BoundingBox | None:
         text = bridge.text_of(line, _MAX_LINE_CHARACTERS)
-        if text is None or not 0 <= start < end <= len(text):
-            # The line may have changed under the pointer between the read and
-            # this call; a span that no longer fits it cannot be asked about.
+        # The line may have changed under the pointer between the read and this
+        # call, even to text of the same length, or another element may now be
+        # there; a rectangle for other content would retain the wrong word.
+        if text is None or text != expected or not 0 <= start < end <= len(text):
             return None
 
         wanted = text[start:end]
