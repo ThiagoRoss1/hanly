@@ -885,7 +885,21 @@ class HoverLookupRuntime:
             return False
 
         def deliver(acquired: Acquisition) -> None:
-            self._dispatcher(lambda: self._on_direct_text(request, acquired))
+            with self._lock:
+                if self._closed:
+                    # Shutdown suppresses queued work on purpose.
+                    return
+            try:
+                self._dispatcher(lambda: self._on_direct_text(request, acquired))
+            except Exception as error:
+                # This runs on the native worker, which may neither capture nor
+                # touch Qt, so the rejection is only recorded, by its class.
+                emit_trace(
+                    self._trace_sink,
+                    "hover_direct_text_dispatch_failed",
+                    hover_request_id=request.request_id,
+                    error_type=type(error).__name__,
+                )
 
         try:
             service.submit(request.point, deliver)

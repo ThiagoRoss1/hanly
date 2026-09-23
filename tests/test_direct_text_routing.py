@@ -496,3 +496,98 @@ def test_only_a_bounded_route_label_reaches_the_trace(
     blob = repr(sink.events)
     assert _KOREAN not in blob
     assert len(blob) < 10_000
+
+
+# --- a dispatcher that rejects the outcome -----------------------------------
+
+
+class _Rejecting:
+    """A UI dispatcher whose target is gone, as a destroyed Qt bridge would be."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, callback: Any) -> None:
+        self.calls += 1
+        raise RuntimeError("초대받았어요 at (20, 10) wrapped object has been deleted")
+
+
+def test_a_rejected_outcome_is_traced_by_its_class_alone() -> None:
+    """The native worker can neither capture nor touch Qt; it can only record."""
+
+    from hanly_app.text_acquisition import Acquisition, Outcome
+
+    service = _Service(Acquisition(Outcome.UNSUPPORTED))
+    runtime, capture, submitted, controller = _hover_runtime(service)
+    sink, dispatcher = _Sink(), _Rejecting()
+    runtime._trace_sink = sink
+    runtime._dispatcher = dispatcher
+    try:
+        assert runtime._start_direct_text(_hover_request())
+        service.deliver_now()  # must not raise into the service's thread
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+
+    [event] = [e for e in sink.events if e["event_kind"] == "hover_direct_text_dispatch_failed"]
+    assert event["error_type"] == "RuntimeError"
+    assert event["hover_request_id"] == 1
+    serialized = repr(event)
+    assert "초대" not in serialized and "deleted" not in serialized and "(20" not in serialized
+    assert dispatcher.calls == 1
+    assert capture.calls == 0 and submitted == []
+
+
+def test_an_outcome_after_shutdown_is_suppressed_without_a_failure() -> None:
+    from hanly_app.text_acquisition import Acquisition, Outcome
+
+    service = _Service(Acquisition(Outcome.UNSUPPORTED))
+    runtime, capture, submitted, controller = _hover_runtime(service)
+    sink, dispatcher = _Sink(), _Rejecting()
+    runtime._trace_sink = sink
+    runtime._dispatcher = dispatcher
+    runtime._start_direct_text(_hover_request())
+    runtime.shutdown()
+    controller.stop(wait=True)
+
+    service.deliver_now()
+
+    assert dispatcher.calls == 0
+    assert not [e for e in sink.events if e["event_kind"] == "hover_direct_text_dispatch_failed"]
+    assert capture.calls == 0 and submitted == []
+
+
+def test_a_rejecting_dispatcher_does_not_stop_the_real_worker() -> None:
+    """Later hovers must still be read after one outcome could not be handed over."""
+
+    from threading import Event
+
+    from hanly_app.text_acquisition import (
+        DirectText,
+        DirectTextCoordinator,
+        DirectTextService,
+    )
+
+    class _Reader:
+        def read_at(self, point: Point, *, timeout_ms: int) -> DirectText | None:
+            return None
+
+    service = DirectTextService(DirectTextCoordinator(_Reader()))
+    runtime, capture, submitted, controller = _hover_runtime(service)
+    rejected, delivered = Event(), Event()
+
+    def dispatcher(callback: Any) -> None:
+        if not rejected.is_set():
+            rejected.set()
+            raise RuntimeError("rejected")
+        delivered.set()
+
+    runtime._dispatcher = dispatcher
+    try:
+        runtime._start_direct_text(_hover_request())
+        assert rejected.wait(timeout=5.0)
+        runtime._start_direct_text(_hover_request())
+        assert delivered.wait(timeout=5.0), "the worker stopped after a rejection"
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
