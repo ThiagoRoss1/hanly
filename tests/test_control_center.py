@@ -270,6 +270,40 @@ def test_bridge_validates_region_and_monitor_target_choices(tmp_path: Path) -> N
         bridge.set_region({"left": 0, "top": 0, "width": 0, "height": 600})
 
 
+def _element_ids(html: str) -> list[str]:
+    """Every ``id`` attribute in the page, in order, as the browser will see them."""
+
+    from html.parser import HTMLParser
+
+    found: list[str] = []
+
+    class _Ids(HTMLParser):
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            found.extend(value for name, value in attrs if name == "id" and value)
+
+    _Ids().feed(html)
+    return found
+
+
+def test_the_packaged_window_probe_names_controls_the_shipped_page_has() -> None:
+    """The frozen UI self-check looks these up by id; a stale one fails every release.
+
+    Each must be exactly one element of the shipped page: ``getElementById``
+    answers for the first match, so a duplicate would let the wrong one pass.
+    """
+
+    from hanly_app.self_check import UI_PROBE_ELEMENTS
+
+    ids = _element_ids(load_control_center_assets().html)
+
+    assert UI_PROBE_ELEMENTS
+    for probe in UI_PROBE_ELEMENTS:
+        assert ids.count(probe) == 1, f"{probe!r} is not one element of the shipped page"
+    # The ids the redesign removed, which the gate kept probing until 2026-09-23.
+    legacy = {"control-center", "start-capture", "runtime-state", "quit-hanly"}
+    assert legacy.isdisjoint(UI_PROBE_ELEMENTS)
+
+
 def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None:
     assets = load_control_center_assets()
 
