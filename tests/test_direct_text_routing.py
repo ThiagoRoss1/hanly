@@ -350,6 +350,43 @@ def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
     assert capture.calls == 1
 
 
+def test_an_unverifiable_windows_cursor_is_captured_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider answering with a shorter prefix never names the wrong syllable."""
+
+    from hanly_app import text_acquisition_uia as uia
+    from hanly_app.text_acquisition import DirectTextCoordinator
+
+    from tests.hanly_fixtures.uia import FakeBridge, FakeControl, point_at
+
+    bridge = FakeBridge(FakeControl("초대받았어요"))
+    honest = bridge.text_of
+
+    def text_of(pointer: Any, limit: int) -> str | None:
+        span = bridge.get(pointer)
+        return "초" if (span.start, span.end) == (0, 2) else honest(pointer, limit)
+
+    bridge.text_of = text_of  # type: ignore[method-assign]
+    monkeypatch.setattr(uia, "_bridge_for_thread", lambda: bridge)
+    acquired = DirectTextCoordinator(uia.UIAutomationTextProvider()).acquire(
+        point_at(2)
+    )
+
+    service = _Service(acquired)
+    runtime, capture, submitted, controller = _hover_runtime(service)
+    try:
+        runtime._start_direct_text(_hover_request())
+        service.deliver_now()
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+
+    assert not acquired.used_direct_text
+    assert submitted == []
+    assert capture.calls == 1
+
+
 def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
     from hanly_app.text_acquisition import Acquisition, Outcome
 

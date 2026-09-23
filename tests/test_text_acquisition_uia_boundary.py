@@ -142,3 +142,115 @@ def test_refinement_belongs_to_the_line_originally_read(
     if expected is not Outcome.DIRECT:
         assert acquired.selection is None and acquired.bounds is None
     assert bridge.live == 0
+
+
+# --- which character the pointer is on ---------------------------------------
+
+
+@pytest.mark.parametrize("unit", ["code_points", "utf16"])
+@pytest.mark.parametrize("caret", ["character", "nearest"])
+@pytest.mark.parametrize("side", ["left", "centre", "right"])
+@pytest.mark.parametrize(
+    ("line", "index"),
+    [
+        ("초대받았어요", 0),
+        ("초대받았어요", 5),
+        ("🙂🙂초대받았어요", 2),
+        ("🙂초대 초대🙂", 4),
+        ("초초초 초초", 4),
+        ("가공식품, 초대받았어요", 6),
+        ("초대\n받았어요", 3),
+    ],
+    ids=["first", "last", "emoji-prefix", "repeated-word", "repeated-syllable",
+         "punctuation", "multiline"],
+)
+def test_the_cursor_is_the_character_whose_own_rectangle_holds_the_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+    unit: str,
+    caret: str,
+    side: str,
+    line: str,
+    index: int,
+) -> None:
+    """Wherever the provider leaves its caret, the answer is the pointer's character."""
+
+    bridge = FakeBridge(FakeControl(line, unit=unit, caret=caret))
+    provider = _install(monkeypatch, bridge)
+
+    reading = provider.read_at(point_at(index, side=side), timeout_ms=40)
+
+    assert reading is not None
+    assert reading.cursor_index == index
+    assert bridge.live == 0
+
+
+def _answering(
+    bridge: FakeBridge, wrong: Callable[[Any], str | None]
+) -> FakeBridge:
+    """``bridge``, with some range texts replaced by an inconsistent provider's."""
+
+    honest = bridge.text_of
+
+    def text_of(pointer: ctypes.c_void_p, limit: int) -> str | None:
+        answer = wrong(bridge.get(pointer))
+        return honest(pointer, limit) if answer is None else answer
+
+    bridge.text_of = text_of  # type: ignore[method-assign]
+    return bridge
+
+
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        # A shorter prefix that still matches the line's beginning.
+        lambda span: "초" if (span.start, span.end) == (0, 2) else None,
+        # A suffix that does not continue where the prefix stopped.
+        lambda span: "았어요" if (span.start, span.end) == (2, 6) else None,
+        # The character after the caret is some other character.
+        lambda span: "사" if (span.start, span.end) == (2, 3) else None,
+        # The character range answers with more than one character.
+        lambda span: "받았" if (span.start, span.end) == (2, 3) else None,
+    ],
+    ids=["short-prefix", "gapped-suffix", "wrong-character", "wide-character"],
+)
+def test_an_inconsistent_provider_answer_is_refused(
+    monkeypatch: pytest.MonkeyPatch, wrong: Callable[[Any], str | None]
+) -> None:
+    bridge = _answering(FakeBridge(FakeControl("초대받았어요")), wrong)
+    provider = _install(monkeypatch, bridge)
+
+    acquired = DirectTextCoordinator(provider).acquire(point_at(2))
+
+    assert acquired.outcome is Outcome.UNSUPPORTED
+    assert acquired.selection is None
+    assert bridge.live == 0
+
+
+def test_a_character_whose_rectangle_misses_the_pointer_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The caret's own character must be where the pointer is, not merely nearby."""
+
+    bridge = FakeBridge(FakeControl("초대받았어요"))
+    honest = bridge.rectangles
+
+    def rectangles(pointer: ctypes.c_void_p) -> list[Any]:
+        span = bridge.get(pointer)
+        return [] if span.end - span.start == 1 else honest(pointer)
+
+    bridge.rectangles = rectangles  # type: ignore[method-assign]
+    provider = _install(monkeypatch, bridge)
+
+    assert provider.read_at(point_at(2), timeout_ms=40) is None
+    assert bridge.live == 0
+
+
+def test_a_character_the_provider_cannot_step_over_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = FakeBridge(FakeControl("초대받았어요"))
+    monkeypatch.setattr(bridge, "move_endpoint", lambda *args: False)
+    provider = _install(monkeypatch, bridge)
+
+    assert provider.read_at(point_at(2), timeout_ms=40) is None
+    assert bridge.live == 0

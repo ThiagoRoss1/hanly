@@ -669,11 +669,19 @@ class UIAutomationTextProvider:
         if text is None or len(text) >= _MAX_LINE_CHARACTERS:
             return None
 
-        cursor_index = self._cursor_index(bridge, line, found, text)
-        if cursor_index is None:
+        caret = self._caret_index(bridge, line, found, text)
+        if caret is None:
             return None
 
         bounds = _rect_for_point(bridge.rectangles(line), point)
+        if bounds is None or not _contains(bounds, point):
+            # The line is not the pointer's, and the caller refuses it by that
+            # evidence before any cursor is used, so none is worth verifying.
+            return DirectText(text=text, cursor_index=caret, bounds=bounds)
+
+        cursor_index = self._character_under(bridge, found, text, caret, point)
+        if cursor_index is None:
+            return None
         return DirectText(text=text, cursor_index=cursor_index, bounds=bounds)
 
     @staticmethod
@@ -690,37 +698,96 @@ class UIAutomationTextProvider:
         bridge.release(line)
         return None
 
-    @staticmethod
-    def _cursor_index(
+    @classmethod
+    def _caret_index(
+        cls,
         bridge: _UIABridge,
         line: ctypes.c_void_p,
         found: ctypes.c_void_p,
         text: str,
     ) -> int | None:
-        """Where in the line the pointer is, counted in Python characters.
+        """Where the degenerate range sits in the line, counted in Python characters.
 
-        Taken from the text before the pointer rather than from a character
-        count, which is the one measure the two providers agree on: whatever a
-        provider thinks a character is, the string it hands back decodes to
-        code points here.
+        Taken from the text on either side of it rather than from a character
+        count, which is the one measure the two providers agree on. Both sides
+        must rebuild the line exactly: a prefix that merely matches the line's
+        beginning could be a shorter answer, and would place the caret early.
         """
 
-        prefix = bridge.clone(line)
-        if prefix is None:
-            return None
-        try:
-            if not bridge.align_endpoint(prefix, _ENDPOINT_END, found, _ENDPOINT_START):
-                return None
-            before = bridge.text_of(prefix, _MAX_LINE_CHARACTERS)
-        finally:
-            bridge.release(prefix)
-
-        # A prefix that is not the line's own beginning means the control
-        # answered about some other range, and nothing about it locates the
-        # pointer.
-        if before is None or not text.startswith(before):
+        before = cls._part_of_line(bridge, line, found, _ENDPOINT_END)
+        after = cls._part_of_line(bridge, line, found, _ENDPOINT_START)
+        if before is None or after is None or before + after != text:
             return None
         return len(before)
+
+    @staticmethod
+    def _part_of_line(
+        bridge: _UIABridge,
+        line: ctypes.c_void_p,
+        found: ctypes.c_void_p,
+        endpoint: int,
+    ) -> str | None:
+        """The line's text before the caret (``END``) or from it (``START``)."""
+
+        part = bridge.clone(line)
+        if part is None:
+            return None
+        try:
+            if not bridge.align_endpoint(part, endpoint, found, _ENDPOINT_START):
+                return None
+            return bridge.text_of(part, _MAX_LINE_CHARACTERS)
+        finally:
+            bridge.release(part)
+
+    @classmethod
+    def _character_under(
+        cls,
+        bridge: _UIABridge,
+        found: ctypes.c_void_p,
+        text: str,
+        caret: int,
+        point: Point,
+    ) -> int | None:
+        """The index of the one character whose own rectangle holds the pointer.
+
+        Providers disagree about where ``RangeFromPoint`` leaves the caret for a
+        pointer on a character's right half: before that character or after it.
+        So both neighbours of the caret are asked for their own text and
+        rectangle, and exactly one must be the expected character under the
+        pointer; anything else is refused rather than guessed.
+        """
+
+        neighbours = ((caret, _ENDPOINT_END, 1), (caret - 1, _ENDPOINT_START, -1))
+        holding = [
+            index
+            for index, endpoint, step in neighbours
+            if 0 <= index < len(text)
+            and cls._character_holds(bridge, found, endpoint, step, text[index], point)
+        ]
+        return holding[0] if len(holding) == 1 else None
+
+    @staticmethod
+    def _character_holds(
+        bridge: _UIABridge,
+        found: ctypes.c_void_p,
+        endpoint: int,
+        step: int,
+        expected: str,
+        point: Point,
+    ) -> bool:
+        character = bridge.clone(found)
+        if character is None:
+            return False
+        try:
+            if not bridge.move_endpoint(character, endpoint, _TEXT_UNIT_CHARACTER, step):
+                return False
+            # A limit wider than one character, so a range that grew past it
+            # is seen and refused rather than truncated into a match.
+            if bridge.text_of(character, 4) != expected:
+                return False
+            return any(_contains(box, point) for box in bridge.rectangles(character))
+        finally:
+            bridge.release(character)
 
     # --- narrowing --------------------------------------------------------
 

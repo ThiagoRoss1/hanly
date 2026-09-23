@@ -94,7 +94,8 @@ class FakeControl:
         return None
 
     def box_for(self, start: int, end: int) -> list[BoundingBox]:
-        if self.rectangles is not None:
+        # Overridden rectangles describe the line; one character keeps its own.
+        if self.rectangles is not None and end - start > 1:
             return self.rectangles
         if end <= start:
             return []
