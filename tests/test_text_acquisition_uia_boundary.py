@@ -254,3 +254,44 @@ def test_a_character_the_provider_cannot_step_over_is_refused(
 
     assert provider.read_at(point_at(2), timeout_ms=40) is None
     assert bridge.live == 0
+
+
+# --- cleanup when a native call raises ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("refine", "failing"),
+    [
+        (False, "expand"),
+        (False, "align_endpoint"),
+        (False, "move_endpoint"),
+        (False, "text_of"),
+        (False, "rectangles"),
+        # Refinement isolates a span by moving endpoints; it aligns none.
+        (True, "expand"),
+        (True, "move_endpoint"),
+        (True, "text_of"),
+        (True, "rectangles"),
+    ],
+)
+def test_a_native_call_that_raises_leaves_no_interface_behind(
+    monkeypatch: pytest.MonkeyPatch, failing: str, refine: bool
+) -> None:
+    """An access violation surfaces as an exception; every clone is still released."""
+
+    bridge = FakeBridge(FakeControl("Hello 초대받았어요"))
+
+    def explode(*args: Any) -> None:
+        raise OSError("access violation")
+
+    monkeypatch.setattr(bridge, failing, explode)
+    provider = _install(monkeypatch, bridge)
+
+    with pytest.raises(OSError):
+        if refine:
+            provider.refine_bounds(
+                point_at(8), 6, 12, line="Hello 초대받았어요", timeout_ms=40
+            )
+        else:
+            provider.read_at(point_at(8), timeout_ms=40)
+    assert bridge.live == 0

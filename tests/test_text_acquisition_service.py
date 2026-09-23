@@ -466,3 +466,26 @@ def test_completion_checks_deadline_even_if_watcher_has_not_run(
         assert collector.outcomes[0].outcome is Outcome.TIMED_OUT
     finally:
         service.close()
+
+
+def test_a_failed_preparation_is_never_undone() -> None:
+    """Undoing a binding that did not happen could leave an apartment never entered."""
+
+    class _HalfBound(_BoundReader):
+        def bind_thread(self) -> None:
+            super().bind_thread()
+            raise OSError("apartment refused")
+
+    reader = _HalfBound()
+    collector = _collect()
+    service = _service(reader)
+    try:
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0)
+    finally:
+        service.close()
+
+    assert len(reader.bound) == 1
+    assert reader.released == []
+    assert collector.outcomes[0].outcome is Outcome.FAILED
+    assert reader.calls == 0

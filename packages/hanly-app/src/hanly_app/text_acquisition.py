@@ -121,18 +121,20 @@ class DirectTextCoordinator:
     def timeout_ms(self) -> int:
         return self._timeout_ms
 
-    def bind_worker(self) -> None:
+    def bind_worker(self) -> bool:
         """Let the adapter prepare the thread that will perform every read.
 
         Windows needs this: COM apartments belong to a thread rather than to a
         process, so the one worker has to enter one before the first read and
         leave it after the last. An adapter that needs nothing says nothing.
+        Returns whether the thread is ready; a failed one reads nothing.
         """
 
         self._binding_failed = not self._notify_provider("bind_thread")
+        return not self._binding_failed
 
     def release_worker(self) -> None:
-        """Undo :meth:`bind_worker`, on that same thread."""
+        """Undo a successful :meth:`bind_worker`, on that same thread."""
 
         self._notify_provider("release_thread")
 
@@ -481,11 +483,14 @@ class DirectTextService:
                 thread.join(timeout=5.0)
 
     def _work(self) -> None:
-        self._coordinator.bind_worker()
+        # A binding that failed part-way has nothing of its own to undo, and
+        # undoing it anyway could leave an apartment that was never entered.
+        bound = self._coordinator.bind_worker()
         try:
             self._consume()
         finally:
-            self._coordinator.release_worker()
+            if bound:
+                self._coordinator.release_worker()
 
     def _consume(self) -> None:
         while True:

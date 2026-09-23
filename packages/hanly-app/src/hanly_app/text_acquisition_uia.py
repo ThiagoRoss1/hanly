@@ -693,10 +693,13 @@ class UIAutomationTextProvider:
         line = bridge.clone(found)
         if line is None:
             return None
-        if bridge.expand(line, _TEXT_UNIT_LINE):
-            return line
-        bridge.release(line)
-        return None
+        expanded = False
+        try:
+            expanded = bridge.expand(line, _TEXT_UNIT_LINE)
+        finally:
+            if not expanded:
+                bridge.release(line)
+        return line if expanded else None
 
     @classmethod
     def _caret_index(
@@ -859,15 +862,17 @@ class UIAutomationTextProvider:
         span = bridge.clone(line)
         if span is None:
             return None
-        moved = bridge.move_endpoint(
-            span, _ENDPOINT_START, _TEXT_UNIT_CHARACTER, first
-        ) and bridge.move_endpoint(
-            span, _ENDPOINT_END, _TEXT_UNIT_CHARACTER, last - total
-        )
-        if moved:
-            return span
-        bridge.release(span)
-        return None
+        moved = False
+        try:
+            moved = bridge.move_endpoint(
+                span, _ENDPOINT_START, _TEXT_UNIT_CHARACTER, first
+            ) and bridge.move_endpoint(
+                span, _ENDPOINT_END, _TEXT_UNIT_CHARACTER, last - total
+            )
+        finally:
+            if not moved:
+                bridge.release(span)
+        return span if moved else None
 
 
 __all__ = ["UIAutomationTextProvider"]
