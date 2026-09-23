@@ -345,3 +345,26 @@ F13 and N5). The branch is still **not merge-ready** until the following exist:
   per-character caret behaviour, `VT_BOOL` False handling, the timed
   `IUIAutomation2` client, and a current Windows artifact whose source commit
   matches.
+
+---
+
+# Windows Release Evidence — Partial, 2026-09-23
+
+- **Run:** Windows 10 Enterprise 10.0.19045 AMD64, CPython 3.13.11 in a new
+  `.venv-final-validation`. Tested commit `cd72d05`. The human interrupted
+  it to continue on macOS; it resumes on Windows later.
+- **Full record and resume steps:**
+  [final Windows release evidence](../reports/final-windows-release-evidence-2026-09-23.md).
+
+| Evidence | Status |
+|---|---|
+| Remote CI, run `35828977851` on `cd72d05` | **success**, all 7 jobs |
+| Clean install, version 0.5.3 | done; pip bootstrapped around this host's broken `ensurepip` |
+| Portable / native / ruff / mypy (`--platform linux`) | 2 failed (dev-benchmark POSIX assumptions, classified) · 105 passed · clean · success |
+| Torch `c10.dll` (WinError 1114) | **diagnosed**: the MSVC runtime 14.26 bundled with PyQt6-Qt6 6.10, loaded before Torch; absent with PyQt6-Qt6 6.11.2 |
+| Real production OCR fallback | **not yet obtained** |
+| Chromium / RichEdit cursor matrix | **not yet obtained**; the first probe attempt was invalid |
+| Password/offscreen `VT_BOOL`, timeout setters, COM worker lifecycle | **not yet observed** |
+| Fresh Windows artifact with `source_commit` = HEAD, packaged gate | build started, **not verified** |
+
+**Verdict: blocked by missing evidence.** No product code changed.
