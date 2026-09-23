@@ -8,7 +8,7 @@ This view defines how the Hanly V1 desktop application starts and how an automat
 
 It does not define package ownership, implementation sequencing, browser or mobile behavior, DOM integration, subtitle processing, or HanlyOCR research.
 
-> **Current OCR decision (2026-08-26):** `EasyOCRProvider` is V1's only OCR implementation. The Paddle adapter, backend selector, managed Paddle model resources, and Paddle-only recognition-first hover fast path were removed at the human's direction. First launch provisions only `krdict`; EasyOCR owns its model storage. `OCRProvider` remains the one provider seam for a future approved second adapter. The 2026-08-24 decision and its operational snapshot are historical and superseded.
+> **Current OCR decision (2026-09-22):** V1 has two OCR implementations behind `OCRProvider`. `VisionProvider` (Apple Vision) is preferred on supported macOS; `EasyOCRProvider` is the cross-platform implementation and the fallback where Vision is unavailable. The internal `ocr_backend` setting selects `auto` (the default), `vision`, or `easyocr`; there is no user-facing provider selection. First launch provisions only `krdict`: Vision is part of macOS and EasyOCR owns its model storage. PaddleOCR stays removed. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 EasyOCR-only decision and the 2026-08-24 decision are historical.
 
 ## Startup flow
 
@@ -21,7 +21,7 @@ Startup is ordered as follows:
    - the SQLite database is present, readable, and schema-compatible;
    - required application assets are present.
 4. **Initialize Providers.** The provider categories may initialize in parallel:
-   - `OCRProvider`: the V1 implementation is `EasyOCRProvider`.
+   - `OCRProvider`: `VisionProvider` on supported macOS under `auto`, otherwise `EasyOCRProvider`.
    - `MorphologyProvider`: Kiwi / kiwipiepy is the initial implementation.
    - `DictionaryProvider`: KRDICT backed by read-only SQLite is the initial implementation.
 5. **Initialize Lookup Pipeline.** `LookupPipeline` orchestrates target resolution, linguistic analysis, and dictionary lookup through provider contracts. It never references EasyOCR, Kiwi, or KRDICT directly.
@@ -101,7 +101,7 @@ The hover delay is configurable and must be tuned empirically. Initial experimen
 
 > **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
 
-- **RF-INV-10:** The V1 OCR implementation is `EasyOCRProvider`; `LookupPipeline` remains coupled only to `OCRProvider`, leaving a future approved second adapter behind the same seam.
+- **RF-INV-10:** V1's OCR implementations are `VisionProvider` (preferred on supported macOS) and `EasyOCRProvider` (cross-platform and fallback); `LookupPipeline` remains coupled only to `OCRProvider`.
 - **RF-INV-11:** Desktop lookup execution is bounded / latest-wins, while final request-currency validation remains mandatory before presentation.
 - **RF-INV-12:** `LookupResult` represents successful, normal non-success, and processing-error outcomes without requiring every non-success to be an exception.
 - **RF-INV-13:** Surface text plus a cursor index is the whole input to the language stage, and pixel OCR and any future direct-text acquisition reach that one stage rather than each running their own.

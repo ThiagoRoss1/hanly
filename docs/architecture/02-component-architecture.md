@@ -50,13 +50,13 @@ Each provider interface is an engine seam. Concrete adapters satisfy those inter
 
 | Provider interface | Contract | Initial adapter(s) | External dependency |
 | --- | --- | --- | --- |
-| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `EasyOCRProvider` (V1) | EasyOCR |
+| `OCRProvider` | `ROIImage` in; normalized `OCRResult[]` out, in reading order | `VisionProvider` (preferred on macOS), `EasyOCRProvider` (cross-platform and fallback) | Apple Vision via pyobjc; EasyOCR |
 | `MorphologyProvider` | Korean text in; `TokenAnalysis` out | `KiwiProvider` | Kiwi / kiwipiepy |
 | `DictionaryProvider` | Dictionary-form lookup in; normalized `DictionaryEntry` data out | `KRDICTProvider` | Processed KRDICT in local, read-only SQLite |
 
-> **Current OCR decision (2026-08-26):** `EasyOCRProvider` is V1's only OCR implementation. The Paddle adapter, backend selector, managed Paddle model resources, and Paddle-only recognition-first hover fast path were removed at the human's direction. First launch provisions only `krdict`; EasyOCR owns its model storage. `OCRProvider` remains the one provider seam for a future approved second adapter. The 2026-08-24 decision and its operational snapshot are historical and superseded.
+> **Current OCR decision (2026-09-22):** V1 has two OCR implementations behind `OCRProvider`. `VisionProvider` (Apple Vision) is preferred on supported macOS; `EasyOCRProvider` is the cross-platform implementation and the fallback where Vision is unavailable. The internal `ocr_backend` setting selects `auto` (the default), `vision`, or `easyocr`; there is no user-facing provider selection. First launch provisions only `krdict`: Vision is part of macOS and EasyOCR owns its model storage. PaddleOCR stays removed. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 EasyOCR-only decision and the 2026-08-24 decision are historical.
 
-The provider seam remains available for a future approved implementation, but V1 composition constructs `EasyOCRProvider` directly and has no backend selector. `LookupPipeline` knows only `OCRProvider`, not the concrete OCR implementation. Likewise, it does not know Kiwi, KRDICT, or SQLite.
+Application configuration chooses the implementation through the internal `ocr_backend` setting; `auto` is resolved in the desktop shell and the lookup worker receives a concrete choice. No further OCR implementation is approved. `LookupPipeline` knows only `OCRProvider`, not the concrete OCR implementation. Likewise, it does not know Kiwi, KRDICT, or SQLite.
 
 ### WordResolver
 
@@ -170,6 +170,7 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 
 | External dependency | Owning adapter / module |
 | --- | --- |
+| Apple Vision (macOS) | `VisionProvider` |
 | EasyOCR | `EasyOCRProvider` |
 | Kiwi / kiwipiepy | `KiwiProvider` |
 | KRDICT | `KRDICTProvider` |

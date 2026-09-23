@@ -135,8 +135,11 @@ for a framework from a spawned process hangs. A first launch still provisions
 only `krdict`; Vision is part of macOS and downloads nothing.
 
 `OCRProvider` remains the seam, and `EasyOCRProvider` remains the cross-platform
-adapter. Do not add a third backend, a plugin system, or dictionary-backed
-spelling correction.
+adapter. `ocr_backend` is internal: there is no user-facing provider selection.
+Do not add a third backend, a plugin system, or dictionary-backed spelling
+correction. The human approved this as architecture on 2026-09-22; the decision,
+its bounded evidence and its revisit condition are in
+`docs/architecture/DECISION-2026-09-22-ocr-backend.md`.
 
 Measurements, the diagnosed defects behind the swap, and the deferred items are
 in `docs/execution/reports/ocr-latency-and-roadmap.md`. Read it before changing
