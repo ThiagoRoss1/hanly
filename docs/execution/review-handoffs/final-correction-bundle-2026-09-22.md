@@ -184,7 +184,7 @@ Evidence required:
 
 **Deferred:**
 - **N5 — P1, release-blocking. The frozen Control Center check fails on every
-  platform since `6c02d03`.**
+  platform since `6c02d03`.** *Fixed in `d607740`; see the outcome section below.*
   - `self_check.UI_PROBE_ELEMENTS` still names `control-center`,
     `start-capture`, `runtime-state` and `quit-hanly`. The redesigned
     `assets/control_center/index.html` removed all four.
@@ -232,7 +232,7 @@ Evidence required:
 
 ## Merge readiness
 
-**Not merge-ready.** These corrections close F3, F4/N2, N1, N4, F5 and F13 on
+*Superseded for N5 by the outcome section below.* **Not merge-ready.** These corrections close F3, F4/N2, N1, N4, F5 and F13 on
 the evidence classes above. Merge still requires:
 - a fix for N5;
 - the Windows continuation evidence;
@@ -253,3 +253,95 @@ the evidence classes above. Merge still requires:
 ## Review assignment
 
 Human-selected after implementation. Not started.
+
+---
+
+# N5 Packaged UI Probe Correction Outcome
+
+- **Date:** 2026-09-23. Claude Opus 5.5, macOS 26.6.2 arm64, `.venv/bin/python`
+  3.13.11. Narrow, human-authorized correction; not a review.
+- **Commit:** `d607740` `fix: align packaged UI probe with control center`,
+  on `67c56e9`. Earlier commits are unchanged; nothing was pushed or merged.
+
+## Change
+
+`self_check.UI_PROBE_ELEMENTS`, the element ids the frozen `--self-check ui`
+looks up in the Control Center page, now follows the approved contract.
+
+| Obsolete id (removed by `6c02d03`) | Replacement | Release-check meaning |
+|---|---|---|
+| `control-center` | `nav` | the application shell and its navigation rendered |
+| `start-capture` | `toggle-capture` | the primary capture control rendered |
+| `runtime-state` | `live-runtime` | runtime state can be presented |
+| `quit-hanly` | `quit-ask` | the user can initiate application exit |
+
+The rest of the UI self-check is unchanged: open the window, wait for the
+document and the injected bridge, verify the controls, make the bridge round
+trip, and close cleanly.
+
+**Regression:** `tests/test_control_center.py::
+test_the_packaged_window_probe_names_controls_the_shipped_page_has`.
+- It parses the `id` attributes of the shipped `index.html` (loaded through
+  `load_control_center_assets()`).
+- It requires every value of `UI_PROBE_ELEMENTS` to be exactly one element.
+  Parsed attributes rather than substrings, so `nav-bubble` cannot stand in
+  for `nav`.
+- It asserts the four legacy ids are not in the contract.
+- It derives from `UI_PROBE_ELEMENTS` itself; there is no second list of probes.
+- Against the old list it failed with `'control-center' is not one element of
+  the shipped page`, and it passes against the new one.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| Focused: Control Center, packaging, smoke-dictionary tests | 163 passed |
+| Focused: native Control Center tests | 5 passed |
+| Unfrozen `python -m hanly_app --self-check ui` | ok. Window opened and exited cleanly; document `Hanly · Control Center`; 4 controls rendered; bridge round trip |
+| `python -m pytest` (full, `HANLY_EXPECTED_SOURCE_COMMIT=d607740…`) | **2353 passed, 2 skipped** (opt-in real EasyOCR inference; non-macOS Vision path) |
+| `python -m pytest --suite native` | **110 passed** |
+| `python -m ruff check packages packaging tests tools benchmarks` | All checks passed |
+| `python -m mypy packages packaging tests tools benchmarks` | Success, 285 source files |
+
+### Fresh packaged evidence (macOS)
+
+- Built with `tools/build_package.py` from a clean worktree at `d607740`.
+- The build stamp in `dist/macos/Hanly.app` and in the app reconstructed from
+  `dist/hanly-desktop-macos.zip` reads `source_commit`
+  `d6077405a56c4bb064eda80ac8dd70bcc98b7082`, version 0.5.3, arm64, built
+  2026-09-23T04:54:45Z.
+- The packaged gate ran on the reconstructed app with `HANLY_REQUIRE_PACKAGED=1`
+  and `HANLY_EXPECTED_SOURCE_COMMIT=d6077405a56c4bb064eda80ac8dd70bcc98b7082`.
+  **All 4 passed:**
+  - runtime inventory;
+  - source identity;
+  - isolated-profile frozen worker (runtime, lookup worker, OCR, morphology,
+    dictionary);
+  - frozen Control Center.
+- `tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --window-only`
+  reported every stage ok, frozen, exit 0: the window opened and its loop
+  exited cleanly, the document loaded, 4 controls rendered, and the bridge made
+  its round trip.
+- The previous artifact (`6debf3c`) fails source identity against `d607740`,
+  as intended. The older `cb2d437` bundle no longer exists locally; its failure
+  was recorded above.
+- Nothing was written under the ignored `artifacts/` export root during this
+  run, and Git holds no bundle, stamp or capture.
+
+Observation, out of scope: the self-check's own window uses an unconfigured
+`ControlCenterBridge()`, so its bridge probe reports the default "EasyOCR"
+rather than the resolved macOS backend. The desktop resolves `auto` separately
+(`runtime.ocr_display_name`). This is not a failure and was not changed.
+
+## Status
+
+**All known macOS-side release blockers are closed** (F3, F4/N2, N1, N4, F5,
+F13 and N5). The branch is still **not merge-ready** until the following exist:
+- Remote CI on a pushed branch, including Ubuntu typing, the Windows and Linux
+  native jobs, and the build workflow's packaged gate now given
+  `HANLY_EXPECTED_SOURCE_COMMIT`.
+- The Windows continuation evidence listed above: a clean install, the
+  `c10.dll` diagnosis, a forced real OCR fallback, Chromium and RichEdit
+  per-character caret behaviour, `VT_BOOL` False handling, the timed
+  `IUIAutomation2` client, and a current Windows artifact whose source commit
+  matches.
