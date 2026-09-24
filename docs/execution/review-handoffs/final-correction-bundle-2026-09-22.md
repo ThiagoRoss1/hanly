@@ -432,3 +432,74 @@ F13 and N5). The branch is still **not merge-ready** until the following exist:
   exports, credentials or tokens.
 
 **Status:** not merge-ready. Nothing here is Windows evidence.
+
+---
+
+# Final Windows Verdict, 2026-09-24
+
+- **Run:** Claude Opus 5.5 on Windows 10 Enterprise 10.0.19045.6456 AMD64,
+  medium integrity, both monitors at 100%. `.venv-final-validation`, CPython
+  3.13.11. Tested commit `8232796`, equal to `origin`. Validation only: no
+  product code changed. Earlier commits are unchanged; nothing was pushed or
+  merged.
+- **Full evidence:** *Windows resume run, 2026-09-24* in
+  [the Windows report](../reports/final-windows-release-evidence-2026-09-23.md).
+
+| Evidence | Result |
+|---|---|
+| Remote CI run `35949423643` at `8232796` | all 7 jobs passed (as reported by the human) |
+| Constrained clean environment | PyQt6-Qt6 6.11.2; `hanly` and `hanly-app` 0.5.3, editable from `C:\Hanly`; `pip check` clean |
+| Portable / native / ruff / mypy `--platform linux` | 2141 passed, 102 skipped · 105 passed, 33 skipped (all POSIX-only or absent Vision artifacts) · clean · success, 285 files |
+| Fresh package | stamp `source_commit` = HEAD, 0.5.3, x86_64 (PE AMD64). Bundled `msvcp140` 14.51 and 14.44, none older than 14.44. Packaged gate **4/4** (inventory, source identity, frozen worker, frozen Control Center) |
+| Torch `c10.dll` / WinError 1114 | absent: the frozen worker and the live EasyOCR fallback both load Torch |
+| Chromium (Chrome 153) matrix | **98/98**; caret before the character |
+| RichEdit (WordPad, `msftedit` 10.0.19041) matrix | **97/98**; caret at the nearest boundary. One emoji-adjacent cell refuses to OCR (W1) |
+| Blank areas, non-Hangul characters, line ends, inter-line gap | all refused (RichEdit lines abut, so it has no gap) |
+| Password / offscreen | `VT_BOOL` False on ordinary lines. Password input `secure` with 0 `GetText` and 0 `GetPattern` |
+| Timeouts | both setters `S_OK`; read-back 50 ms; 49 ms gives `E_INVALIDARG`; coordinator deadline 40 ms |
+| COM ownership and lifetime | bridge created, read and disposed on the service worker; interfaces balanced on both targets |
+| Real OCR fallback | UIA refusal → 1 capture per hover → `easyocr`, `ocr_cached=false`, in the lookup child → popup **SUCCESS**. OCR 245 ms, pipeline 252 ms, popup 610 ms after the stable fire (first popup) |
+| Normal `hanly` entry point | always-active capture started; engine ready at 9.0 s; popup shown on the canvas; "stopped watching" logged |
+
+**Findings:**
+- **Fixed now:** none; there were no product defects. Five scratch-harness
+  defects were found and corrected outside the repository; they are listed in
+  the report.
+- **Deferred:**
+  - **W1 — RichEdit emoji rectangles overlap the next syllable.** One cell
+    fails closed to OCR. Changing `_character_under` is a design decision.
+    **Trigger:** evidence that it matters in RichEdit hosts, or the next change
+    to `_character_under`.
+  - **W2 — the canvas refused as `not_korean` during live hovers**, while
+    standalone reads give `unsupported`. The routing is identical and the
+    cause undetermined. **Trigger:** coverage analysis that relies on refusal
+    reasons.
+  - **W3 — the always-active auto-start writes no "watching" line** to the
+    session log. **Trigger:** the next change to the session log or the
+    capture lifecycle.
+  - The existing items (F5 recovery, F12, the host `ensurepip`) are unchanged.
+- **Dismissed:** the probe's RichEdit "between lines" `direct`. The point was
+  inside line 2's first character, and the answer was correct.
+
+**Could not confirm:**
+- 125–200% scaling, mixed DPI and moving between monitors;
+- other browsers, Office or other RichEdit hosts;
+- elevated targets and Windows 11;
+- the popup status and a clean quit on the entry-point path;
+- the OCR fallback from the frozen executable rather than the source install.
+
+**Privacy:**
+- Only the synthetic fixtures were placed on screen.
+- The traces hold no text, boxes or evidence, and the password value was never
+  requested.
+- No screenshot, capture, Export or `artifacts/` write was made.
+- Scratch stayed outside the repository.
+- The human's own hovers during harness capture stayed in memory and were not
+  used as evidence.
+
+**Verdict: accepted with deferred findings.**
+- Every required Windows boundary has real evidence.
+- All gates pass, and the package stamp matches HEAD.
+- W1 misses the literal "every row passes" criterion by one fail-closed
+  RichEdit cell. This run recommends merge with W1–W3 deferred.
+- The merge decision is the human's.

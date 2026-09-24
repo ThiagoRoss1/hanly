@@ -1,15 +1,277 @@
-# Final Windows Release Evidence — Partial Run, 2026-09-23
+# Final Windows Release Evidence — 2026-09-23, completed 2026-09-24
 
-**Status: incomplete. The human interrupted this run to continue on macOS.**
-This report records what was verified on Windows, what is still missing, and
-exactly how to resume. It adds to
+**Status: complete. The resume run on 2026-09-24 executed Remaining work steps
+1–7 on Windows at `8232796`.** Its evidence is in the next section. Everything
+after it is the partial 2026-09-23 record, kept unchanged apart from the
+Findings and Verdict, which now state the final outcome. This report adds to
 `review-handoffs/final-correction-bundle-2026-09-22.md` and does not replace it.
 
-Everything from **Environment** to **Package build** was observed on Windows at
-`cd72d05`, before the macOS corrections below existed. Inside those sections,
-only the notes marked *afterwards on macOS* are later. The next section records
-what changed, and **Remaining work** is the one authoritative resume
-sequence.
+## Windows resume run, 2026-09-24
+
+No product code changed. Every probe, harness, fixture and output lived in the
+session scratchpad, outside the repository.
+
+### Environment
+
+| Fact | Value |
+|---|---|
+| Machine | Windows 10 Enterprise 10.0.19045.6456 (22H2), AMD64, medium integrity (`S-1-16-8192`), not elevated |
+| Displays (re-measured) | `DISPLAY1` primary `(0,0)–(1920,1080)`; `DISPLAY2` `(-1920,0)–(0,1080)`; both 96 DPI effective (100%), from `GetDpiForMonitor` |
+| Commit | `823279622ab0ccf1ca75de8a1b6ce68c33e18a9b`, equal to `origin/visual/interface-update` after fetch; worktree clean; `f18a0d6`, `d4f827d`, `0bae4bf`, `8232796` are ancestors |
+| Remote CI | run `35949423643` at this tip: all seven jobs passed (as given by the human; not re-queried here) |
+| Interpreter | `.venv-final-validation`, CPython 3.13.11 (MSC v.1944, 64-bit); user site disabled; `VIRTUAL_ENV` cleared |
+| Targets | Chrome 153.0.8010.53 with an isolated scratch profile; WordPad 10.0.19041.4522 on `msftedit.dll` 10.0.19041.4522 (`RICHEDIT50W`) |
+
+All fixture windows were placed on `DISPLAY2`, because the human was working on
+the primary monitor.
+
+### Step 2 — validation environment
+
+- Installed with `-c packaging/release-constraints.txt` into the existing venv.
+  Resolved: PyQt6-Qt6 **6.11.2**, PyQt6 6.11.0, PyQt6-WebEngine 6.11.0, torch
+  2.14.0, easyocr 1.7.2, PyInstaller 6.22.2.
+- `hanly` and `hanly-app` are **0.5.3**, editable from `C:\Hanly\packages\...`.
+- `pip check`: no broken requirements.
+
+| Gate | Result |
+|---|---|
+| `pytest --suite portable` | **2141 passed, 102 skipped, 0 failed** (213 s) |
+| `pytest --suite native` | **105 passed, 33 skipped** (219 s). Every skip is POSIX-only (update helper, rollback, signals) or needs absent local Vision frozen artifacts |
+| `ruff check packages packaging tests tools benchmarks` | All checks passed |
+| `mypy --platform linux packages packaging tests tools benchmarks` | Success, 285 source files |
+
+Both portable failures from 2026-09-23 no longer occur; `d4f827d` is confirmed
+on Windows.
+
+### Step 3 — package
+
+- `tools\build_package.py` was run from the clean tree at HEAD.
+- Stamp `dist\windows\hanly-desktop\_internal\hanly_app\assets\hanly-build.json`:
+  - `source_commit` `823279622ab0ccf1ca75de8a1b6ce68c33e18a9b`, equal to HEAD;
+  - `version` 0.5.3, `platform` windows, `architecture` x86_64;
+  - built 2026-09-24T06:25:45Z.
+- `hanly-desktop.exe` has PE machine type `0x8664` (AMD64).
+- Bundled MSVC runtimes:
+  - `_internal\msvcp140.dll` 14.51.36247;
+  - `_internal\PyQt6\Qt6\bin\MSVCP140.dll` 14.44.35211;
+  - `vcruntime140.dll` 14.42.34438 and 14.44.35211.
+  - The 14.26 runtime behind WinError 1114 is gone, and no `msvcp140.dll` is
+    older than 14.44.
+- `pytest --suite packaged` with `HANLY_EXPECTED_SOURCE_COMMIT=<HEAD>` and
+  `HANLY_REQUIRE_PACKAGED=1` gave **4 passed**:
+  - inventory;
+  - source identity;
+  - frozen worker on an isolated profile;
+  - frozen Control Center.
+
+### Step 4 — Chromium and RichEdit cursor matrix
+
+The Appendix A probe was used with two scratch-only corrections, both
+diagnostic-probe defects found against real RichEdit (see *Probe corrections*
+below). Reference rectangles came only from raw UIA calls. `refine_bounds` was
+only judged. Every fixture character was hovered on its left (25 %) and right
+(75 %) half: 49 characters, 98 rows per target.
+
+| Check | Chromium | RichEdit |
+|---|---|---|
+| Fixture lines found | 4 / 4 | 4 / 4 |
+| Characters with exactly one raw reference rectangle | 49 / 49 | 49 / 49 |
+| Rows passing | **98 / 98** | **97 / 98** |
+| Hangul rows `direct` | 76 / 76 | 75 / 76 (one `unsupported`, below) |
+| Cursor index exact, and its reference rectangle holds the pointer | 76 / 76 | 75 / 76 |
+| Word and in-word cursor correct | 76 / 76 | 75 / 76 |
+| Word bounds equal the raw reference exactly | 76 / 76 | 75 / 76 |
+| Unchanged snapshot accepted / changed snapshot refused | 76 / 76 · 76 / 76 | 75 / 76 · 76 / 76 |
+| Non-Hangul characters (emoji, spaces, `Hello`) refused | 22 / 22 `not_korean` | 21 `not_korean`, 1 `unsupported` |
+| `prefix_plus_suffix_is_line` | 98 / 98 | 98 / 98 |
+| Caret side | **before** on every row | **nearest boundary**: before on the left half, after on the right (48 before, 49 after, 1 other) |
+| Acquisition time | p50 8.0 ms, max 10.8 ms | p50 9.7 ms, max 16.4 ms |
+
+Blank areas:
+- **Chromium:**
+  - right of the line end: `not_containing`;
+  - the gap between lines: `not_containing`;
+  - no selection in either case.
+- **RichEdit:**
+  - right of the line ends on lines 1, 3 and 4, below the last line, and in
+    the left margin all give `not_containing`, with no selection;
+  - a space inside a line gives `not_korean`.
+- RichEdit line rectangles abut (line 1 ends at y 272, where line 2 begins), so
+  RichEdit has no inter-line gap to test. The probe's "between lines" point
+  (`first.bottom + 3`) is therefore inside line 2's first character. It
+  correctly returned `direct` with word `떨어뜨렸어요`, cursor 0, bounds equal to
+  that word. This is a probe assumption, not a refusal failure.
+
+**The one RichEdit row that failed** (reproduced 20 / 20 on the identical
+point):
+- The case: line 4 (`🙂🙂초대받았어요 Hello 떨어뜨렸어요`), `초` at index 2, left half,
+  pointer `(-1492,427)`. The outcome is `unsupported`, so the hover goes to OCR.
+- RichEdit reports the two emoji as overlapping rectangles:
+  - emoji 0 is `x -1553..-1499`;
+  - emoji 1 is `x -1526..-1472`;
+  - `초` is `x -1499..-1472`.
+- So the second emoji's rectangle wholly contains `초`'s. At the caret the
+  adapter asks both neighbours for one Character each:
+  - `🙂` reads back with a rectangle holding the pointer;
+  - so does `초`.
+- The "exactly one neighbour" rule then refuses.
+- The right half of `초` resolves `direct` with the correct cursor.
+- This is **not a wrong answer**: production fails closed to OCR. Classified as
+  a RichEdit geometry quirk that the current verification rule refuses by
+  design. Deferred below.
+
+### Step 5 — UIA boundary, COM lifecycle and ownership
+
+Observed identically on both targets.
+
+- The timed `IUIAutomation2` client was created.
+- Timeouts:
+  - both timeout setters returned `S_OK` (`0x0`);
+  - the connection and transaction getters read back **50 ms**;
+  - a 49 ms setter call returned **`E_INVALIDARG` (`0x80070057`)**;
+  - 50 ms was restored.
+- The coordinator deadline is **40 ms**.
+- `IsPassword` and `IsOffscreen` on ordinary fixture lines are **`VT_BOOL`
+  False**. On the password input, `IsPassword` is `VT_BOOL` True.
+- The password input, which held the synthetic value `synthetic-fixture`,
+  refused as **`secure`** with **0 `GetText` and 0 `GetPattern`** calls, in
+  1.47 ms. The value was never requested.
+- `DirectTextService` created the bridge, did every read and disposed of the
+  bridge on its own worker (`hanly-text-acquisition`), not on the caller; the
+  outcome was delivered on that worker.
+- Native interfaces balance:
+
+  | Target | Acquired | Released | Automation-client disposals | Balanced |
+  |---|---|---|---|---|
+  | Chromium | 20,972 | 20,974 | 2 | yes |
+  | RichEdit | 17,245 | 17,247 | 2 | yes |
+
+### Step 6 — real UIA refusal → capture → production EasyOCR → popup
+
+**Harness.** The real composition (`run_desktop`) ran from the validation venv
+with a recording trace sink. The sink retained no text, geometry or evidence,
+so no `ocr_text`, `ocr_boxes` or `ocr_evidence` appears in the trace.
+- App config: `hover_activation: always_active`, `lookup_preload: always`,
+  `update_checks_enabled: false`.
+- `ocr_backend` stayed `auto`, which resolves to EasyOCR on Windows.
+- The Control Center window was suppressed in this harness only, as it is not
+  on the lookup path.
+- A separate process moved the real cursor with `SendInput` onto the fixture
+  `<canvas>` (`가공식품`) at `(-1716,572)` and to a blank point 300 px below,
+  three times.
+
+Canvas hovers, clean run (trace `run1`):
+
+| Hover | UIA outcome | Capture attempted / completed | Lookup | OCR | Popup |
+|---|---|---|---|---|---|
+| 13 | `not_korean` (7.0 ms) | 1 / 1 (17.6 ms, ROI 200×100) | cache miss | **`easyocr`, `ocr_cached=false`**, 245 ms, in the lookup child (`hanly-lookup-worker`) | **`SUCCESS`** |
+| 36 | `not_korean` | 1 / 1 | cache hit | not run | `SUCCESS` |
+| 59 | `not_korean` | 1 / 1 | cache hit | not run | `SUCCESS` |
+| blank point, 4 hovers | `not_containing` | 1 / 1 each | first a miss, then hits | first 162 ms, 0 Hangul regions | none (`EMPTY` suppressed) |
+
+**Latency of the fresh lookup (hover 13)**, measured from the stable fire:
+
+| Step | Elapsed |
+|---|---|
+| Direct-text refusal | 7.3 ms |
+| Capture done | 24.9 ms |
+| OCR done | 270.8 ms (OCR 245 ms) |
+| Morphology, dictionary and pipeline done | 277.5 ms (pipeline 252 ms) |
+| Result dispatched | 277.8 ms |
+| **Popup visible** | **609.9 ms** |
+
+- The last 332 ms was the first popup's construction and show.
+- The cached repeats showed the popup 25–30 ms after the stable fire. They are
+  cache hits, not production OCR, and are not counted as OCR latency.
+
+What this establishes:
+- Every hover had exactly one `hover_capture_attempted` and one
+  `hover_capture_completed`.
+- The clean run had no error events. A second run, contaminated by live mouse
+  activity and set aside, had only `LookupCancelled` from superseded hovers.
+- This is production `readtext()` evidence through `EasyOCRProvider` in the
+  lookup child. No staged EasyOCR replay or diagnostic was run in this
+  campaign, so there is nothing to diverge from.
+
+**Divergence: `not_korean`, not `unsupported`.** Remaining work predicted
+`unsupported` for the canvas.
+- Outside the running desktop, the identical point always gives
+  `unsupported`. This held from a fresh process, through `DirectTextService`,
+  with the cursor away or resting on the point.
+- Inside a running desktop without a hover, the hit element is Chrome's canvas
+  (process = Chrome, control type 50006 Image), and the refusal is again
+  `unsupported`.
+- During the real hovers of the clean run, it was `not_korean` at the same
+  point.
+- Both are ordinary refusals: `used_direct_text=false`, one capture, OCR
+  fallback. The routing requirement holds.
+- The cause of the difference was **not determined**.
+
+**Normal entry point.**
+- `hanly.exe --app-config <scratch>` (`hanly_app.cli:main`) was launched from
+  the validation venv.
+- Always-active hover starts capture at launch, by design
+  (`_start_if_always_active`).
+- The session log (`%LOCALAPPDATA%\Hanly\logs\hanly.log`) recorded:
+  - version 0.5.3 and PyQt6 6.11.0;
+  - resources, lookup providers and **"Lookup engine: ready"** at 9.0 s;
+  - after the hotkey stop, **"Capture: Hanly stopped watching the screen."**
+- A hover on the canvas produced a visible Hanly popup (a Qt tool window at
+  `(-1700,588)–(-1360,946)`, beside the pointer).
+- The session log records no individual lookup, by design. So the popup's
+  `SUCCESS` status on this path is inferred from the harness run on the same
+  fixture, not read from this launch.
+- The process was terminated after the stop; a clean quit was not exercised
+  on this path.
+
+### Harness defects found and corrected (scratch only)
+
+None of these was a product defect, and none changed repository code.
+
+1. **RichEdit paragraph mark.** RichEdit's line range reads `초대받았어요\r`.
+   Appendix A's exact `line in FIXTURES` match therefore found no line. The
+   probe now accepts one trailing `\r` and judges only the fixture's own
+   characters, against the real line text.
+2. **RichEdit wrapping.** WordPad wraps to its 6-inch ruler (about 548 px), and
+   it ignores RTF `\paperw`. Lines 3–4 were split.
+   - The RTF now uses `\fs40` instead of `\fs60`, with identical text.
+   - The human's WordPad settings were not touched.
+3. **`DesktopApplication.can_start_capture`** does not exist; that property is
+   on the session.
+   - Reading it inside the harness's `QTimer` slot raised `AttributeError`.
+   - PyQt6 turns an exception in a slot into `qFatal`, and the process exited
+     `0xC0000409`.
+   - Reproduced three times, then removed. No such crash happened without the
+     harness bug.
+4. **`INPUT` struct size.** The cursor mover declared 48 bytes instead of the
+   x64 size of 40, so `SendInput` rejected every event. The cursor never moved
+   in those runs.
+   - Fixed, then verified: 20 / 20 `SendInput` events were accepted and seen
+     by pynput.
+   - `SetCursorPos` moves are not seen by a low-level hook, as expected.
+5. **The first entry-point launch pressed the capture hotkey once.** Because
+   always-active had already started capture, that press stopped it, so that
+   hover ran with capture stopped. The rerun removed the press.
+
+### Could not confirm
+
+- **Scaling:** only 100% on both monitors. There is no 125/150/200% or
+  mixed-DPI evidence, and no transition between monitors during a hover.
+- **Hosts:** one Chromium build (Chrome 153) and one RichEdit host (WordPad on
+  `msftedit` 10.0.19041). No other browser, Edge, Office or RichEdit-based
+  editor was tested.
+- **Integrity:** no elevated-integrity target, and no UAC case.
+- **OS:** no Windows 11 host.
+- **Entry point:** the popup's `SUCCESS` status there was not observed
+  directly; the log deliberately omits lookups. A clean tray/Control Center
+  quit was not exercised on that path, because the process was terminated
+  after stopping capture.
+- **Packaged OCR fallback:** the frozen worker was verified by the packaged
+  gate. The UIA refusal → OCR → popup chain ran from the source install, not
+  from the frozen executable.
+- **W2:** the cause of `not_korean` over the canvas.
+
+
 
 ## Post-interruption corrections on macOS (2026-09-23)
 
@@ -204,7 +466,8 @@ The Chrome fixture window and a WordPad `RICHEDIT50W` fixture on the secondary
 
 ## Remaining work (resume on Windows)
 
-This is the one authoritative resume sequence; the final-correction handoff
+*Executed on 2026-09-24; see* Windows resume run *above.* This is the one
+authoritative resume sequence; the final-correction handoff
 links here rather than repeating it. Run it from `C:\Hanly`. The shell inherits
 `C:\Hanly\.venv`, so clear `VIRTUAL_ENV` and name the validation interpreter
 explicitly:
@@ -322,14 +585,21 @@ $py = ".\.venv-final-validation\Scripts\python.exe"
 
 ## Findings
 
-**Fixed during the Windows run:** none. It was a validation run, and no product
-code changed.
+**Fixed during the Windows runs:** none in product code. Both runs were
+validation runs. The 2026-09-24 harness defects are listed under *Harness
+defects found and corrected* and never touched the repository.
 
-**Fixed afterwards on macOS** (not yet confirmed on Windows):
+**Fixed on macOS, now confirmed on Windows (2026-09-24):**
 - **PyQt6-Qt6 6.10 bundles MSVC runtime 14.26, which breaks Torch loaded after
-  Qt.** `f18a0d6` pins the verified `PyQt6-Qt6==6.11.2` for release builds.
-- **Two dev-benchmark tests assumed POSIX.** Fixed in `d4f827d`.
-- **The probe's reference method was circular.** Appendix A has been replaced.
+  Qt.** `f18a0d6` pins the verified `PyQt6-Qt6==6.11.2`.
+  - The clean venv resolves to it.
+  - The fresh bundle carries no runtime older than 14.44.
+  - The frozen worker and the real OCR fallback both load Torch.
+- **Two dev-benchmark tests assumed POSIX.** Fixed in `d4f827d`; the portable
+  suite has no failures on Windows.
+- **The probe's reference method was circular.** It was replaced in Appendix A
+  and ran against real Chromium and RichEdit, with the two scratch corrections
+  above.
 
 **Deferred:**
 - **This host's Python 3.13.11 `ensurepip` is inconsistent** (the bundled wheel
@@ -337,6 +607,33 @@ code changed.
   - **Trigger:** the next clean-environment run on this host.
   - **Action:** a human repair of the system Python install, which may need a
     reinstaller.
+- **W1 — RichEdit emoji rectangles overlap the next character.** One of 98
+  RichEdit cells (the left half of the first syllable after two emoji) refuses
+  to OCR instead of resolving directly.
+  - Cause: RichEdit reports each emoji's rectangle overlapping the following
+    character, and the adapter requires exactly one caret neighbour to contain
+    the pointer.
+  - This is a lost direct-text cell, not a wrong word.
+  - Changing the rule to choose between overlapping neighbours is a
+    text-acquisition design decision (it relates to F12 and the handoff's
+    `_character_under` review target). It is outside this run's correction
+    authority.
+  - **Trigger:** evidence that emoji-adjacent Hangul in RichEdit hosts
+    (WordPad, Outlook, and other RichEdit-based editors) matters to users, or
+    the next change to `_character_under`.
+- **W2 — the canvas refusal reason differs.** During real hovers on the
+  running desktop the canvas refused as `not_korean`; every standalone and
+  idle in-desktop read of the same point gave `unsupported`.
+  - Both route to capture exactly once.
+  - The cause is undetermined.
+  - **Trigger:** any coverage analysis that relies on refusal reasons, or a
+    report of direct text misbehaving over Chrome canvases.
+- **W3 — always-active auto-start is not logged as capture starting.** The
+  session log records "stopped watching" for the later stop, but no "watching"
+  line for the launch-time start (`_start_if_always_active` goes around
+  `start_capture`).
+  - This is observability only.
+  - **Trigger:** the next change to the session log or the capture lifecycle.
 
 **Dismissed:**
 - **A packaged test on bundled `msvcp140.dll` versions.** It was proposed
@@ -364,16 +661,46 @@ code changed.
 - Neither the Windows run nor the macOS corrections committed pixels, OCR
   output, accessibility content, passwords or private captures.
 
+**2026-09-24 run:**
+- Only the Appendix B fixture strings were placed on screen; the RTF changed
+  font size only.
+- The recording trace sink retained no text, geometry or evidence. A key scan
+  of every trace found only numeric geometry and counts: no `ocr_text`,
+  `ocr_boxes` or `ocr_evidence`.
+- Probe and repro JSON hold fixture strings, coordinates and outcomes only.
+- The password value was never requested.
+- No screenshot, capture file or Export was produced. Nothing was written
+  under `artifacts/`. Freeze was not used.
+- Scratch scripts, JSON and the Chrome profile stayed in the session
+  scratchpad. The repository delta is these two documents.
+- **Exposure to note:** while each harness run was capturing, the human's own
+  mouse movement on the other monitor also produced hovers. Those were
+  processed in memory like any user hover.
+  - Their traces carry counts and geometry only.
+  - The contaminated run was set aside rather than used as evidence.
+  - No content from them was persisted.
+
 ## Verdict
 
-**Blocked by missing evidence.** This is unchanged by the macOS corrections,
-which still need confirming on Windows.
-- CI, lint, Linux-platform typing and the native suite were green at `cd72d05`.
-- The two portable failures were classified. They are now corrected on macOS.
-- The `c10.dll` failure is conclusively diagnosed and absent in a clean
-  environment. Release builds are now constrained away from it.
-- Not yet obtained: a real production OCR fallback, the Chromium/RichEdit
-  cursor matrix, the observed UIA boundary, and a verified packaged artifact.
+**Accepted with deferred findings (2026-09-24).** Every boundary Remaining
+work requires now has real Windows evidence at `8232796`:
+- the constrained clean environment and all four gates;
+- a fresh AMD64 package whose stamp equals HEAD, passing all four packaged
+  gates;
+- the Chromium matrix (98/98) and the RichEdit matrix (97/98);
+- UIA boundary values, timeouts, worker ownership and balanced COM lifetimes;
+- a real production UIA refusal → capture → EasyOCR (non-cached, in the
+  lookup child) → `SUCCESS` popup, plus a normal `hanly` entry-point launch.
+
+The one RichEdit cell and the canvas refusal reason do not match the predicted
+outcomes. Both fail closed to OCR, so neither yields a wrong answer, and both
+are recorded as W1 and W2 rather than dismissed.
+
+A strict reading of "every `matrix` row has `pass: true`" is not met for
+RichEdit. Whether W1 blocks merge is the human's decision. This run recommends
+merging with W1–W3 deferred.
+
+*Superseded 2026-09-23 verdict: blocked by missing evidence.*
 
 ## Appendix A — `uia_probe.py` (diagnostic scratch probe, not product code)
 
@@ -404,8 +731,18 @@ Every native interface is released on every path: `try`/`finally` for each span
 clone, and an `ExitStack` that registers each interface as soon as it is
 acquired.
 
-**Not confirmed.** The probe has not run against real Chromium or RichEdit, and
-it is not known to work there.
+**Amended 2026-09-24.** The probe ran against real Chromium and RichEdit. Two
+scratch-only corrections were needed for RichEdit; they are recorded under
+*Harness defects found and corrected*.
+1. In `discover`, `opened[2].removesuffix("\r") not in FIXTURES` replaces
+   `opened[2] not in FIXTURES`.
+2. In `matrix`, the loop iterates only
+   `reference["chars"][:len(text.removesuffix("\r"))]`.
+
+The listing below is the uncorrected version.
+
+*(Original note, now superseded:)* The probe has not run against real Chromium
+or RichEdit, and it is not known to work there.
 
 On macOS, its reference and judging functions ran against the repository's fake
 UIA bridge (`tests/hanly_fixtures/uia.py`). Both unit models and both caret
@@ -976,6 +1313,7 @@ def rtf_escape(text: str) -> str:
 
 
 body = "\\par\n".join(rtf_escape(line) for line in LINES)
+# 2026-09-24: \fs40 was used instead of \fs60 below, so WordPad's ruler wrap keeps each line whole.
 rtf = (
     "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil Malgun Gothic;}}\n"
     "\\f0\\fs60\\sl480\\slmult0 " + body + "\\par\n}"
