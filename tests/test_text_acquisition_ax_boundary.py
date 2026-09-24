@@ -90,7 +90,10 @@ def test_refinement_belongs_to_the_line_originally_read(
     monkeypatch.setattr(provider, "_string_for_range", string_for_range)
     monkeypatch.setattr(provider, "_bounds_for_range", lambda *args: _LINE_BOUNDS)
 
-    acquired = DirectTextCoordinator(provider).acquire(Point(5, 5))
+    # A fixed clock: this is about the snapshot, and a runner stall past the real
+    # 40 ms deadline once turned the unchanged case into ``timed_out`` in CI.
+    coordinator = DirectTextCoordinator(provider, clock=lambda: 0)
+    acquired = coordinator.acquire(Point(5, 5))
 
     assert acquired.outcome is expected
     if expected is not Outcome.DIRECT:
