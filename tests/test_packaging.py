@@ -739,6 +739,33 @@ def test_release_inputs_are_pinned_without_touching_package_ranges() -> None:
     assert "easyocr==1.7.2" in pins
     assert "pyinstaller==6.22.2" in pins
     assert "pyinstaller-hooks-contrib==2026.7" in pins
+    assert "PyQt6-Qt6==6.11.2" in pins
+    app_manifest = ROOT / "packages" / "hanly-app" / "pyproject.toml"
+    assert '"PyQt6>=6.7,<7"' in app_manifest.read_text(encoding="utf-8")
+
+
+def test_release_builds_cannot_resolve_the_qt_runtime_that_breaks_torch() -> None:
+    """PyQt6-Qt6 6.10 ships MSVC runtime 14.26; loaded before Torch on Windows,
+    ``c10.dll`` fails to initialize. 6.11.2 is the verified replacement."""
+
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    lines = RELEASE_CONSTRAINTS.read_text(encoding="utf-8").splitlines()
+    requirements = [
+        Requirement(line.split("#", 1)[0])
+        for line in lines
+        if line.split("#", 1)[0].strip()
+    ]
+    qt_runtime = [
+        requirement.specifier
+        for requirement in requirements
+        if canonicalize_name(requirement.name) == "pyqt6-qt6"
+    ]
+
+    assert len(qt_runtime) == 1
+    assert "6.11.2" in qt_runtime[0]
+    assert not any(qt_runtime[0].contains(v) for v in ("6.10.0", "6.10.1", "6.10.2"))
 
 
 def test_the_bundled_weights_are_the_two_easyocr_actually_loads() -> None:
