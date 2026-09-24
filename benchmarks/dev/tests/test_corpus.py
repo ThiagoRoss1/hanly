@@ -17,6 +17,7 @@ from benchmarks.dev.corpus import (
     Corpus,
     CorpusError,
     ExpectedRegion,
+    _require_portable_path,
     build_corpus,
     inventory,
     load_corpus,
@@ -154,11 +155,6 @@ def test_a_committed_manifest_cannot_reference_a_private_case() -> None:
 def test_a_committed_manifest_cannot_reference_a_local_synthetic_case() -> None:
     with pytest.raises(CorpusError, match="cannot appear in a committed manifest"):
         _load(Path("."), _manifest(_case(provenance="local_synthetic")))
-
-
-def test_a_committed_manifest_cannot_carry_a_machine_specific_path() -> None:
-    with pytest.raises(CorpusError, match="must stay machine-independent"):
-        _load(Path("."), _manifest(_case(image="/Users/someone/screenshots/a.png")))
 
 
 def test_a_local_manifest_may_hold_private_cases_and_absolute_paths() -> None:
@@ -324,6 +320,7 @@ def test_a_committed_case_cannot_traverse_out_to_a_private_capture(
 @pytest.mark.parametrize(
     "image",
     [
+        "/Users/someone/screenshots/a.png",
         r"C:\Users\someone\shot.png",
         r"\\server\share\shot.png",
         "~/screenshots/a.png",
@@ -331,11 +328,15 @@ def test_a_committed_case_cannot_traverse_out_to_a_private_capture(
     ],
 )
 def test_a_committed_case_cannot_name_one_machine(image: str) -> None:
-    """``Path.is_absolute`` answers for the host, so a Windows path reads as
-    relative on POSIX -- and those are the paths carrying a user name."""
+    """``Path.is_absolute`` answers for the host, so each flavour must be refused
+    by the privacy rule itself on every host, not later by containment."""
 
-    with pytest.raises(CorpusError, match="machine-independent"):
+    with pytest.raises(CorpusError, match="must stay machine-independent"):
         _load(Path("."), _manifest(_case(image=image)))
+
+    # As if the host's own ``Path`` called it relative, as Windows does ``/Users``.
+    with pytest.raises(CorpusError, match="must stay machine-independent"):
+        _require_portable_path("case", image, Path("fixture.png"))
 
 
 def test_a_local_manifest_may_still_point_wherever_it_needs_to(

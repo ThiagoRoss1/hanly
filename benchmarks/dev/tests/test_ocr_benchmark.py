@@ -7,7 +7,9 @@ the mode claims not to run.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -303,6 +305,10 @@ def test_memory_growth_is_derived_only_from_both_ends() -> None:
     assert evidence.peak_growth == 700
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("resource") is None,
+    reason="ru_maxrss comes from the POSIX resource module",
+)
 def test_peak_memory_is_readable_without_psutil() -> None:
     """``psutil`` is optional; the peak still has to be measurable."""
 
@@ -310,6 +316,16 @@ def test_peak_memory_is_readable_without_psutil() -> None:
     assert peak is not None and peak > 0
     current = current_rss()
     assert current is None or current > 0
+
+
+def test_peak_memory_is_absent_without_the_resource_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows has no ``resource``; the peak is then unknown, never an error."""
+
+    monkeypatch.setitem(sys.modules, "resource", None)
+
+    assert peak_rss() is None
 
 
 # --- Raw evidence -----------------------------------------------------------

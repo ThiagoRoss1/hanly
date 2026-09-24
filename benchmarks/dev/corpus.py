@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -292,12 +292,16 @@ def _case_image(
 def _require_portable_path(case_id: str, raw: str, candidate: Path) -> None:
     """Refuse anything that names one machine rather than this repository.
 
-    ``Path.is_absolute`` answers for the host it runs on, so a Windows drive
-    letter or a UNC share reads as an ordinary relative name on POSIX -- and
-    those are exactly the paths that carry somebody's user name.
+    ``Path.is_absolute`` answers for the host it runs on: a drive letter or UNC
+    share is relative on POSIX, and ``/Users/name`` is relative on Windows --
+    and those are exactly the paths that carry somebody's user name.
     """
 
-    if candidate.is_absolute() or PureWindowsPath(raw).is_absolute():
+    if (
+        candidate.is_absolute()
+        or PureWindowsPath(raw).is_absolute()
+        or PurePosixPath(raw).is_absolute()
+    ):
         raise CorpusError(
             f"case {case_id!r} uses the absolute path {raw!r}; a committed "
             "manifest must stay machine-independent"
