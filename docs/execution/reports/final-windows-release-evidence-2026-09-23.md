@@ -5,6 +5,33 @@ This report records what was verified on Windows, what is still missing, and
 exactly how to resume. It adds to
 `review-handoffs/final-correction-bundle-2026-09-22.md` and does not replace it.
 
+Everything from **Environment** to **Package build** was observed on Windows at
+`cd72d05`, before the macOS corrections below existed. Inside those sections,
+only the notes marked *afterwards on macOS* are later. The next section records
+what changed, and **Remaining work** is the one authoritative resume
+sequence.
+
+## Post-interruption corrections on macOS (2026-09-23)
+
+These were made on macOS after the Windows run stopped. None of them is Windows
+evidence; the Windows run must confirm them.
+
+| Commit | Change |
+|---|---|
+| `f18a0d6` `fix: constrain the verified Qt release runtime` | `PyQt6-Qt6==6.11.2` in `packaging/release-constraints.txt`. A regression test fails if the constraint admits 6.10. `hanly-app` keeps `PyQt6>=6.7,<7`. |
+| `d4f827d` `fix: keep benchmark gates portable` | Corpus privacy also refuses POSIX-absolute paths via `PurePosixPath`, whatever the host. The `resource`-based peak test skips where `resource` is absent, and a separate test covers the documented `None` on every host. |
+| `docs: harden final windows continuation` | This report: a machine-neutral interpreter path, the corrected probe in Appendix A, and one resume sequence. |
+
+- On macOS, the full release set (dev group, both packages with
+  `[runtime]`, PyInstaller and hooks) resolves under the new constraints to
+  PyQt6 6.11.0, PyQt6-Qt6 6.11.2, PyQt6-WebEngine 6.11.0 and its Qt6 6.11.2,
+  easyocr 1.7.2, PyInstaller 6.22.2 and hooks 2026.7. Under the same
+  constraints, PyQt6 6.10.x cannot be resolved.
+- PyPI publishes PyQt6-Qt6 6.11.2 wheels for `win_amd64`, `macosx_11_0_arm64`
+  and `manylinux_2_34_x86_64`, the three build targets.
+- This does **not** show that a Windows build resolves or runs correctly.
+  That still has to be confirmed in steps 2–3 below.
+
 ## Environment
 
 | Fact | Value |
@@ -12,7 +39,7 @@ exactly how to resume. It adds to
 | Machine | Windows 10 Enterprise 10.0.19045 (22H2), AMD64, medium integrity, not elevated |
 | Displays | as recorded in the Wave 6 checkpoint, **not re-measured in this run**: `DISPLAY1` primary `(0,0)–(1920,1080)` and `DISPLAY2` `(-1920,0)–(0,1080)`, both at 96 DPI (100%) |
 | Tested commit | `cd72d057f40ff2e29c7c201e9413541d3a572ef3` (`visual/interface-update`); `origin` at the same commit; worktree clean at start |
-| Interpreter | `C:\Users\Thiago\AppData\Local\Programs\Python\Python313\python.exe`, CPython 3.13.11 (MSC v.1944, 64-bit) |
+| Interpreter | `%LOCALAPPDATA%\Programs\Python\Python313\python.exe`, CPython 3.13.11 (MSC v.1944, 64-bit) |
 | Clean venv | `C:\Hanly\.venv-final-validation` (new; `.venv` untouched) |
 
 ## Remote CI
@@ -82,6 +109,8 @@ on Ubuntu in CI. Neither touches `packages/` or the release path.
    - Its sibling test is already skipped for exactly that reason; this one lacks
      the same skip.
 
+*Both corrected afterwards on macOS in `d4f827d`.*
+
 ## Torch `c10.dll` / WinError 1114 — conclusively diagnosed
 
 Each load boundary ran in its own child process.
@@ -120,7 +149,8 @@ Each load boundary ran in its own child process.
     `PyQt6-Qt6>=6.11` line in `packaging/release-constraints.txt` or a raised
     floor in `hanly-app`. The current floor is `PyQt6>=6.7,<7`, which still
     admits 6.10.
-  - That is a dependency-policy decision and was **not made**; see Deferred.
+  - That is a dependency-policy decision and was **not made** during the run.
+    *It was made afterwards on macOS: `f18a0d6` pins `PyQt6-Qt6==6.11.2`.*
   - The production design already keeps Torch out of the Qt shell: EasyOCR is
     imported first inside the lookup child.
   - A frozen bundle still collects every DLL into one tree, so it needs a
@@ -144,12 +174,18 @@ evidence either way.
 - Its per-character *reference* rectangles all came back `None`. They are taken
   from `refine_bounds(line_centre, i, i+1, line=text)`, so no hover points were
   generated.
-  - The cause was being debugged when the run stopped. It is most likely in the
-    probe's reference-rectangle step, not in the adapter.
-  - It could also be the adapter's `_narrowed` refusing single-character spans
-    in Chromium.
-  - **That second possibility must be ruled out before any verdict**, because
-    `refine_bounds` is the production path for word bounds too.
+- **Corrected afterwards on macOS: that method was invalid.**
+  - `refine_bounds` is the production behaviour under test. It re-resolves the
+    element and line from the pointer it is given, and chooses the span's
+    rectangle by that pointer.
+  - Asking it from one line-centre point cannot discover arbitrary character
+    rectangles. Using it to generate the points it is then judged at is
+    circular.
+  - Why it returned `None` was never determined. The corrected probe does not
+    depend on the answer.
+  - Appendix A now builds reference rectangles from raw UIA calls only. A
+    Chromium refusal to narrow a word would still show, as failed
+    `word_bounds_exact` and snapshot rows.
 
 The Chrome fixture window and a WordPad `RICHEDIT50W` fixture on the secondary
 (negative-origin) monitor were open, and were closed at the end of the run.
@@ -163,46 +199,96 @@ The Chrome fixture window and a WordPad `RICHEDIT50W` fixture on the secondary
 - There is **no verified Windows artifact yet**:
   - its stamp was never read;
   - the packaged gate was never run.
-- If the build finished, check its stamp and bundled runtime versions before
-  trusting it. If it didn't, rebuild.
+- Whatever that build left, it is stamped `cd72d05` and cannot match the commit
+  to validate now. Step 3 of Remaining work rebuilds.
 
 ## Remaining work (resume on Windows)
 
-From `C:\Hanly`, on the commit to be validated. Clear `VIRTUAL_ENV`, because
-the shell inherits `C:\Hanly\.venv`.
+This is the one authoritative resume sequence; the final-correction handoff
+links here rather than repeating it. Run it from `C:\Hanly`. The shell inherits
+`C:\Hanly\.venv`, so clear `VIRTUAL_ENV` and name the validation interpreter
+explicitly:
 
-1. **Package.** Confirm HEAD, then rebuild unless `dist\windows` is already
-   stamped with it:
+```powershell
+$env:VIRTUAL_ENV = $null
+$py = ".\.venv-final-validation\Scripts\python.exe"
+```
+
+1. **Pull the macOS corrections.**
    ```powershell
-   $env:VIRTUAL_ENV = $null
-   .\.venv-final-validation\Scripts\python.exe tools\build_package.py
+   git fetch origin; git switch visual/interface-update; git pull --ff-only
+   git status --short; git rev-parse HEAD
+   git merge-base --is-ancestor f18a0d6 HEAD; git merge-base --is-ancestor d4f827d HEAD
+   ```
+   Required:
+   - a clean worktree;
+   - both `--is-ancestor` checks exit 0 (`$LASTEXITCODE`);
+   - HEAD is the reviewed tip, including the documentation commit after the
+     two corrections.
+2. **Validation environment.** Reuse `.venv-final-validation`, brought to the
+   new constraints:
+   ```powershell
+   & $py -m pip install --group dev -c packaging/release-constraints.txt
+   & $py -m pip install -e packages/hanly -e "packages/hanly-app[runtime]" -c packaging/release-constraints.txt
+   & $py -m pip install "pyinstaller>=6,<7" pyinstaller-hooks-contrib -c packaging/release-constraints.txt
+   & $py -m pip check
+   & $py -m pip show PyQt6-Qt6 hanly hanly-app
+   & $py -m pytest --suite portable
+   & $py -m pytest --suite native
+   & $py -m ruff check packages packaging tests tools benchmarks
+   & $py -m mypy --platform linux packages packaging tests tools benchmarks
+   ```
+   Required:
+   - `pip check` is clean.
+   - PyQt6-Qt6 is 6.11.2.
+   - hanly and hanly-app are 0.5.3, editable from `C:\Hanly`.
+   - The portable suite has **no failures**.
+   - native, ruff and mypy are green as before.
+
+   If the environment is invalid (a failed install, `pip check` errors, another
+   interpreter, or the user site enabled), recreate it and repeat this step.
+   Use `py -3.13 -m venv --without-pip .venv-final-validation`, then bootstrap
+   pip from the bundled wheel as in *Clean-environment installation*. Never
+   validate from `.venv`.
+3. **Package.**
+   ```powershell
+   & $py tools\build_package.py
    Get-Content dist\windows\hanly-desktop\_internal\hanly_app\assets\hanly-build.json
    Get-ChildItem dist\windows -Recurse -Filter msvcp140.dll | % { "$($_.FullName) $($_.VersionInfo.FileVersion)" }
    $env:HANLY_EXPECTED_SOURCE_COMMIT = (git rev-parse HEAD); $env:HANLY_REQUIRE_PACKAGED = "1"
-   .\.venv-final-validation\Scripts\python.exe -m pytest --suite packaged
+   & $py -m pytest --suite packaged
    ```
    Required:
-   - inventory, source identity (stamp = HEAD), the frozen worker and the
-     frozen Control Center all pass;
-   - version 0.5.3, AMD64;
-   - no bundled `msvcp140.dll` older than 14.44.
-2. **UIA cursor matrix, Chrome and WordPad.**
-   - Fix the probe's reference rectangles (Appendix A). First run
-     `refine_bounds` on a single character by hand to rule out an adapter
-     refusal.
-   - Then take the whole matrix for each target:
-     - left and right halves of every syllable;
-     - cursor index, selected neighbour (caret before or after the character),
-       and pointer containment;
-     - prefix + suffix = line;
-     - the snapshot rule: an unchanged line gives the same bounds, and a
-       same-length mutated line is refused;
-     - the repeated-substring line and the emoji-prefixed line;
-     - refusals right of the line end and between lines.
-   - Fixture: Appendix B.
-   - Launch Chrome with `--user-data-dir=<scratch>\chrome-profile` and open
-     WordPad on the `.rtf` fixture.
-3. **UIA boundary**, from the same probe:
+   - The stamp's `source_commit` equals HEAD, with version 0.5.3 on AMD64.
+   - No bundled `msvcp140.dll` is older than 14.44.
+   - Inventory, source identity, the frozen worker and the frozen Control
+     Center all pass.
+4. **Chromium and RichEdit cursor matrix.**
+   - Save Appendix A as `<scratch>\uia_probe.py`, and the Appendix B fixtures
+     in `<scratch>`.
+   - Open the HTML fixture in Chrome with
+     `--user-data-dir=<scratch>\chrome-profile`.
+   - Open the `.rtf` fixture in WordPad on the negative-origin monitor.
+   ```powershell
+   $env:PROBE_OUT = "<scratch>\chromium.json"; & $py <scratch>\uia_probe.py "Hanly Windows fixture" chromium
+   $env:PROBE_OUT = "<scratch>\richedit.json"; & $py <scratch>\uia_probe.py "<rtf file name>" richedit
+   ```
+   Required, for each target:
+   - All four fixture lines are found, and every character has exactly one
+     raw reference rectangle. A missing reference is a probe finding, to be
+     diagnosed with raw calls. It is never a production pass or fail.
+   - Every `matrix` row has `pass: true`:
+     - On a Hangul syllable's left or right half, the outcome is `direct`.
+     - The provider's cursor is the reference index, and that character's
+       reference rectangle holds the pointer.
+     - The word and in-word cursor are right, and the word bounds equal the
+       raw reference exactly.
+     - The unchanged snapshot is accepted, and the changed one refused.
+   - Any other character is refused rather than used.
+   - `prefix_plus_suffix_is_line` holds on every row. Record `caret_side` for
+     each provider.
+   - Pointers right of the line end and between lines are refused.
+5. **UIA boundary, COM lifecycle and ownership**, from the same JSON:
    - password and offscreen answer `VT_BOOL False` on ordinary lines;
    - both timeout setters return `S_OK`, the read-back gives 50 ms, and 49 ms
      gives `E_INVALIDARG`;
@@ -212,7 +298,7 @@ the shell inherits `C:\Hanly\.venv`.
    - bridge creation, reads and disposal all happen on the service worker
      thread;
    - acquired and released interfaces balance.
-4. **Real production OCR fallback.**
+6. **Real UIA refusal → capture → production EasyOCR → popup.**
    - Run the production composition with a recording trace sink that has
      neither `retain_text` nor evidence, as `benchmarks/dev/hud/session.py`
      does. Use an app config with `hover_activation: always_active` and
@@ -230,32 +316,36 @@ the shell inherits `C:\Hanly\.venv`.
      entry point, and confirm the session log records the lookup.
    - Keep production `readtext()` evidence separate from any staged EasyOCR
      replay.
-5. Append the verdict to the final-correction handoff and commit
-   documentation-only.
+7. **Verdict.** Append the final Windows verdict to
+   `review-handoffs/final-correction-bundle-2026-09-22.md` and commit it as
+   documentation only.
 
 ## Findings
 
-**Fixed now:** none. This was a validation run, and no product code changed.
+**Fixed during the Windows run:** none. It was a validation run, and no product
+code changed.
+
+**Fixed afterwards on macOS** (not yet confirmed on Windows):
+- **PyQt6-Qt6 6.10 bundles MSVC runtime 14.26, which breaks Torch loaded after
+  Qt.** `f18a0d6` pins the verified `PyQt6-Qt6==6.11.2` for release builds.
+- **Two dev-benchmark tests assumed POSIX.** Fixed in `d4f827d`.
+- **The probe's reference method was circular.** Appendix A has been replaced.
 
 **Deferred:**
-- **PyQt6-Qt6 6.10 bundles MSVC runtime 14.26, which breaks Torch loaded after
-  Qt.** The dependency floor still admits it.
-  - **Trigger:** the release-constraints review, or any Windows build
-    environment that resolves PyQt6-Qt6 < 6.11.
-  - **Proposed:** `PyQt6-Qt6>=6.11` in `packaging/release-constraints.txt`, and
-    a packaged check that no bundled `msvcp140.dll` is older than the one Torch
-    needs.
-- **Two dev-benchmark tests assume POSIX** (above).
-  - **Trigger:** adding Windows to the portable CI matrix.
-  - **Proposed:** a `skipif` on `resource` for `peak_rss`, and treat a rooted,
-    drive-less path as absolute in `_require_portable_path`.
 - **This host's Python 3.13.11 `ensurepip` is inconsistent** (the bundled wheel
   is 25.2, the expected version 25.3).
   - **Trigger:** the next clean-environment run on this host.
   - **Action:** a human repair of the system Python install, which may need a
     reinstaller.
 
-**Dismissed:** none.
+**Dismissed:**
+- **A packaged test on bundled `msvcp140.dll` versions.** It was proposed
+  during the run.
+  - It would read Windows DLL metadata only, so it cannot be a durable
+    cross-platform gate.
+  - The durable protections are the verified constraint and the real
+    frozen-worker check.
+  - Step 3 still records the bundled versions as evidence.
 
 ## Privacy
 
@@ -268,125 +358,383 @@ the shell inherits `C:\Hanly\.venv`.
 - All probe scripts and outputs lived in the session scratchpad. The scripts
   are reproduced in the appendices; their outputs held only fixture strings and
   coordinates.
+- `8e0cd7d` recorded the interpreter under the local Windows account's profile
+  directory. The current text reads `%LOCALAPPDATA%\…` instead. The original
+  line stays in that commit's history, which was not rewritten.
+- Neither the Windows run nor the macOS corrections committed pixels, OCR
+  output, accessibility content, passwords or private captures.
 
 ## Verdict
 
-**Blocked by missing evidence.**
-- CI, lint, Linux-platform typing and the native suite are green.
-- The two portable failures are classified.
+**Blocked by missing evidence.** This is unchanged by the macOS corrections,
+which still need confirming on Windows.
+- CI, lint, Linux-platform typing and the native suite were green at `cd72d05`.
+- The two portable failures were classified. They are now corrected on macOS.
 - The `c10.dll` failure is conclusively diagnosed and absent in a clean
-  environment.
+  environment. Release builds are now constrained away from it.
 - Not yet obtained: a real production OCR fallback, the Chromium/RichEdit
   cursor matrix, the observed UIA boundary, and a verified packaged artifact.
 
-## Appendix A — `uia_probe.py` (scratch probe, not product code)
+## Appendix A — `uia_probe.py` (diagnostic scratch probe, not product code)
 
-Known defect: every per-character reference rectangle came back `None` (see above).
+**Corrected on macOS after the run.** The invalid original is in `8e0cd7d`. The
+probe reaches into private adapter names (`_UIABridge`, its constants). It is
+not a contract, and it follows the adapter if those change.
+
+Method:
+1. Get each fixture line's range from raw UIA calls: element, text pattern,
+   `RangeFromPoint`, clone, then expand to a line. Nothing production is
+   involved.
+2. Clone that line and narrow each clone to one character, and to each Hangul
+   word. Use the code-point and UTF-16 candidate offsets the adapter uses.
+3. Keep a span only if its text reads back as the expected string.
+4. Read its native rectangles with no pointer-containment filtering.
+5. Hover the left and right halves of each character's rectangle, and pass
+   those points to the real provider and coordinator.
+6. Judge the result independently:
+   - the provider's cursor is the reference index, and that character's
+     reference rectangle holds the pointer;
+   - the raw prefix and suffix rebuild the line;
+   - the word and in-word cursor are right;
+   - the word bounds equal the raw reference exactly;
+   - `refine_bounds` accepts the unchanged snapshot and refuses a changed one.
+
+`refine_bounds` is only ever *judged*. It never produces a reference point.
+Every native interface is released on every path: `try`/`finally` for each span
+clone, and an `ExitStack` that registers each interface as soon as it is
+acquired.
+
+**Not confirmed.** The probe has not run against real Chromium or RichEdit, and
+it is not known to work there.
+
+On macOS, its reference and judging functions ran against the repository's fake
+UIA bridge (`tests/hanly_fixtures/uia.py`). Both unit models and both caret
+models were used, over all four fixture lines:
+- all 392 rows passed;
+- no interface was left unreleased;
+- reference generation never called `refine_bounds`;
+- a provider reporting the cursor one character late failed 26 of 32 rows.
+
+That shows only that the algorithm is internally consistent.
+
+The Windows-only harness was not executed anywhere: window discovery, the
+instrumentation, the boundary and HRESULT reads, and the service lifecycle.
 
 ```python
 """Real-control UIA evidence: cursor matrix, boundary properties, timeouts, lifecycle.
 
-Usage: python uia_probe.py <window-title-substring> <label> [--password X,Y] [--blank X,Y ...]
+Usage (Windows only): python uia_probe.py <window-title-substring> <label> [name=X,Y ...]
+Writes JSON to the path in PROBE_OUT.
 
-Every string recorded is one of the synthetic fixtures; a password control's
-contents are never requested, and the probe asserts that no text call is made.
+Reference geometry comes only from raw UIA calls, narrowed from the line range
+without any pointer filtering. The production provider and coordinator are then
+judged at points taken from that geometry; neither is ever asked to produce the
+points it is judged at. Every string recorded is a synthetic fixture, and a
+password control's text pattern is never requested.
 """
 
 from __future__ import annotations
 
 import ctypes
 import json
+import os
 import sys
 import threading
 import time
-from ctypes import wintypes
+from contextlib import ExitStack
 
-ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-
-from hanly import BoundingBox, Point  # noqa: E402
-from hanly_app import text_acquisition_uia as uia  # noqa: E402
-from hanly_app.text_acquisition import (  # noqa: E402
+from hanly import BoundingBox, Point
+from hanly_app import text_acquisition_uia as uia
+from hanly_app.text_acquisition import (
     DEFAULT_TIMEOUT_MS,
     DirectTextCoordinator,
     DirectTextService,
-    _korean_run,
 )
 
-FIXTURES = {
+FIXTURES = (
     "초대받았어요",
     "떨어뜨렸어요",
     "받았어요 초대받았어요 받았어요",
     "🙂🙂초대받았어요 Hello 떨어뜨렸어요",
-}
+)
+LIMIT = 4096
 
-# --- instrumentation: native acquisition/release ledger and thread identity ---
+
+# --- raw reference geometry: diagnostic only, never production refinement ------
+
+
+def contains(box: BoundingBox | None, p: Point) -> bool:
+    return box is not None and box.left <= p.x <= box.right and box.top <= p.y <= box.bottom
+
+
+def raw_line(bridge, stack: ExitStack, point: Point):
+    """(found, line, text) at ``point`` from raw calls; ``stack`` releases each.
+
+    Refuses before any text call unless the element answers password False.
+    """
+
+    element = bridge.element_at(point)
+    if element is None:
+        return None
+    stack.callback(bridge.release, element)
+    if bridge.flag(element, uia._UIA_IS_PASSWORD_PROPERTY) is not False:
+        return None
+    pattern = bridge.text_pattern(element)
+    if pattern is None:
+        return None
+    stack.callback(bridge.release, pattern)
+    found = bridge.range_at(pattern, point)
+    if found is None:
+        return None
+    stack.callback(bridge.release, found)
+    line = bridge.clone(found)
+    if line is None:
+        return None
+    stack.callback(bridge.release, line)
+    if not bridge.expand(line, uia._TEXT_UNIT_LINE):
+        return None
+    return found, line, bridge.text_of(line, LIMIT)
+
+
+def candidate_offsets(text: str, start: int, end: int):
+    """Code points (Chromium) and UTF-16 units (RichEdit), each as (start, end, total)."""
+
+    def units(s: str) -> int:
+        return len(s.encode("utf-16-le")) // 2
+
+    points = (start, end, len(text))
+    utf16 = (units(text[:start]), units(text[:end]), units(text))
+    return (points,) if points == utf16 else (points, utf16)
+
+
+def raw_span_rects(bridge, line, text: str, start: int, end: int):
+    """Native rectangles of ``text[start:end]``, or ``None`` if no candidate reads it back."""
+
+    wanted = text[start:end]
+    for first, last, total in candidate_offsets(text, start, end):
+        span = bridge.clone(line)
+        if span is None:
+            continue
+        try:
+            if not bridge.move_endpoint(span, uia._ENDPOINT_START, uia._TEXT_UNIT_CHARACTER, first):
+                continue
+            if not bridge.move_endpoint(span, uia._ENDPOINT_END, uia._TEXT_UNIT_CHARACTER, last - total):
+                continue
+            if bridge.text_of(span, LIMIT) == wanted:
+                return bridge.rectangles(span)
+        finally:
+            bridge.release(span)
+    return None
+
+
+def one_rect(rects) -> BoundingBox | None:
+    return rects[0] if rects is not None and len(rects) == 1 else None
+
+
+def syllable_runs(text: str) -> list[tuple[int, str]]:
+    """Each run of precomposed Hangul syllables, the only Hangul in the fixtures.
+
+    The probe's own expectation, deliberately not the coordinator's helper.
+    """
+
+    runs: list[tuple[int, str]] = []
+    start = None
+    for i, ch in enumerate(text + " "):
+        hangul = "가" <= ch <= "힣"
+        if hangul and start is None:
+            start = i
+        elif not hangul and start is not None:
+            runs.append((start, text[start:i]))
+            start = None
+    return runs
+
+
+def reference_line(bridge, anchor: Point, text: str) -> dict | None:
+    """Every character's and every word's native rectangle, from one raw line range."""
+
+    with ExitStack() as stack:
+        opened = raw_line(bridge, stack, anchor)
+        if opened is None or opened[2] != text:
+            return None
+        line = opened[1]
+        chars = [raw_span_rects(bridge, line, text, i, i + 1) for i in range(len(text))]
+        words = {
+            start: raw_span_rects(bridge, line, text, start, start + len(word))
+            for start, word in syllable_runs(text)
+        }
+    return {
+        "chars": [one_rect(r) for r in chars],
+        "char_rect_counts": [None if r is None else len(r) for r in chars],
+        "words": {start: one_rect(r) for start, r in words.items()},
+    }
+
+
+def raw_part(bridge, line, found, endpoint: int) -> str | None:
+    part = bridge.clone(line)
+    if part is None:
+        return None
+    try:
+        if not bridge.align_endpoint(part, endpoint, found, uia._ENDPOINT_START):
+            return None
+        return bridge.text_of(part, LIMIT)
+    finally:
+        bridge.release(part)
+
+
+def raw_caret(bridge, point: Point, text: str) -> dict:
+    """Where RangeFromPoint leaves its degenerate range, from raw prefix and suffix."""
+
+    with ExitStack() as stack:
+        opened = raw_line(bridge, stack, point)
+        if opened is None:
+            return {"raw_line_is_fixture": False}
+        found, line, line_text = opened
+        prefix = raw_part(bridge, line, found, uia._ENDPOINT_END)
+        suffix = raw_part(bridge, line, found, uia._ENDPOINT_START)
+    return {
+        "raw_line_is_fixture": line_text == text,
+        "raw_caret": None if prefix is None else len(prefix),
+        "prefix_plus_suffix_is_line": prefix is not None and suffix is not None
+        and prefix + suffix == text,
+    }
+
+
+# --- judging production at reference points ------------------------------------
+
+
+def mutate(text: str, index: int) -> str:
+    replacement = "가" if text[index] != "가" else "나"
+    return text[:index] + replacement + text[index + 1:]
+
+
+def judge(bridge, provider, coordinator, text: str, i: int, reference: dict, p: Point) -> dict:
+    word = next(((s, w) for s, w in syllable_runs(text) if s <= i < s + len(w)), None)
+    reading = provider.read_at(p, timeout_ms=DEFAULT_TIMEOUT_MS)
+    started = time.perf_counter_ns()
+    acquisition = coordinator.acquire(p)
+    elapsed = (time.perf_counter_ns() - started) / 1e6
+
+    cursor = reading.cursor_index if reading is not None else None
+    chars = reference["chars"]
+    row = {
+        "index": i, "char": text[i], "point": [p.x, p.y],
+        "outcome": acquisition.outcome.value, "ms": round(elapsed, 2),
+        **raw_caret(bridge, p, text),
+        "provider_line_is_fixture": reading is not None and reading.text == text,
+        "cursor_correct": cursor == i,
+        "cursor_char_rect_contains_point": cursor is not None and 0 <= cursor < len(chars)
+        and contains(chars[cursor], p),
+    }
+    if row["raw_caret"] is not None:
+        row["caret_side"] = {i: "before", i + 1: "after"}.get(row["raw_caret"], "other")
+    if word is None:
+        # Any refusal sends this pointer to OCR; which one is recorded, not required.
+        row["expected_outcome"] = "refused"
+        row["pass"] = row["outcome"] != "direct"
+        return row
+
+    start, expected = word
+    selection = acquisition.selection
+    row["expected_outcome"] = "direct"
+    row["word_correct"] = selection is not None and selection.text == expected \
+        and selection.cursor_index == i - start
+    reference_word = reference["words"].get(start)
+    row["word_bounds_exact"] = reference_word is not None and acquisition.bounds == reference_word
+    end = start + len(expected)
+    same = provider.refine_bounds(p, start, end, line=text, timeout_ms=DEFAULT_TIMEOUT_MS)
+    changed = provider.refine_bounds(p, start, end, line=mutate(text, i), timeout_ms=DEFAULT_TIMEOUT_MS)
+    row["unchanged_snapshot_accepted"] = same is not None and same == acquisition.bounds
+    row["changed_snapshot_refused"] = changed is None
+    row["pass"] = row["outcome"] == "direct" and all(row[key] for key in (
+        "cursor_correct", "cursor_char_rect_contains_point", "word_correct",
+        "word_bounds_exact", "unchanged_snapshot_accepted", "changed_snapshot_refused"))
+    return row
+
+
+def matrix(bridge, provider, coordinator, anchors: dict[str, Point]) -> list[dict]:
+    rows = []
+    for text, anchor in anchors.items():
+        reference = reference_line(bridge, anchor, text)
+        if reference is None:
+            rows.append({"line": text, "reference": None})
+            continue
+        for i, rect in enumerate(reference["chars"]):
+            if rect is None:
+                rows.append({"line": text, "index": i, "char": text[i], "char_rect": None,
+                             "rect_count": reference["char_rect_counts"][i]})
+                continue
+            for half, fraction in (("left", 0.25), ("right", 0.75)):
+                p = Point(round(rect.left + (rect.right - rect.left) * fraction),
+                          round((rect.top + rect.bottom) / 2))
+                rows.append({"line": text, "half": half,
+                             **judge(bridge, provider, coordinator, text, i, reference, p)})
+    return rows
+
+
+# --- Windows-only harness -------------------------------------------------------
+
+
 ledger = {"acquired": 0, "released": 0, "text_calls": 0, "pattern_calls": 0}
 threads: dict[str, list[int]] = {"create": [], "dispose": [], "read": []}
-Bridge = uia._UIABridge
-_orig = {name: getattr(Bridge, name) for name in (
-    "element_at", "text_pattern", "range_at", "clone", "release", "text_of", "dispose")}
 
 
-def _counting(name):
-    def wrapper(self, *args):
-        result = _orig[name](self, *args)
-        if result is not None:
-            ledger["acquired"] += 1
-        if name == "text_pattern":
-            ledger["pattern_calls"] += 1
-        return result
-    return wrapper
+def instrument() -> tuple[uia.UIAutomationTextProvider, DirectTextCoordinator]:
+    """Count every native acquisition and release, and record which thread did what."""
 
+    bridge_class = uia._UIABridge
+    orig = {name: getattr(bridge_class, name) for name in (
+        "element_at", "text_pattern", "range_at", "clone", "release", "text_of", "dispose")}
 
-for _name in ("element_at", "text_pattern", "range_at", "clone"):
-    setattr(Bridge, _name, _counting(_name))
+    def counting(name):
+        def wrapper(self, *args):
+            if name == "text_pattern":
+                ledger["pattern_calls"] += 1
+            result = orig[name](self, *args)
+            if result is not None:
+                ledger["acquired"] += 1
+            return result
+        return wrapper
 
+    for name in ("element_at", "text_pattern", "range_at", "clone"):
+        setattr(bridge_class, name, counting(name))
 
-def _release(self, interface):
-    if interface:
-        ledger["released"] += 1
-    return _orig["release"](self, interface)
+    def release(self, interface):
+        if interface:
+            ledger["released"] += 1
+        return orig["release"](self, interface)
 
+    def text_of(self, text_range, limit):
+        ledger["text_calls"] += 1
+        return orig["text_of"](self, text_range, limit)
 
-def _text_of(self, text_range, limit):
-    ledger["text_calls"] += 1
-    return _orig["text_of"](self, text_range, limit)
+    def dispose(self):
+        threads["dispose"].append(threading.get_ident())
+        return orig["dispose"](self)
 
+    bridge_class.release = release
+    bridge_class.text_of = text_of
+    bridge_class.dispose = dispose
+    orig_create = uia._create_bridge
 
-def _dispose(self):
-    threads["dispose"].append(threading.get_ident())
-    return _orig["dispose"](self)
+    def create():
+        threads["create"].append(threading.get_ident())
+        return orig_create()
 
+    uia._create_bridge = create
+    provider = uia.UIAutomationTextProvider()
+    orig_read = provider.read_at
 
-Bridge.release = _release
-Bridge.text_of = _text_of
-Bridge.dispose = _dispose
-_orig_create = uia._create_bridge
+    def read(point, *, timeout_ms):
+        threads["read"].append(threading.get_ident())
+        return orig_read(point, timeout_ms=timeout_ms)
 
+    provider.read_at = read  # type: ignore[method-assign]
+    return provider, DirectTextCoordinator(provider)
 
-def _create():
-    threads["create"].append(threading.get_ident())
-    return _orig_create()
-
-
-uia._create_bridge = _create
-provider = uia.UIAutomationTextProvider()
-_orig_read = provider.read_at
-
-
-def _read(point, *, timeout_ms):
-    threads["read"].append(threading.get_ident())
-    return _orig_read(point, timeout_ms=timeout_ms)
-
-
-provider.read_at = _read  # type: ignore[method-assign]
-coordinator = DirectTextCoordinator(provider)
-secure_points: dict[str, Point] = {}
-
-
-# --- helpers ------------------------------------------------------------------
 
 def window_rect(fragment: str) -> tuple[int, int, int, int]:
+    from ctypes import wintypes
+
     found: list[int] = []
     user32 = ctypes.windll.user32
 
@@ -409,137 +757,49 @@ def window_rect(fragment: str) -> tuple[int, int, int, int]:
     return rect.left, rect.top, rect.right, rect.bottom
 
 
-def contains(box: BoundingBox | None, p: Point) -> bool:
-    return box is not None and box.left <= p.x <= box.right and box.top <= p.y <= box.bottom
-
-
-def discover_lines(rect) -> dict[str, BoundingBox]:
-    """Scan the window and keep each fixture line's own rectangle."""
+def discover(bridge, rect) -> tuple[dict[str, Point], dict[str, BoundingBox], Point | None]:
+    """A pointer-containing anchor and line box per fixture line, and a password point."""
 
     left, top, right, bottom = rect
-    lines: dict[str, BoundingBox] = {}
-    bridge = uia._bridge_for_thread()
+    anchors: dict[str, Point] = {}
+    boxes: dict[str, BoundingBox] = {}
+    password = None
     for y in range(top + 60, bottom - 10, 12):
         for x in range(left + 10, right - 10, 24):
             p = Point(x, y)
-            reading = provider.read_at(p, timeout_ms=DEFAULT_TIMEOUT_MS)
-            if reading and reading.secure:
-                secure_points.setdefault("password", p)
-            if reading and reading.text in FIXTURES and contains(reading.bounds, p):
-                lines.setdefault(reading.text, reading.bounds)
-    assert bridge is not None
-    return lines
-
-
-def char_rects(text: str, box: BoundingBox) -> list[BoundingBox | None]:
-    centre = Point((box.left + box.right) / 2, (box.top + box.bottom) / 2)
-    return [
-        provider.refine_bounds(centre, i, i + 1, line=text, timeout_ms=DEFAULT_TIMEOUT_MS)
-        for i in range(len(text))
-    ]
-
-
-def raw_detail(p: Point) -> dict:
-    """The adapter's own steps, one by one, so caret side and component are visible."""
-
-    bridge = uia._bridge_for_thread()
-    P = uia.UIAutomationTextProvider
-    element = bridge.element_at(p)
-    if element is None:
-        return {"element": False}
-    try:
-        pattern = bridge.text_pattern(element)
-        if pattern is None:
-            return {"pattern": False}
-        try:
-            found = bridge.range_at(pattern, p)
-            if found is None:
-                return {"range": False}
-            try:
-                line = P._line_of(bridge, found)
-                try:
-                    text = bridge.text_of(line, 4096)
-                    before = P._part_of_line(bridge, line, found, uia._ENDPOINT_END)
-                    after = P._part_of_line(bridge, line, found, uia._ENDPOINT_START)
-                    caret = len(before) if before is not None else None
-                    right_ok = caret is not None and caret < len(text) and P._character_holds(
-                        bridge, found, uia._ENDPOINT_END, 1, text[caret], p)
-                    left_ok = caret is not None and caret > 0 and P._character_holds(
-                        bridge, found, uia._ENDPOINT_START, -1, text[caret - 1], p)
-                    return {
-                        "caret": caret,
-                        "prefix_plus_suffix_is_line": before is not None and after is not None
-                        and before + after == text,
-                        "char_after_caret_holds": right_ok,
-                        "char_before_caret_holds": left_ok,
-                    }
-                finally:
-                    bridge.release(line)
-            finally:
-                bridge.release(found)
-        finally:
-            bridge.release(pattern)
-    finally:
-        bridge.release(element)
-
-
-def mutate(text: str, index: int) -> str:
-    replacement = "가" if text[index] != "가" else "나"
-    return text[:index] + replacement + text[index + 1:]
-
-
-def matrix(lines: dict[str, BoundingBox]) -> list[dict]:
-    rows = []
-    for text, box in lines.items():
-        rects = char_rects(text, box)
-        for i, rect in enumerate(rects):
-            if rect is None:
-                rows.append({"line": text, "index": i, "char": text[i], "char_rect": None})
+            element = bridge.element_at(p)
+            if element is None:
                 continue
-            for half, fraction in (("left", 0.25), ("right", 0.75)):
-                p = Point(round(rect.left + (rect.right - rect.left) * fraction),
-                          round((rect.top + rect.bottom) / 2))
-                started = time.perf_counter_ns()
-                acquisition = coordinator.acquire(p)
-                elapsed = (time.perf_counter_ns() - started) / 1e6
-                run = _korean_run(text, i)
-                row = {
-                    "line": text, "index": i, "char": text[i], "half": half,
-                    "point": [p.x, p.y], "outcome": acquisition.outcome.value,
-                    "ms": round(elapsed, 2), **raw_detail(p),
-                }
-                if acquisition.selection is not None:
-                    row.update(
-                        word=acquisition.selection.text,
-                        word_cursor=acquisition.selection.cursor_index,
-                        expected_word=run[0] if run else None,
-                        expected_cursor=run[1] if run else None,
-                        bounds_contain_point=contains(acquisition.bounds, p),
-                    )
-                    start = run[2]
-                    same = provider.refine_bounds(p, start, start + len(run[0]),
-                                                  line=text, timeout_ms=40)
-                    changed = provider.refine_bounds(p, start, start + len(run[0]),
-                                                     line=mutate(text, i), timeout_ms=40)
-                    row.update(refine_same_snapshot=same == acquisition.bounds,
-                               refine_changed_snapshot_refused=changed is None)
-                else:
-                    row.update(expected_word=run[0] if run else None)
-                rows.append(row)
-    return rows
+            try:
+                is_password = bridge.flag(element, uia._UIA_IS_PASSWORD_PROPERTY)
+            finally:
+                bridge.release(element)
+            if is_password is True:
+                password = password or p
+                continue
+            with ExitStack() as stack:
+                opened = raw_line(bridge, stack, p)
+                if opened is None or opened[2] not in FIXTURES or opened[2] in anchors:
+                    continue
+                box = next((b for b in bridge.rectangles(opened[1]) if contains(b, p)), None)
+                if box is not None:
+                    anchors[opened[2]], boxes[opened[2]] = p, box
+    return anchors, boxes, password
 
 
-def boundary(rect, samples: list[tuple[str, Point]]) -> dict:
-    bridge = uia._bridge_for_thread()
+def boundary(bridge, coordinator, samples: list[tuple[str, Point]]) -> dict:
     out: dict = {}
-    # Client identity and both timeout setters, re-invoked for their raw HRESULTs.
-    out["timed_client_iid"] = "IUIAutomation2" if bridge is not None else None
-    statuses = []
-    for slot in (uia._AUTOMATION_PUT_CONNECTION_TIMEOUT, uia._AUTOMATION_PUT_TRANSACTION_TIMEOUT):
-        statuses.append(bridge._method(bridge._automation, slot, ctypes.c_uint32)(
-            bridge._automation, uia._NATIVE_TIMEOUT_MS))
+    # _create_bridge returns None unless the timed IUIAutomation2 client was
+    # created and both setters succeeded; they are re-invoked here for raw HRESULTs.
+    out["timed_client"] = bridge is not None
+    statuses = [
+        bridge._method(bridge._automation, slot, ctypes.c_uint32)(
+            bridge._automation, uia._NATIVE_TIMEOUT_MS)
+        for slot in (uia._AUTOMATION_PUT_CONNECTION_TIMEOUT, uia._AUTOMATION_PUT_TRANSACTION_TIMEOUT)
+    ]
     out["timeout_setter_hresults"] = [hex(s & 0xFFFFFFFF) for s in statuses]
     readback = []
+    # Each getter sits one slot before its setter on IUIAutomation2.
     for slot in (uia._AUTOMATION_PUT_CONNECTION_TIMEOUT - 1, uia._AUTOMATION_PUT_TRANSACTION_TIMEOUT - 1):
         value = ctypes.c_uint32()
         status = bridge._method(bridge._automation, slot, ctypes.POINTER(ctypes.c_uint32))(
@@ -549,23 +809,27 @@ def boundary(rect, samples: list[tuple[str, Point]]) -> dict:
     below = bridge._method(bridge._automation, uia._AUTOMATION_PUT_CONNECTION_TIMEOUT,
                            ctypes.c_uint32)(bridge._automation, 49)
     out["setter_49ms_hresult"] = hex(below & 0xFFFFFFFF)
-    bridge.limit_calls(uia._NATIVE_TIMEOUT_MS)
+    out["restored"] = bridge.limit_calls(uia._NATIVE_TIMEOUT_MS)
     out["coordinator_deadline_ms"] = coordinator.timeout_ms
 
     props = []
     for name, p in samples:
         element = bridge.element_at(p)
-        entry = {"sample": name}
+        entry: dict = {"sample": name}
         if element is not None:
             try:
                 for label, pid in (("password", uia._UIA_IS_PASSWORD_PROPERTY),
                                    ("offscreen", uia._UIA_IS_OFFSCREEN_PROPERTY)):
                     value = bridge._property(element, pid)
-                    entry[label] = None if value is None else {
-                        "vt": value.vt, "is_vt_bool": value.vt == uia._VT_BOOL,
-                        "value": bool(value.value.bool_value) if value.vt == uia._VT_BOOL else None,
-                    }
-                    if value is not None:
+                    if value is None:
+                        entry[label] = None
+                        continue
+                    try:
+                        entry[label] = {
+                            "vt": value.vt, "is_vt_bool": value.vt == uia._VT_BOOL,
+                            "value": bool(value.value.bool_value) if value.vt == uia._VT_BOOL else None,
+                        }
+                    finally:
                         bridge._oleaut32.VariantClear(ctypes.byref(value))
             finally:
                 bridge.release(element)
@@ -574,7 +838,7 @@ def boundary(rect, samples: list[tuple[str, Point]]) -> dict:
     return out
 
 
-def refusal(name: str, p: Point) -> dict:
+def refusal(coordinator, name: str, p: Point) -> dict:
     before_text, before_pattern = ledger["text_calls"], ledger["pattern_calls"]
     acquisition = coordinator.acquire(p)
     return {
@@ -586,10 +850,10 @@ def refusal(name: str, p: Point) -> dict:
     }
 
 
-def service_lifecycle(p: Point) -> dict:
+def service_lifecycle(provider, p: Point) -> dict:
     """Run the production service once and record which thread did what."""
 
-    main = threading.get_ident()
+    main_thread = threading.get_ident()
     provider.release_thread()  # leave the probe thread's own apartment first
     create0, dispose0, read0 = len(threads["create"]), len(threads["dispose"]), len(threads["read"])
     delivered = threading.Event()
@@ -610,41 +874,45 @@ def service_lifecycle(p: Point) -> dict:
         "bridge_created_on_worker": threads["create"][create0:] == [worker],
         "reads_on_worker": set(threads["read"][read0:]) == {worker},
         "bridge_disposed_on_worker": threads["dispose"][dispose0:] == [worker],
-        "worker_is_not_caller": worker != main,
+        "worker_is_not_caller": worker != main_thread,
     }
 
 
 def main() -> None:
+    ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     fragment, label = sys.argv[1], sys.argv[2]
     extra = dict(arg.split("=", 1) for arg in sys.argv[3:])
-    rect = window_rect(fragment)
-    lines = discover_lines(rect)
-    for key, p in secure_points.items():
-        extra.setdefault(key, f"{int(p.x)},{int(p.y)}")
-    result: dict = {"target": label, "window": rect, "lines_found": {
-        k: [v.left, v.top, v.right, v.bottom] for k, v in lines.items()}}
-    result["matrix"] = matrix(lines)
+    provider, coordinator = instrument()
+    bridge = uia._bridge_for_thread()
+    if bridge is None:
+        raise SystemExit("no timed UIA client on this thread")
 
-    samples = [(f"line:{t}", Point((b.left + b.right) // 2, (b.top + b.bottom) // 2))
-               for t, b in list(lines.items())[:2]]
+    rect = window_rect(fragment)
+    anchors, boxes, password = discover(bridge, rect)
+    if password is not None:
+        extra.setdefault("password", f"{int(password.x)},{int(password.y)}")
+    result: dict = {"target": label, "window": rect,
+                    "lines_found": {k: [v.left, v.top, v.right, v.bottom] for k, v in boxes.items()}}
+    result["matrix"] = matrix(bridge, provider, coordinator, anchors)
+
+    samples = [(f"line:{t}", p) for t, p in list(anchors.items())[:2]]
     refusals = []
     for key, value in extra.items():
         x, y = (int(v) for v in value.split(","))
-        refusals.append(refusal(key, Point(x, y)))
+        refusals.append(refusal(coordinator, key, Point(x, y)))
         if key == "password":
             samples.append((key, Point(x, y)))
-    first = next(iter(lines.values()))
-    refusals.append(refusal("right_of_line_end", Point(first.right + 60, (first.top + first.bottom) // 2)))
-    refusals.append(refusal("between_lines", Point(first.left + 5, first.bottom + 3)))
+    first = next(iter(boxes.values()))
+    refusals.append(refusal(coordinator, "right_of_line_end",
+                            Point(first.right + 60, (first.top + first.bottom) // 2)))
+    refusals.append(refusal(coordinator, "between_lines", Point(first.left + 5, first.bottom + 3)))
     result["refusals"] = refusals
-    result["boundary"] = boundary(rect, samples)
-    anchor = samples[0][1]
-    result["service"] = service_lifecycle(anchor)
-    # Each dispose also releases its automation client, which is not a range
-    # or element and was never counted as acquired.
+    result["boundary"] = boundary(bridge, coordinator, samples)
+    result["service"] = service_lifecycle(provider, samples[0][1])
+    # Each dispose also releases its automation client, which is not a range or
+    # element and was never counted as acquired.
     result["ledger"] = dict(ledger, disposes=len(threads["dispose"]),
                             balanced=ledger["acquired"] == ledger["released"] - len(threads["dispose"]))
-    import os
     with open(os.environ["PROBE_OUT"], "w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False)
 

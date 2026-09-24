@@ -136,20 +136,10 @@ never evidence for this branch.
 
 ## Required Windows continuation evidence
 
-Merge readiness also depends on this run, on a clean Windows 10/11 host:
-
-```powershell
-git checkout visual/interface-update; git rev-parse HEAD
-py -3.13 -m venv .venv; .venv\Scripts\python -m pip install --group dev
-.venv\Scripts\python -m pip install -e packages/hanly -e "packages/hanly-app[runtime]"
-.venv\Scripts\python -m pytest --suite portable
-.venv\Scripts\python -m pytest --suite native
-.venv\Scripts\python -m ruff check packages packaging tests tools benchmarks
-.venv\Scripts\python tools\build_package.py
-$env:HANLY_EXPECTED_SOURCE_COMMIT = (git rev-parse HEAD)
-$env:HANLY_REQUIRE_PACKAGED = "1"
-.venv\Scripts\python -m pytest --suite packaged
-```
+Merge readiness also depends on this run, on a clean Windows 10/11 host. *The
+commands first listed here are superseded. The authoritative sequence is
+**Remaining work** in
+[the Windows report](../reports/final-windows-release-evidence-2026-09-23.md).*
 
 Evidence required:
 - [ ] A clean install reports version 0.5.3.
@@ -368,3 +358,77 @@ F13 and N5). The branch is still **not merge-ready** until the following exist:
 | Fresh Windows artifact with `source_commit` = HEAD, packaged gate | build started, **not verified** |
 
 **Verdict: blocked by missing evidence.** No product code changed.
+---
+
+# Mac Correction Bundle After the Windows Interruption, 2026-09-23
+
+- **Run:** Claude Opus 5.5, macOS 26.6.2 arm64, `.venv/bin/python` 3.13.11.
+  Bounded correction, not a review. It starts at `8e0cd7d`. Earlier commits are
+  unchanged, and nothing was pushed or merged.
+- **Resume:** the only resume sequence is **Remaining work** in
+  [the Windows report](../reports/final-windows-release-evidence-2026-09-23.md).
+  This section gives status only.
+
+| Commit | Boundary |
+|---|---|
+| `f18a0d6` | `fix: constrain the verified Qt release runtime` |
+| `d4f827d` | `fix: keep benchmark gates portable` |
+| `docs: harden final windows continuation` | report, probe and this section |
+
+## Completed on macOS
+
+- **Qt release constraint.** `PyQt6-Qt6==6.11.2` is in
+  `packaging/release-constraints.txt`, and `packaging/README.md` explains the
+  four inputs.
+  - A regression test fails if the constraint admits any 6.10 release.
+  - `PyQt6>=6.7,<7` and the EasyOCR, PyInstaller and hooks pins are unchanged.
+  - The workflow's `-c` use and the packaged frozen-worker gate are unchanged.
+  - On macOS, the full release set resolves under the constraint to Qt 6.11.2,
+    and PyQt6 6.10.x becomes unresolvable.
+- **Portable suite.**
+  - Committed-manifest privacy refuses POSIX-absolute paths through
+    `PurePosixPath`, whatever the host; `_require_inside` is unchanged. The
+    case now fails on macOS against the old code, reproducing the Windows
+    failure.
+  - The `resource`-based peak test skips without `resource`. A new
+    platform-neutral test asserts the documented `None`.
+- **Path sanitization.** The report's interpreter path is machine-neutral. It
+  was the only local user path this branch introduced; older reports were left
+  alone.
+- **Corrected diagnostic design.** Appendix A builds its reference rectangles
+  from raw UIA calls only, and judges production at those points. It was
+  exercised against the fake UIA bridge; the details and limits are in the
+  report.
+- **Mac gates:** see Validation.
+
+## Still requiring Windows
+
+- Constraint resolution in the clean Windows environment.
+- A fresh artifact whose source stamp is exactly HEAD.
+- The frozen worker and the frozen Control Center.
+- The Chromium/RichEdit matrix, run with the corrected probe.
+- Password/offscreen `VT_BOOL` and the timeouts.
+- COM lifecycle and interface balance.
+- Real production OCR fallback: UIA refusal → capture → EasyOCR → popup.
+- The final merge verdict.
+
+## Validation (macOS)
+
+| Check | Result |
+|---|---|
+| Focused: packaging, CI workflows, dev dependencies, package boundary | 192 passed |
+| Focused: `benchmarks/dev/tests` | 221 passed |
+| New regressions against the previous code | Qt: 2 failed without the pin. Corpus: the `/Users/…` case failed before the fix. |
+| `python -m pytest` | **2354 passed, 3 skipped**: non-macOS Vision, opt-in real EasyOCR inference, and packaged source identity (no `HANLY_EXPECTED_SOURCE_COMMIT`; no bundle was rebuilt here) |
+| `python -m pytest --suite native` | **110 passed** |
+| `python -m ruff check packages packaging tests tools benchmarks` | All checks passed |
+| `python -m mypy packages packaging tests tools benchmarks` | Success, 285 source files |
+| `git diff --check` | clean |
+
+**Privacy:**
+- The delta from `8e0cd7d` adds no files and no binaries.
+- Its only paths are synthetic fixtures or machine-neutral.
+- There are no screenshots, captures, OCR or accessibility content, benchmark
+  exports, credentials or tokens.
+
+**Status:** not merge-ready. Nothing here is Windows evidence.
