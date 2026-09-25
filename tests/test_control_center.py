@@ -307,7 +307,7 @@ def test_the_packaged_window_probe_names_controls_the_shipped_page_has() -> None
 def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None:
     assets = load_control_center_assets()
 
-    assert "<title>Hanly · Control Center</title>" in assets.html
+    assert "<title>Hanly</title>" in assets.html
     # One token set, redefined for the dark mode the theme control selects.
     assert "--accent: #E88CA1" in assets.css
     assert '[data-mode="dark"]' in assets.css

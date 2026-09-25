@@ -21,6 +21,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .app_icon import APPLICATION_NAME, qt_icon
 from .control_center import ControlCenterUnavailable
 from .diagnostics import DiagnosticLog, install_qt_message_handler
 
@@ -69,8 +70,50 @@ def ensure_qt_application(
         _application = existing
     elif not isinstance(_application, QApplication):
         verify_platform_plugin()
+        _claim_platform_identity()
         _application = QApplication(list(argv) or list(QT_PROGRAM_ARGUMENTS))
+        _apply_identity(_application)
     return _application
+
+
+#: Groups every Hanly process under one taskbar entry and one icon on Windows,
+#: instead of under the interpreter that happens to run them.
+WINDOWS_APP_USER_MODEL_ID = "io.github.thiagoross1.hanly"
+
+
+def _claim_platform_identity() -> None:
+    """Name the process before the platform reads its name, which it does once.
+
+    A source run is ``python3.13`` to macOS and ``python.exe`` to Windows; a
+    frozen build already carries its own name, and setting it again is harmless.
+    Cosmetic, so a failure here never stops Hanly starting.
+    """
+
+    try:
+        if sys.platform == "darwin":
+            from Foundation import NSBundle
+
+            info = NSBundle.mainBundle().infoDictionary()
+            if info is not None:
+                info["CFBundleName"] = APPLICATION_NAME
+        elif sys.platform == "win32":
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                WINDOWS_APP_USER_MODEL_ID
+            )
+    except Exception:
+        pass
+
+
+def _apply_identity(application: Any) -> None:
+    """Show Hanly's name and icon on every window this process opens."""
+
+    try:
+        application.setApplicationDisplayName(APPLICATION_NAME)
+        application.setWindowIcon(qt_icon())
+    except Exception:
+        pass
 
 
 #: How the primary screen is asked for. Injectable because the answer, not the

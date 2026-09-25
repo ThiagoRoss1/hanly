@@ -25,6 +25,7 @@ from typing import Any, Protocol, cast
 from hanly.resource_manager import ResourceManager
 
 from .app_build_identity import BuildStamp, ReceiptStore, read_build_stamp, receipt_store
+from .app_icon import tray_image
 from .app_manifest import PLATFORM_WINDOWS
 from .app_update import (
     APPLICATION_STEM,
@@ -528,6 +529,7 @@ class _DesktopSession:
             on_pause=lambda: self.desktop.stop_capture(),
             on_open_control_center=lambda: self.desktop.open_control_center(),
             on_quit=lambda: self.desktop.quit(),
+            icon_image=_tray_image(),
         )
 
     @property
@@ -1302,6 +1304,15 @@ def _readiness_milestone(timeline: StartupTimeline) -> Callable[[RuntimeStatus],
             timeline.reached("runtime ready")
 
     return observe
+
+
+def _tray_image() -> object | None:
+    """Hanly's icon for the status item; the tray's neutral default otherwise."""
+
+    try:
+        return tray_image()
+    except Exception:
+        return None
 
 
 def _load_settings(path: Path, diagnostics: DiagnosticLog) -> ConfigManager:

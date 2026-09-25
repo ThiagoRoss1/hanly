@@ -17,6 +17,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from .app_icon import APPLICATION_NAME
 from .control_center import (
     ControlCenterUnavailable,
     control_center_document,
@@ -28,6 +29,7 @@ from .qt_bootstrap import (
     install_qt_thread_invoker,
     verify_primary_screen,
 )
+from .window_frame_win32 import FRAME_COLOURS, apply_frame_theme
 
 #: The backend module Hanly's single-Qt design requires. pywebview falls back
 #: to Cocoa, GTK, or WinForms when Qt cannot load, which would silently mix two
@@ -78,7 +80,7 @@ class ControlCenterHost:
         self,
         bridge: object,
         *,
-        title: str = "Hanly · Control Center",
+        title: str = APPLICATION_NAME,
         width: int | None = None,
         height: int | None = None,
         debug: bool = False,
@@ -278,9 +280,43 @@ class ControlCenterHost:
             background_color="#FAFAF9",
         )
         self._subscribe(window)
+        self._expose_frame_theme(window)
         with self._lock:
             self._window = window
             self._destroyed = False
+
+    def _expose_frame_theme(self, window: Any) -> None:
+        """Let the page tell this window which mode it rendered.
+
+        Only Windows draws a frame Hanly can colour. This is the one page call
+        the child answers itself: it names a mode, changes nothing but the
+        frame, and never reaches the shell's bridge.
+        """
+
+        if sys.platform != "win32":
+            return
+        expose = getattr(window, "expose", None)
+        if callable(expose):
+            expose(self.frame_theme)
+
+    def frame_theme(self, mode: object) -> bool:
+        """Match the native title bar to ``mode``, ``"light"`` or ``"dark"``."""
+
+        if not isinstance(mode, str) or mode not in FRAME_COLOURS:
+            return False
+        native = getattr(self.window, "native", None)
+        post = self._to_qt_thread
+        if native is None or post is None:
+            return False
+
+        def apply() -> None:
+            try:
+                apply_frame_theme(int(native.winId()), mode)
+            except Exception as error:
+                self._report("Control Center frame", error)
+
+        post(apply)
+        return True
 
     def _start_loop(self, webview: Any, on_started: Callable[[], None] | None) -> None:
         start = getattr(webview, "start", None)
@@ -380,6 +416,10 @@ class ControlCenterHost:
         exists: a Dock tile that has already appeared does not go away.
         """
 
+        if sys.platform == "win32":
+            # Only the title bar is coloured there, and from the loop's thread.
+            self._to_qt_thread = install_qt_thread_invoker()
+            return
         if not self._on_cocoa():
             return
         from .app_identity_darwin import run_as_accessory_application

@@ -44,6 +44,8 @@ REQUIRED_DATA_FILES = (
     "hanly_app/assets/easyocr_models/craft_mlt_25k.pth",
     "hanly_app/assets/easyocr_models/korean_g2.pth",
     "easyocr/character/ko_char.txt",
+    "hanly_app/assets/icons/hanly-icon-256.png",
+    "hanly_app/assets/icons/favicon.ico",
 )
 
 #: PyInstaller 6 places collected packages under this directory.

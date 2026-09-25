@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 from hanly.resource_manager import ResourceManager
 
+from .app_icon import favicon_data_uri
 from .app_update import installed_version
 from .capture import CaptureService, MonitorInfo, ScreenRect
 from .capture_selector import CaptureSelection
@@ -179,6 +180,10 @@ def _inline_assets(assets: ControlCenterAssets) -> str:
     document = assets.html.replace(
         '<link rel="stylesheet" href="control_center.css">',
         f"<style>\n{assets.css}\n</style>",
+    )
+    document = document.replace(
+        '<link rel="icon" href="favicon.ico">',
+        f'<link rel="icon" href="{favicon_data_uri()}">',
     )
     return document.replace(
         '<script src="control_center.js"></script>',

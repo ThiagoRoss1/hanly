@@ -105,7 +105,7 @@ class _ChildPhase(Enum):
 class ControlCenterOptions:
     """Window geometry and debug flag, as one value the spawn boundary takes."""
 
-    title: str = "Hanly · Control Center"
+    title: str = "Hanly"
     #: ``None`` means the host derives the size from the work area it finds, so
     #: a short display is not asked to hold a window built for a tall one.
     width: int | None = None

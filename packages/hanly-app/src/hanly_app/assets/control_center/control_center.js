@@ -420,7 +420,15 @@
     const mode = theme === "dark" || theme === "light" ? theme : systemMode();
     const root = document.documentElement;
     if (root) root.setAttribute("data-mode", mode);
+    // The native title bar follows the page where the window can colour it.
+    const api = bridge();
+    if (mode !== frameMode && api && typeof api.frame_theme === "function") {
+      frameMode = mode;
+      api.frame_theme(mode);
+    }
   }
+
+  let frameMode = null;
 
   function watchSystemTheme() {
     if (!window.matchMedia) return;
