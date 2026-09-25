@@ -73,6 +73,24 @@ def initial_window_size(
     return min(width, available_width), min(height, available_height)
 
 
+#: A copy is the log view's visible records; far beyond that is not a copy.
+_MAX_COPY_CHARACTERS = 4_000_000
+#: The clipboard is written on the loop's thread, which is otherwise idle.
+_COPY_TIMEOUT_SECONDS = 3.0
+
+
+def _loop_invoker() -> Callable[[Callable[[], None]], None] | None:
+    """Post work to the Qt loop, once a Qt application exists to own one."""
+
+    try:
+        from PyQt6.QtGui import QGuiApplication
+    except ImportError:
+        return None
+    if QGuiApplication.instance() is None:
+        return None
+    return install_qt_thread_invoker()
+
+
 class ControlCenterHost:
     """Create the main window once and own the loop it runs in."""
 
@@ -280,10 +298,55 @@ class ControlCenterHost:
             background_color="#FAFAF9",
         )
         self._subscribe(window)
-        self._expose_frame_theme(window)
+        self._expose_page_calls(window)
         with self._lock:
             self._window = window
             self._destroyed = False
+
+    def _expose_page_calls(self, window: Any) -> None:
+        """The page calls this child answers itself, never forwarding them.
+
+        Each touches only this window or this process's clipboard, carries
+        nothing the shell's bridge would see, and is refused unless its
+        argument is exactly what it expects.
+        """
+
+        expose = getattr(window, "expose", None)
+        if callable(expose):
+            expose(self.copy_text)
+        self._expose_frame_theme(window)
+
+    def copy_text(self, text: object) -> bool:
+        """Put the text the user asked to copy on the system clipboard.
+
+        The page's own clipboard API is missing inside the embedded web view,
+        so its Copy action falls back here. Only that action calls it, and the
+        text goes to the clipboard and nowhere else -- never a log or a trace.
+        """
+
+        if not isinstance(text, str) or len(text) > _MAX_COPY_CHARACTERS:
+            return False
+        post = self._to_qt_thread
+        if post is None:
+            return False
+        done = threading.Event()
+        copied: list[bool] = []
+
+        def write() -> None:
+            try:
+                from PyQt6.QtGui import QGuiApplication
+
+                clipboard = QGuiApplication.clipboard()
+                if clipboard is not None:
+                    clipboard.setText(text)
+                    copied.append(clipboard.text() == text)
+            except Exception as error:
+                self._report("Control Center copy", error)
+            finally:
+                done.set()
+
+        post(write)
+        return done.wait(_COPY_TIMEOUT_SECONDS) and copied == [True]
 
     def _expose_frame_theme(self, window: Any) -> None:
         """Let the page tell this window which mode it rendered.
@@ -416,17 +479,14 @@ class ControlCenterHost:
         exists: a Dock tile that has already appeared does not go away.
         """
 
-        if sys.platform == "win32":
-            # Only the title bar is coloured there, and from the loop's thread.
-            self._to_qt_thread = install_qt_thread_invoker()
-            return
+        # Built here, on the thread that owns the loop, because it is the way
+        # everything else reaches that thread afterwards: activation, the
+        # title bar, and the clipboard.
+        self._to_qt_thread = _loop_invoker()
         if not self._on_cocoa():
             return
         from .app_identity_darwin import run_as_accessory_application
 
-        # Built here, on the thread that owns the loop, because it is the way
-        # everything else reaches that thread afterwards.
-        self._to_qt_thread = install_qt_thread_invoker()
         try:
             run_as_accessory_application()
         except Exception as error:

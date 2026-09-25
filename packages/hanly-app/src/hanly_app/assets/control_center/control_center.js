@@ -1700,14 +1700,27 @@
     renderLogs();
   });
   on("refresh-logs", "click", function () { showActionError(""); loadLogs(); });
+  // The embedded web view often has no clipboard of its own, so the window's
+  // process copies instead. Only this button reaches it, and the text goes to
+  // the clipboard and nowhere else.
   on("copy-logs", "click", function () {
-    if (!navigator.clipboard) {
-      showActionError("This window cannot reach the clipboard.");
-      return;
+    const text = logsAsText();
+    const count = visibleRecords().length;
+    showActionError("");
+    function copied() { setText("log-summary", "Copied " + count + " records."); }
+    function failed() { showActionError("The records could not be copied."); }
+    function native() {
+      const api = bridge();
+      if (!api || typeof api.copy_text !== "function") { failed(); return; }
+      api.copy_text(text).then(function (ok) {
+        if (ok) copied(); else failed();
+      }).catch(failed);
     }
-    navigator.clipboard.writeText(logsAsText()).then(function () {
-      setText("log-summary", "Copied " + visibleRecords().length + " records.");
-    }).catch(function () { showActionError("The records could not be copied."); });
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(text).then(copied).catch(native);
+    } else {
+      native();
+    }
   });
   on("clear-logs", "click", function () {
     const api = bridge();
