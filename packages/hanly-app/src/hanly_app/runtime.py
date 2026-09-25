@@ -500,6 +500,10 @@ def _easyocr_values(raw: Mapping[str, object]) -> dict[str, object]:
     return dict(value)
 
 
+#: The language list first launches wrote before English was added.
+_LEGACY_DEFAULT_LANGUAGES = ("ko",)
+
+
 def _easyocr_config(raw: Mapping[str, object], root: Path) -> EasyOCRConfig:
     """Build EasyOCR options, rooting any model directory at the config file."""
 
@@ -511,6 +515,11 @@ def _easyocr_config(raw: Mapping[str, object], root: Path) -> EasyOCRConfig:
         if isinstance(languages, str) or not isinstance(languages, Sequence):
             raise ValueError("easyocr.languages must be a JSON array of language codes")
         options["languages"] = tuple(languages)
+        if options["languages"] == _LEGACY_DEFAULT_LANGUAGES:
+            # What every earlier first launch wrote. Korean alone forbids
+            # Latin output, so it is read as the current default rather than
+            # kept as a deliberate choice.
+            options["languages"] = EasyOCRConfig().languages
 
     for field_name in ("model_storage_directory", "user_network_directory"):
         directory = values.get(field_name)

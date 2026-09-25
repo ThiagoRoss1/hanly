@@ -151,7 +151,8 @@ def test_easyocr_options_are_validated_and_rooted_at_the_config_file(
     easyocr_config = load_runtime(config).easyocr_config
 
     assert easyocr_config is not None
-    assert easyocr_config.languages == ("ko",)
+    # The list earlier first launches wrote reads as the current default.
+    assert easyocr_config.languages == ("ko", "en")
     assert easyocr_config.model_storage_directory == (
         tmp_path / "models" / "easyocr"
     ).resolve()
@@ -279,3 +280,12 @@ def test_the_shell_builds_no_provider_and_the_child_gets_the_validated_path(
     assert len(set(recorder.threads.values())) == 1
     assert executor_thread not in set(recorder.threads.values())
     assert recorder.databases == [(tmp_path / "data" / "krdict.sqlite3").resolve()]
+
+
+def test_a_deliberate_language_list_is_kept(tmp_path: Path) -> None:
+    config = _easyocr_config(tmp_path, languages=["ko", "ja"])
+
+    easyocr_config = load_runtime(config).easyocr_config
+
+    assert easyocr_config is not None
+    assert easyocr_config.languages == ("ko", "ja")

@@ -253,6 +253,14 @@ def test_a_pointer_resting_outside_korean_falls_back(
     )
 
 
+@pytest.mark.parametrize("placeholder", ["\ufffc", "\ufffd", "\n", "\u200b", "\ue000"])
+def test_a_placeholder_under_the_pointer_is_left_to_ocr(placeholder: str) -> None:
+    """Chromium reports a canvas or image as U+FFFC; its pixels still need OCR."""
+
+    reading = _reading(text=f"초대{placeholder}받다", cursor_index=2)
+    assert _acquire(reading).outcome is Outcome.UNSUPPORTED
+
+
 # --- the retained rectangle belongs to the word, not the line ----------------
 
 _WORD_BOUNDS = BoundingBox(left=150, top=100, right=190, bottom=120)

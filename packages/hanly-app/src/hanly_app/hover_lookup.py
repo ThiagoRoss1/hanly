@@ -29,7 +29,7 @@ from .hover_target import (
 from .lookup_controller import LookupController
 from .mouse_observer import MouseListenerFactory, MouseObserver
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
-from .text_acquisition import Acquisition, DirectTextService
+from .text_acquisition import Acquisition, DirectTextService, Outcome
 
 
 class CaptureSource(Protocol):
@@ -912,10 +912,16 @@ class HoverLookupRuntime:
     def _on_direct_text(self, request: HoverRequest, acquired: Acquisition) -> None:
         """Act on a completed native read, back on the caller's own thread."""
 
-        if not self._submit_direct_text(request, acquired):
-            # Every refusal is ordinary: capture and OCR exactly as before.
-            if self._hover.is_current(request):
-                self._capture_and_submit(request)
+        if self._submit_direct_text(request, acquired):
+            return
+        if acquired.outcome is Outcome.NOT_KOREAN:
+            # The control read the pointer's character exactly and it is not
+            # Korean. OCR could only misread those same pixels, which is how
+            # Latin text turned into Hangul popups.
+            return
+        # Every other refusal is ordinary: capture and OCR exactly as before.
+        if self._hover.is_current(request):
+            self._capture_and_submit(request)
 
     def _submit_direct_text(
         self, request: HoverRequest, acquired: Acquisition

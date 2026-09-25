@@ -329,7 +329,7 @@ def test_the_ui_thread_only_schedules_and_never_performs_the_read() -> None:
     "outcome",
     [
         "no_provider", "no_permission", "unsupported", "secure", "not_containing",
-        "ambiguous", "not_korean", "empty", "timed_out", "failed", "superseded",
+        "ambiguous", "empty", "timed_out", "failed", "superseded",
     ],
 )
 def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
@@ -348,6 +348,24 @@ def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
 
     assert submitted == []
     assert capture.calls == 1
+
+
+def test_verified_non_korean_text_ends_the_hover_without_a_capture() -> None:
+    """OCR could only misread the pixels the control already read as Latin."""
+
+    from hanly_app.text_acquisition import Acquisition, Outcome
+
+    service = _Service(Acquisition(Outcome.NOT_KOREAN))
+    runtime, capture, submitted, controller = _hover_runtime(service)
+    try:
+        runtime._start_direct_text(_hover_request())
+        service.deliver_now()
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+
+    assert submitted == []
+    assert capture.calls == 0
 
 
 def test_an_unverifiable_windows_cursor_is_captured_exactly_once(

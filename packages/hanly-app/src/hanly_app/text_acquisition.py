@@ -12,11 +12,14 @@ point -- and every rule about whether the answer may be used lives here, so both
 desktop platforms reach the same decision from the same evidence.
 
 A refusal is never a failure. Every outcome other than :data:`Outcome.DIRECT`
-means the caller captures the screen and runs OCR exactly as it always has.
+means the caller captures the screen and runs OCR exactly as it always has --
+except :data:`Outcome.NOT_KOREAN`, which is itself an answer: the control read
+the pointer's character exactly, and it is not Korean.
 """
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -215,8 +218,11 @@ class DirectTextCoordinator:
         # mixes scripts answers exactly as that word alone would.
         narrowed = _korean_run(text, reading.cursor_index)
         if narrowed is None:
-            # Either there is no Korean here, or the pointer rests on something
-            # else on the line. Both are for OCR to answer.
+            if _stands_in_for_content(text[reading.cursor_index]):
+                # An embedded object -- Chromium's U+FFFC for a canvas or an
+                # image -- has no text of its own; its pixels are OCR's to read.
+                return Acquisition(Outcome.UNSUPPORTED, duration_ns=duration)
+            # The pointer rests on real text that is not Korean.
             return Acquisition(Outcome.NOT_KOREAN, duration_ns=duration)
 
         word, cursor_index, start = narrowed
@@ -283,8 +289,8 @@ def _korean_run(text: str, cursor_index: int) -> tuple[str, int, int] | None:
     """The unbroken Korean the pointer is inside, where it sits, and where it starts.
 
     ``None`` when the pointer rests on anything that is not Korean, so a reader
-    pointing at an emoji or a Latin word is answered by OCR rather than by the
-    nearest Hangul that happens to share the line. The start offset lets the
+    pointing at an emoji or a Latin word is not answered with the nearest
+    Hangul that happens to share the line. The start offset lets the
     caller ask the platform about exactly this span.
     """
 
@@ -307,6 +313,21 @@ def _encloses(outer: BoundingBox, inner: BoundingBox) -> bool:
         and inner.right <= outer.right
         and inner.bottom <= outer.bottom
     )
+
+
+#: Characters a control uses in place of content it cannot express as text.
+_PLACEHOLDERS = frozenset({"\ufffc", "\ufffd"})
+
+
+def _stands_in_for_content(character: str) -> bool:
+    """Whether ``character`` is a placeholder rather than a glyph of its own.
+
+    Control, format, private-use and unassigned code points never draw text
+    the reader could be pointing at, so like the object replacement character
+    they say nothing about what is on screen there.
+    """
+
+    return character in _PLACEHOLDERS or unicodedata.category(character)[0] == "C"
 
 
 def _is_hangul(character: str) -> bool:
