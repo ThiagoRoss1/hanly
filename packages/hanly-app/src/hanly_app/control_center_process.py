@@ -31,6 +31,7 @@ from .process_transport import (
     spawn_child,
     stop_process,
 )
+from .window_frame_win32 import allow_parent_foreground
 
 #: The bridge operations the page may call. The proxy in the child declares
 #: exactly these methods and the parent resolves them against this list, so a
@@ -573,6 +574,9 @@ class ControlCenterProxy:
         return self._call("set_region", region)
 
     def select_capture_area(self) -> object:
+        # The dialog opens in the shell, which may take the front only because
+        # this process, the one the user just clicked, allows it.
+        allow_parent_foreground()
         return self._call("select_capture_area")
 
     def set_hover_delay(self, delay_ms: object) -> object:

@@ -140,11 +140,9 @@ def test_the_selector_uses_the_one_shared_application(
         class ButtonRole:
             AcceptRole = object()
             ActionRole = object()
+            RejectRole = object()
 
-        class StandardButton:
-            Cancel = object()
-
-        def __init__(self) -> None:
+        def __init__(self, **_options: object) -> None:
             order.append("prompt")
             self.clicked: object = None
 
@@ -245,7 +243,7 @@ def test_selection_restores_the_application_quit_policy(
     application = _FakeApplication()
     seen: list[bool] = []
 
-    def choose(_application: object, _message_box: object) -> None:
+    def choose(_application: object, _message_box: object, _theme: object) -> None:
         seen.append(application.quit_on_last)
         return None
 

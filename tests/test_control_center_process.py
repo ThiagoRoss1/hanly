@@ -604,3 +604,21 @@ def test_a_click_on_the_popup_does_not_reopen_the_control_center() -> None:
     clock["now"] += 5.0
     assert reopen.application_activated() is True, "the Dock still reopens it"
     assert opened == ["show"]
+
+
+def test_choosing_an_area_first_lets_the_shell_come_to_the_front(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows only lets the process the user clicked hand the foreground on."""
+
+    from hanly_app import control_center_process
+
+    order: list[str] = []
+    monkeypatch.setattr(
+        control_center_process, "allow_parent_foreground", lambda: order.append("allow")
+    )
+    proxy = ControlCenterProxy(lambda name, *_args: order.append(name))
+
+    proxy.select_capture_area()
+
+    assert order == ["allow", "select_capture_area"]

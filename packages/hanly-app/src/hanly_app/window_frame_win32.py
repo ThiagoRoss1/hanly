@@ -62,4 +62,24 @@ def apply_frame_theme(hwnd: int, mode: str) -> bool:
     return dark
 
 
-__all__ = ["FRAME_COLOURS", "apply_frame_theme", "colorref"]
+def allow_parent_foreground() -> None:
+    """From the process the user just clicked, let its parent take the front.
+
+    Windows gives the foreground only to a process the user is interacting
+    with. The Control Center has that right while its button is pressed; the
+    shell, which shows the dialog that press asked for, does not until it is
+    handed over.
+    """
+
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        import os
+
+        ctypes.windll.user32.AllowSetForegroundWindow(os.getppid())
+    except Exception:
+        pass
+
+
+__all__ = ["FRAME_COLOURS", "allow_parent_foreground", "apply_frame_theme", "colorref"]

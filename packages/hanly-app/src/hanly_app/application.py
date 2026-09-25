@@ -903,7 +903,7 @@ class _DesktopSession:
             if observing and controller is not None:
                 controller.set_hover_muted(True)
             try:
-                chosen.append(select_capture_area())
+                chosen.append(select_capture_area(self._settings.config.theme))
             finally:
                 if observing and controller is not None:
                     controller.set_hover_muted(muted)

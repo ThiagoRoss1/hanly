@@ -841,7 +841,7 @@ def test_a_cancelled_selection_restores_observation_in_one_dispatch(
     controller = _QtOwnedController(DesktopState.RUNNING)
     session._controller = controller
 
-    def cancelled() -> None:
+    def cancelled(*_theme: object) -> None:
         controller.calls.append("overlay")
         return None
 

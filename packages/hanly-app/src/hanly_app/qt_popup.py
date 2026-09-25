@@ -15,7 +15,6 @@ from PyQt6.QtGui import (
     QPainter,
     QPainterPath,
     QPaintEvent,
-    QPalette,
     QPen,
     QScreen,
 )
@@ -45,6 +44,7 @@ from .popup import (
     ScreenGeometry,
     format_lookup_result,
 )
+from .qt_theme import PALETTES, resolved_mode
 from .runtime_trace import RuntimeTraceSink, emit_trace
 
 
@@ -95,48 +95,6 @@ _FONT_STACK = (
     "'Segoe UI Variable Text','Segoe UI','SF Pro Text','Helvetica Neue',"
     "'Apple SD Gothic Neo','Malgun Gothic',sans-serif"
 )
-
-_PALETTES = {
-    "light": {
-        "bg": "#FFFFFF",
-        "foot": "#F5F4F2",
-        "border": "#D3D1CE",
-        "line": "#E7E5E3",
-        "wash": "#F1F0EE",
-        "ink": "#202124",
-        "ink2": "#5F6268",
-        "ink3": "#85888F",
-        "accent": "#E88CA1",
-        "accent_ink": "#B75C76",
-        "accent_wash": "rgba(232, 140, 161, 41)",
-        "accent_hover": "rgba(232, 140, 161, 66)",
-        "hover": "#E7E5E3",
-        "press": "#DAD8D5",
-        "scroll": "rgba(32, 33, 36, 46)",
-        "scroll_hover": "rgba(32, 33, 36, 92)",
-        "danger": "#A0302A",
-    },
-    "dark": {
-        "bg": "#232428",
-        "foot": "#1C1D20",
-        "border": "#3A3C41",
-        "line": "#2F3135",
-        "wash": "#292A2E",
-        "ink": "#F2F2F3",
-        "ink2": "#B8BAC0",
-        "ink3": "#858890",
-        "accent": "#F08FA6",
-        "accent_ink": "#F4A5B6",
-        "accent_wash": "rgba(240, 143, 166, 36)",
-        "accent_hover": "rgba(240, 143, 166, 64)",
-        "hover": "#32343A",
-        "press": "#3A3D44",
-        "scroll": "rgba(242, 242, 243, 48)",
-        "scroll_hover": "rgba(242, 242, 243, 104)",
-        "danger": "#F09086",
-    },
-}
-
 
 def _entry_gloss(entry: PopupEntryContent) -> str:
     """The shortest useful label for an alternate entry."""
@@ -258,7 +216,7 @@ class QtPopupView(QFrame):
         its own rectangle would square the corner it sits in.
         """
 
-        palette = _PALETTES[self._resolved_theme()]
+        palette = PALETTES[self._resolved_theme()]
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         card = QPainterPath()
@@ -299,21 +257,10 @@ class QtPopupView(QFrame):
             self._apply_theme()
 
     def _resolved_theme(self) -> str:
-        if self._theme is not Theme.SYSTEM:
-            return self._theme.value
-        app = cast(QGuiApplication | None, QGuiApplication.instance())
-        if app is not None:
-            scheme = getattr(app.styleHints(), "colorScheme", lambda: None)()
-            if scheme == Qt.ColorScheme.Dark:
-                return "dark"
-            if scheme == Qt.ColorScheme.Light:
-                return "light"
-            if app.palette().color(QPalette.ColorRole.Window).lightness() < 128:
-                return "dark"
-        return "light"
+        return resolved_mode(self._theme)
 
     def _apply_theme(self) -> None:
-        p = _PALETTES[self._resolved_theme()]
+        p = PALETTES[self._resolved_theme()]
         rules = [
             # The card itself is painted in paintEvent; this rule only records
             # the palette so a style read reports the colours in use.
