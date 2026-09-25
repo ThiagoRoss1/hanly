@@ -101,15 +101,19 @@ def install_reopen_filter(
 
 
 def _pointer_on_own_window() -> bool:
-    """Whether the pointer rests on a visible window of this process.
+    """Whether this activation came from the shell using its own window.
 
     A Dock click leaves the pointer on the Dock; a click that activated the
-    shell through its popup or selection dialog leaves it on that window.
+    shell through its popup leaves it on that window. A modal window of the
+    shell -- the capture-area prompt, the region overlay -- activates the shell
+    wherever the pointer is, and the Control Center must not cover it.
     """
 
     from PyQt6.QtGui import QCursor
     from PyQt6.QtWidgets import QApplication
 
+    if QApplication.activeModalWidget() is not None:
+        return True
     pointer = QCursor.pos()
     return any(
         window.isVisible() and window.frameGeometry().contains(pointer)
