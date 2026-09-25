@@ -7,13 +7,16 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from hanly import BoundingBox, DictionarySense, LookupResult, LookupStatus, Point
-from PyQt6.QtCore import QObject, QPoint, QPropertyAnimation, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QPoint, QPropertyAnimation, QRectF, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
+    QColor,
     QCursor,
     QGuiApplication,
     QPainter,
+    QPainterPath,
     QPaintEvent,
     QPalette,
+    QPen,
     QScreen,
 )
 from PyQt6.QtWidgets import (
@@ -25,8 +28,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QStyle,
-    QStyleOption,
     QVBoxLayout,
     QWidget,
 )
@@ -76,6 +77,23 @@ POPUP_WINDOW_FLAGS = (
     | Qt.WindowType.Tool
     | Qt.WindowType.WindowStaysOnTopHint
     | Qt.WindowType.WindowDoesNotAcceptFocus
+)
+
+#: The card's corner radius. Everything inside is clipped to this one shape,
+#: so no child background can square off a corner.
+_CARD_RADIUS = 14
+
+#: One control shape on every platform: a fixed height and an explicit radius
+#: rather than a pill derived from each platform's font metrics.
+_BUTTON_HEIGHT = 26
+_BUTTON_RADIUS = 7
+
+#: Vertical rhythm, in pixels: within a group, between groups, around a rule.
+_TIGHT, _GROUP, _SECTION = 3, 8, 12
+
+_FONT_STACK = (
+    "'Segoe UI Variable Text','Segoe UI','SF Pro Text','Helvetica Neue',"
+    "'Apple SD Gothic Neo','Malgun Gothic',sans-serif"
 )
 
 _PALETTES = {
@@ -190,7 +208,6 @@ class QtPopupView(QFrame):
         self._default_size = configured.popup_default_size
         self._detail_level = configured.technical_details
         self._expanded = self._default_size is PopupDefaultSize.EXPANDED
-        self._others_open = False
         self._result: LookupResult | None = None
         self._content: PopupContent | None = None
         self._prepared_result: LookupResult | None = None
@@ -210,9 +227,12 @@ class QtPopupView(QFrame):
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        viewport = self._scroll.viewport()
+        if viewport is not None:
+            viewport.setAutoFillBackground(False)
         self._content_host = QWidget()
         self._content_layout = QVBoxLayout(self._content_host)
-        self._content_layout.setContentsMargins(18, 15, 18, 14)
+        self._content_layout.setContentsMargins(18, 16, 18, 14)
         self._content_layout.setSpacing(0)
         self._scroll.setWidget(self._content_host)
         outer.addWidget(self._scroll)
@@ -220,7 +240,7 @@ class QtPopupView(QFrame):
         self._footer = QWidget(self)
         self._footer.setObjectName("hanlyPopupFooter")
         self._footer_layout = QHBoxLayout(self._footer)
-        self._footer_layout.setContentsMargins(10, 8, 12, 8)
+        self._footer_layout.setContentsMargins(12, 8, 12, 8)
         self._footer_layout.setSpacing(8)
         outer.addWidget(self._footer)
 
@@ -231,13 +251,32 @@ class QtPopupView(QFrame):
         self._keep_visible_when_inactive()
 
     def paintEvent(self, _event: QPaintEvent | None) -> None:
-        style = self.style()
-        if style is None:
-            return
-        option = QStyleOption()
-        option.initFrom(self)
+        """Paint the card as one rounded shape, footer band included.
+
+        Children are transparent and the footer band is drawn clipped to the
+        same path, which is what keeps every corner round: a child painting
+        its own rectangle would square the corner it sits in.
+        """
+
+        palette = _PALETTES[self._resolved_theme()]
         painter = QPainter(self)
-        style.drawPrimitive(QStyle.PrimitiveElement.PE_Widget, option, painter, self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        card = QPainterPath()
+        card.addRoundedRect(
+            QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), _CARD_RADIUS, _CARD_RADIUS
+        )
+        painter.fillPath(card, QColor(palette["bg"]))
+
+        painter.save()
+        painter.setClipPath(card)
+        footer = QRectF(self._footer.geometry())
+        painter.fillRect(footer, QColor(palette["foot"]))
+        painter.setPen(QPen(QColor(palette["line"]), 1))
+        painter.drawLine(footer.topLeft(), footer.topRight())
+        painter.restore()
+
+        painter.setPen(QPen(QColor(palette["border"]), 1))
+        painter.drawPath(card)
 
     def _keep_visible_when_inactive(self) -> None:
         if sys.platform != "darwin" or QGuiApplication.platformName() != "cocoa":
@@ -276,46 +315,44 @@ class QtPopupView(QFrame):
     def _apply_theme(self) -> None:
         p = _PALETTES[self._resolved_theme()]
         rules = [
-            f"QFrame#hanlyPopup {{ background:{p['bg']}; border:1px solid {p['border']}; "
-            "border-radius:14px; }",
+            # The card itself is painted in paintEvent; this rule only records
+            # the palette so a style read reports the colours in use.
+            f"QFrame#hanlyPopup {{ background:{p['bg']}; border:0; }}",
             f"QWidget {{ color:{p['ink']}; background:transparent; "
-            "font-family:'Segoe UI','Malgun Gothic',sans-serif; }",
-            "QLabel#hanlyPopupTitle { font-size:27px; font-weight:700; }",
-            f"QLabel#hanlyPopupHanja {{ font-size:18px; color:{p['ink2']}; }}",
-            "QLabel#hanlyPopupSense { font-size:14px; font-weight:600; }",
+            f"font-family:{_FONT_STACK}; }}",
+            "QLabel#hanlyPopupTitle { font-size:26px; font-weight:600; }",
+            f"QLabel#hanlyPopupHanja {{ font-size:16px; color:{p['ink3']}; }}",
+            "QLabel#hanlyPopupPrimary { font-size:16px; font-weight:600; }",
+            f"QLabel#hanlyPopupPrimaryNote {{ font-size:13px; color:{p['ink2']}; }}",
+            "QLabel#hanlyPopupSense { font-size:13px; font-weight:500; }",
             f"QLabel#hanlyPopupSecondary {{ font-size:12px; color:{p['ink2']}; }}",
             f"QLabel#hanlyPopupMuted {{ font-size:11px; color:{p['ink3']}; }}",
-            f"QLabel#hanlyPopupAccent {{ color:{p['accent_ink']}; }}",
+            f"QLabel#hanlyPopupNumber {{ font-size:12px; color:{p['ink3']}; }}",
+            f"QLabel#hanlyPopupSection {{ font-size:10px; color:{p['ink3']}; "
+            "letter-spacing:1px; }",
+            f"QLabel#hanlyPopupPart {{ font-size:13px; color:{p['ink']}; }}",
+            f"QLabel#hanlyPopupPartSelected {{ font-size:13px; color:{p['accent_ink']}; "
+            "font-weight:600; }",
             f"QLabel#hanlyPopupChip {{ background:{p['accent_wash']}; "
-            f"color:{p['accent_ink']}; border-radius:10px; padding:3px 9px; "
-            "font-size:11px; font-weight:600; }",
-            f"QLabel#hanlyPopupQuietChip {{ background:{p['wash']}; color:{p['ink2']}; "
-            "border-radius:10px; padding:3px 9px; font-size:11px; }",
-            f"QWidget#hanlyPopupFooter {{ background:{p['foot']}; "
-            f"border-top:1px solid {p['line']}; }}",
-            # Footer controls read as one family: a filled pill for the primary
-            # action, a quiet outline for the secondary, both with the hover and
-            # pressed states a control needs to feel real under the pointer.
-            f"QPushButton {{ color:{p['ink2']}; border:1px solid transparent; "
-            f"background:{p['wash']}; border-radius:13px; padding:5px 13px; "
-            "font-size:11px; font-weight:600; }",
-            f"QPushButton:hover {{ color:{p['ink']}; background:{p['hover']}; }}",
+            f"color:{p['accent_ink']}; border-radius:9px; padding:2px 8px; "
+            "font-size:11px; }",
+            f"QLabel#hanlyPopupMeta {{ font-size:11px; color:{p['ink3']}; }}",
+            f"QFrame#hanlyPopupDivider {{ background:{p['line']}; border:0; }}",
+            "QWidget#hanlyPopupFooter { background:transparent; border:0; }",
+            f"QPushButton {{ color:{p['ink2']}; border:1px solid {p['line']}; "
+            f"background:transparent; border-radius:{_BUTTON_RADIUS}px; "
+            f"min-height:{_BUTTON_HEIGHT - 2}px; max-height:{_BUTTON_HEIGHT - 2}px; "
+            "padding:0 12px; font-size:12px; font-weight:500; }",
+            f"QPushButton:hover {{ color:{p['ink']}; background:{p['hover']}; "
+            f"border-color:{p['border']}; }}",
             f"QPushButton:pressed {{ background:{p['press']}; }}",
             f"QPushButton#hanlyPopupSize {{ color:{p['accent_ink']}; "
             f"background:{p['accent_wash']}; border-color:transparent; }}",
             f"QPushButton#hanlyPopupSize:hover {{ background:{p['accent_hover']}; "
             f"color:{p['accent_ink']}; }}",
-            # Pressing the primary action commits to the full accent, which is
-            # the one place the saturated brand colour earns its contrast.
             f"QPushButton#hanlyPopupSize:pressed {{ background:{p['accent']}; "
             f"color:{p['bg']}; }}",
-            f"QPushButton#hanlyPopupClose {{ background:transparent; "
-            f"border-color:{p['line']}; }}",
-            f"QPushButton#hanlyPopupClose:hover {{ background:{p['hover']}; "
-            f"border-color:{p['border']}; }}",
-            f"QScrollArea#hanlyPopupScroll {{ border:0; background:{p['bg']}; }}",
-            # An overlay-style bar: no track, inset from the card edge, and a
-            # handle that only firms up under the pointer.
+            "QScrollArea#hanlyPopupScroll { border:0; background:transparent; }",
             "QScrollBar:vertical { width:10px; background:transparent; "
             "margin:4px 2px 4px 0; }",
             f"QScrollBar::handle:vertical {{ background:{p['scroll']}; "
@@ -326,6 +363,7 @@ class QtPopupView(QFrame):
             "{ background:transparent; }",
         ]
         self.setStyleSheet("".join(rules))
+        self.update()
 
     @property
     def popup_size(self) -> PopupSize:
@@ -369,7 +407,6 @@ class QtPopupView(QFrame):
         self._result = result
         self._prepared_result = result
         self._expanded = self._default_size is PopupDefaultSize.EXPANDED
-        self._others_open = False
         self._content = format_lookup_result(result, self._detail_level)
         self._rebuild()
         return self._resize_to_content()
@@ -388,19 +425,59 @@ class QtPopupView(QFrame):
 
     def _build_success(self, content: PopupContent) -> None:
         assert content.entry is not None
-        header = QHBoxLayout()
-        title = _label(content.entry.headword, name="hanlyPopupTitle")
-        header.addWidget(title, 1, Qt.AlignmentFlag.AlignTop)
-        if content.entry.hanja:
-            hanja = _label(content.entry.hanja, name="hanlyPopupHanja")
-            hanja.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            header.addWidget(hanja, 0, Qt.AlignmentFlag.AlignTop)
-        self._content_layout.addLayout(header)
+        entry = content.entry
+        layout = self._content_layout
 
-        chips = QHBoxLayout()
-        chips.setSpacing(6)
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        header.addWidget(
+            _label(entry.headword, name="hanlyPopupTitle"), 1, Qt.AlignmentFlag.AlignBottom
+        )
+        if entry.hanja:
+            hanja = _label(entry.hanja, name="hanlyPopupHanja")
+            hanja.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+            header.addWidget(hanja, 0, Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(header)
+        layout.addSpacing(_TIGHT)
+        layout.addLayout(self._metadata_row(content))
+
+        senses = entry.senses if self._expanded else entry.senses[:2]
+        if senses:
+            layout.addSpacing(_SECTION)
+            primary, rest = senses[0], senses[1:]
+            layout.addLayout(self._primary_sense(primary))
+            for index, sense in enumerate(rest, start=2):
+                layout.addSpacing(_GROUP + 2)
+                layout.addLayout(self._numbered_sense(index, sense))
+
+        self._build_reading(content)
+        self._build_components(content)
+        if self._expanded and content.other_entries:
+            self._section("OTHER ENTRIES")
+            for other in content.other_entries:
+                gloss = _entry_gloss(other)
+                row = _label(
+                    " · ".join(filter(None, (other.headword, other.part_of_speech, gloss))),
+                    name="hanlyPopupSecondary",
+                )
+                row.setWordWrap(True)
+                layout.addWidget(row)
+                layout.addSpacing(_TIGHT)
+
+        if self._detail_level is TechnicalDetailLevel.FULL and content.technical_lines:
+            self._section("DETAILS")
+            technical = _label("\n".join(content.technical_lines), name="hanlyPopupMuted")
+            technical.setWordWrap(True)
+            layout.addWidget(technical)
+
+    def _metadata_row(self, content: PopupContent) -> QHBoxLayout:
+        """Part of speech as the one marked chip, then quiet source and level."""
+
+        assert content.entry is not None
+        row = QHBoxLayout()
+        row.setSpacing(8)
         if content.entry.part_of_speech:
-            chips.addWidget(_label(content.entry.part_of_speech, name="hanlyPopupChip"))
+            row.addWidget(_label(content.entry.part_of_speech, name="hanlyPopupChip"))
         metadata = " · ".join(
             filter(
                 None,
@@ -411,105 +488,77 @@ class QtPopupView(QFrame):
             )
         )
         if metadata:
-            chips.addWidget(
-                _label(metadata, name="hanlyPopupQuietChip")
+            row.addWidget(_label(metadata, name="hanlyPopupMeta"))
+        row.addStretch(1)
+        return row
+
+    def _build_reading(self, content: PopupContent) -> None:
+        """How the surface on screen reads as the headword above."""
+
+        changed = bool(content.surface and content.lemma and content.surface != content.lemma)
+        if not (content.analysis or changed):
+            return
+        self._section("WORD ANALYSIS" if self._expanded else "READ AS")
+        if changed:
+            relation = _label(f"{content.surface}  →  {content.lemma}", name="hanlyPopupPart")
+            relation.setWordWrap(True)
+            self._content_layout.addWidget(relation)
+        if content.analysis:
+            if changed:
+                self._content_layout.addSpacing(_TIGHT + 1)
+            pieces = _label(
+                "  +  ".join(piece.text for piece in content.analysis),
+                name="hanlyPopupSecondary",
             )
-        chips.addStretch(1)
-        self._content_layout.addSpacing(12)
-        self._content_layout.addLayout(chips)
+            pieces.setWordWrap(True)
+            self._content_layout.addWidget(pieces)
+            roles = " · ".join(piece.role for piece in content.analysis if piece.role)
+            if roles:
+                role_label = _label(roles, name="hanlyPopupMuted")
+                role_label.setWordWrap(True)
+                self._content_layout.addWidget(role_label)
 
-        senses = content.entry.senses if self._expanded else content.entry.senses[:2]
-        self._content_layout.addSpacing(12)
-        for index, sense in enumerate(senses, start=1):
-            row = QHBoxLayout()
-            number = _label(str(index), name="hanlyPopupAccent")
-            number.setFixedWidth(15)
-            row.addWidget(number, 0, Qt.AlignmentFlag.AlignTop)
-            row.addLayout(self._sense_body(sense), 1)
-            self._content_layout.addLayout(row)
-            self._content_layout.addSpacing(10)
+    def _build_components(self, content: PopupContent) -> None:
+        if not content.components:
+            return
+        self._section("HOW THIS FORM IS BUILT")
+        for index, component in enumerate(content.components):
+            if index:
+                self._content_layout.addSpacing(_TIGHT + 1)
+            self._content_layout.addLayout(self._component_row(component))
 
-        if content.analysis or (content.surface and content.surface != content.lemma):
-            self._content_layout.addWidget(self._divider())
-            label = "WORD ANALYSIS" if self._expanded else "READ AS"
-            self._content_layout.addWidget(_label(label, name="hanlyPopupMuted"))
-            if content.surface and content.lemma and content.surface != content.lemma:
-                relation = _label(
-                    f"{content.surface}  →  {content.lemma}", name="hanlyPopupSecondary"
-                )
-                relation.setWordWrap(True)
-                self._content_layout.addSpacing(5)
-                self._content_layout.addWidget(relation)
-            if content.analysis:
-                pieces = _label(
-                    "  +  ".join(piece.text for piece in content.analysis),
-                    name="hanlyPopupSecondary",
-                )
-                pieces.setWordWrap(True)
-                roles = _label(
-                    " · ".join(piece.role for piece in content.analysis if piece.role),
-                    name="hanlyPopupMuted",
-                )
-                roles.setWordWrap(True)
-                self._content_layout.addSpacing(7)
-                self._content_layout.addWidget(pieces)
-                self._content_layout.addWidget(roles)
+    def _section(self, title: str) -> None:
+        """One rule, one small label, one gap: every section starts the same."""
 
-        if content.components:
-            self._content_layout.addWidget(self._divider())
-            self._content_layout.addWidget(
-                _label("HOW THIS FORM IS BUILT", name="hanlyPopupMuted")
-            )
-            self._content_layout.addSpacing(5)
-            for component in content.components:
-                self._content_layout.addWidget(self._component_row(component))
-                self._content_layout.addSpacing(4)
-
-        if self._expanded and self._others_open:
-            self._content_layout.addWidget(self._divider())
-            for other in content.other_entries:
-                gloss = _entry_gloss(other)
-                text = " · ".join(filter(None, (other.headword, other.part_of_speech, gloss)))
-                item = _label(text, name="hanlyPopupSecondary")
-                item.setWordWrap(True)
-                self._content_layout.addWidget(item)
-                self._content_layout.addSpacing(6)
-
-        if self._detail_level is TechnicalDetailLevel.FULL and content.technical_lines:
-            self._content_layout.addWidget(self._divider())
-            technical = _label("\n".join(content.technical_lines), name="hanlyPopupMuted")
-            technical.setWordWrap(True)
-            self._content_layout.addWidget(technical)
+        self._content_layout.addSpacing(_SECTION)
+        self._content_layout.addWidget(self._divider())
+        self._content_layout.addSpacing(_SECTION - 2)
+        self._content_layout.addWidget(_label(title, name="hanlyPopupSection"))
+        self._content_layout.addSpacing(_GROUP - 2)
 
     def _build_non_success(self, content: PopupContent) -> None:
         if content.surface:
             word = _label(content.surface, name="hanlyPopupTitle")
             word.setWordWrap(True)
             self._content_layout.addWidget(word)
-            self._content_layout.addSpacing(7)
+            self._content_layout.addSpacing(_GROUP)
         title = _label(content.title, name="hanlyPopupSense")
         body = _label(content.body, name="hanlyPopupSecondary")
         tip = _label(content.tip, name="hanlyPopupMuted")
         body.setWordWrap(True)
         tip.setWordWrap(True)
         self._content_layout.addWidget(title)
-        self._content_layout.addSpacing(5)
+        self._content_layout.addSpacing(_TIGHT + 1)
         self._content_layout.addWidget(body)
-        self._content_layout.addSpacing(4)
+        self._content_layout.addSpacing(_TIGHT)
         self._content_layout.addWidget(tip)
         if content.technical_lines:
-            self._content_layout.addSpacing(10)
+            self._content_layout.addSpacing(_GROUP)
             technical = _label(" · ".join(content.technical_lines), name="hanlyPopupMuted")
             technical.setWordWrap(True)
             self._content_layout.addWidget(technical)
 
     def _build_footer(self, content: PopupContent) -> None:
-        if content.other_entries:
-            others = QPushButton(f"Other entries ({len(content.other_entries)})")
-            others.setObjectName("hanlyPopupOthers")
-            others.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            others.clicked.connect(self._toggle_others)
-            self._footer_layout.addWidget(others)
         if (
             self._detail_level is TechnicalDetailLevel.BASIC
             and content.technical_lines
@@ -518,24 +567,46 @@ class QtPopupView(QFrame):
                 _label(" · ".join(content.technical_lines), name="hanlyPopupMuted")
             )
         self._footer_layout.addStretch(1)
-        if content.status is LookupStatus.SUCCESS:
-            size = QPushButton("Collapse" if self._expanded else "Expand")
-            size.setObjectName("hanlyPopupSize")
-            size.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        if content.status is LookupStatus.SUCCESS and self._can_expand(content):
+            # The one disclosure control: expanding also reveals the other
+            # entries, so there is no second button competing with it.
+            size = self._button(
+                "Collapse" if self._expanded else "Expand", "hanlyPopupSize"
+            )
             size.clicked.connect(self._toggle_size)
             self._footer_layout.addWidget(size)
 
         # The window never accepts focus, so it can receive neither a key press
         # nor a click outside itself. A control inside the card is the one
         # dismissal the user can always reach.
-        close = QPushButton("Close")
-        close.setObjectName("hanlyPopupClose")
-        close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close = self._button("Close", "hanlyPopupClose")
         close.clicked.connect(self._request_dismiss)
         self._footer_layout.addWidget(close)
 
-    def _component_row(self, component: PopupComponent) -> QLabel:
-        """One line of the breakdown: the characters, then what they contribute.
+    def _can_expand(self, content: PopupContent) -> bool:
+        """Whether Expand would show anything the compact card does not."""
+
+        if self._expanded:
+            return True
+        entry = content.entry
+        return bool(
+            (entry is not None and len(entry.senses) > 2)
+            or content.other_entries
+            or content.analysis
+        )
+
+    @staticmethod
+    def _button(text: str, name: str) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName(name)
+        button.setAccessibleName(text)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setFixedHeight(_BUTTON_HEIGHT)
+        return button
+
+    def _component_row(self, component: PopupComponent) -> QHBoxLayout:
+        """One part of the form: the characters, then what they contribute.
 
         A grammatical part explains the form rather than naming a word, so a
         missing gloss there is expected; a lexical part without one is a word
@@ -545,59 +616,73 @@ class QtPopupView(QFrame):
         meaning = component.gloss
         if meaning is None:
             meaning = "grammatical" if component.grammatical else "no dictionary entry"
-        text = f"{component.surface} · {meaning}"
-        if component.selected:
-            text = f"▸ {text}"
-        name = "hanlyPopupMuted" if component.grammatical else "hanlyPopupSecondary"
-        label = _label(text, name=name)
-        label.setWordWrap(True)
-        return label
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        part = _label(
+            component.surface,
+            name="hanlyPopupPartSelected" if component.selected else "hanlyPopupPart",
+        )
+        part.setMinimumWidth(56)
+        row.addWidget(part, 0, Qt.AlignmentFlag.AlignTop)
+        gloss = _label(
+            meaning, name="hanlyPopupMuted" if component.grammatical else "hanlyPopupSecondary"
+        )
+        gloss.setWordWrap(True)
+        row.addWidget(gloss, 1, Qt.AlignmentFlag.AlignTop)
+        return row
 
     def _divider(self) -> QFrame:
         line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
         line.setObjectName("hanlyPopupDivider")
-        line.setStyleSheet("QFrame#hanlyPopupDivider { color: palette(midlight); }")
+        line.setFixedHeight(1)
         return line
 
     def _toggle_size(self) -> None:
         self._expanded = not self._expanded
-        if not self._expanded:
-            self._others_open = False
-        self._rebuild()
-        self._resize_and_notify()
-
-    def _toggle_others(self) -> None:
-        if not self._expanded:
-            self._expanded = True
-        self._others_open = not self._others_open
         self._rebuild()
         self._resize_and_notify()
 
     @staticmethod
-    def _sense_body(sense: DictionarySense) -> QVBoxLayout:
-        """Stack a sense's short gloss above its fuller definition.
+    def _primary_sense(sense: DictionarySense) -> QVBoxLayout:
+        """The first sense leads: its translation is the answer to the lookup."""
+
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(_TIGHT)
+        lead = _label(sense.gloss or sense.definition, name="hanlyPopupPrimary")
+        lead.setWordWrap(True)
+        body.addWidget(lead)
+        if sense.gloss:
+            note = _label(sense.definition, name="hanlyPopupPrimaryNote")
+            note.setWordWrap(True)
+            body.addWidget(note)
+        return body
+
+    @staticmethod
+    def _numbered_sense(index: int, sense: DictionarySense) -> QHBoxLayout:
+        """A further sense, numbered, with its gloss above its fuller definition.
 
         A sense without a gloss shows the definition in the primary slot rather
         than an empty row, so nothing is invented and nothing is repeated.
         """
 
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        number = _label(str(index), name="hanlyPopupNumber")
+        number.setFixedWidth(14)
+        row.addWidget(number, 0, Qt.AlignmentFlag.AlignTop)
         body = QVBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(2)
-
+        lead = _label(sense.gloss or sense.definition, name="hanlyPopupSense")
+        lead.setWordWrap(True)
+        body.addWidget(lead)
         if sense.gloss:
-            gloss = _label(sense.gloss, name="hanlyPopupSense")
-            gloss.setWordWrap(True)
-            body.addWidget(gloss)
-
-            definition = _label(sense.definition, name="hanlyPopupSecondary")
-        else:
-            definition = _label(sense.definition, name="hanlyPopupSense")
-
-        definition.setWordWrap(True)
-        body.addWidget(definition)
-        return body
+            note = _label(sense.definition, name="hanlyPopupSecondary")
+            note.setWordWrap(True)
+            body.addWidget(note)
+        row.addLayout(body, 1)
+        return row
 
     def _resize_to_content(self) -> PopupSize:
         width = 386 if self._expanded else 340
