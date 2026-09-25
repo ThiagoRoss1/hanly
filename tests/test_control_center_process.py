@@ -615,10 +615,31 @@ def test_choosing_an_area_first_lets_the_shell_come_to_the_front(
 
     order: list[str] = []
     monkeypatch.setattr(
-        control_center_process, "allow_parent_foreground", lambda: order.append("allow")
+        control_center_process, "hand_foreground_to_parent", lambda: order.append("allow")
     )
     proxy = ControlCenterProxy(lambda name, *_args: order.append(name))
 
     proxy.select_capture_area()
 
     assert order == ["allow", "select_capture_area"]
+
+
+def test_the_hand_over_reaches_both_platform_mechanisms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows allows the parent's foreground; macOS yields activation to it."""
+
+    import os
+
+    from hanly_app import app_identity_darwin, control_center_process
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        control_center_process, "allow_parent_foreground", lambda: calls.append("windows")
+    )
+    monkeypatch.setattr(control_center_process.sys, "platform", "darwin")
+    monkeypatch.setattr(app_identity_darwin, "yield_activation_to", calls.append)
+
+    control_center_process.hand_foreground_to_parent()
+
+    assert calls == ["windows", os.getppid()]

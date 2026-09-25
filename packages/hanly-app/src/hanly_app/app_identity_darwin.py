@@ -43,6 +43,7 @@ class _ApplicationBridge:
             raise RuntimeError("the Objective-C runtime did not expose objc_msgSend")
 
         self._runtime = runtime
+        self._address: int = address
         self._shared_selector = runtime.sel_registerName(b"sharedApplication")
         self._policy_selector = runtime.sel_registerName(b"activationPolicy")
         self._set_policy_selector = runtime.sel_registerName(b"setActivationPolicy:")
@@ -81,6 +82,36 @@ class _ApplicationBridge:
         self._send_set_bool(
             ctypes.c_void_p(application), self._activate_selector, True
         )
+
+    def yield_to(self, application: int, pid: int) -> bool:
+        """``yieldActivationToApplication:``, where this macOS has it (14+)."""
+
+        runtime = self._runtime
+        address = self._address
+        yield_selector = runtime.sel_registerName(b"yieldActivationToApplication:")
+        responds = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
+        )(address)
+        if not responds(
+            ctypes.c_void_p(application),
+            runtime.sel_registerName(b"respondsToSelector:"),
+            ctypes.c_void_p(yield_selector),
+        ):
+            return False
+        lookup = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int
+        )(address)
+        target = lookup(
+            ctypes.c_void_p(runtime.objc_getClass(b"NSRunningApplication")),
+            runtime.sel_registerName(b"runningApplicationWithProcessIdentifier:"),
+            pid,
+        )
+        if not target:
+            return False
+        ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)(address)(
+            ctypes.c_void_p(application), ctypes.c_void_p(yield_selector), ctypes.c_void_p(target)
+        )
+        return True
 
 
 def _objective_c() -> _ApplicationBridge:
@@ -123,6 +154,18 @@ def activate_application() -> None:
     bridge.activate(bridge.application())
 
 
+def yield_activation_to(pid: int) -> bool:
+    """Let another process become the active application on its next request.
+
+    Since macOS 14 activation is cooperative: an application activates only if
+    the one the user is using yields to it. The Control Center has the user's
+    click; the shell, which shows what that click asked for, does not.
+    """
+
+    bridge = _objective_c()
+    return bridge.yield_to(bridge.application(), pid)
+
+
 def activation_policy() -> int | None:
     """Report the current policy, for tests and diagnostics."""
 
@@ -138,4 +181,5 @@ __all__ = [
     "activate_application",
     "activation_policy",
     "run_as_accessory_application",
+    "yield_activation_to",
 ]
