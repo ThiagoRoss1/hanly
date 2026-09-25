@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -85,6 +86,8 @@ class CleanupReport:
     preserved: tuple[Path, ...] = ()
     recovery_required: tuple[Path, ...] = ()
     failures: tuple[tuple[Path, str], ...] = ()
+    #: Still held open by a process, so left for a later launch to retry.
+    in_use: tuple[Path, ...] = ()
 
     def merged(self, other: CleanupReport) -> CleanupReport:
         return CleanupReport(
@@ -92,6 +95,7 @@ class CleanupReport:
             preserved=self.preserved + other.preserved,
             recovery_required=self.recovery_required + other.recovery_required,
             failures=self.failures + other.failures,
+            in_use=self.in_use + other.in_use,
         )
 
     def messages(self) -> tuple[str, ...]:
@@ -104,6 +108,11 @@ class CleanupReport:
             lines.append(
                 f"An interrupted update still holds a copy of a previous Hanly in "
                 f"{path.name}; it was kept rather than removed."
+            )
+        if self.in_use:
+            lines.append(
+                f"{len(self.in_use)} leftover update directories are still in use; "
+                "they will be removed at a later launch."
             )
         for path, reason in self.failures:
             lines.append(f"Could not remove {path.name}: {reason}")
@@ -119,6 +128,10 @@ class StagingLocation:
     #: Entries whose presence means this directory is the only copy of
     #: something the user cannot lose.
     keep_if_present: tuple[str, ...] = field(default=())
+    #: When set, the only entries a directory Hanly made here can contain. One
+    #: holding anything else matches the prefix without being Hanly's, and is
+    #: left alone.
+    only_entries: frozenset[str] | None = None
 
 
 class OwnedWorkspace:
@@ -292,6 +305,7 @@ def _sweep_one(
     preserved: list[Path] = []
     recovery: list[Path] = []
     failures: list[tuple[Path, str]] = []
+    in_use: list[Path] = []
     root = location.root.resolve()
 
     for candidate in sorted(location.root.glob(f"{location.prefix}*")):
@@ -302,10 +316,18 @@ def _sweep_one(
         if any((candidate / name).exists() for name in location.keep_if_present):
             recovery.append(candidate)
             continue
-        if not _older_than(candidate, now, min_age_seconds):
+        if not _older_than(candidate, now, min_age_seconds) or not _shaped_as(
+            candidate, location.only_entries
+        ):
             preserved.append(candidate)
             continue
-        failure = _remove_tree(candidate)
+        try:
+            failure = _remove_tree(candidate)
+        except PermissionError:
+            # A process still has it open -- the helper, or the Hanly it
+            # relaunched. Nothing is lost by waiting, so nothing is forced.
+            in_use.append(candidate)
+            continue
         if failure is None:
             removed.append(candidate)
         else:
@@ -316,7 +338,19 @@ def _sweep_one(
         preserved=tuple(preserved),
         recovery_required=tuple(recovery),
         failures=tuple(failures),
+        in_use=tuple(in_use),
     )
+
+
+def _shaped_as(directory: Path, only_entries: frozenset[str] | None) -> bool:
+    """Whether everything inside is something Hanly itself puts there."""
+
+    if only_entries is None:
+        return True
+    try:
+        return all(entry.name in only_entries for entry in directory.iterdir())
+    except OSError:
+        return False
 
 
 def update_staging_locations(
@@ -331,7 +365,15 @@ def update_staging_locations(
     ``<installation>/.hanly-update``. All of them outlive a killed process.
     """
 
-    locations = [StagingLocation(root=temporary_root, prefix="hanly-update.")]
+    # The system temporary directory is shared with everything else, so only a
+    # directory holding nothing but the handoff script is taken to be Hanly's.
+    locations = [
+        StagingLocation(
+            root=temporary_root,
+            prefix="hanly-update.",
+            only_entries=frozenset({"hanly-update.ps1", "hanly-update.sh"}),
+        )
+    ]
     if install_root is not None:
         locations.append(
             StagingLocation(
@@ -451,17 +493,37 @@ def _process_alive(pid: int) -> bool:
 
 
 def _remove_tree(path: Path) -> str | None:
-    """Remove a directory, returning why it could not be removed."""
+    """Remove a directory, returning why it could not be removed.
+
+    A read-only entry is made writable and tried once more: Windows refuses to
+    delete one with ``Access is denied`` where POSIX needs only the directory's
+    permission. Anything still refused after that is in use, and
+    ``PermissionError`` reaches the caller so it can wait rather than report.
+    """
 
     if path.is_symlink():
         return "it is a symbolic link"
     try:
-        shutil.rmtree(path)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_retry_writable)
+        else:
+            shutil.rmtree(path, onerror=_retry_writable)
     except FileNotFoundError:
         return None
+    except PermissionError:
+        raise
     except OSError as error:
         return str(error)
     return None
+
+
+def _retry_writable(function: object, target: str, _error: object) -> None:
+    """Clear the read-only attribute on one entry and repeat what failed on it."""
+
+    if not callable(function):
+        raise PermissionError(target)
+    os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+    function(target)
 
 
 def _now(clock: object) -> float:

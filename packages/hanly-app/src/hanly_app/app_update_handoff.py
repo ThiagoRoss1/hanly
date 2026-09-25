@@ -84,9 +84,13 @@ def start_handoff(
     script = _write_script(executable=executable, platform=platform)
     runner = spawn if spawn is not None else spawn_detached
     try:
+        # Started from the temporary root rather than from the script's own
+        # directory: a working directory is held open for a process's whole
+        # life, and the Hanly the script relaunches inherits it, so starting
+        # inside would keep that directory from ever being cleaned up.
         runner(
             [*_launcher(platform, script), *handoff_arguments(transaction)],
-            script.parent,
+            script.parent.parent,
         )
     except OSError as error:
         raise HandoffError(f"could not start the update handoff: {error}") from error

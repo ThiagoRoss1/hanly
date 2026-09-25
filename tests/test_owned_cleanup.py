@@ -294,3 +294,62 @@ def _reassign_owner(path: Path, *, pid: int, status: str = "active") -> None:
     payload["owner_pid"] = pid
     payload["status"] = status
     marker.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_a_read_only_entry_is_removed_rather_than_refused(tmp_path: Path) -> None:
+    """Windows refuses to delete a read-only file with "Access is denied"."""
+
+    clock = _Clock()
+    staging = tmp_path / "hanly-update.abc"
+    staging.mkdir()
+    script = staging / "hanly-update.ps1"
+    script.write_text("# handoff", encoding="utf-8")
+    script.chmod(0o444)
+    os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
+
+    report = sweep_staging(update_staging_locations(None, tmp_path), clock=clock)
+
+    assert staging in report.removed
+    assert not staging.exists()
+
+
+def test_a_temporary_directory_holding_more_than_the_handoff_is_not_hanlys(
+    tmp_path: Path,
+) -> None:
+    """The prefix alone is not ownership in a directory every program shares."""
+
+    clock = _Clock()
+    staging = tmp_path / "hanly-update.abc"
+    staging.mkdir()
+    (staging / "hanly-update.ps1").write_text("# handoff", encoding="utf-8")
+    (staging / "somebody-elses.txt").write_text("keep", encoding="utf-8")
+    os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
+
+    report = sweep_staging(update_staging_locations(None, tmp_path), clock=clock)
+
+    assert staging in report.preserved
+    assert (staging / "somebody-elses.txt").is_file()
+
+
+def test_a_directory_still_in_use_is_left_for_a_later_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hanly_app import owned_cleanup
+
+    clock = _Clock()
+    staging = tmp_path / "hanly-update.abc"
+    staging.mkdir()
+    os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
+
+    def held(path: Path) -> str | None:
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(owned_cleanup, "_remove_tree", held)
+
+    report = sweep_staging(update_staging_locations(None, tmp_path), clock=clock)
+
+    assert report.in_use == (staging,)
+    assert report.failures == ()
+    assert staging.is_dir()
+    assert any("later launch" in line for line in report.messages())
+    assert not any("Could not remove" in line for line in report.messages())
