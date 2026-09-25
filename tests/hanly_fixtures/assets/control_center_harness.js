@@ -228,6 +228,7 @@ function report(step) {
     intervals_created: intervalsCreated,
     clears_requested: clearsRequested,
     runtime_state: document.getElementById("live-runtime").textContent,
+    engine_state: document.getElementById("live-engine").textContent,
     runtime_message: document.getElementById("runtime-error-text").textContent,
     retry_hidden: document.getElementById("runtime-error").hidden,
     start_disabled: document.getElementById("toggle-capture").disabled,

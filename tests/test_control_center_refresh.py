@@ -396,3 +396,49 @@ def test_lost_connection_stops_an_already_running_poll(tmp_path: Path) -> None:
     assert trace[0]["timer_running"] is True
     assert trace[-1]["connection"] == "lost"
     assert trace[-1]["timer_running"] is False
+
+
+def _engine(snapshot: dict[str, Any], **engine: str) -> dict[str, Any]:
+    snapshot["runtime"]["engine"] = {"state": "sleeping", "message": "", **engine}
+    return snapshot
+
+
+@pytest.mark.parametrize(
+    ("state", "label"),
+    [("sleeping", "sleeping"), ("preparing", "loading"), ("ready", "loaded"), ("error", "error")],
+)
+def test_every_engine_state_has_its_label(tmp_path: Path, state: str, label: str) -> None:
+    trace = _run([_engine(_snapshot("ready"), state=state)], tmp_path)
+
+    assert trace[-1]["engine_state"] == label
+
+
+def test_a_load_that_finished_before_the_page_asked_is_still_shown(tmp_path: Path) -> None:
+    """The push arrives, the engine is already ready: loading still appears.
+
+    The runtime phase stays ``preparing`` only so the page keeps asking.
+    """
+
+    trace = _run(
+        [
+            _engine(_snapshot("preparing"), state="sleeping", preparing_sequence="0"),
+            _engine(_snapshot("preparing"), state="ready", preparing_sequence="3"),
+        ],
+        tmp_path,
+    )
+
+    assert trace[0]["engine_state"] == "sleeping"
+    assert trace[-1]["engine_state"] == "loading"
+
+
+def test_a_load_already_shown_is_not_shown_again(tmp_path: Path) -> None:
+    trace = _run(
+        [
+            _engine(_snapshot("preparing"), state="preparing", preparing_sequence="3"),
+            _engine(_snapshot("preparing"), state="ready", preparing_sequence="3"),
+        ],
+        tmp_path,
+    )
+
+    assert trace[0]["engine_state"] == "loading"
+    assert trace[-1]["engine_state"] == "loaded"

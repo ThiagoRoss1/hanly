@@ -493,6 +493,8 @@ class _DesktopSession:
         self._generation = 0
         self._pending_release: list[DesktopController] = []
         self._engine_state: tuple[str, str] = ("sleeping", "")
+        self._engine_sequence = 0
+        self._preparing_sequence = 0
         self._activation = settings.config.hover_activation
         self._reopen_filter: object | None = None
 
@@ -614,7 +616,14 @@ class _DesktopSession:
         """Report where the lookup engine is, separately from shell readiness."""
 
         state, message = self._engine_state
-        return {"state": state, "message": message}
+        # Loading can finish before the page asks, so the last load it began is
+        # named too, and the page can still show that one happened.
+        return {
+            "state": state,
+            "message": message,
+            "sequence": str(self._engine_sequence),
+            "preparing_sequence": str(self._preparing_sequence),
+        }
 
     def application_snapshot(self) -> ApplicationSnapshot:
         """Derive the one label every surface shows, from every input at once.
@@ -720,6 +729,9 @@ class _DesktopSession:
         """Take engine news from whichever thread reported it, onto Qt."""
 
         self._engine_state = (state, message)
+        self._engine_sequence += 1
+        if state == "preparing":
+            self._preparing_sequence = self._engine_sequence
         self._diagnostics.record("Lookup engine", f"{state}: {message}" if message else state)
         self._dispatcher(self.refresh_tray)
 

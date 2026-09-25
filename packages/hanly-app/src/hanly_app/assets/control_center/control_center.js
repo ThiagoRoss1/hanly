@@ -1160,11 +1160,36 @@
     });
   }
 
+  // ---- engine ------------------------------------------------------------
+
+  // Loading often finishes between the push and the page's question, so a
+  // load the page never saw is still shown, for long enough to be read. This
+  // is display only: nothing about the engine itself waits.
+  const ENGINE_MIN_LOADING_MS = 700;
+  let engineLoadSeen = 0;
+  let engineLoadingUntil = 0;
+
+  function shownEngine() {
+    const engine = runtime().engine || {};
+    const load = Number(engine.preparing_sequence || 0);
+    if (load > engineLoadSeen) {
+      engineLoadSeen = load;
+      if (engine.state !== "preparing" && engine.state !== "error") {
+        engineLoadingUntil = Date.now() + ENGINE_MIN_LOADING_MS;
+        window.setTimeout(function () { renderState(currentState); }, ENGINE_MIN_LOADING_MS);
+      }
+    }
+    if (engine.state === "ready" && Date.now() < engineLoadingUntil) {
+      return { state: "preparing", message: "Loading the lookup engine..." };
+    }
+    return engine;
+  }
+
   // ---- readiness ---------------------------------------------------------
 
   function readinessRows() {
     const status = runtime().status || {};
-    const engine = runtime().engine || {};
+    const engine = shownEngine();
     const registered = runtime().hotkeys || {};
     const bound = SHORTCUTS.filter(function (entry) { return !!config()[entry.id]; });
     const live = bound.filter(function (entry) { return !!registered[entry.action]; });
@@ -1357,7 +1382,7 @@
     attr(byId("fact-runtime"), "data-tone",
       status.phase === "ready" ? "ok" : (status.phase === "failed" ? "bad" : ""));
 
-    const engine = runtime().engine || {};
+    const engine = shownEngine();
     setText("live-engine", ENGINE_LABELS[engine.state] || formatStatus(engine.state));
     attr(byId("fact-engine"), "data-tone", engine.state === "error" ? "bad" : "");
 

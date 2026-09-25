@@ -1234,3 +1234,28 @@ def test_the_hover_mute_shortcut_never_starts_a_stopped_session() -> None:
 
     assert controller.calls == []
     assert controller.state is DesktopState.PAUSED
+
+
+def test_the_engine_status_remembers_a_load_the_page_may_have_missed() -> None:
+    """Loading can end before the Control Center asks; its last load is named."""
+
+    from types import SimpleNamespace
+
+    from hanly_app.application import _DesktopSession
+
+    session = SimpleNamespace(
+        _engine_state=("sleeping", ""),
+        _engine_sequence=0,
+        _preparing_sequence=0,
+        _diagnostics=SimpleNamespace(record=lambda *_args: None),
+        _dispatcher=lambda _callback: None,
+        refresh_tray=lambda: None,
+    )
+
+    _DesktopSession._on_engine_state(session, "preparing", "Loading the lookup engine...")  # type: ignore[arg-type]
+    _DesktopSession._on_engine_state(session, "ready", "Hanly is ready.")  # type: ignore[arg-type]
+    status = _DesktopSession.engine_status(session)  # type: ignore[arg-type]
+
+    assert status["state"] == "ready"
+    assert status["sequence"] == "2"
+    assert status["preparing_sequence"] == "1"
