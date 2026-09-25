@@ -1259,3 +1259,33 @@ def test_the_engine_status_remembers_a_load_the_page_may_have_missed() -> None:
     assert status["state"] == "ready"
     assert status["sequence"] == "2"
     assert status["preparing_sequence"] == "1"
+
+
+def test_a_second_area_request_while_choosing_changes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Control Center can be clicked again while the prompt is open."""
+
+    from hanly_app.capture_selector import CaptureSelection
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    session._controller = _QtOwnedController(DesktopState.RUNNING)
+    shown: list[str] = []
+    nested: list[object] = []
+
+    def choose(*_theme: object) -> CaptureSelection:
+        shown.append("prompt")
+        # The Qt loop running under the open prompt delivers the second request.
+        nested.append(session._select_capture_area())
+        return CaptureSelection.whole_monitor()
+
+    monkeypatch.setattr(application_module, "select_capture_area", choose)
+    monkeypatch.setattr(threading, "current_thread", threading.main_thread)
+
+    first = session._select_capture_area()
+
+    assert shown == ["prompt"]
+    assert nested == [None]
+    assert first == CaptureSelection.whole_monitor()

@@ -495,6 +495,7 @@ class _DesktopSession:
         self._engine_state: tuple[str, str] = ("sleeping", "")
         self._engine_sequence = 0
         self._preparing_sequence = 0
+        self._choosing_area = False
         self._activation = settings.config.hover_activation
         self._reopen_filter: object | None = None
 
@@ -905,6 +906,20 @@ class _DesktopSession:
         chosen: list[CaptureSelection | None] = []
 
         def choose() -> None:
+            if self._choosing_area:
+                # The Control Center stays clickable while the prompt is open,
+                # and a second choice nested inside the first left its overlay
+                # under the first prompt, unable to take input. The open one is
+                # brought forward instead, and this request changes nothing.
+                _raise_open_choice()
+                return
+            self._choosing_area = True
+            try:
+                choose_once()
+            finally:
+                self._choosing_area = False
+
+        def choose_once() -> None:
             controller = self._controller
             manual = self._manual
             observing = controller is not None and controller.state is DesktopState.RUNNING
@@ -1316,6 +1331,21 @@ def _readiness_milestone(timeline: StartupTimeline) -> Callable[[RuntimeStatus],
             timeline.reached("runtime ready")
 
     return observe
+
+
+def _raise_open_choice() -> None:
+    """Bring the capture-area choice already on screen back in front."""
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+
+        from .hanly_dialog import bring_to_front
+
+        window = QApplication.activeModalWidget()
+        if window is not None:
+            bring_to_front(window)
+    except Exception:
+        pass
 
 
 def _tray_image() -> object | None:
