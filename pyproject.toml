@@ -57,7 +57,7 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["Foundation", "objc"]
+module = ["AppKit", "ApplicationServices", "Foundation", "Quartz", "objc"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

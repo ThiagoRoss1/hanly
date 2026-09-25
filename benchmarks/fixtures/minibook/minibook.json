@@ -1,0 +1,2745 @@
+{
+ "schema_version": 1,
+ "title": "작은 서점의 겨울",
+ "description": "An original developer-only Korean mini book for Hanly acceptance runs. Synthetic, written for this repository; not copied material. TOPIK levels are the author's estimate (1-2 TOPIK I, 3-6 TOPIK II). 'expected' is the linguistically correct dictionary form, set before any pipeline was run; refuse targets are Latin and must produce no Korean lookup.",
+ "lines": [
+  "우리 동네에는 작은 서점이 하나 있습니다.",
+  "주인 할머니는 매일 아침 일찍 가게 문을 엽니다.",
+  "저는 학교가 끝나면 그 서점에 들러서 책을 읽어요.",
+  "오늘은 날씨가 너무 추워서 손이 꽁꽁 얼었어요.",
+  "할머니께서 따뜻한 차를 주시면서 천천히 쉬라고 하셨어요.",
+  "창밖으로 눈이 조용히 내리고, 사람들은 바쁘게 지나갔습니다.",
+  "저는 선반에서 오래된 시집을 한 권 골랐습니다.",
+  "시인의 문장은 짧지만 마음을 깊이 흔들었어요.",
+  "할머니는 젊었을 때 출판사에서 편집자로 일하셨대요.",
+  "그래서 좋은 책을 알아보는 눈이 남다르다고 하십니다.",
+  "요즘은 온라인 서점 때문에 손님이 많이 줄었답니다.",
+  "하지만 할머니는 가게를 지키려고 끊임없이 노력하세요.",
+  "저는 친구들에게 이 서점을 소개하기로 결심했어요.",
+  "주말에는 친구와 함께 와서 책을 고르고 이야기를 나눴어요.",
+  "친구는 추리 소설을, 저는 역사책을 샀습니다.",
+  "서점 벽에는 손님들이 남긴 메모가 가득 붙어 있었어요.",
+  "누군가는 \"이곳 덕분에 꿈을 포기하지 않았다\"고 썼더군요.",
+  "그 글을 읽고 나니 가슴이 뭉클해졌습니다.",
+  "할머니께 도와 드릴 일이 있으면 말씀해 달라고 여쭈었어요.",
+  "할머니는 웃으시며 가끔 들러서 안부만 전해 달라고 하셨어요.",
+  "봄이 오면 서점 앞에 작은 화분을 놓아 드릴 생각입니다.",
+  "경제가 어려워도 문화 공간을 보존하는 일은 중요하다고 생각해요.",
+  "지역 사회가 관심을 기울인다면 이런 공간은 충분히 살아남을 수 있습니다.",
+  "이 서점은 단순한 가게가 아니라 동네의 기억을 간직한 곳입니다.",
+  "서점 Wi-Fi 비밀번호는 카운터 옆 memo에 적혀 있어요.",
+  "할머니는 Claude projects vs CLI workflow 같은 말은 모르신대요.",
+  "새 가게 이름은 Hanly Books가 될지도 몰라요."
+ ],
+ "targets": [
+  {
+   "id": "k001",
+   "line": 0,
+   "start": 0,
+   "surface": "우리",
+   "cursor": 0,
+   "expected": {
+    "lemma": "우리",
+    "headword": "우리"
+   },
+   "topik": 1,
+   "kinds": [
+    "pronoun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k002",
+   "line": 0,
+   "start": 3,
+   "surface": "동네에는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "동네",
+    "headword": "동네"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k003",
+   "line": 0,
+   "start": 8,
+   "surface": "작은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "작다",
+    "headword": "작다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k004",
+   "line": 0,
+   "start": 11,
+   "surface": "서점이",
+   "cursor": 1,
+   "expected": {
+    "lemma": "서점",
+    "headword": "서점"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k005",
+   "line": 0,
+   "start": 18,
+   "surface": "있습니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "있다",
+    "headword": "있다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "formal_polite",
+    "punctuation"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k006",
+   "line": 1,
+   "start": 0,
+   "surface": "주인",
+   "cursor": 0,
+   "expected": {
+    "lemma": "주인",
+    "headword": "주인"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k007",
+   "line": 1,
+   "start": 3,
+   "surface": "할머니는",
+   "cursor": 1,
+   "expected": {
+    "lemma": "할머니",
+    "headword": "할머니"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k008",
+   "line": 1,
+   "start": 8,
+   "surface": "매일",
+   "cursor": 0,
+   "expected": {
+    "lemma": "매일",
+    "headword": "매일"
+   },
+   "topik": 1,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k009",
+   "line": 1,
+   "start": 14,
+   "surface": "일찍",
+   "cursor": 0,
+   "expected": {
+    "lemma": "일찍",
+    "headword": "일찍"
+   },
+   "topik": 2,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k010",
+   "line": 1,
+   "start": 17,
+   "surface": "가게",
+   "cursor": 0,
+   "expected": {
+    "lemma": "가게",
+    "headword": "가게"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k011",
+   "line": 1,
+   "start": 23,
+   "surface": "엽니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "열다",
+    "headword": "열다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "irregular_l",
+    "formal_polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k012",
+   "line": 2,
+   "start": 3,
+   "surface": "학교가",
+   "cursor": 1,
+   "expected": {
+    "lemma": "학교",
+    "headword": "학교"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k013",
+   "line": 2,
+   "start": 7,
+   "surface": "끝나면",
+   "cursor": 1,
+   "expected": {
+    "lemma": "끝나다",
+    "headword": "끝나다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k014",
+   "line": 2,
+   "start": 17,
+   "surface": "들러서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "들르다",
+    "headword": "들르다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "irregular_eu",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k015",
+   "line": 2,
+   "start": 21,
+   "surface": "책을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "책",
+    "headword": "책"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k016",
+   "line": 2,
+   "start": 24,
+   "surface": "읽어요.",
+   "cursor": 2,
+   "expected": {
+    "lemma": "읽다",
+    "headword": "읽다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "polite",
+    "ending_cursor"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k017",
+   "line": 3,
+   "start": 0,
+   "surface": "오늘은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "오늘",
+    "headword": "오늘"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k018",
+   "line": 3,
+   "start": 4,
+   "surface": "날씨가",
+   "cursor": 0,
+   "expected": {
+    "lemma": "날씨",
+    "headword": "날씨"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k019",
+   "line": 3,
+   "start": 8,
+   "surface": "너무",
+   "cursor": 0,
+   "expected": {
+    "lemma": "너무",
+    "headword": "너무"
+   },
+   "topik": 1,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k020",
+   "line": 3,
+   "start": 11,
+   "surface": "추워서",
+   "cursor": 1,
+   "expected": {
+    "lemma": "춥다",
+    "headword": "춥다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "irregular_b",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k021",
+   "line": 3,
+   "start": 18,
+   "surface": "꽁꽁",
+   "cursor": 0,
+   "expected": {
+    "lemma": "꽁꽁",
+    "headword": "꽁꽁"
+   },
+   "topik": 4,
+   "kinds": [
+    "adverb",
+    "mimetic"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k022",
+   "line": 3,
+   "start": 21,
+   "surface": "얼었어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "얼다",
+    "headword": "얼다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "past",
+    "polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k023",
+   "line": 4,
+   "start": 0,
+   "surface": "할머니께서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "할머니",
+    "headword": "할머니"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "honorific_particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k024",
+   "line": 4,
+   "start": 6,
+   "surface": "따뜻한",
+   "cursor": 0,
+   "expected": {
+    "lemma": "따뜻하다",
+    "headword": "따뜻하다"
+   },
+   "topik": 2,
+   "kinds": [
+    "adjective",
+    "modifier"
+   ],
+   "style": "bold",
+   "refuse": false
+  },
+  {
+   "id": "k025",
+   "line": 4,
+   "start": 10,
+   "surface": "차를",
+   "cursor": 0,
+   "expected": {
+    "lemma": "차",
+    "headword": "차"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "homograph"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k026",
+   "line": 4,
+   "start": 13,
+   "surface": "주시면서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "주다",
+    "headword": "주다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "honorific",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k027",
+   "line": 4,
+   "start": 18,
+   "surface": "천천히",
+   "cursor": 0,
+   "expected": {
+    "lemma": "천천히",
+    "headword": "천천히"
+   },
+   "topik": 2,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k028",
+   "line": 4,
+   "start": 22,
+   "surface": "쉬라고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "쉬다",
+    "headword": "쉬다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "quotative"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k029",
+   "line": 4,
+   "start": 26,
+   "surface": "하셨어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "하다",
+    "headword": "하다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "honorific",
+    "past"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k030",
+   "line": 5,
+   "start": 0,
+   "surface": "창밖으로",
+   "cursor": 0,
+   "expected": {
+    "lemma": "창밖",
+    "headword": "창밖"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "compound",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k031",
+   "line": 5,
+   "start": 5,
+   "surface": "눈이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "눈",
+    "headword": "눈"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "homograph"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k032",
+   "line": 5,
+   "start": 8,
+   "surface": "조용히",
+   "cursor": 0,
+   "expected": {
+    "lemma": "조용히",
+    "headword": "조용히"
+   },
+   "topik": 2,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k033",
+   "line": 5,
+   "start": 12,
+   "surface": "내리고,",
+   "cursor": 0,
+   "expected": {
+    "lemma": "내리다",
+    "headword": "내리다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "connective",
+    "punctuation"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k034",
+   "line": 5,
+   "start": 17,
+   "surface": "사람들은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "사람",
+    "headword": "사람"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "plural"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k035",
+   "line": 5,
+   "start": 22,
+   "surface": "바쁘게",
+   "cursor": 0,
+   "expected": {
+    "lemma": "바쁘다",
+    "headword": "바쁘다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "adverbial"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k036",
+   "line": 5,
+   "start": 26,
+   "surface": "지나갔습니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "지나가다",
+    "headword": "지나가다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "compound",
+    "past",
+    "formal_polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k037",
+   "line": 6,
+   "start": 3,
+   "surface": "선반에서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "선반",
+    "headword": "선반"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k038",
+   "line": 6,
+   "start": 8,
+   "surface": "오래된",
+   "cursor": 0,
+   "expected": {
+    "lemma": "오래되다",
+    "headword": "오래되다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k039",
+   "line": 6,
+   "start": 12,
+   "surface": "시집을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "시집",
+    "headword": "시집"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "homograph"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k040",
+   "line": 6,
+   "start": 18,
+   "surface": "권",
+   "cursor": 0,
+   "expected": {
+    "lemma": "권",
+    "headword": "권"
+   },
+   "topik": 2,
+   "kinds": [
+    "counter"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k041",
+   "line": 6,
+   "start": 20,
+   "surface": "골랐습니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "고르다",
+    "headword": "고르다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "irregular_reu",
+    "past"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k042",
+   "line": 7,
+   "start": 0,
+   "surface": "시인의",
+   "cursor": 0,
+   "expected": {
+    "lemma": "시인",
+    "headword": "시인"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k043",
+   "line": 7,
+   "start": 4,
+   "surface": "문장은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "문장",
+    "headword": "문장"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k044",
+   "line": 7,
+   "start": 8,
+   "surface": "짧지만",
+   "cursor": 0,
+   "expected": {
+    "lemma": "짧다",
+    "headword": "짧다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k045",
+   "line": 7,
+   "start": 12,
+   "surface": "마음을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "마음",
+    "headword": "마음"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k046",
+   "line": 7,
+   "start": 16,
+   "surface": "깊이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "깊이",
+    "headword": "깊이"
+   },
+   "topik": 3,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k047",
+   "line": 7,
+   "start": 19,
+   "surface": "흔들었어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "흔들다",
+    "headword": "흔들다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "past"
+   ],
+   "style": "bold",
+   "refuse": false
+  },
+  {
+   "id": "k048",
+   "line": 8,
+   "start": 5,
+   "surface": "젊었을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "젊다",
+    "headword": "젊다"
+   },
+   "topik": 2,
+   "kinds": [
+    "adjective",
+    "past",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k049",
+   "line": 8,
+   "start": 9,
+   "surface": "때",
+   "cursor": 0,
+   "expected": {
+    "lemma": "때",
+    "headword": "때"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k050",
+   "line": 8,
+   "start": 11,
+   "surface": "출판사에서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "출판사",
+    "headword": "출판사"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "compound",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k051",
+   "line": 8,
+   "start": 17,
+   "surface": "편집자로",
+   "cursor": 0,
+   "expected": {
+    "lemma": "편집자",
+    "headword": "편집자"
+   },
+   "topik": 5,
+   "kinds": [
+    "noun",
+    "derived"
+   ],
+   "style": "italic",
+   "refuse": false
+  },
+  {
+   "id": "k052",
+   "line": 8,
+   "start": 22,
+   "surface": "일하셨대요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "일하다",
+    "headword": "일하다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "honorific",
+    "hearsay"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k053",
+   "line": 9,
+   "start": 0,
+   "surface": "그래서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "그래서",
+    "headword": "그래서"
+   },
+   "topik": 1,
+   "kinds": [
+    "conjunctive_adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k054",
+   "line": 9,
+   "start": 4,
+   "surface": "좋은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "좋다",
+    "headword": "좋다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k055",
+   "line": 9,
+   "start": 10,
+   "surface": "알아보는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "알아보다",
+    "headword": "알아보다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "compound",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k056",
+   "line": 9,
+   "start": 18,
+   "surface": "남다르다고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "남다르다",
+    "headword": "남다르다"
+   },
+   "topik": 5,
+   "kinds": [
+    "adjective",
+    "quotative"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k057",
+   "line": 9,
+   "start": 24,
+   "surface": "하십니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "하다",
+    "headword": "하다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "honorific",
+    "formal_polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k058",
+   "line": 10,
+   "start": 0,
+   "surface": "요즘은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "요즘",
+    "headword": "요즘"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k059",
+   "line": 10,
+   "start": 4,
+   "surface": "온라인",
+   "cursor": 0,
+   "expected": {
+    "lemma": "온라인",
+    "headword": "온라인"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "loanword"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k060",
+   "line": 10,
+   "start": 11,
+   "surface": "때문에",
+   "cursor": 0,
+   "expected": {
+    "lemma": "때문",
+    "headword": "때문"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "bound"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k061",
+   "line": 10,
+   "start": 15,
+   "surface": "손님이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "손님",
+    "headword": "손님"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k062",
+   "line": 10,
+   "start": 19,
+   "surface": "많이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "많이",
+    "headword": "많이"
+   },
+   "topik": 1,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k063",
+   "line": 10,
+   "start": 22,
+   "surface": "줄었답니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "줄다",
+    "headword": "줄다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "past",
+    "reported"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k064",
+   "line": 11,
+   "start": 0,
+   "surface": "하지만",
+   "cursor": 0,
+   "expected": {
+    "lemma": "하지만",
+    "headword": "하지만"
+   },
+   "topik": 1,
+   "kinds": [
+    "conjunctive_adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k065",
+   "line": 11,
+   "start": 13,
+   "surface": "지키려고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "지키다",
+    "headword": "지키다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "purposive"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k066",
+   "line": 11,
+   "start": 18,
+   "surface": "끊임없이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "끊임없이",
+    "headword": "끊임없이"
+   },
+   "topik": 5,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k067",
+   "line": 11,
+   "start": 23,
+   "surface": "노력하세요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "노력하다",
+    "headword": "노력하다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "honorific",
+    "polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k068",
+   "line": 12,
+   "start": 0,
+   "surface": "저는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "저",
+    "headword": "저"
+   },
+   "topik": 1,
+   "kinds": [
+    "pronoun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k069",
+   "line": 12,
+   "start": 3,
+   "surface": "친구들에게",
+   "cursor": 0,
+   "expected": {
+    "lemma": "친구",
+    "headword": "친구"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "plural",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k070",
+   "line": 12,
+   "start": 15,
+   "surface": "소개하기로",
+   "cursor": 0,
+   "expected": {
+    "lemma": "소개하다",
+    "headword": "소개하다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "nominal"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k071",
+   "line": 12,
+   "start": 21,
+   "surface": "결심했어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "결심하다",
+    "headword": "결심하다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "past",
+    "polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k072",
+   "line": 13,
+   "start": 0,
+   "surface": "주말에는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "주말",
+    "headword": "주말"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k073",
+   "line": 13,
+   "start": 9,
+   "surface": "함께",
+   "cursor": 0,
+   "expected": {
+    "lemma": "함께",
+    "headword": "함께"
+   },
+   "topik": 2,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k074",
+   "line": 13,
+   "start": 12,
+   "surface": "와서",
+   "cursor": 0,
+   "expected": {
+    "lemma": "오다",
+    "headword": "오다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "contracted",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k075",
+   "line": 13,
+   "start": 18,
+   "surface": "고르고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "고르다",
+    "headword": "고르다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k076",
+   "line": 13,
+   "start": 22,
+   "surface": "이야기를",
+   "cursor": 0,
+   "expected": {
+    "lemma": "이야기",
+    "headword": "이야기"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k077",
+   "line": 13,
+   "start": 27,
+   "surface": "나눴어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "나누다",
+    "headword": "나누다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "contracted",
+    "past"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k078",
+   "line": 14,
+   "start": 4,
+   "surface": "추리",
+   "cursor": 0,
+   "expected": {
+    "lemma": "추리",
+    "headword": "추리"
+   },
+   "topik": 5,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k079",
+   "line": 14,
+   "start": 7,
+   "surface": "소설을,",
+   "cursor": 0,
+   "expected": {
+    "lemma": "소설",
+    "headword": "소설"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun",
+    "punctuation"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k080",
+   "line": 14,
+   "start": 15,
+   "surface": "역사책을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "역사책",
+    "headword": "역사책"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun",
+    "compound"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k081",
+   "line": 14,
+   "start": 20,
+   "surface": "샀습니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "사다",
+    "headword": "사다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "past",
+    "formal_polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k082",
+   "line": 15,
+   "start": 3,
+   "surface": "벽에는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "벽",
+    "headword": "벽"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k083",
+   "line": 15,
+   "start": 12,
+   "surface": "남긴",
+   "cursor": 0,
+   "expected": {
+    "lemma": "남기다",
+    "headword": "남기다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k084",
+   "line": 15,
+   "start": 15,
+   "surface": "메모가",
+   "cursor": 0,
+   "expected": {
+    "lemma": "메모",
+    "headword": "메모"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "loanword"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k085",
+   "line": 15,
+   "start": 19,
+   "surface": "가득",
+   "cursor": 0,
+   "expected": {
+    "lemma": "가득",
+    "headword": "가득"
+   },
+   "topik": 3,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k086",
+   "line": 15,
+   "start": 22,
+   "surface": "붙어",
+   "cursor": 0,
+   "expected": {
+    "lemma": "붙다",
+    "headword": "붙다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k087",
+   "line": 15,
+   "start": 25,
+   "surface": "있었어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "있다",
+    "headword": "있다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "past"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k088",
+   "line": 16,
+   "start": 0,
+   "surface": "누군가는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "누군가",
+    "headword": "누군가"
+   },
+   "topik": 3,
+   "kinds": [
+    "pronoun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k089",
+   "line": 16,
+   "start": 5,
+   "surface": "\"이곳",
+   "cursor": 1,
+   "expected": {
+    "lemma": "이곳",
+    "headword": "이곳"
+   },
+   "topik": 2,
+   "kinds": [
+    "pronoun",
+    "quotation"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k090",
+   "line": 16,
+   "start": 9,
+   "surface": "덕분에",
+   "cursor": 0,
+   "expected": {
+    "lemma": "덕분",
+    "headword": "덕분"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k091",
+   "line": 16,
+   "start": 13,
+   "surface": "꿈을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "꿈",
+    "headword": "꿈"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k092",
+   "line": 16,
+   "start": 16,
+   "surface": "포기하지",
+   "cursor": 0,
+   "expected": {
+    "lemma": "포기하다",
+    "headword": "포기하다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "negation"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k093",
+   "line": 16,
+   "start": 21,
+   "surface": "않았다\"고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "않다",
+    "headword": "않다"
+   },
+   "topik": 2,
+   "kinds": [
+    "auxiliary",
+    "quotation"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k094",
+   "line": 16,
+   "start": 27,
+   "surface": "썼더군요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "쓰다",
+    "headword": "쓰다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "irregular_eu",
+    "retrospective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k095",
+   "line": 17,
+   "start": 2,
+   "surface": "글을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "글",
+    "headword": "글"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k096",
+   "line": 17,
+   "start": 5,
+   "surface": "읽고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "읽다",
+    "headword": "읽다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k097",
+   "line": 17,
+   "start": 8,
+   "surface": "나니",
+   "cursor": 0,
+   "expected": {
+    "lemma": "나다",
+    "headword": "나다"
+   },
+   "topik": 3,
+   "kinds": [
+    "auxiliary"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k098",
+   "line": 17,
+   "start": 11,
+   "surface": "가슴이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "가슴",
+    "headword": "가슴"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k099",
+   "line": 17,
+   "start": 15,
+   "surface": "뭉클해졌습니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "뭉클하다",
+    "headword": "뭉클하다"
+   },
+   "topik": 6,
+   "kinds": [
+    "adjective",
+    "inchoative"
+   ],
+   "style": "italic",
+   "refuse": false
+  },
+  {
+   "id": "k100",
+   "line": 18,
+   "start": 0,
+   "surface": "할머니께",
+   "cursor": 0,
+   "expected": {
+    "lemma": "할머니",
+    "headword": "할머니"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "honorific_particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k101",
+   "line": 18,
+   "start": 5,
+   "surface": "도와",
+   "cursor": 0,
+   "expected": {
+    "lemma": "돕다",
+    "headword": "돕다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "irregular_b"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k102",
+   "line": 18,
+   "start": 8,
+   "surface": "드릴",
+   "cursor": 0,
+   "expected": {
+    "lemma": "드리다",
+    "headword": "드리다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "honorific",
+    "future_modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k103",
+   "line": 18,
+   "start": 11,
+   "surface": "일이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "일",
+    "headword": "일"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "homograph"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k104",
+   "line": 18,
+   "start": 14,
+   "surface": "있으면",
+   "cursor": 0,
+   "expected": {
+    "lemma": "있다",
+    "headword": "있다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "conditional"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k105",
+   "line": 18,
+   "start": 18,
+   "surface": "말씀해",
+   "cursor": 0,
+   "expected": {
+    "lemma": "말씀하다",
+    "headword": "말씀하다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "honorific"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k106",
+   "line": 18,
+   "start": 22,
+   "surface": "달라고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "달다",
+    "headword": "달다"
+   },
+   "topik": 2,
+   "kinds": [
+    "auxiliary",
+    "quotative"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k107",
+   "line": 18,
+   "start": 26,
+   "surface": "여쭈었어요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "여쭈다",
+    "headword": "여쭈다"
+   },
+   "topik": 4,
+   "kinds": [
+    "verb",
+    "humble",
+    "past"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k108",
+   "line": 19,
+   "start": 5,
+   "surface": "웃으시며",
+   "cursor": 0,
+   "expected": {
+    "lemma": "웃다",
+    "headword": "웃다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "honorific",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k109",
+   "line": 19,
+   "start": 10,
+   "surface": "가끔",
+   "cursor": 0,
+   "expected": {
+    "lemma": "가끔",
+    "headword": "가끔"
+   },
+   "topik": 2,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k110",
+   "line": 19,
+   "start": 17,
+   "surface": "안부만",
+   "cursor": 0,
+   "expected": {
+    "lemma": "안부",
+    "headword": "안부"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k111",
+   "line": 19,
+   "start": 21,
+   "surface": "전해",
+   "cursor": 0,
+   "expected": {
+    "lemma": "전하다",
+    "headword": "전하다"
+   },
+   "topik": 3,
+   "kinds": [
+    "verb",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k112",
+   "line": 20,
+   "start": 0,
+   "surface": "봄이",
+   "cursor": 0,
+   "expected": {
+    "lemma": "봄",
+    "headword": "봄"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k113",
+   "line": 20,
+   "start": 3,
+   "surface": "오면",
+   "cursor": 0,
+   "expected": {
+    "lemma": "오다",
+    "headword": "오다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "conditional"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k114",
+   "line": 20,
+   "start": 9,
+   "surface": "앞에",
+   "cursor": 0,
+   "expected": {
+    "lemma": "앞",
+    "headword": "앞"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "particle"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k115",
+   "line": 20,
+   "start": 15,
+   "surface": "화분을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "화분",
+    "headword": "화분"
+   },
+   "topik": 4,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k116",
+   "line": 20,
+   "start": 19,
+   "surface": "놓아",
+   "cursor": 0,
+   "expected": {
+    "lemma": "놓다",
+    "headword": "놓다"
+   },
+   "topik": 2,
+   "kinds": [
+    "verb",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k117",
+   "line": 20,
+   "start": 25,
+   "surface": "생각입니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "생각",
+    "headword": "생각"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun",
+    "copula"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k118",
+   "line": 21,
+   "start": 0,
+   "surface": "경제가",
+   "cursor": 0,
+   "expected": {
+    "lemma": "경제",
+    "headword": "경제"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k119",
+   "line": 21,
+   "start": 4,
+   "surface": "어려워도",
+   "cursor": 0,
+   "expected": {
+    "lemma": "어렵다",
+    "headword": "어렵다"
+   },
+   "topik": 2,
+   "kinds": [
+    "adjective",
+    "irregular_b",
+    "concessive"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k120",
+   "line": 21,
+   "start": 9,
+   "surface": "문화",
+   "cursor": 0,
+   "expected": {
+    "lemma": "문화",
+    "headword": "문화"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k121",
+   "line": 21,
+   "start": 12,
+   "surface": "공간을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "공간",
+    "headword": "공간"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k122",
+   "line": 21,
+   "start": 16,
+   "surface": "보존하는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "보존하다",
+    "headword": "보존하다"
+   },
+   "topik": 5,
+   "kinds": [
+    "verb",
+    "modifier"
+   ],
+   "style": "serif",
+   "refuse": false
+  },
+  {
+   "id": "k123",
+   "line": 21,
+   "start": 24,
+   "surface": "중요하다고",
+   "cursor": 0,
+   "expected": {
+    "lemma": "중요하다",
+    "headword": "중요하다"
+   },
+   "topik": 2,
+   "kinds": [
+    "adjective",
+    "quotative"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k124",
+   "line": 21,
+   "start": 30,
+   "surface": "생각해요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "생각하다",
+    "headword": "생각하다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k125",
+   "line": 22,
+   "start": 0,
+   "surface": "지역",
+   "cursor": 0,
+   "expected": {
+    "lemma": "지역",
+    "headword": "지역"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k126",
+   "line": 22,
+   "start": 3,
+   "surface": "사회가",
+   "cursor": 0,
+   "expected": {
+    "lemma": "사회",
+    "headword": "사회"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k127",
+   "line": 22,
+   "start": 7,
+   "surface": "관심을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "관심",
+    "headword": "관심"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k128",
+   "line": 22,
+   "start": 11,
+   "surface": "기울인다면",
+   "cursor": 0,
+   "expected": {
+    "lemma": "기울이다",
+    "headword": "기울이다"
+   },
+   "topik": 5,
+   "kinds": [
+    "verb",
+    "conditional"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k129",
+   "line": 22,
+   "start": 24,
+   "surface": "충분히",
+   "cursor": 0,
+   "expected": {
+    "lemma": "충분히",
+    "headword": "충분히"
+   },
+   "topik": 3,
+   "kinds": [
+    "adverb"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k130",
+   "line": 22,
+   "start": 28,
+   "surface": "살아남을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "살아남다",
+    "headword": "살아남다"
+   },
+   "topik": 4,
+   "kinds": [
+    "verb",
+    "compound",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k131",
+   "line": 22,
+   "start": 33,
+   "surface": "수",
+   "cursor": 0,
+   "expected": {
+    "lemma": "수",
+    "headword": "수"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "bound"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k132",
+   "line": 23,
+   "start": 6,
+   "surface": "단순한",
+   "cursor": 0,
+   "expected": {
+    "lemma": "단순하다",
+    "headword": "단순하다"
+   },
+   "topik": 4,
+   "kinds": [
+    "adjective",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k133",
+   "line": 23,
+   "start": 14,
+   "surface": "아니라",
+   "cursor": 0,
+   "expected": {
+    "lemma": "아니다",
+    "headword": "아니다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "connective"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k134",
+   "line": 23,
+   "start": 22,
+   "surface": "기억을",
+   "cursor": 0,
+   "expected": {
+    "lemma": "기억",
+    "headword": "기억"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k135",
+   "line": 23,
+   "start": 26,
+   "surface": "간직한",
+   "cursor": 0,
+   "expected": {
+    "lemma": "간직하다",
+    "headword": "간직하다"
+   },
+   "topik": 5,
+   "kinds": [
+    "verb",
+    "modifier"
+   ],
+   "style": "serif",
+   "refuse": false
+  },
+  {
+   "id": "k136",
+   "line": 23,
+   "start": 30,
+   "surface": "곳입니다.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "곳",
+    "headword": "곳"
+   },
+   "topik": 2,
+   "kinds": [
+    "noun",
+    "copula"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k137",
+   "line": 24,
+   "start": 9,
+   "surface": "비밀번호는",
+   "cursor": 0,
+   "expected": {
+    "lemma": "비밀번호",
+    "headword": "비밀번호"
+   },
+   "topik": 3,
+   "kinds": [
+    "noun",
+    "compound"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k138",
+   "line": 24,
+   "start": 15,
+   "surface": "카운터",
+   "cursor": 0,
+   "expected": {
+    "lemma": "카운터",
+    "headword": "카운터"
+   },
+   "topik": 5,
+   "kinds": [
+    "noun",
+    "loanword"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k139",
+   "line": 24,
+   "start": 27,
+   "surface": "적혀",
+   "cursor": 0,
+   "expected": {
+    "lemma": "적히다",
+    "headword": "적히다"
+   },
+   "topik": 4,
+   "kinds": [
+    "verb",
+    "passive"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k140",
+   "line": 25,
+   "start": 37,
+   "surface": "같은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "같다",
+    "headword": "같다"
+   },
+   "topik": 1,
+   "kinds": [
+    "adjective",
+    "modifier"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k141",
+   "line": 25,
+   "start": 43,
+   "surface": "모르신대요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "모르다",
+    "headword": "모르다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "honorific",
+    "hearsay"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k142",
+   "line": 26,
+   "start": 5,
+   "surface": "이름은",
+   "cursor": 0,
+   "expected": {
+    "lemma": "이름",
+    "headword": "이름"
+   },
+   "topik": 1,
+   "kinds": [
+    "noun"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k143",
+   "line": 26,
+   "start": 22,
+   "surface": "될지도",
+   "cursor": 0,
+   "expected": {
+    "lemma": "되다",
+    "headword": "되다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "conjecture"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "k144",
+   "line": 26,
+   "start": 26,
+   "surface": "몰라요.",
+   "cursor": 0,
+   "expected": {
+    "lemma": "모르다",
+    "headword": "모르다"
+   },
+   "topik": 1,
+   "kinds": [
+    "verb",
+    "irregular_reu",
+    "polite"
+   ],
+   "style": "regular",
+   "refuse": false
+  },
+  {
+   "id": "l001",
+   "line": 24,
+   "start": 3,
+   "surface": "Wi-Fi",
+   "cursor": 0,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l002",
+   "line": 24,
+   "start": 21,
+   "surface": "memo에",
+   "cursor": 1,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l003",
+   "line": 25,
+   "start": 5,
+   "surface": "Claude",
+   "cursor": 0,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l004",
+   "line": 25,
+   "start": 12,
+   "surface": "projects",
+   "cursor": 3,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l005",
+   "line": 25,
+   "start": 21,
+   "surface": "vs",
+   "cursor": 0,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l006",
+   "line": 25,
+   "start": 24,
+   "surface": "CLI",
+   "cursor": 1,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l007",
+   "line": 25,
+   "start": 28,
+   "surface": "workflow",
+   "cursor": 4,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l008",
+   "line": 26,
+   "start": 9,
+   "surface": "Hanly",
+   "cursor": 1,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  },
+  {
+   "id": "l009",
+   "line": 26,
+   "start": 15,
+   "surface": "Books가",
+   "cursor": 0,
+   "expected": null,
+   "topik": null,
+   "kinds": [
+    "latin"
+   ],
+   "style": "regular",
+   "refuse": true
+  }
+ ]
+}
