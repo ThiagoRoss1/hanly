@@ -26,7 +26,9 @@ class ApplicationReopenFilter:
 
     ``should_reopen`` decides whether a reactivation means anything. It exists
     so a Control Center the user deliberately closed is not resurrected by an
-    ordinary Command-Tab back to Hanly.
+    ordinary Command-Tab back to Hanly. ``clicked_own_window`` tells a click on
+    one of the shell's own windows -- the popup's Expand or Close -- apart from
+    the Dock: both activate the application, only one asks for the window.
     """
 
     def __init__(
@@ -34,6 +36,7 @@ class ApplicationReopenFilter:
         on_reopen: Callable[[], None],
         should_reopen: Callable[[], bool],
         *,
+        clicked_own_window: Callable[[], bool] | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         if not callable(on_reopen) or not callable(should_reopen):
@@ -41,6 +44,7 @@ class ApplicationReopenFilter:
 
         self._on_reopen = on_reopen
         self._should_reopen = should_reopen
+        self._clicked_own_window = clicked_own_window
         self._clock = clock or _monotonic
         self._last_reopen = float("-inf")
 
@@ -49,6 +53,8 @@ class ApplicationReopenFilter:
 
         now = self._clock()
         if now - self._last_reopen < _REACTIVATION_DEBOUNCE_SECONDS:
+            return False
+        if self._clicked_own_window is not None and self._clicked_own_window():
             return False
         if not self._should_reopen():
             return False
@@ -82,7 +88,9 @@ def install_reopen_filter(
 
     from PyQt6.QtCore import Qt
 
-    reopen = ApplicationReopenFilter(on_reopen, should_reopen)
+    reopen = ApplicationReopenFilter(
+        on_reopen, should_reopen, clicked_own_window=_pointer_on_own_window
+    )
 
     def _state_changed(state: Qt.ApplicationState) -> None:
         if state is Qt.ApplicationState.ApplicationActive:
@@ -90,6 +98,23 @@ def install_reopen_filter(
 
     connect(_state_changed)
     return reopen
+
+
+def _pointer_on_own_window() -> bool:
+    """Whether the pointer rests on a visible window of this process.
+
+    A Dock click leaves the pointer on the Dock; a click that activated the
+    shell through its popup or selection dialog leaves it on that window.
+    """
+
+    from PyQt6.QtGui import QCursor
+    from PyQt6.QtWidgets import QApplication
+
+    pointer = QCursor.pos()
+    return any(
+        window.isVisible() and window.frameGeometry().contains(pointer)
+        for window in QApplication.topLevelWidgets()
+    )
 
 
 def _monotonic() -> float:

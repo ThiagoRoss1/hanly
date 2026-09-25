@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from threading import RLock, Thread, Timer
 from typing import Any, Protocol, TypeAlias, cast
 
-from hanly import HanlyError, LookupResult, LookupStatus, Point
+from hanly import BoundingBox, HanlyError, LookupResult, LookupStatus, Point
 
 from .capture import CaptureResult, ConfiguredCaptureService, ScreenRect
 from .config import (
@@ -946,7 +946,7 @@ class ManualLookupRuntime:
         hover = self._hover_runtime
         if hover is None:
             return
-        word = self._word_rect(result, lookup_request_id)
+        word = self.word_rect(result, lookup_request_id)
         if word is None or lookup_request_id is None:
             emit_trace(
                 self._trace_sink,
@@ -1017,13 +1017,16 @@ class ManualLookupRuntime:
             return
         hover.retain(RetainedTarget(retained.lookup_request_id, retained.word, popup))
 
-    def _word_rect(
+    def word_rect(
         self, result: LookupResult, lookup_request_id: int | None
     ) -> ScreenRect | None:
         """Place the resolved word on screen, using its own request's capture."""
 
         if result.status is not LookupStatus.SUCCESS or result.context is None:
             return None
+        read_directly = self._origins.word(lookup_request_id)
+        if read_directly is not None:
+            return read_directly
         bounds = result.context.word_region
         region = self._origins.origin(lookup_request_id)
         if bounds is None or region is None:
@@ -1312,7 +1315,16 @@ def create_qt_manual_lookup(
             _trace_suppressed(trace_sink, result, controller.current_request_id)
             return None
         lookup_request_id = controller.current_request_id
-        position = popup_trigger.open(result, lookup_request_id=lookup_request_id)
+        word = (
+            manual_holder[0].word_rect(result, lookup_request_id)
+            if manual_holder
+            else None
+        )
+        position = popup_trigger.open(
+            result,
+            lookup_request_id=lookup_request_id,
+            anchor=_bounding_box(word),
+        )
         if manual_holder:
             manual_holder[0].note_presented(
                 result, lookup_request_id, _popup_rect(position, view.popup_size)
@@ -1560,6 +1572,12 @@ def _trace_suppressed(
         lookup_request_id=lookup_request_id,
         result_status=result.status.value if isinstance(result, LookupResult) else None,
     )
+
+
+def _bounding_box(rect: ScreenRect | None) -> BoundingBox | None:
+    if rect is None:
+        return None
+    return BoundingBox(rect.left, rect.top, rect.left + rect.width, rect.top + rect.height)
 
 
 def _no_retention_reason(

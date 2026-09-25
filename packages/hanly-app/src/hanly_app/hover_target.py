@@ -159,12 +159,23 @@ class CaptureOrigins:
         self._limit = limit
         self._lock = RLock()
         self._origins: dict[int, ScreenRect] = {}
+        self._words: dict[int, ScreenRect] = {}
 
     def remember(self, request_id: int, region: ScreenRect) -> None:
         with self._lock:
             self._origins[request_id] = region
-            while len(self._origins) > self._limit:
-                self._origins.pop(next(iter(self._origins)))
+            self._trim()
+
+    def remember_word(self, request_id: int, word: ScreenRect) -> None:
+        """Record a word read without pixels, whose own rectangle is known.
+
+        Direct text answers with the word's screen bounds rather than a capture
+        region, and its result carries no ROI-local geometry to map.
+        """
+
+        with self._lock:
+            self._words[request_id] = word
+            self._trim()
 
     def origin(self, request_id: int | None) -> ScreenRect | None:
         if request_id is None:
@@ -172,9 +183,21 @@ class CaptureOrigins:
         with self._lock:
             return self._origins.get(request_id)
 
+    def word(self, request_id: int | None) -> ScreenRect | None:
+        if request_id is None:
+            return None
+        with self._lock:
+            return self._words.get(request_id)
+
     def clear(self) -> None:
         with self._lock:
             self._origins.clear()
+            self._words.clear()
+
+    def _trim(self) -> None:
+        for recent in (self._origins, self._words):
+            while len(recent) > self._limit:
+                recent.pop(next(iter(recent)))
 
 
 __all__ = [

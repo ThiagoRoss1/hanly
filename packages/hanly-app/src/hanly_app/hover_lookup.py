@@ -965,7 +965,7 @@ class HoverLookupRuntime:
         if acquired.bounds is not None:
             # The popup protects the word the answer came from, and direct text
             # reports that rectangle itself instead of a captured region.
-            self._origins.remember(
+            self._origins.remember_word(
                 lookup_request.request_id,
                 ScreenRect(
                     left=acquired.bounds.left,

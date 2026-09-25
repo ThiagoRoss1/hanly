@@ -582,3 +582,25 @@ def test_repeated_activations_are_debounced() -> None:
     assert reopen.application_activated() is True
 
     assert opened == ["show", "show"]
+
+
+def test_a_click_on_the_popup_does_not_reopen_the_control_center() -> None:
+    """Expand or Close on the popup activates the shell, but asks for nothing."""
+
+    from hanly_app.app_reopen_darwin import ApplicationReopenFilter
+
+    opened: list[str] = []
+    pointer = {"on_own_window": True}
+    clock = {"now": 0.0}
+    reopen = ApplicationReopenFilter(
+        lambda: opened.append("show"),
+        lambda: True,
+        clicked_own_window=lambda: pointer["on_own_window"],
+        clock=lambda: clock["now"],
+    )
+
+    assert reopen.application_activated() is False
+    pointer["on_own_window"] = False
+    clock["now"] += 5.0
+    assert reopen.application_activated() is True, "the Dock still reopens it"
+    assert opened == ["show"]

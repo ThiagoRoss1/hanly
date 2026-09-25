@@ -206,7 +206,7 @@ def test_popup_show_update_hide_and_close_lifecycle() -> None:
     screen = ScreenGeometry(0, 0, 500, 500)
 
     first_position = controller.open(_success(), Point(10, 10), screen)
-    second_result = _success()
+    second_result = _non_success(LookupStatus.NOT_FOUND)
     controller.open(second_result, Point(20, 20), screen)
     controller.hide()
     controller.close()
@@ -541,3 +541,48 @@ def test_a_component_without_a_gloss_is_reported_rather_than_invented() -> None:
     content = format_lookup_result(result)
     assert content.components[1].gloss is None
     assert content.components[1].grammatical is False
+
+
+def test_the_same_answer_again_is_not_rebuilt() -> None:
+    """Moving inside one word must not re-render the card describing it."""
+
+    view = _ResizableView()
+    controller = PopupController(view, popup_size=PopupSize(340, 220))
+    screen = ScreenGeometry(0, 0, 1600, 1000)
+    word = BoundingBox(300, 200, 360, 224)
+
+    first = controller.open(_success(), Point(310, 210), screen, anchor=word)
+    again = controller.open(_success(), Point(350, 212), screen, anchor=word)
+
+    assert again == first
+    assert [event[0] for event in view.events] == ["show"]
+
+
+def test_a_word_anchored_popup_sits_below_it_and_keeps_its_side_on_resize() -> None:
+    view = _ResizableView()
+    controller = PopupController(view, popup_size=PopupSize(340, 220))
+    screen = ScreenGeometry(0, 0, 1600, 1000)
+    word = BoundingBox(300, 200, 360, 224)
+
+    position = controller.open(_success(), Point(320, 212), screen, anchor=word)
+    assert position == PopupPosition(300, 230)
+
+    assert callable(view.resize_handler)
+    view.resize_handler(PopupSize(386, 600))
+    assert controller.position == PopupPosition(300, 230)
+
+    view.resize_handler(PopupSize(386, 800))
+    # Taller than the room below: clamped to the screen, never flipped above
+    # the word, so the pointer on the Expand control stays on the card.
+    assert controller.position == PopupPosition(300, 200)
+
+
+def test_a_word_near_the_bottom_puts_the_popup_above_it() -> None:
+    controller = PopupController(_RecordingView([]), popup_size=PopupSize(340, 220))
+    screen = ScreenGeometry(0, 0, 1600, 1000)
+
+    position = controller.position_for(
+        Point(0, 0), screen, anchor=BoundingBox(1500, 900, 1560, 924)
+    )
+
+    assert position == PopupPosition(1260, 674)

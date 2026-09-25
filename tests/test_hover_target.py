@@ -483,6 +483,34 @@ def test_a_presented_result_retains_the_word_its_own_capture_found(
     manual.shutdown()
 
 
+def test_a_word_read_directly_is_retained_by_its_own_bounds() -> None:
+    """A selection lookup carries no ROI geometry; the control's rectangle is it.
+
+    Without this every pixel of movement inside a directly read word started a
+    new lookup and rebuilt the popup, which is what Windows showed.
+    """
+
+    from tests.test_hover_lookup import _manual_composition
+
+    manual, _dispatcher, _listeners, _capture, _results = _manual_composition()
+    _origins_of(manual).remember_word(7, ScreenRect(300, 200, 60, 24))
+    selection_result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(DictionaryEntry(headword="초대", definitions=("invitation",)),),
+        context=LookupContext(text="초대받았어요", lemma="초대"),
+    )
+
+    manual.note_presented(selection_result, 7, ScreenRect(300, 230, 340, 200))
+
+    hover = manual.hover_runtime
+    assert hover is not None
+    retained = hover.retained_target
+    assert retained is not None
+    assert retained.word == ScreenRect(300, 200, 60, 24)
+    assert retained.protects(Point(303, 210)) and retained.protects(Point(355, 220))
+    manual.shutdown()
+
+
 def test_a_result_without_geometry_retains_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.test_hover_lookup import _manual_composition
 

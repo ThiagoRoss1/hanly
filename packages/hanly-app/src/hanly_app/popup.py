@@ -8,6 +8,7 @@ from math import floor
 from typing import Protocol
 
 from hanly import (
+    BoundingBox,
     DictionaryEntry,
     DictionarySense,
     LookupContext,
@@ -342,6 +343,10 @@ def format_lookup_result(
 
 GeometryChanged = Callable[[PopupPosition, PopupSize], None]
 
+#: Space between a retained word and its popup. Small, so the crossing from the
+#: word to the popup is short and nothing else fits between them.
+_WORD_GAP_PIXELS = 6
+
 
 class PopupController:
     """Own measured popup placement and lifecycle for completed results."""
@@ -365,6 +370,8 @@ class PopupController:
         self._position: PopupPosition | None = None
         self._cursor: Point | None = None
         self._screen: ScreenGeometry | None = None
+        self._anchor: BoundingBox | None = None
+        self._above: bool | None = None
 
         self._on_dismissed: Callable[[], None] | None = None
 
@@ -413,41 +420,83 @@ class PopupController:
         cursor: Point,
         screen: ScreenGeometry,
         size: PopupSize | None = None,
+        *,
+        anchor: BoundingBox | None = None,
     ) -> PopupPosition:
+        """Where a popup of ``size`` goes for this cursor or retained word."""
+
+        return self._place(cursor, screen, size or self._popup_size, anchor, None)[0]
+
+    def _place(
+        self,
+        cursor: Point,
+        screen: ScreenGeometry,
+        size: PopupSize,
+        anchor: BoundingBox | None,
+        above: bool | None,
+    ) -> tuple[PopupPosition, bool]:
+        """Place the popup, keeping a side already chosen when ``above`` is set.
+
+        Anchored to a word it sits just below it, aligned with its left edge,
+        and goes above only when the screen has no room below. Without a word
+        the cursor is the anchor, as before. A side already chosen is kept, so a
+        resize never throws the popup to the other side of the word -- the
+        pointer on its Expand control would be left over empty screen.
+        """
+
         if not isinstance(cursor, Point):
             raise TypeError("cursor must be a Point")
         if not isinstance(screen, ScreenGeometry):
             raise TypeError("screen must be a ScreenGeometry")
 
-        measured = size or self._popup_size
-        width, height = measured.width, measured.height
-        x = floor(cursor.x + self._offset)
-        y = floor(cursor.y + self._offset)
-        if x + width > screen.right:
-            x = floor(cursor.x - self._offset - width)
-        if y + height > screen.bottom:
-            y = floor(cursor.y - self._offset - height)
+        width, height = size.width, size.height
+        if anchor is None:
+            gap = self._offset
+            x = floor(cursor.x + gap)
+            if x + width > screen.right:
+                x = floor(cursor.x - gap - width)
+            top_edge = bottom_edge = cursor.y
+        else:
+            gap = _WORD_GAP_PIXELS
+            x = floor(anchor.left)
+            top_edge, bottom_edge = anchor.top, anchor.bottom
+
+        below_y = floor(bottom_edge + gap)
+        if above is None:
+            above = below_y + height > screen.bottom
+        y = floor(top_edge - gap - height) if above else below_y
         x = min(max(x, screen.left), max(screen.left, screen.right - width))
         y = min(max(y, screen.top), max(screen.top, screen.bottom - height))
-        return PopupPosition(x, y)
+        return PopupPosition(x, y), above
 
     def open(
         self,
         result: LookupResult,
         cursor: Point,
         screen: ScreenGeometry,
+        *,
+        anchor: BoundingBox | None = None,
     ) -> PopupPosition:
         """Measure, place, and show every normalized lookup outcome."""
 
         if not isinstance(result, LookupResult):
             raise TypeError("result must be a LookupResult")
-        self._cursor, self._screen = cursor, screen
+        if self._visible and self._position is not None and result == self._result:
+            # The same answer again: its content is already on screen and is
+            # not rebuilt. It moves only if what it is anchored to moved.
+            if anchor == self._anchor and (anchor is not None or cursor == self._cursor):
+                return self._position
+            return self._move(cursor, screen, anchor)
+
+        self._cursor, self._screen, self._anchor = cursor, screen, anchor
         prepare = getattr(self._view, "prepare_result", None)
         if callable(prepare):
             measured = prepare(result)
             if isinstance(measured, PopupSize):
                 self._popup_size = measured
-        position = self.position_for(cursor, screen)
+        position, self._above = self._place(
+            cursor, screen, self._popup_size, anchor, None
+        )
 
         if self._visible:
             self._view.update_result(result, position)
@@ -464,8 +513,24 @@ class PopupController:
         result: LookupResult,
         cursor: Point,
         screen: ScreenGeometry,
+        *,
+        anchor: BoundingBox | None = None,
     ) -> PopupPosition:
-        return self.open(result, cursor, screen)
+        return self.open(result, cursor, screen, anchor=anchor)
+
+    def _move(
+        self, cursor: Point, screen: ScreenGeometry, anchor: BoundingBox | None
+    ) -> PopupPosition:
+        self._cursor, self._screen, self._anchor = cursor, screen, anchor
+        position, self._above = self._place(
+            cursor, screen, self._popup_size, anchor, None
+        )
+        reposition = getattr(self._view, "reposition", None)
+        if callable(reposition):
+            reposition(position)
+        self._position = position
+        self._notify_geometry()
+        return position
 
     def _handle_resize(self, size: PopupSize) -> None:
         if not isinstance(size, PopupSize):
@@ -473,7 +538,9 @@ class PopupController:
         self._popup_size = size
         if not self._visible or self._cursor is None or self._screen is None:
             return
-        position = self.position_for(self._cursor, self._screen, size)
+        position, self._above = self._place(
+            self._cursor, self._screen, size, self._anchor, self._above
+        )
         reposition = getattr(self._view, "reposition", None)
         if callable(reposition):
             reposition(position)
@@ -496,6 +563,8 @@ class PopupController:
         self._position = None
         self._cursor = None
         self._screen = None
+        self._anchor = None
+        self._above = None
 
     def close(self) -> None:
         self.hide()

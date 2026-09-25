@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, cast
 
-from hanly import DictionarySense, LookupResult, LookupStatus, Point
+from hanly import BoundingBox, DictionarySense, LookupResult, LookupStatus, Point
 from PyQt6.QtCore import QObject, QPoint, QPropertyAnimation, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QCursor,
@@ -707,9 +707,15 @@ class QtPopupTrigger:
         result: LookupResult,
         *,
         lookup_request_id: int | None = None,
+        anchor: BoundingBox | None = None,
     ) -> PopupPosition:
         cursor = QCursor.pos()
-        screen = QApplication.screenAt(cursor) or QApplication.primaryScreen()
+        # The popup belongs on the screen of the word it describes, which the
+        # cursor may already have left.
+        where = (
+            QPoint(int(anchor.left), int(anchor.top)) if anchor is not None else cursor
+        )
+        screen = QApplication.screenAt(where) or QApplication.primaryScreen()
         if screen is None:
             raise RuntimeError("no Qt screen is available for popup placement")
         geometry = screen.availableGeometry()
@@ -718,6 +724,7 @@ class QtPopupTrigger:
                 result,
                 Point(float(cursor.x()), float(cursor.y())),
                 ScreenGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height()),
+                anchor=anchor,
             )
         except BaseException as error:
             emit_trace(
