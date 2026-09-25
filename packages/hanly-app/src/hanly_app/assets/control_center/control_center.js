@@ -107,6 +107,12 @@
     on_demand: "Nothing is loaded until a lookup needs it."
   };
 
+  const OCR_LABELS = {
+    auto: "Automatic (recommended)",
+    vision: "Apple Vision",
+    easyocr: "EasyOCR"
+  };
+
   const OCR_HELP = {
     auto: "Picks the best recognizer this machine has.",
     vision: "Built into macOS. Reads Korean verb endings most accurately.",
@@ -206,6 +212,179 @@
     if (value === null || value === undefined) node.removeAttribute(name);
     else node.setAttribute(name, String(value));
     return node;
+  }
+
+  // ---- combobox ----------------------------------------------------------
+
+  // One accessible choice list for every <select>. The native select stays in
+  // the document as the value the rest of the page reads, writes, and listens
+  // to; this only replaces what the user sees and touches. Setting the value
+  // or rebuilding the options through the select keeps the two in step.
+  function combobox(select) {
+    if (!select || typeof select.insertAdjacentElement !== "function") return;
+    if (select.dataset.combobox) return;
+    select.dataset.combobox = "1";
+    comboCount += 1;
+    const listId = "combo-list-" + comboCount;
+
+    const root = el("div", "combo");
+    if (select.id) root.id = select.id + "-combo";
+    const button = el("button", "combo-button");
+    button.type = "button";
+    attr(button, "role", "combobox");
+    attr(button, "aria-haspopup", "listbox");
+    attr(button, "aria-expanded", "false");
+    attr(button, "aria-controls", listId);
+    ["aria-labelledby", "aria-label"].forEach(function (name) {
+      const value = select.getAttribute(name);
+      if (value) attr(button, name, value);
+    });
+    const label = el("span", "combo-label");
+    button.appendChild(label);
+    button.insertAdjacentHTML("beforeend",
+      '<svg class="combo-chevron" viewBox="0 0 10 10" aria-hidden="true">' +
+      '<path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+    const list = el("ul", "combo-list");
+    list.id = listId;
+    attr(list, "role", "listbox");
+    attr(list, "tabindex", "-1");
+
+    select.insertAdjacentElement("beforebegin", root);
+    root.appendChild(button);
+    root.appendChild(list);
+    root.appendChild(select);
+    select.classList.add("combo-native");
+    attr(select, "tabindex", "-1");
+    attr(select, "aria-hidden", "true");
+
+    let active = -1;
+
+    function options() { return Array.prototype.slice.call(select.options); }
+    function isOpen() { return root.hasAttribute("data-open"); }
+
+    function sync() {
+      const chosen = select.options[select.selectedIndex];
+      label.textContent = chosen ? chosen.textContent : "";
+      button.disabled = !!select.disabled;
+      clear(list);
+      options().forEach(function (option, index) {
+        const item = el("li", "combo-option", option.textContent);
+        item.id = listId + "-" + index;
+        attr(item, "role", "option");
+        attr(item, "aria-selected", index === select.selectedIndex ? "true" : "false");
+        if (option.disabled) attr(item, "aria-disabled", "true");
+        if (index === active) item.setAttribute("data-active", "");
+        item.addEventListener("mousemove", function () { highlight(index); });
+        item.addEventListener("click", function () { choose(index); });
+        list.appendChild(item);
+      });
+    }
+
+    function highlight(index) {
+      active = index;
+      Array.prototype.forEach.call(list.children, function (item, position) {
+        if (position === index) item.setAttribute("data-active", "");
+        else item.removeAttribute("data-active");
+      });
+      const current = list.children[index];
+      attr(button, "aria-activedescendant", current ? current.id : null);
+      if (current && typeof current.scrollIntoView === "function") {
+        current.scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function step(from, delta) {
+      const all = options();
+      for (let index = from + delta; index >= 0 && index < all.length; index += delta) {
+        if (!all[index].disabled) return index;
+      }
+      return from;
+    }
+
+    function open() {
+      if (select.disabled || isOpen()) return;
+      closeOtherCombos(root);
+      const rect = root.getBoundingClientRect();
+      const below = window.innerHeight - rect.bottom;
+      attr(root, "data-placement", below < 180 && rect.top > below ? "top" : null);
+      root.setAttribute("data-open", "");
+      attr(button, "aria-expanded", "true");
+      highlight(select.selectedIndex >= 0 ? select.selectedIndex : step(-1, 1));
+    }
+
+    function close() {
+      if (!isOpen()) return;
+      root.removeAttribute("data-open");
+      attr(button, "aria-expanded", "false");
+      attr(button, "aria-activedescendant", null);
+      active = -1;
+    }
+
+    function choose(index) {
+      const option = select.options[index];
+      if (!option || option.disabled) return;
+      close();
+      button.focus();
+      if (select.selectedIndex === index) return;
+      select.selectedIndex = index;
+      sync();
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    button.addEventListener("click", function () { if (isOpen()) close(); else open(); });
+    button.addEventListener("keydown", function (event) {
+      const key = event.key;
+      if (!isOpen()) {
+        if (key === "ArrowDown" || key === "ArrowUp" || key === "Enter" || key === " ") {
+          event.preventDefault();
+          open();
+        }
+        return;
+      }
+      if (key === "ArrowDown") { event.preventDefault(); highlight(step(active, 1)); }
+      else if (key === "ArrowUp") { event.preventDefault(); highlight(step(active, -1)); }
+      else if (key === "Home") { event.preventDefault(); highlight(step(-1, 1)); }
+      else if (key === "End") { event.preventDefault(); highlight(step(select.options.length, -1)); }
+      else if (key === "Enter" || key === " ") { event.preventDefault(); choose(active); }
+      else if (key === "Escape") { event.preventDefault(); close(); }
+      else if (key === "Tab") { close(); }
+    });
+    root.combobox = { close: close };
+
+    // The page writes the value and rebuilds the options through the select;
+    // both have to reach what is shown.
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+    Object.defineProperty(select, "value", {
+      configurable: true,
+      get: function () { return descriptor.get.call(select); },
+      set: function (value) { descriptor.set.call(select, value); sync(); }
+    });
+    new MutationObserver(sync).observe(select, {
+      childList: true, subtree: true, characterData: true, attributes: true,
+      attributeFilter: ["disabled"]
+    });
+    sync();
+  }
+
+  let comboCount = 0;
+
+  function closeOtherCombos(keep) {
+    Array.prototype.forEach.call(document.querySelectorAll(".combo[data-open]"), function (node) {
+      if (node !== keep && node.combobox) node.combobox.close();
+    });
+  }
+
+  function enhanceSelects() {
+    if (typeof document.querySelectorAll !== "function") return;
+    Array.prototype.forEach.call(document.querySelectorAll("select.select"), combobox);
+    // Outside the open list, a press closes it without choosing anything.
+    document.addEventListener("pointerdown", function (event) {
+      const inside = closest(event.target, function (node) {
+        return node.classList && node.classList.contains("combo");
+      });
+      closeOtherCombos(inside);
+    });
   }
 
   function formatStatus(value) {
@@ -416,9 +595,31 @@
     if (preload) preload.value = config().lookup_preload || "when_capture_starts";
     setText("preload-help", PRELOAD_HELP[config().lookup_preload] || "");
 
-    const backend = byId("ocr-backend");
-    if (backend) backend.value = config().ocr_backend || "auto";
-    setText("ocr-help", OCR_HELP[config().ocr_backend] || "");
+    renderRecognizers();
+  }
+
+  // Only what this machine can run is offered: Apple Vision exists on macOS
+  // alone, and Automatic names the recognizer it really resolves to.
+  function renderRecognizers() {
+    const select = byId("ocr-backend");
+    const chosen = config().ocr_backend || "auto";
+    const offered = runtime().ocr_backends || ["auto", "easyocr"];
+    if (select) {
+      const current = Array.prototype.map.call(select.options || [], function (o) { return o.value; });
+      if (current.join() !== offered.join()) {
+        clear(select);
+        offered.forEach(function (id) {
+          const option = el("option", null, OCR_LABELS[id] || id);
+          option.value = id;
+          select.appendChild(option);
+        });
+      }
+      select.value = offered.indexOf(chosen) >= 0 ? chosen : "auto";
+    }
+    const resolved = runtime().ocr_provider;
+    setText("ocr-help", chosen === "auto" && resolved
+      ? "Uses " + resolved + " on this machine."
+      : OCR_HELP[chosen] || "");
   }
 
   function renderTargets(targets, selected) {
@@ -1556,6 +1757,7 @@
   };
 
   watchSystemTheme();
+  enhanceSelects();
   renderState(fallbackState);
 
   // The ready event may already have fired before this script ran.

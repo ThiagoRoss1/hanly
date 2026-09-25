@@ -78,6 +78,24 @@
   --mat-inset: inset 0 1px 2px rgba(20, 14, 18, .05);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .04), 0 4px 12px rgba(0, 0, 0, .025);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, .09);
+
+  /* Semantic roles over the palette above. Components use these, so a palette
+     change is made once, here, rather than in every rule that shares a role.
+     They resolve per element, so the dark theme's palette carries through. */
+  --exit: var(--accent);
+  --exit-hover: var(--accent-hover);
+  --exit-pressed: var(--accent-pressed);
+  --exit-text: var(--text-on-accent);
+  --exit-quiet-text: var(--accent-strong);
+  --exit-quiet-wash: var(--accent-wash);
+  --menu-bg: var(--surface-raised);
+  --menu-border: var(--border);
+  --menu-shadow: var(--shadow-md);
+  --menu-item-hover: var(--surface-hover);
+  --menu-item-selected: var(--accent-wash);
+  --menu-item-selected-text: var(--accent-strong);
+  --menu-motion: 140ms;
+  --menu-offset: 4px;
 }
 
 [data-mode="dark"] {
@@ -483,7 +501,12 @@ button, input, select { font-family: inherit; }
 .btn-sm { height: var(--control-height-sm); padding: 0 13px; font-size: 12px; border-radius: var(--radius-sm); }
 .btn-quiet { background: transparent; color: var(--text-secondary); border-color: var(--border); }
 .btn-quiet:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
-.btn-danger { background: var(--danger); color: #FFF; border-color: var(--danger); }
+/* Leaving Hanly: the brand accent, through the exit role rather than a colour. */
+.btn-exit { background: var(--exit); color: var(--exit-text); border-color: var(--exit); }
+.btn-exit:hover:not(:disabled) { background: var(--exit-hover); border-color: var(--exit-hover); }
+.btn-exit:active:not(:disabled) { background: var(--exit-pressed); border-color: var(--exit-pressed); }
+.btn-exit-quiet { background: transparent; color: var(--exit-quiet-text); border-color: var(--border); }
+.btn-exit-quiet:hover:not(:disabled) { background: var(--exit-quiet-wash); color: var(--exit-quiet-text); border-color: var(--exit); }
 .btn-text { background: transparent; border: 0; color: var(--text-secondary); padding: 0 8px; }
 .btn-text:hover:not(:disabled) { background: transparent; color: var(--text-primary); }
 .btn-fixed { width: var(--action-width); }
@@ -687,6 +710,106 @@ button, input, select { font-family: inherit; }
   font: inherit;
   font-size: 11.5px;
   font-weight: 600;
+}
+
+/* ---- combobox ---------------------------------------------------------- */
+
+/* One control for every choice list: the closed button and its menu share the
+   page's design, which the platform's own select menu does not. The native
+   select stays in the document as the value the page reads and writes. */
+.combo { position: relative; display: inline-flex; min-width: 0; }
+.combo-native { display: none; }
+
+.combo-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 9rem;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: left;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+
+.combo-button:hover:not(:disabled) { border-color: var(--border-strong); }
+.combo-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.combo-button:disabled { opacity: .55; cursor: default; }
+.combo[data-open] .combo-button { border-color: var(--exit); }
+.combo-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.combo-chevron {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  color: var(--text-muted);
+  transition: transform var(--menu-motion) var(--ease-soft);
+}
+
+.combo[data-open] .combo-chevron { transform: rotate(180deg); }
+
+.combo-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + var(--menu-offset));
+  left: 0;
+  min-width: 100%;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--menu-shadow);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(calc(var(--menu-offset) * -1));
+  transition: opacity var(--menu-motion) var(--ease-soft),
+    transform var(--menu-motion) var(--ease-soft),
+    visibility 0s linear var(--menu-motion);
+}
+
+.combo[data-placement="top"] .combo-list {
+  top: auto;
+  bottom: calc(100% + var(--menu-offset));
+  transform: translateY(var(--menu-offset));
+}
+
+.combo[data-open] .combo-list {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity var(--menu-motion) var(--ease-soft),
+    transform var(--menu-motion) var(--ease-soft), visibility 0s;
+}
+
+.combo-option {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.combo-option[data-active] { background: var(--menu-item-hover); color: var(--text-primary); }
+.combo-option[aria-selected="true"] { background: var(--menu-item-selected); color: var(--menu-item-selected-text); font-weight: 600; }
+.combo-option[aria-disabled="true"] { opacity: .45; cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .combo-list, .combo[data-open] .combo-list, .combo-chevron { transition: none; }
 }
 
 /* ---- capture settings ------------------------------------------------- */

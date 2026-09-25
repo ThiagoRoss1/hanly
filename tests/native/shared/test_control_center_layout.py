@@ -23,8 +23,8 @@ _WIDTHS = (400, 640, 760, 780, 900, 1039, 1040, 1080)
 _CONTROLS = (
     "toggle-capture",
     "select-area",
-    "capture-target",
-    "lookup-preload",
+    "capture-target-combo",
+    "lookup-preload-combo",
     "hover-delay-slider",
     "hover-delay-value",
     "region-left",

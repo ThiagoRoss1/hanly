@@ -1179,3 +1179,45 @@ def test_a_plain_string_recognizer_label_still_works() -> None:
     state = ControlCenterBridge(ocr_provider="EasyOCR").get_state()
 
     assert state["runtime"]["ocr_provider"] == "EasyOCR"
+
+
+def test_apple_vision_is_offered_only_where_it_exists(tmp_path: Path) -> None:
+    config = ConfigManager(tmp_path / "settings.json")
+    without = ControlCenterBridge(config_manager=config, vision_available=lambda: False)
+
+    assert without.get_state()["runtime"]["ocr_backends"] == ["auto", "easyocr"]
+    with pytest.raises(ControlCenterUnavailable, match="only available on macOS"):
+        without.update_settings({"ocr_backend": "vision"})
+    assert config.config.ocr_backend.value != "vision"
+
+    with_vision = ControlCenterBridge(config_manager=config, vision_available=lambda: True)
+    assert with_vision.get_state()["runtime"]["ocr_backends"] == ["auto", "vision", "easyocr"]
+    assert with_vision.update_settings({"ocr_backend": "vision"})["config"]["ocr_backend"] == (
+        "vision"
+    )
+
+
+def test_vision_availability_is_probed_once() -> None:
+    calls: list[int] = []
+
+    def probe() -> bool:
+        calls.append(1)
+        return True
+
+    bridge = ControlCenterBridge(vision_available=probe)
+
+    bridge.get_state()
+    bridge.get_state()
+
+    assert calls == [1]
+
+
+def test_quitting_uses_the_exit_role_rather_than_a_fixed_colour() -> None:
+    assets = load_control_center_assets()
+
+    assert 'class="btn btn-sm btn-exit" id="quit-confirm-yes"' in assets.html
+    assert 'class="btn btn-sm btn-exit-quiet" id="quit-ask"' in assets.html
+    assert "btn-danger" not in assets.html and ".btn-danger" not in assets.css
+    rules = [line for line in assets.css.splitlines() if line.startswith(".btn-exit")]
+    assert rules and all("#" not in rule for rule in rules), rules
+    assert "--exit: var(--accent);" in assets.css

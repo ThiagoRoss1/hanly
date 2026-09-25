@@ -186,6 +186,12 @@ def _inline_assets(assets: ControlCenterAssets) -> str:
     )
 
 
+def _vision_is_available() -> bool:
+    from hanly.vision_provider import VisionProvider
+
+    return VisionProvider.is_available()
+
+
 class ControlCenterBridge:
     """Expose normalized app/config/resource state to the web UI.
 
@@ -219,6 +225,7 @@ class ControlCenterBridge:
         registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
         application_snapshot: Callable[[], ApplicationSnapshot] | None = None,
         diagnostic_log: DiagnosticLog | None = None,
+        vision_available: Callable[[], bool] | None = None,
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")
@@ -255,6 +262,8 @@ class ControlCenterBridge:
         self._capture_service: MonitorSource | CaptureService | None = None
         self._resource_manager = resource_manager
         self._ocr_provider = ocr_provider
+        self._vision_probe = vision_available or _vision_is_available
+        self._vision_available: bool | None = None
         self._diagnostics = diagnostics
         self._runtime_status = runtime_status
         self._engine_status = engine_status
@@ -296,6 +305,7 @@ class ControlCenterBridge:
             "config": config.to_dict(),
             "runtime": {
                 "ocr_provider": self._ocr_name(),
+                "ocr_backends": self._ocr_backends(),
                 "app_version": _installed_version(),
                 "hover_delay_bounds": {
                     "min": HOVER_DELAY_MIN_MS,
@@ -469,6 +479,8 @@ class ControlCenterBridge:
             values["ocr_backend"] = _validated_choice(
                 values["ocr_backend"], OCRBackend, "text recognizer"
             )
+            if values["ocr_backend"] not in self._ocr_backends():
+                raise ControlCenterUnavailable("Apple Vision is only available on macOS")
         if "popup_default_size" in values:
             values["popup_default_size"] = _validated_choice(
                 values["popup_default_size"], PopupDefaultSize, "default popup size"
@@ -692,6 +704,24 @@ class ControlCenterBridge:
         """Reapply persisted config and transient target/region state."""
 
         self._apply_live_config()
+
+    def _ocr_backends(self) -> list[str]:
+        """The recognizer choices this machine can actually honour.
+
+        Probed once: Vision's availability cannot change while Hanly runs, and
+        the page asks for state on every refresh.
+        """
+
+        if self._vision_available is None:
+            try:
+                self._vision_available = bool(self._vision_probe())
+            except Exception:
+                self._vision_available = False
+        choices = [OCRBackend.AUTO.value]
+        if self._vision_available:
+            choices.append(OCRBackend.VISION.value)
+        choices.append(OCRBackend.EASYOCR.value)
+        return choices
 
     def _ocr_name(self) -> str:
         """The recognizer in use now, which the preference can change live."""

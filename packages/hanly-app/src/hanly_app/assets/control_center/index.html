@@ -40,11 +40,11 @@
             </div>
           </div>
 
-          <button class="btn btn-sm btn-quiet" id="quit-ask" type="button">Quit Hanly</button>
+          <button class="btn btn-sm btn-exit-quiet" id="quit-ask" type="button">Quit Hanly</button>
           <div class="quit-confirm" id="quit-confirm" hidden>
             <span class="quit-note">Capture stops and the tray icon goes away.</span>
             <div class="quit-row">
-              <button class="btn btn-sm btn-danger" id="quit-confirm-yes" type="button">Quit</button>
+              <button class="btn btn-sm btn-exit" id="quit-confirm-yes" type="button">Quit</button>
               <button class="btn btn-sm btn-quiet" id="quit-confirm-no" type="button">Cancel</button>
             </div>
           </div>
@@ -190,7 +190,6 @@
                 <span class="settings-name" id="ocr-name">Text recognizer</span>
                 <select class="select" id="ocr-backend" aria-labelledby="ocr-name">
                   <option value="auto">Automatic (recommended)</option>
-                  <option value="vision">Apple Vision</option>
                   <option value="easyocr">EasyOCR</option>
                 </select>
                 <span class="settings-help" id="ocr-help"></span>
