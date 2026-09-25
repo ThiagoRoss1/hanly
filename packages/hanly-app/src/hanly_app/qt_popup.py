@@ -44,7 +44,7 @@ from .popup import (
     ScreenGeometry,
     format_lookup_result,
 )
-from .qt_theme import PALETTES, resolved_mode
+from .qt_theme import FONT_STACK, PALETTES, resolved_mode
 from .runtime_trace import RuntimeTraceSink, emit_trace
 
 
@@ -91,10 +91,6 @@ _BUTTON_RADIUS = 7
 #: Vertical rhythm, in pixels: within a group, between groups, around a rule.
 _TIGHT, _GROUP, _SECTION = 3, 8, 12
 
-_FONT_STACK = (
-    "'Segoe UI Variable Text','Segoe UI','SF Pro Text','Helvetica Neue',"
-    "'Apple SD Gothic Neo','Malgun Gothic',sans-serif"
-)
 
 def _entry_gloss(entry: PopupEntryContent) -> str:
     """The shortest useful label for an alternate entry."""
@@ -266,7 +262,7 @@ class QtPopupView(QFrame):
             # the palette so a style read reports the colours in use.
             f"QFrame#hanlyPopup {{ background:{p['bg']}; border:0; }}",
             f"QWidget {{ color:{p['ink']}; background:transparent; "
-            f"font-family:{_FONT_STACK}; }}",
+            f"font-family:{FONT_STACK}; }}",
             "QLabel#hanlyPopupTitle { font-size:26px; font-weight:600; }",
             f"QLabel#hanlyPopupHanja {{ font-size:16px; color:{p['ink3']}; }}",
             "QLabel#hanlyPopupPrimary { font-size:16px; font-weight:600; }",

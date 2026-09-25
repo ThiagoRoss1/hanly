@@ -16,12 +16,7 @@ from PyQt6.QtGui import QShowEvent
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .config import Theme
-from .qt_theme import PALETTES, resolved_mode
-
-_FONT_STACK = (
-    "'Segoe UI Variable Text','Segoe UI','SF Pro Text','Helvetica Neue',"
-    "'Apple SD Gothic Neo','Malgun Gothic',sans-serif"
-)
+from .qt_theme import FONT_STACK, PALETTES, resolved_mode
 
 
 class PromptRole(Enum):
@@ -39,7 +34,7 @@ def dialog_style(mode: str) -> str:
     return "".join(
         [
             f"QDialog#hanlyDialog {{ background:{p['bg']}; }}",
-            f"QWidget {{ color:{p['ink']}; font-family:{_FONT_STACK}; }}",
+            f"QWidget {{ color:{p['ink']}; font-family:{FONT_STACK}; }}",
             "QLabel#hanlyDialogTitle { font-size:16px; font-weight:600; }",
             f"QLabel#hanlyDialogText {{ font-size:13px; color:{p['ink2']}; }}",
             f"QPushButton {{ min-height:28px; max-height:28px; padding:0 14px; "

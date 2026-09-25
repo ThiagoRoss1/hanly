@@ -7,9 +7,20 @@ same values by hand.
 
 from __future__ import annotations
 
+import sys
 from typing import cast
 
 from .config import Theme
+
+#: Only faces each platform ships. Qt scans every installed family to resolve a
+#: name it cannot find, which cost the first popup about 120 ms on macOS.
+FONT_STACK = (
+    "'Helvetica Neue','Apple SD Gothic Neo'"
+    if sys.platform == "darwin"
+    else "'Segoe UI','Malgun Gothic'"
+    if sys.platform == "win32"
+    else "sans-serif"
+)
 
 PALETTES = {
     "light": {
@@ -76,4 +87,4 @@ def resolved_mode(theme: Theme) -> str:
     return "light"
 
 
-__all__ = ["PALETTES", "resolved_mode"]
+__all__ = ["FONT_STACK", "PALETTES", "resolved_mode"]
