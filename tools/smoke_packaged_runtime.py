@@ -44,7 +44,12 @@ REQUIRED_DATA_FILES = (
     "hanly_app/assets/easyocr_models/craft_mlt_25k.pth",
     "hanly_app/assets/easyocr_models/korean_g2.pth",
     "easyocr/character/ko_char.txt",
-    "hanly_app/assets/icons/hanly-icon-256.png",
+    # Every size the application loads, not a sample: a missing tray size
+    # quietly falls back to a grey square rather than failing anything.
+    *(
+        f"hanly_app/assets/icons/hanly-icon-{size}.png"
+        for size in (16, 24, 32, 48, 64, 128, 256, 512)
+    ),
     "hanly_app/assets/icons/favicon.ico",
 )
 

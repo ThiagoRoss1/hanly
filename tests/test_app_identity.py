@@ -80,5 +80,6 @@ def test_builds_carry_the_icons_they_are_given() -> None:
 def test_the_packaged_inventory_requires_the_icons() -> None:
     from tools.smoke_packaged_runtime import REQUIRED_DATA_FILES
 
-    assert "hanly_app/assets/icons/hanly-icon-256.png" in REQUIRED_DATA_FILES
+    for size in app_icon.ICON_SIZES:
+        assert f"hanly_app/assets/icons/hanly-icon-{size}.png" in REQUIRED_DATA_FILES
     assert "hanly_app/assets/icons/favicon.ico" in REQUIRED_DATA_FILES
