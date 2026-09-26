@@ -623,3 +623,322 @@ Hanly's own windows and buttons.
 
 **Windows continuation:** unchanged. Use a build of `bdb66fe` or later, and add:
 - [ ] popup and Control Center muted text readable in Light and Dark.
+
+---
+
+# Windows Final Validation — 2026-09-26
+
+- **Run:** Claude Opus 5.5 (Claude Code), Windows 10 Enterprise 22H2
+  (10.0.19045.6456) x64, two 1920×1080 monitors at 100% (primary at 0,0, the
+  second at −1920,0), system dark mode on. Validation interpreter
+  `.venv-final-validation` (Python 3.13.11, PyQt6-Qt6 6.11.2, kiwipiepy 0.23.2).
+  Unlocked console session. All input was real `SendInput` (mouse and the
+  push-to-hover chord), and all windows were real. No Windows evidence was
+  simulated; the one stand-in process is named below.
+- **Start:** clean `visual/interface-update` at `9d244d2`, equal to origin.
+  Remote CI for `9d244d2`: **success** (run 36268567173). Earlier commits
+  unchanged; nothing amended, squashed, rebased, pushed or merged.
+
+| Commit | Boundary |
+|---|---|
+| `9f9fa17` | `test: skip the link-escape cleanup test where links are refused` |
+| `0e35eba` | `fix: draw the mini-book raster with Windows Korean fonts` (dev tooling) |
+| `2895034` | `fix: redraw the Windows 10 title bar when the theme changes` (product) |
+| this commit | `docs: record the Windows final validation` |
+
+## Package identity
+
+- **Checked build:** `dist\windows\hanly-desktop` from the clean tree at
+  `9d244d2` (stamp `source_commit` `9d244d28060a7529c7453e5d04544e73d4417e7c`,
+  0.5.3, x86_64, built 2026-09-26T20:16:49Z). Every interactive check below
+  ran on it unless marked otherwise.
+- **Final build:** rebuilt from the clean tree at **`2895034`**:
+  - stamp `source_commit` `2895034e4f4b8f233509d828e414ebd302556f05`, 0.5.3,
+    x86_64, built 2026-09-26T21:22:40Z;
+  - `hanly-desktop-windows.zip` is 621,712,238 bytes, SHA-256
+    `4E6F530659BB361438096365ECDC644B5584F299F4E385B17590696100D199AC`.
+
+  The title-bar fix was re-verified on it, and it supersedes the `9d244d2`
+  build. `9f9fa17` and `0e35eba` change no packaged file.
+
+## Gates
+
+| Check | Result |
+|---|---|
+| Remote CI, `9d244d2` | success |
+| `pytest --suite portable` at `9d244d2` | 2222 passed, 102 skipped, **1 failed**: `test_the_read_only_retry_never_follows_a_link_out_of_the_tree` hit WinError 1314 from `os.symlink` on an unprivileged account (fixed in `9f9fa17`) |
+| `pytest --suite portable` at `2895034` | **2224 passed, 103 skipped** |
+| `pytest --suite native` at `9d244d2` / `2895034` | 114 passed, 33 skipped / **115 passed, 33 skipped** |
+| `pytest --suite packaged`, `HANLY_REQUIRE_PACKAGED=1`, expected `9d244d2` / `2895034` | 4 passed / **4 passed** |
+| `ruff check packages packaging tests tools benchmarks` | clean |
+| `mypy --platform linux packages packaging tests tools benchmarks` | Success, 300 files |
+
+The 33 native skips are:
+- POSIX-only helpers;
+- benchmark runs not present on this machine;
+- the Windows in-place helper cases, which compile their fake installations
+  and found no C compiler on PATH.
+
+Host-platform `mypy` (without `--platform linux`) reports 22 pre-existing
+POSIX-API errors in files this run did not touch. The documented gate is the
+Linux one.
+
+## Mini book on Windows (`--backend easyocr`, after `0e35eba`)
+
+The documented command stopped at `OSError: cannot open resource`, because
+`render_raster` knew only macOS font paths. It now draws with Malgun Gothic
+and Batang on Windows; the regression test fails on the old code.
+
+| Path | Success | Target | Lemma | Headword | Headword from inexact target | Latin FP | Stable |
+|---|---|---|---|---|---|---|---|
+| Language only | 138/144 | 144 | 138 | 138 | 0 | 0 | — |
+| Forced OCR, EasyOCR `ko+en`, Windows raster | 101/144 | 105 | 118 | 118 | 17 | **0** | 153/153 |
+
+The language path has one miss more than macOS (139): `창밖으로`→`창` (k030),
+with kiwipiepy 0.23.2 here. See Findings.
+
+## Checklist evidence
+
+**Route-evidence harness.**
+- The real entry (`hanly_app.cli._start` → `run_desktop`) ran from the
+  validation venv with a scratch `--app-config`: always-active hover, keep
+  loaded, no update checks.
+- A JSONL trace sink recorded events, and a recorder on
+  `QtPopupView._show_at` recorded each popup.
+- Fixtures were on the second monitor: the rendered mini book (HTML, canvas,
+  RTF) and a synthetic `이에요` page, in Chrome (scratch profile, app mode,
+  `--force-device-scale-factor=1`) and WordPad.
+- Every target point was checked with a raw UIA read before use.
+
+1. **Latin — pass.**
+   - Chrome `minibook.html`: all 9 Latin targets (`Wi-Fi`, `memo에`,
+     `Claude`, `projects`, `vs`, `CLI`, `workflow`, `Hanly`, `Books가`) gave
+     `not_korean`, with **0 captures, 0 lookups, 0 popups**.
+   - WordPad `minibook.rtf`: the same 9/9.
+   - Korean controls on the same lines looked up directly (`비밀번호는`,
+     `창밖으로`).
+   - One Chrome hover was contaminated: about 570 mouse events not from the
+     harness arrived in 1.3 s and dragged the pointer to the screen edge. It
+     was set aside and rerun clean (2/2 `not_korean`).
+2. **W2 canvas — pass; U+FFFC confirmed.**
+   - A raw UIA read over `minibook-canvas.html` returned a one-character range
+     **U+FFFC** (object replacement character) at a canvas point, and nothing
+     on later reads.
+   - Every Hanly hover over the canvas was `unsupported` → capture →
+     **EasyOCR `ko+en` in the lookup child**.
+   - 9/9 Latin targets produced no popup (non-success is suppressed).
+   - 21/21 Korean targets produced a popup; EasyOCR's known `ㅆ` misreads
+     show, e.g. `결심햇어요`, `있없어요`.
+3. **`이에요` stability — pass.**
+   - 12 cursor positions on `학생이에요` (alone and in a sentence), `방이에요`,
+     `책이에요` and `사과예요` were each hovered 5 times, leaving in between.
+   - **60/60 gave one lemma per position.** The lemma follows the character
+     under the pointer (`학`/`생` → 학생, `이`/`에`/`요` → 이다), which is the
+     component-under-cursor rule.
+   - 56 went `direct`. **4 diverged in route** (UIA `timed_out` → OCR, OCR
+     text `학생이` or `사과예`) with the same lemma.
+4. **One popup per word — pass.**
+   - Chrome: resting on `할머니는` gave 1 lookup and 1 popup. 15 movements
+     inside gave 15 `hover_inside_retained_target` and **0 lookups**. Moving
+     to `매일` gave exactly 1 lookup and 1 popup; 15 movements inside it
+     gave 0.
+   - WordPad: the same on `비밀번호는` → `카운터`. The second word came via
+     OCR after a UIA timeout, and OCR retention also held.
+   - Crossing from `매일` down onto the popup: 9 retained, 0 lookups, popup
+     held.
+   - **Expand** went 340×258 → 386×320 and **Collapse** back, with the
+     top-left fixed at (−1713, 384).
+   - Near the bottom edge, WordPad's popup flipped above the word.
+   - Leaving dismissed the always-active popup. Push-to-hover (packaged)
+     keeps the answer until Close, by policy (`hover_lookup.py`), and Close
+     dismissed it.
+5. **Popup visuals — pass.**
+   - On a `#121212` page all four window-corner pixels are the page colour,
+     so the card clips its corners.
+   - Buttons measure 26 px high.
+   - Rendered muted ink on Windows: Light `#6B6E75` on white **5.11:1**, Dark
+     `#898C94` on `#232428` **4.61:1**, identical to the `cee728d` tokens.
+6. **Control Center (packaged) — pass.**
+   - The recognizer list is `Automatic (recommended)` and `EasyOCR` only, with
+     **no Apple Vision**. Automatic reads "Uses EasyOCR on this machine."
+   - Mouse: open, outside-click dismissal (value unchanged), and choosing
+     Automatic all work.
+   - Keyboard: Space opens, ArrowDown highlights, Escape closes unchanged,
+     Enter chooses.
+   - Choices were saved: `auto` → `easyocr` → `auto`, and `lookup_preload` →
+     `always`.
+   - Quit Hanly is in the accent colour. Its confirmation quit all processes
+     in 1.0–1.3 s (five times).
+   - An apparent "Lookup engine does not open" was my click on the row's
+     label (a coordinate error); clicks on the button open it.
+7. **Identity (packaged) — pass.**
+   - `hanly-desktop.exe`'s shell icon is the Hanly icon, not Python's.
+   - The Control Center title bar and taskbar button show the Hanly icon.
+   - One Hanly tray icon. A second one was the ghost of a force-killed source
+     run and disappeared on hover.
+   - **Title bar: failed, fixed (`2895034`), re-verified.** See Findings.
+8. **Select area (packaged) — pass.**
+   - The Hanly prompt was foreground 0.3 s after one click from the Control
+     Center, owned by the shell process, and still in front at 2 s.
+   - A second click while it was open kept **one** prompt, in front.
+   - Cancel changed nothing.
+   - Select an area: the overlay took the foreground, and a drag saved
+     `region {left −1600, top 300, 401×301}`.
+   - Whole monitor switched `capture_mode` back to `full_monitor`.
+   - Escape on the overlay cancelled.
+9. **Copy logs (packaged) — pass.**
+   - The status read "Copied 21 records.", and the clipboard held exactly 21
+     lines, replacing a sentinel placed there first.
+   - The user's clipboard was saved and restored; nothing was persisted.
+10. **Engine status (packaged) — pass.**
+    - Switching Lookup engine to Keep loaded went `sleeping` → `loading`
+      (0.26 s) → `loaded` (9.5 s), a real EasyOCR + Kiwi + KRDICT load.
+    - A Control Center opened after the warm load showed `Preparing –` (page
+      boot) → **`loaded`**, never `loading` (twice).
+11. **Permission rows — not applicable on Windows.** The page reports
+    `permissions.supported: false`, so neither the Permissions page nor its
+    rows are shown. Nothing can flash.
+12. **Updater cleanup (packaged, `9d244d2`) — pass.** Real fixtures were aged
+    to 2 h with `os.utime`, then Hanly was really relaunched:
+    - `hanly-update.zz-stale-ok` (read-only `hanly-update.ps1`) → removed.
+    - `hanly-update.zz-held` (a live PowerShell's working directory) → "1
+      leftover update directories are still in use; they will be removed at a
+      later launch." No Access-denied line and no exception.
+    - These were all kept, and both junction targets stayed intact (junctions
+      stand in for symlinks, which this account cannot create):
+      - a *directory* named `hanly-update.ps1` inside a stale directory;
+      - a stale directory holding a **junction** to an outside folder;
+      - a candidate that **is** a junction;
+      - a young directory.
+    - `.hanly-update-zz\previous` beside the install → kept, with its message.
+    - `.hanly-update\zz-txn` with `backup\`, `plan.json` and an `applying`
+      record → untouched by both the sweep and the update settle, which
+      logged "An interrupted update is still outstanding, and its recovery
+      record is missing. Nothing was removed."
+    - The sweep also reaped **two real leftovers** (`hanly-update.7ay_uxkl`
+      and `.urmmse88`, one script each). This session's own test run had left
+      them in the real `%TEMP%`, and they were past the hour by then.
+    - A first attempt put `backup\` in a transaction with **no** progress
+      record, and the update settle removed it. That is by design: with no
+      record the transaction is phase `prepared`, which counts as settled.
+      Backups exist only after an `applying` record, so the fixture was
+      unrealistic, not a defect.
+13. **In-place helper working directory — recorded with a stand-in.**
+    - No release was available to update to, and the helper's native cases
+      need a compiler. The exact mechanism was reproduced instead: a committed
+      transaction (`result.json` committed) whose directory was the working
+      directory of a live PowerShell, as `start_helper` sets it.
+    - The relaunched packaged Hanly reported "Hanly updated." and deleted the
+      contents, but **the directory itself stayed**, held as the working
+      directory.
+    - Once the holder had exited and the directory was over an hour old, the
+      next launch's sweep removed it. The empty `.hanly-update` root would go
+      one launch after that.
+    - No data is at risk; see Deferred.
+
+## Findings
+
+**Fixed now:**
+- **Windows 10 title bar kept its previous colour after a theme change**
+  (`2895034`).
+  - Choosing Dark in the Control Center left a white caption, and Light a
+    black one, until the window lost and regained activation. A Control
+    Center reopened in Dark was also white.
+  - Diagnosis, with an occlusion guard (`WindowFromPoint` is Hanly, foreground
+    checked): DWM held `DWMWA_USE_IMMERSIVE_DARK_MODE` = 1 (read back), and a
+    plain Tk window painted dark with it. The caption repainted only on an
+    activation change, which `SWP_FRAMECHANGED` did not trigger.
+  - Fix: a `WM_NCACTIVATE` flip (the opposite state, then the real one)
+    repaints at once and leaves the real activation alone.
+  - `tests/native/windows/test_window_frame.py` reads the drawn caption with
+    GDI across dark/light/dark/light. It failed on the old code ("caption
+    still light after choosing dark (255)") and passes now.
+  - On the rebuilt package every switch is right immediately: active 0/255,
+    inactive dark 43, reactivated 0. A Control Center reopened in Dark is dark
+    on first paint.
+- **Portable test failure on an unprivileged Windows account** (`9f9fa17`,
+  test-only). `0eb908f`'s link test lacked the repository's
+  `requires_symlinks` marker, which its sibling test has. CI runners are
+  administrators, so CI stayed green.
+- **The documented Windows mini-book command could not run** (`0e35eba`,
+  tooling): it used macOS-only font paths.
+
+**Deferred:**
+- **The KRDICT resource carries raw XML entities.** The `할머니` popup shows
+  `Father&apos;s mother`.
+  - The shipped `v20260819-v1` database has 1,063 fields containing
+    `&apos;`, `&quot;` or `&amp;`, 805 of them English definitions. The copy
+    in `data/generated` is identical.
+  - Platform-independent and pre-existing.
+  - **Revisit** with the next KRDICT resource build: unescape in the builder
+    and add a check that no field contains an entity.
+- **The capture-area prompt's title bar is not themed.** It stays white in
+  Dark while the prompt body is dark, because only the Control Center calls
+  `apply_frame_theme`. **Revisit** with the next `HanlyPrompt` change.
+- **Page Start/Stop capture is missing from the session log.**
+  - `ControlCenterBridge.start_capture`/`stop_capture` drive the controller
+    directly. Only the tray and the hotkey go through `DesktopApplication`,
+    which records "watching" and "stopped watching".
+  - This contradicts the `toggle_capture` docstring, and it left one capture
+    stop in this run undatable.
+  - **Revisit** with the next session-log or capture-lifecycle change.
+- **The in-place helper's working directory is its transaction.** The
+  committed transaction's empty directory outlives the first relaunch; the
+  sweep reaps it at least an hour later. **Revisit** when the helper spawn
+  next changes: start it from the recovery directory instead.
+- **Test runs leave `hanly-update.*` directories in the real `%TEMP%`.** Two
+  (a `.ps1` and a `.sh`) appeared at 17:19 local during this session's suite
+  run. They are later reaped correctly, but tests should use `tmp_path`.
+  **Revisit** with the next update-handoff test change, after identifying
+  which test writes them.
+- **Language path: `창밖으로` → `창` on Windows** (kiwipiepy 0.23.2; the macOS
+  run did not record its version). This joins the Phase A whole-form
+  deferrals. **Revisit** there, and pin the morphology version in the report.
+- All earlier deferrals stand, except W2: its cause is now confirmed on
+  Windows (item 2), so that deferral is closed.
+
+**Not reproduced:**
+- One capture stop in the packaged app (21:07:52Z). The engine went
+  `sleeping` while I was clicking in the Control Center on the primary
+  monitor.
+- No log line was written, so the stop came through the page path (see the
+  deferred logging gap).
+- A theme change, idle time, and three attempts at the same click sequence
+  did not stop capture. **Revisit** if it recurs once page actions are
+  logged.
+
+**Observed, not Hanly's to act on:**
+- Four `%TEMP%\hanly-update.*` directories from 2026-09-26 04:11 local deny
+  even listing to this account (`icacls` and `Get-Acl` were refused).
+- The `9d244d2` sweep leaves them without logging, where builds of 09-25
+  logged `Could not remove … Acesso negado`.
+- Their origin is unknown. They were not touched.
+
+## Privacy
+
+- All on-screen text was synthetic: the mini book, the `이에요` page and the
+  Appendix B fixture shape.
+- Screenshots were limited to Hanly's own windows, the fixture windows, the
+  Hanly taskbar button and the tray overflow. Two early frames of a reopening
+  window caught another application's pixels and were deleted, as was a
+  taskbar strip showing other apps' icons.
+- Traces, screenshots, the Chrome profile and fixtures stayed in the session
+  scratchpad.
+- The user's `config.json`, grants and settings were not modified; every run
+  used a scratch `--app-config`. The session log received ordinary entries
+  from the runs. The clipboard was restored after Copy logs.
+- Synthetic update fixtures (`zz-` names) were created only in `%TEMP%` and
+  the build output, and all were removed. Junctions were unlinked with
+  `rmdir`, never recursed.
+
+## Verdict
+
+**Windows accepted, with one product fix.** Every Windows checklist item
+passes on the packaged build, with three qualifications:
+- the Windows 10 title bar failed, was fixed (`2895034`), rebuilt and
+  re-verified;
+- permission rows do not exist on Windows;
+- the in-place helper's working directory was recorded with a stand-in
+  process, not a real update.
+
+Push, merge and any further review remain the human's decision.
