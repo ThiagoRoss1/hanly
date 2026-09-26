@@ -286,3 +286,114 @@ capture prompt's style and foreground; Copy logs without `navigator.clipboard`;
 ## Review assignment
 
 Human-selected after implementation. Not started.
+
+---
+
+# macOS Interactive Acceptance — Phase A Resume, 2026-09-25/26
+
+- **Run:** Claude Opus 5.5, macOS 26.6.2 arm64, unlocked session. Phase A
+  only; nothing pushed or merged. Starts at `b241f96`.
+- **Package identity:** `dist/macos/Hanly.app` built from the clean tree at
+  **`1461a2e`** (stamp `source_commit` = `1461a2e64d576591df980e23ce0bf28d1215339f`,
+  0.5.3, arm64; `CFBundleName`/`CFBundleDisplayName` `Hanly`; `hanly.icns`
+  byte-identical to the supplied file). `caf76b1` changes only
+  `tests/conftest.py`; this handoff commit is documentation. The earlier
+  `5b016c4` bundle is superseded.
+- The packaged app ran with a scratch `--app-config` (push-to-hover, `auto`
+  recognizer, load while watching); the user's own config was not touched.
+  Input was synthetic (Quartz events). Only Hanly's own windows and its Dock
+  and menu-bar item rectangles were captured, to the session scratchpad.
+
+## Real checks exposed defects — fixed, rebuilt, rechecked
+
+| Commit | Defect found in the packaged app | Evidence |
+|---|---|---|
+| `714cca1` | Select Area's prompt opened **behind** the Control Center: macOS 14+ activation is cooperative and the Control Center kept it. The child now yields activation to the shell before asking. | Prompt first in window order at 0.75 s, behind from 1.0 s; child frontmost |
+| `f313c41` | Once the shell could activate, the reopen route read that activation as a Dock click and raised the Control Center over the prompt. An activation while a shell modal is open is no longer a reopen. | Prompt on top at 0.5 s, covered from 0.75 s |
+| `f3cb2ca` | A second Select area click while the prompt was open nested a second prompt; a region chosen from it left an overlay under the first modal that took no input. One choice at a time; a repeat brings the open one forward. | Two prompt windows; overlay ignored drag and Escape |
+| `38f494f` | Qt styles named faces the platform lacks (`Segoe UI…` on macOS); Qt scanned every family (`Populating font family aliases took 119 ms`). | First popup render 172–315 ms → 89–153 ms |
+| `1461a2e` | The permission rows flashed: every refresh (grant watch ticks, window refocus) rebuilt them and replayed their entrance. They are redrawn only when an answer changes. | Reported by the human; harness counts 0 rebuilds on identical refreshes (failed before) |
+| `caf76b1` | `test_hover_e2e_supersedes_stale_movement…` read the real screen through AX (the TextEdit mini book) and failed; portable compositions no longer use the host reader. | Real AX at the test's points: `direct`, `unsupported`, `timed_out` |
+
+Each product fix has a regression that failed before it; each was followed by
+a rebuild from the new product HEAD and the identical check.
+
+## The five requested checks
+
+1. **Dock and menu bar (packaged): pass.** The Dock item's AX title is `Hanly`
+   with the Hanly icon; the menu-bar status item shows the Hanly mark (soft at
+   22 pt, as pystray scales the 24 px source); the application menu reads
+   `Hanly`; the Control Center child is an accessory (one Dock tile).
+2. **Push-to-hover over the TextEdit mini book: pass, with one disclosed
+   substitution.** macOS does not deliver injected key events to Carbon hot
+   keys (0 of 3 injection methods reached a registered hot key in isolation),
+   so the chord edge was delivered to the handler Carbon calls
+   (`ManualLookupRuntime._set_push_held`) through Hanly's UI dispatcher.
+   Everything else was real: Start from the Control Center, pointer events
+   through Hanly's observer, TextEdit read through AX, Vision, the Qt popup.
+   This ran as a **source run at `1461a2e`**, because the packaged ad-hoc
+   build has no macOS grants (below).
+   - resting on `할머니는`: 1 lookup, `direct`, `SUCCESS`, 1 `popup_visible`;
+   - 12 small movements and 3 syllable moves inside it: 26
+     `hover_inside_retained_target`, **0 new lookups, 0 new popups**;
+   - moving to `매일`: **exactly 1** lookup and 1 `popup_visible`; the popup
+     moved to sit just below the new word (x 80 → 147, top 178);
+   - moving from the word down onto the popup: same window, no lookup;
+   - Expand 340×250 → 386×310 and Collapse back, top-left fixed at (147,178);
+   - popup clicks with the Control Center minimized: it **stayed minimized**;
+   - Close: popup gone;
+   - a deliberate Dock click (packaged) restored the minimized Control Center.
+3. **Select Area (packaged, final build): pass.** The Hanly prompt is in front
+   0.41 s after one click and stays there with the shell frontmost; Cancel
+   changes nothing; a second request keeps one prompt, in front; Select an
+   area puts the overlay on top and a drag saves the region; Whole monitor
+   saves `full_monitor`; Escape on the overlay cancels.
+4. **Engine status (packaged): pass.** Switching Lookup engine to Keep loaded
+   in the Control Center gave `sleeping` → `loading` (≈4.2 s, frames 1–24) →
+   `loaded`, a real Vision + Kiwi + KRDICT load with no added delay; a warm
+   reload also showed `loading`. The sub-round-trip case stays covered by the
+   controlled-provider test.
+5. **Source-run Dock label: recorded.** The Dock lists the source run as
+   `python3.13` — from the interpreter executable, a non-packaged
+   limitation — and the packaged app as `Hanly`.
+
+Also in the packaged Control Center: the comboboxes opened in Hanly's design
+(flipping upward near the window edge), a keyboard choice saved `always` and
+was restored, Escape closed the recognizer menu unchanged; Copy logs copied
+**21 records** ("Copied 21 records."), and the clipboard was restored.
+
+## Not confirmed
+
+- **Push-to-hover inside the packaged app.** macOS answers "not granted" to
+  `AXIsProcessTrusted`/`CGPreflightScreenCaptureAccess` in the packaged shell.
+  Both builds are ad-hoc signed, whose designated requirement is their exact
+  cdhash: the human's existing grant belongs to the installed 0.5.2
+  (`2029c435…`), this build is `6d6ccc7d…`-class and new with every rebuild.
+  The hover evidence above is the same product code as a source run.
+  **Revisit** with a stably signed build, or after a grant for this binary.
+- **The real Carbon chord**, which only physical keys reach.
+
+## Validation
+
+| Check | Result |
+|---|---|
+| `python -m pytest` | **2418 passed, 3 skipped** (non-macOS Vision, opt-in real EasyOCR, packaged identity without the expected commit) |
+| `python -m pytest --suite packaged`, `HANLY_REQUIRE_PACKAGED=1`, expected `1461a2e` | **4 passed** |
+| `python -m pytest --suite native` | **117 passed** |
+| ruff / mypy (297 files) / `git diff --check` | clean |
+
+## Privacy
+
+Synthetic mini-book text only; captures were Hanly's own windows and item
+rectangles, kept in the scratchpad; traces kept event kinds and ids; the
+copied log records and the clipboard content were not persisted, and the
+clipboard was restored; the user's config and grants were not modified by the
+run.
+
+## Windows continuation (unchanged, plus the new fixes)
+
+The checklist in *Windows continuation* above still applies, on a build of
+`1461a2e` or later. Add:
+- [ ] Select Area in front on the first click **and** a second click while
+  it is open keeps one prompt (the re-entrancy guard is platform-neutral).
+- [ ] The permission rows do not flash when the window regains focus.
