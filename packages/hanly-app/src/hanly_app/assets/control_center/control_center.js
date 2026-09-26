@@ -1174,13 +1174,18 @@
   // load the page never saw is still shown, for long enough to be read. This
   // is display only: nothing about the engine itself waits.
   const ENGINE_MIN_LOADING_MS = 700;
-  let engineLoadSeen = 0;
+  // Unknown until the first real answer: a window opened after a load has no
+  // load of its own to show, so that answer is where counting starts.
+  let engineLoadSeen = null;
   let engineLoadingUntil = 0;
 
   function shownEngine() {
     const engine = runtime().engine || {};
+    if (engine.preparing_sequence === undefined) return engine;
     const load = Number(engine.preparing_sequence || 0);
-    if (load > engineLoadSeen) {
+    if (engineLoadSeen === null) {
+      engineLoadSeen = load;
+    } else if (load > engineLoadSeen) {
       engineLoadSeen = load;
       if (engine.state !== "preparing" && engine.state !== "error") {
         engineLoadingUntil = Date.now() + ENGINE_MIN_LOADING_MS;

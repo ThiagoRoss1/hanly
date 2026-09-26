@@ -463,3 +463,15 @@ def test_unchanged_permissions_are_not_rebuilt_on_every_refresh(tmp_path: Path) 
     assert rebuilds[0] == rebuilds[2], "identical refreshes rebuilt the rows"
     assert rebuilds[-1] == rebuilds[2] + 1, "a changed grant must redraw them"
     assert [row["badge"] for row in trace[-1]["permission_rows"]] == ["granted", "required"]
+
+
+def test_a_page_opened_after_a_load_does_not_replay_it(tmp_path: Path) -> None:
+    """A window opened long after the engine loaded has no load to show: the
+    first answer it receives is where it starts counting from."""
+
+    trace = _run(
+        [_engine(_snapshot("ready"), state="ready", preparing_sequence="3")],
+        tmp_path,
+    )
+
+    assert trace[0]["engine_state"] == "loaded"
