@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
@@ -249,6 +250,19 @@ class RasterFonts:
             serif=("/System/Library/Fonts/Supplemental/AppleMyungjo.ttf", 0),
         )
 
+    @classmethod
+    def windows(cls) -> RasterFonts:
+        fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        return cls(
+            regular=(str(fonts / "malgun.ttf"), 0),
+            bold=(str(fonts / "malgunbd.ttf"), 0),
+            serif=(str(fonts / "batang.ttc"), 0),
+        )
+
+    @classmethod
+    def for_this_platform(cls) -> RasterFonts:
+        return cls.windows() if sys.platform == "win32" else cls.macos()
+
 
 @dataclass(frozen=True)
 class Raster:
@@ -263,7 +277,7 @@ def render_raster(book: Minibook, fonts: RasterFonts | None = None) -> Raster:
 
     from PIL import Image, ImageDraw, ImageFont
 
-    chosen = fonts or RasterFonts.macos()
+    chosen = fonts or RasterFonts.for_this_platform()
     faces = {
         "regular": ImageFont.truetype(chosen.regular[0], FONT_SIZE, index=chosen.regular[1]),
         "bold": ImageFont.truetype(chosen.bold[0], FONT_SIZE, index=chosen.bold[1]),

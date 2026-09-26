@@ -12,6 +12,7 @@ from hanly import DictionaryEntry, LookupContext, LookupResult, LookupStatus
 from benchmarks.dev.minibook import (
     MANIFEST,
     MinibookError,
+    RasterFonts,
     judge,
     load_minibook,
     render_html,
@@ -150,3 +151,18 @@ def test_a_skipped_target_counts_as_a_miss() -> None:
     assert summary["success_rate"] == f"10/{len(korean)}"
     assert summary["missing"] == len(book.targets) - 10
     assert summary["latin_unjudged"] == sum(t.refuse for t in book.targets)
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_the_raster_draws_with_the_korean_faces_the_platform_ships(
+    platform: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.platform", platform)
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+
+    fonts = RasterFonts.for_this_platform()
+
+    expected = RasterFonts.windows() if platform == "win32" else RasterFonts.macos()
+    assert fonts == expected
+    if platform == "win32":
+        assert fonts.regular[0].lower().endswith("malgun.ttf")
