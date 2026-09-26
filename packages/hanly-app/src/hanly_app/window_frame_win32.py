@@ -17,6 +17,7 @@ _DWMWA_CAPTION_COLOR = 35
 _DWMWA_TEXT_COLOR = 36
 
 _SWP_FRAME_ONLY = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
+_WM_NCACTIVATE = 0x0086
 
 #: The Control Center's own surface and ink for each mode (its ``--surface``
 #: and ``--text-primary`` tokens), so the frame and the page meet without a seam.
@@ -57,8 +58,13 @@ def apply_frame_theme(hwnd: int, mode: str) -> bool:
     dark = set_attribute(_DWMWA_USE_IMMERSIVE_DARK_MODE, 1 if mode == "dark" else 0)
     set_attribute(_DWMWA_CAPTION_COLOR, colorref(caption))
     set_attribute(_DWMWA_TEXT_COLOR, colorref(text))
-    # Windows 10 repaints a frame's mode only when the frame is recalculated.
-    ctypes.windll.user32.SetWindowPos(handle, None, 0, 0, 0, 0, _SWP_FRAME_ONLY)
+    user32 = ctypes.windll.user32
+    user32.SetWindowPos(handle, None, 0, 0, 0, 0, _SWP_FRAME_ONLY)
+    # Windows 10 keeps the old caption until the activation state changes, so
+    # flip the painted state and back; the real activation is untouched.
+    active = 1 if user32.GetForegroundWindow() == hwnd else 0
+    user32.SendMessageW(handle, _WM_NCACTIVATE, 1 - active, 0)
+    user32.SendMessageW(handle, _WM_NCACTIVATE, active, 0)
     return dark
 
 
