@@ -396,6 +396,7 @@ def test_a_directory_bearing_the_scripts_name_is_not_the_script(tmp_path: Path) 
     assert (staging / "hanly-update.ps1" / "somebody-elses.txt").is_file()
 
 
+@requires_symlinks
 def test_the_read_only_retry_never_follows_a_link_out_of_the_tree(tmp_path: Path) -> None:
     from hanly_app.owned_cleanup import _retry_writable
 
