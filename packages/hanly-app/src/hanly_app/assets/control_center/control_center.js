@@ -694,6 +694,8 @@
 
   // ---- permissions -------------------------------------------------------
 
+  let permissionRowsShown = null;
+
   function renderPermissions() {
     const state = permissions();
     const items = state.items || [];
@@ -703,6 +705,12 @@
 
     const list = byId("permission-list");
     if (!list) return;
+    // Every refresh renders the page, and it refreshes repeatedly while a
+    // grant is being watched for. Rebuilding unchanged rows replayed their
+    // entrance each time, which read as the rows flashing.
+    const shown = JSON.stringify([state.supported, items]);
+    if (shown === permissionRowsShown && list.children.length) return;
+    permissionRowsShown = shown;
     clear(list);
     if (!state.supported) return;
 

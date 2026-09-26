@@ -109,6 +109,7 @@ function element(id) {
   Object.defineProperty(node, "innerHTML", {
     get() { return ""; },
     set() {
+      node.clears = (node.clears || 0) + 1;
       node.children.forEach(function (child) { child.parentNode = null; });
       node.children.length = 0;
     }
@@ -224,6 +225,7 @@ function report(step) {
     step: step,
     nav_pages: navPages(),
     permission_rows: permissionRows(),
+    permission_rebuilds: document.getElementById("permission-list").clears || 0,
     timer_running: timer !== null,
     intervals_created: intervalsCreated,
     clears_requested: clearsRequested,

@@ -442,3 +442,24 @@ def test_a_load_already_shown_is_not_shown_again(tmp_path: Path) -> None:
 
     assert trace[0]["engine_state"] == "loading"
     assert trace[-1]["engine_state"] == "loaded"
+
+
+def test_unchanged_permissions_are_not_rebuilt_on_every_refresh(tmp_path: Path) -> None:
+    """Each rebuild replayed the rows' entrance, which read as flashing while
+    the page kept refreshing. Only a changed answer redraws them."""
+
+    required = _macos_permissions("required", "required")
+    trace = _run(
+        [
+            _snapshot("preparing", permissions=required),
+            _snapshot("preparing", permissions=required),
+            _snapshot("preparing", permissions=required),
+            _snapshot("preparing", permissions=_macos_permissions("granted", "required")),
+        ],
+        tmp_path,
+    )
+
+    rebuilds = [step["permission_rebuilds"] for step in trace]
+    assert rebuilds[0] == rebuilds[2], "identical refreshes rebuilt the rows"
+    assert rebuilds[-1] == rebuilds[2] + 1, "a changed grant must redraw them"
+    assert [row["badge"] for row in trace[-1]["permission_rows"]] == ["granted", "required"]
