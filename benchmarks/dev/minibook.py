@@ -534,26 +534,42 @@ def _find_role(element: Any, role: str, depth: int = 0) -> Any:
 
 
 def summarize(book: Minibook, outcomes: Iterable[Outcome]) -> dict[str, Any]:
-    """Rates per path, Latin false positives, stability, and every failure."""
+    """Rates per path over every target in the book, Latin false positives,
+    stability, and every failure.
+
+    A target a path produced no outcome for counts as a miss, so a run that
+    skips work cannot raise its own rates. ``success`` needs the right word,
+    its dictionary form and its headword together; ``headword`` alone counts
+    the right entry whatever was selected, which an OCR misreading of the
+    right word can still reach.
+    """
 
     by_path: dict[str, list[Outcome]] = {}
     for outcome in outcomes:
         by_path.setdefault(outcome.path, []).append(outcome)
-    targets = {target.id: target for target in book.targets}
-    summary: dict[str, Any] = {"korean_targets": sum(not t.refuse for t in book.targets),
-                               "latin_targets": sum(t.refuse for t in book.targets), "paths": {}}
+    korean_ids = [t.id for t in book.targets if not t.refuse]
+    latin_ids = [t.id for t in book.targets if t.refuse]
+    summary: dict[str, Any] = {"korean_targets": len(korean_ids),
+                               "latin_targets": len(latin_ids), "paths": {}}
     for path, items in by_path.items():
-        korean = [item for item in items if not targets[item.target].refuse]
-        latin = [item for item in items if targets[item.target].refuse]
+        seen = {item.target: item for item in items}
+        korean = [seen.get(target) for target in korean_ids]
+        latin = [seen.get(target) for target in latin_ids]
         stability = [item.stable for item in items if item.stable is not None]
         summary["paths"][path] = {
-            "targets": len(korean),
-            "target_rate": _rate(item.target_ok for item in korean),
-            "lemma_rate": _rate(item.lemma_ok for item in korean),
-            "dictionary_rate": _rate(item.dictionary_ok for item in korean),
-            "latin_false_positives": sum(not item.target_ok for item in latin),
+            "targets": len(korean_ids),
+            "missing": sum(item is None for item in korean + latin),
+            "success_rate": _rate(item is not None and item.stage is None for item in korean),
+            "target_rate": _rate(item is not None and item.target_ok for item in korean),
+            "lemma_rate": _rate(item is not None and item.lemma_ok for item in korean),
+            "headword_rate": _rate(item is not None and item.dictionary_ok for item in korean),
+            "headword_despite_inexact_target": sum(
+                item is not None and item.dictionary_ok and not item.target_ok for item in korean
+            ),
+            "latin_false_positives": sum(item is not None and not item.target_ok for item in latin),
+            "latin_unjudged": sum(item is None for item in latin),
             "stable": f"{sum(stability)}/{len(stability)}" if stability else None,
-            "failure_stages": dict(Counter(item.stage for item in korean if item.stage)),
+            "failure_stages": dict(Counter(item.stage for item in korean if item and item.stage)),
             "failures": [asdict(item) for item in items if item.stage],
         }
     return summary

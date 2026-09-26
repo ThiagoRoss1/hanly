@@ -109,3 +109,44 @@ def test_any_korean_answer_on_latin_is_a_false_positive() -> None:
     assert refused.stage is None
     assert popup.stage == "false_positive"
     assert summary["paths"]["ocr"]["latin_false_positives"] == 1
+
+
+def test_a_wrong_word_with_the_right_headword_is_not_a_success() -> None:
+    book = load_minibook()
+    target = next(t for t in book.targets if t.surface == "책을")
+
+    outcome = judge(target, path="ocr", route="capture", result=_result("책이", "책", "책"))
+    summary = summarize(book, [outcome])["paths"]["ocr"]
+
+    assert outcome.stage == "target"
+    assert summary["success_rate"].startswith("0/")
+    assert summary["headword_despite_inexact_target"] == 1
+
+
+def test_empty_ocr_is_not_a_success() -> None:
+    book = load_minibook()
+    target = next(t for t in book.targets if t.surface == "책을")
+
+    outcome = judge(
+        target, path="ocr", route="capture", result=LookupResult(status=LookupStatus.EMPTY)
+    )
+
+    assert outcome.stage == "ocr" and not outcome.dictionary_ok
+
+
+def test_a_skipped_target_counts_as_a_miss() -> None:
+    book = load_minibook()
+    korean = [t for t in book.targets if not t.refuse]
+    right = [
+        judge(
+            t, path="ocr", route="capture",
+            result=_result(t.surface, t.lemma or "", t.headword or ""),
+        )
+        for t in korean[:10]
+    ]
+
+    summary = summarize(book, right)["paths"]["ocr"]
+
+    assert summary["success_rate"] == f"10/{len(korean)}"
+    assert summary["missing"] == len(book.targets) - 10
+    assert summary["latin_unjudged"] == sum(t.refuse for t in book.targets)
