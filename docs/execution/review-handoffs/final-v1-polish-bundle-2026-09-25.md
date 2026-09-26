@@ -112,6 +112,10 @@ pointer is on one of the shell's own windows no longer reopen the Control Center
 
 ## Mini-book acceptance (macOS)
 
+*Phase B superseded this table: its lemma and dictionary columns credited a
+headword reached from a misread target. Recomputed figures are under
+Phase B review.*
+
 `benchmarks/fixtures/minibook/minibook.json`: original story, 144 Korean
 targets (TOPIK 1–6 estimate), 9 Latin refusal targets, bold/italic/serif
 variants. Run: `python -m benchmarks.dev.minibook evaluate --paths
@@ -281,11 +285,13 @@ capture prompt's style and foreground; Copy logs without `navigator.clipboard`;
 - The combobox's value-descriptor override and `MutationObserver` sync.
 - `frame_theme` and `copy_text` as the only child-local page calls, outside the
   shell allowlist by design.
-- `_remove_tree` raising `PermissionError` to mean "in use".
+- `_remove_tree` raising `PermissionError` to mean "in use" (Phase B
+  replaced this; see below).
 
 ## Review assignment
 
-Human-selected after implementation. Not started.
+Human-selected after implementation. Completed on macOS; see Phase B review
+at the end of this file.
 
 ---
 
@@ -305,6 +311,9 @@ Human-selected after implementation. Not started.
   and menu-bar item rectangles were captured, to the session scratchpad.
 
 ## Real checks exposed defects — fixed, rebuilt, rechecked
+
+Five product defects (five product-fix commits) and one test defect
+(`caf76b1`, test-only).
 
 | Commit | Defect found in the packaged app | Evidence |
 |---|---|---|
@@ -397,3 +406,125 @@ The checklist in *Windows continuation* above still applies, on a build of
 - [ ] Select Area in front on the first click **and** a second click while
   it is open keeps one prompt (the re-entrancy guard is platform-neutral).
 - [ ] The permission rows do not flash when the window regains focus.
+
+---
+
+# Phase B Review — 2026-09-26
+
+- **Reviewer:** Claude Opus 5.5 (Claude Code), chosen by the human. macOS 26.6.2
+  arm64, `.venv` Python 3.13.11. No Windows host; no Windows behaviour was
+  simulated.
+- **Range:** `5b7358c..a8ef82e` (19 commits, `5869e9d`…`a8ef82e`), all left
+  unchanged; review commits follow `a8ef82e`.
+- **Verdict:** **Accepted for macOS with four review corrections.** The Windows
+  items stay open on the checklist below.
+
+## Reproduced independently
+
+- **Latin routing.** Same model and charset, `["ko"]` vs `["ko","en"]` over the
+  Latin fixtures: 10 → 0 Hangul hallucinations, Korean reads unchanged, warm
+  latency equal. The frozen build loads `en_char.txt` and runs `ko+en` in its
+  self-check. Verified non-Korean direct text is terminal `not_korean`;
+  U+FFFC/U+FFFD and control categories stay `unsupported` and go to OCR.
+- **Hover retention.** Moving inside one word: 1 popup (the mutation that
+  drops retention gives 7). Identical input is stable (153/153 per path).
+  `이에요` on Windows is **not** claimed resolved.
+- **Popup placement.** Right/bottom edges, negative-origin screens, corridor
+  to the popup, Expand/Collapse at the edge: placement stays on-screen, and the
+  AX edge scan found 1439/1440 positions inside. Cold first render measured
+  72–162 ms after `38f494f` (the Qt font alias scan is gone).
+- **Comboboxes.** One canonical `<select>`, value setter and `MutationObserver`
+  keep the menu in step, Arrow/Home/End/Escape/Enter, ARIA roles and
+  `aria-activedescendant`, no duplicate options; Apple Vision offered only on
+  macOS; a choice is saved once.
+- **Identity.** Icons packaged once; removing any icon size now fails the
+  packaged inventory; `CFBundleName` `Hanly`. The source-run Dock label
+  `python3.13` remains a documented limitation.
+- **Capture prompt.** The Phase A packaged checks (first click, rapid second
+  click, Cancel, Whole monitor, region, Escape, Dock reopen) were re-read
+  against the code; the repeat-request guard has a composition test.
+  **Shutdown with the prompt open was not exercised**: by reading, the
+  `finally` blocks restore the hover mute and clear `_choosing_area`, but no
+  test or real run covers it. Revisit with the next capture-prompt change.
+- **Clipboard.** `copy_text` is child-local, runs on the Qt thread, is
+  bounded, and writes no trace; the real embedded test
+  (`tests/native/shared/test_control_center_copy.py`) passed again and
+  restored the clipboard.
+- **Mini book.** Original text, schema validated, every metric recomputed from
+  the per-target records (below).
+
+## Findings
+
+**Fixed now** (each with a regression that failed on the reviewed code):
+
+| Commit | Defect | Class |
+|---|---|---|
+| `0eb908f` | Update cleanup could leave its boundary: a *directory* named like the helper script matched the "ours" shape; the read-only retry `chmod`ed through a symlink out of the tree; a held directory in Hanly's own root raised instead of reporting "in use". | product (Windows path, exercised portably) |
+| `7e56ebd` | The packaged inventory required only some icon sizes, so a bundle missing the tray's size passed. | test/packaging |
+| `9eccfdc` | A Control Center opened after a load finished replayed that load as `loading`; the latch now takes its baseline from the page's first answer. | product (display) |
+| `6207c86` | The mini-book scorer divided lemma/dictionary by reached targets only and counted a right headword from a wrong word as success; empty OCR and skipped targets fell out of the denominator. | diagnostic |
+
+Recomputed mini book (success = right target, lemma and headword):
+
+| Path | Success | Target | Lemma | Headword | Headword from inexact target | Latin FP | Stable |
+|---|---|---|---|---|---|---|---|
+| Language only | 139/144 | 144 | 139 | 139 | 0 | 0 | — |
+| Direct text (TextEdit AX) | 139/144 | 144 | 139 | 139 | 0 | 0 | 153/153 |
+| Apple Vision | 137/144 | 141 | 137 | 137 | 0 | 0 | 153/153 |
+| EasyOCR `ko+en` | 103/144 | 106 | 122 | 122 | 19 | 0 | 153/153 |
+
+EasyOCR's dictionary column exceeded its target column because 19 misreads
+still lemmatized to the right headword; they are no longer successes. The
+Vision misses are the same seven (k008, k122 target; k061, k088, k099, k102,
+k137 morphology) and remain classified as in Phase A.
+
+**Deferred:**
+- **In-place update helper starts with its transaction as working
+  directory** (`app_update_helper.start_helper`, `runner(arguments,
+  script.parent)`) — the pattern `1278378` removed from the whole-bundle
+  handoff. Windows-only; revisit on the Windows updater check below.
+- **Light-theme tertiary ink contrast** — `ink3` is 3.55:1 on the popup
+  background and 3.23:1 on the footer (dark: 4.37:1), under 4.5:1 for small
+  text. Palette predates this range; revisit with the next popup palette
+  change.
+- **Packaged hover on macOS** — ad-hoc signing binds TCC grants to each
+  build's cdhash; revisit with a stably signed build.
+- All Phase A deferrals stand (language misses, edge-clipped line estimation,
+  W2 U+FFFC, physical Carbon chord).
+
+**Dismissed:**
+- *Pointer on the digit of `2개` refuses* — a digit is not Korean; the
+  counter itself looks up.
+- *Engine latch hides real state* — it only delays `loaded` for display;
+  status and the permission rows redraw on any changed answer.
+
+## Validation (HEAD `6207c86`)
+
+| Check | Result |
+|---|---|
+| `python -m pytest` | **2425 passed, 3 skipped** |
+| `python -m pytest --suite native` | **117 passed** |
+| `python -m pytest --suite packaged`, `HANLY_REQUIRE_PACKAGED=1`, expected `6207c86` | **4 passed** |
+| ruff / mypy (297 files) / `git diff --check` | clean |
+
+**Package identity:** `dist/macos/Hanly.app` rebuilt from the clean tree at
+`6207c86` (stamp `source_commit` `6207c8623de6b3ddf08d70013e790c0b26b1a2d5`,
+0.5.3, arm64, `CFBundleName` `Hanly`, `hanly.icns`, nine icon assets).
+The `1461a2e` bundle is superseded.
+
+## Privacy
+
+Only synthetic mini-book text and Hanly's own windows were read; renders and
+logs stayed in the session scratchpad; no screen pixels, AX text, OCR text or
+clipboard contents were written to the repository or to Hanly's data
+directories; the clipboard was restored by the native test.
+
+## Windows continuation (after Phase B)
+
+On a build of `6207c86` or later, the checklists above still apply. Add:
+- [ ] Updater cleanup: a directory named `hanly-update-helper.ps1` and a
+  symlink inside a stale `hanly-update.*` are left untouched; a held
+  directory logs "still in use", never an exception.
+- [ ] In-place update: the helper completes and its transaction directory is
+  removed afterwards (record whether its working directory blocks removal).
+- [ ] Control Center opened after a warm load shows `loaded`, not `loading`.
