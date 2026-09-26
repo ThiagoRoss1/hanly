@@ -341,10 +341,10 @@ def test_a_directory_still_in_use_is_left_for_a_later_launch(
     staging.mkdir()
     os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
 
-    def held(path: Path) -> str | None:
+    def held(path: Path, *_args: object, **_kwargs: object) -> None:
         raise PermissionError(13, "Access is denied", str(path))
 
-    monkeypatch.setattr(owned_cleanup, "_remove_tree", held)
+    monkeypatch.setattr(owned_cleanup.shutil, "rmtree", held)
 
     report = sweep_staging(update_staging_locations(None, tmp_path), clock=clock)
 
@@ -353,3 +353,63 @@ def test_a_directory_still_in_use_is_left_for_a_later_launch(
     assert staging.is_dir()
     assert any("later launch" in line for line in report.messages())
     assert not any("Could not remove" in line for line in report.messages())
+
+
+def test_a_held_directory_in_hanlys_own_root_is_reported_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows answers a held directory with Access is denied, a PermissionError;
+    startup cleanup must report it, as it always did, rather than raise."""
+
+    from hanly_app import owned_cleanup
+
+    clock = _Clock()
+    workspace = OwnedWorkspace(tmp_path / "work", clock=clock)
+    owned = workspace.open("update")
+    clock.now += MIN_AGE_SECONDS + 1
+    monkeypatch.setattr(owned_cleanup, "_process_alive", lambda _pid: False)
+
+    def denied(path: Path, *_args: object, **_kwargs: object) -> None:
+        raise PermissionError(13, "Access is denied", str(path))
+
+    monkeypatch.setattr(owned_cleanup.shutil, "rmtree", denied)
+
+    report = workspace.sweep()
+    workspace.complete(owned)
+
+    assert [path for path, _ in report.failures] == [owned.path]
+
+
+def test_a_directory_bearing_the_scripts_name_is_not_the_script(tmp_path: Path) -> None:
+    """Only regular files make a handoff directory; a nested directory could
+    carry anybody's content into the removal."""
+
+    clock = _Clock()
+    staging = tmp_path / "hanly-update.abc"
+    (staging / "hanly-update.ps1").mkdir(parents=True)
+    (staging / "hanly-update.ps1" / "somebody-elses.txt").write_text("keep", encoding="utf-8")
+    os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
+
+    report = sweep_staging(update_staging_locations(None, tmp_path), clock=clock)
+
+    assert staging in report.preserved
+    assert (staging / "hanly-update.ps1" / "somebody-elses.txt").is_file()
+
+
+def test_the_read_only_retry_never_follows_a_link_out_of_the_tree(tmp_path: Path) -> None:
+    from hanly_app.owned_cleanup import _retry_writable
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not Hanly's", encoding="utf-8")
+    outside.chmod(0o444)
+    link = tmp_path / "tree" / "link"
+    link.parent.mkdir()
+    link.symlink_to(outside)
+
+    def refused(_path: str) -> None:
+        raise PermissionError(13, "Access is denied")
+
+    with pytest.raises(PermissionError):
+        _retry_writable(refused, str(link), None)
+
+    assert outside.stat().st_mode & 0o777 == 0o444

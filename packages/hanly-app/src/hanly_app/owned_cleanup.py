@@ -322,7 +322,7 @@ def _sweep_one(
             preserved.append(candidate)
             continue
         try:
-            failure = _remove_tree(candidate)
+            failure = _remove_tree_unless_held(candidate)
         except PermissionError:
             # A process still has it open -- the helper, or the Hanly it
             # relaunched. Nothing is lost by waiting, so nothing is forced.
@@ -348,7 +348,12 @@ def _shaped_as(directory: Path, only_entries: frozenset[str] | None) -> bool:
     if only_entries is None:
         return True
     try:
-        return all(entry.name in only_entries for entry in directory.iterdir())
+        # Regular files only: a directory or link bearing an expected name
+        # would carry whatever it holds into the removal.
+        return all(
+            entry.name in only_entries and entry.is_file() and not entry.is_symlink()
+            for entry in directory.iterdir()
+        )
     except OSError:
         return False
 
@@ -493,12 +498,20 @@ def _process_alive(pid: int) -> bool:
 
 
 def _remove_tree(path: Path) -> str | None:
-    """Remove a directory, returning why it could not be removed.
+    """Remove a directory, returning why it could not be removed. Never raises."""
+
+    try:
+        return _remove_tree_unless_held(path)
+    except PermissionError as error:
+        return str(error)
+
+
+def _remove_tree_unless_held(path: Path) -> str | None:
+    """Remove a directory; ``PermissionError`` means something still holds it.
 
     A read-only entry is made writable and tried once more: Windows refuses to
     delete one with ``Access is denied`` where POSIX needs only the directory's
-    permission. Anything still refused after that is in use, and
-    ``PermissionError`` reaches the caller so it can wait rather than report.
+    permission. Anything still refused after that is in use.
     """
 
     if path.is_symlink():
@@ -518,9 +531,13 @@ def _remove_tree(path: Path) -> str | None:
 
 
 def _retry_writable(function: object, target: str, _error: object) -> None:
-    """Clear the read-only attribute on one entry and repeat what failed on it."""
+    """Clear the read-only attribute on one entry and repeat what failed on it.
 
-    if not callable(function):
+    Never through a link: changing permissions follows it, onto a file that is
+    not part of the tree being removed.
+    """
+
+    if not callable(function) or os.path.islink(target):
         raise PermissionError(target)
     os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
     function(target)
