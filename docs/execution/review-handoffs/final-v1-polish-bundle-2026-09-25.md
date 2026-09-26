@@ -443,7 +443,7 @@ The checklist in *Windows continuation* above still applies, on a build of
 - **Capture prompt.** The Phase A packaged checks (first click, rapid second
   click, Cancel, Whole monitor, region, Escape, Dock reopen) were re-read
   against the code; the repeat-request guard has a composition test.
-  **Shutdown with the prompt open was not exercised**: by reading, the
+  **Shutdown with the prompt open was not exercised** (closed below by `bdb66fe`): by reading, the
   `finally` blocks restore the hover mute and clear `_choosing_area`, but no
   test or real run covers it. Revisit with the next capture-prompt change.
 - **Clipboard.** `copy_text` is child-local, runs on the Qt thread, is
@@ -483,11 +483,11 @@ k137 morphology) and remain classified as in Phase A.
   directory** (`app_update_helper.start_helper`, `runner(arguments,
   script.parent)`) — the pattern `1278378` removed from the whole-bundle
   handoff. Windows-only; revisit on the Windows updater check below.
-- **Light-theme tertiary ink contrast** — `ink3` is 3.55:1 on the popup
+- **Light-theme tertiary ink contrast** (closed below by `cee728d`) — `ink3` is 3.55:1 on the popup
   background and 3.23:1 on the footer (dark: 4.37:1), under 4.5:1 for small
   text. Palette predates this range; revisit with the next popup palette
   change.
-- **Packaged hover on macOS** — ad-hoc signing binds TCC grants to each
+- **Packaged hover on macOS** (trigger restated below) — ad-hoc signing binds TCC grants to each
   build's cdhash; revisit with a stably signed build.
 - All Phase A deferrals stand (language misses, edge-clipped line estimation,
   W2 U+FFFC, physical Carbon chord).
@@ -528,3 +528,98 @@ On a build of `6207c86` or later, the checklists above still apply. Add:
 - [ ] In-place update: the helper completes and its transaction directory is
   removed afterwards (record whether its working directory blocks removal).
 - [ ] Control Center opened after a warm load shows `loaded`, not `loading`.
+
+---
+
+# macOS Deferral Closure — 2026-09-26
+
+- **Run:** Claude Opus 5.5, macOS 26.6.2 arm64. Starts at `206ad98`; no
+  Windows work.
+- **Commits:** `cee728d fix: give small muted text AA contrast in both themes`,
+  `bdb66fe test: quit while the capture-area choice is open`, and this
+  documentation commit.
+
+## Contrast — Fixed now (`cee728d`)
+
+The tertiary ink (`ink3` in `qt_theme.PALETTES`, `--text-muted` in the
+Control Center) moved the least distance, along its own hue, that clears
+4.5:1 against both popup surfaces:
+
+| Theme | Before → after | On card (`bg`) | On footer (`foot`) | `ink2` on card |
+|---|---|---|---|---|
+| Light | `#85888F` → `#6B6E75` | 3.55 → **5.11** | 3.23 → **4.65** | 6.12 |
+| Dark | `#858890` → `#898C94` | 4.37 → **4.61** | 4.75 → **5.01** | 7.99 |
+
+`tests/test_theme_contrast.py` checks every ink against both surfaces in both
+themes (3 cases failed on the old tokens), keeps `ink` > `ink2` > `ink3` with
+at least 0.5 between the secondary and tertiary inks, and ties the Control
+Center token to the popup's. Light and dark renders of three entries,
+compact and expanded, keep the hierarchy: section labels, hanja and meta
+lines stay quieter than the secondary text.
+
+## Shutdown with the capture prompt open — no defect (`bdb66fe`)
+
+- `tests/native/shared/test_capture_prompt_shutdown.py` (real Qt): Quit while
+  the Hanly prompt **or** the region overlay is open ends the application loop
+  in under 1 s. The choice returns `None`, no Hanly window stays visible, and
+  `quitOnLastWindowClosed` is restored. A mutation that reshows the prompt
+  after an interrupted `exec()` fails it.
+- `tests/test_application.py::test_quitting_while_choosing_restores_hover_and_the_guard`:
+  hover is muted then restored (`mute=True`, `mute=False`), `_choosing_area`
+  is cleared, and a later request shows the prompt again. Restoring the mute
+  after shutdown has begun is a no-op (`ManualLookupRuntime.set_hover_muted`
+  returns once closed).
+- **Packaged, real:** the app was built at `bdb66fe`. Select area was clicked
+  (the prompt opened), then Quit Hanly → Quit in the Control Center. **All
+  three processes** (shell, resource tracker, Control Center) exited in
+  **0.47 s**. The child's pending `select_capture_area` call reported
+  `RuntimeError: Hanly closed before answering.` on its stderr: a truthful
+  refusal while it exits, not a hang (Dismissed). Hover restoration was not
+  observable in the package (no grants, below); the composition test covers it.
+
+## Packaged hover and TCC — Deferred, signing identity
+
+`codesign -dv` / `-d -r-`: `dist/macos/Hanly.app` (`bdb66fe`) and the
+installed `/Applications/Hanly.app` (0.5.2) are both `Signature=adhoc`,
+`TeamIdentifier=not set`. Their designated requirements are
+`cdhash H"fbc2046c…"` and `cdhash H"2029c435…"`. TCC keys a grant to the
+designated requirement, so each rebuild is a new app to macOS. Hanly's
+`AXIsProcessTrusted`/`CGPreflightScreenCaptureAccess` answers report that
+truthfully. This is a signing-identity limitation, not a runtime defect.
+Permissions were not reset, bypassed or automated.
+
+**Revisit trigger:** the first macOS build signed with a Developer ID
+certificate, whose designated requirement names the team rather than a cdhash.
+Then:
+- [ ] grant Accessibility and Screen Recording once;
+- [ ] confirm the grant survives a rebuild and an update to a newer signed
+  build;
+- [ ] run packaged push-to-hover over the TextEdit mini book.
+
+## Found in passing — Deferred
+
+- **Light accent ink on small text:** `accent_ink` `#B75C76` is 4.37:1 on the
+  light card and 3.84:1 on its chip wash (the part-of-speech chip, 11 px).
+  Outside this change's tertiary-ink scope; revisit with the next accent or
+  popup palette change. Dark is 8.05:1 / 6.22:1.
+
+## Validation (HEAD `bdb66fe`)
+
+| Check | Result |
+|---|---|
+| `python -m pytest` | **2445 passed, 3 skipped** |
+| `python -m pytest --suite native` | **119 passed** |
+| `python -m pytest --suite packaged`, `HANLY_REQUIRE_PACKAGED=1`, expected `bdb66fe` | **4 passed** |
+| ruff / mypy (299 files) / `git diff --check` | clean |
+
+**Package identity:** `dist/macos/Hanly.app` built from the clean tree at
+`bdb66fe` (stamp `source_commit` `bdb66fe55617ac2916ba4eec97eceafe02e37f47`,
+0.5.3, arm64). It contains `cee728d`'s tokens. The `6207c86` bundle is
+superseded.
+
+**Privacy:** the renders were of synthetic dictionary entries, kept in the
+scratchpad; the packaged run used a scratch `--app-config` and read only
+Hanly's own windows and buttons.
+
+**Windows continuation:** unchanged. Use a build of `bdb66fe` or later, and add:
+- [ ] popup and Control Center muted text readable in Light and Dark.
