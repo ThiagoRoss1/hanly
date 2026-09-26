@@ -1289,3 +1289,31 @@ def test_a_second_area_request_while_choosing_changes_nothing(
     assert shown == ["prompt"]
     assert nested == [None]
     assert first == CaptureSelection.whole_monitor()
+
+
+def test_quitting_while_choosing_restores_hover_and_the_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quit ends the open prompt's loop, which reads as no choice."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    controller = _QtOwnedController(DesktopState.RUNNING)
+    session._controller = controller
+    shown: list[str] = []
+
+    def quit_during_prompt(*_theme: object) -> None:
+        shown.append("prompt")
+        return None
+
+    monkeypatch.setattr(application_module, "select_capture_area", quit_during_prompt)
+    monkeypatch.setattr(threading, "current_thread", threading.main_thread)
+
+    assert session._select_capture_area() is None
+    assert controller.calls == ["mute=True", "mute=False"]
+    assert session._choosing_area is False
+
+    session._select_capture_area()
+
+    assert shown == ["prompt", "prompt"]
