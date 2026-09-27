@@ -22,15 +22,31 @@ def test_every_packaged_icon_is_the_size_its_name_says(size: int) -> None:
         assert image.mode == "RGBA"
 
 
+@pytest.mark.parametrize("size", app_icon.WINDOW_FACE_SIZES)
+def test_every_packaged_window_face_is_the_size_its_name_says(size: int) -> None:
+    from PIL import Image
+
+    with Image.open(app_icon.window_face_path(size)) as image:
+        assert image.size == (size, size)
+        assert image.mode == "RGBA"
+
+
 def test_an_unpackaged_size_is_refused_rather_than_scaled() -> None:
     with pytest.raises(ValueError):
         app_icon.icon_path(20)
+    with pytest.raises(ValueError):
+        app_icon.window_face_path(32)
 
 
 def test_the_tray_gets_a_drawn_size_not_a_resampled_one() -> None:
+    from PIL import Image
+
     image = app_icon.tray_image()
 
-    assert getattr(image, "size")[0] in app_icon.ICON_SIZES
+    size = getattr(image, "size")[0]
+    assert size in app_icon.ICON_SIZES
+    with Image.open(app_icon.icon_path(size)) as application_icon:
+        assert image.tobytes() == application_icon.convert("RGBA").tobytes()
 
 
 def test_the_control_center_is_titled_hanly_with_an_inline_favicon() -> None:
@@ -82,4 +98,6 @@ def test_the_packaged_inventory_requires_the_icons() -> None:
 
     for size in app_icon.ICON_SIZES:
         assert f"hanly_app/assets/icons/hanly-icon-{size}.png" in REQUIRED_DATA_FILES
+    for size in app_icon.WINDOW_FACE_SIZES:
+        assert f"hanly_app/assets/icons/window-face-{size}.png" in REQUIRED_DATA_FILES
     assert "hanly_app/assets/icons/favicon.ico" in REQUIRED_DATA_FILES

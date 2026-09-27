@@ -1651,3 +1651,15 @@ def test_the_windows_reader_needs_no_dependency_and_no_hidden_import() -> None:
     assert "uiautomation" not in manifest
     assert "text_acquisition_uia" not in source
     assert 'collect_submodules("hanly_app")' in source
+
+
+@pytest.mark.parametrize("size", (16, 20, 24))
+def test_a_bundle_missing_a_window_face_fails_its_inventory(tmp_path: Path, size: int) -> None:
+    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
+    relative = f"hanly_app/assets/icons/window-face-{size}.png"
+    bundle.joinpath("_internal", *relative.split("/")).unlink()
+
+    inventory = inspect_bundle(bundle)
+
+    assert not inventory.ok
+    assert inventory.missing == (relative,)
