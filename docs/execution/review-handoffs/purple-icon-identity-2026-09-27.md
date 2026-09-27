@@ -263,3 +263,137 @@ Do not redesign/recolor icons or rewrite history.
 
 The user owns the next push. Remote CI and real Windows acceptance were not
 available in this macOS review and must be checked before final merge.
+
+## Final Windows Review Outcome — Phase B, 2026-09-27
+
+**Verdict: Windows icon identity accepted, with limits.** Every Windows
+surface I could inspect shows the approved purple identity. The branch is **not
+yet merge-ready**: remote Windows native CI on `674c1e1` failed for a reason
+this review could not read.
+
+- Host: Windows 10 Enterprise 19045, two 1920×1080 displays at 100% (96 DPI).
+- Reviewed from `674c1e1` (contains `b7c4b8c` and `c464029`). The one code
+  commit from this review is `f5b583d`. Nothing was reset, rebased, amended,
+  squashed, pushed or merged.
+- Accepted build: clean tree at
+  `f5b583d7d886a8f3b00c5c3849dab61125523bed`, `hanly-build.json` version
+  0.5.3, windows x86_64, build id `606a1faa-eec8-4ed2-b72e-598f71d3b371`.
+  Built with `.venv-final-validation` (Python 3.13.11, PyQt6-Qt6 6.11.2,
+  PyInstaller 6.22.2, hooks-contrib 2026.7, easyocr 1.7.2). These are the
+  pins in `packaging/release-constraints.txt`.
+
+### Gates
+
+Run in `.venv-final-validation` unless noted.
+
+| Gate | Result |
+|---|---|
+| Identity, packaging, Qt icon and dialog tests | 130 passed, 2 skipped |
+| Portable suite | 2232 passed, 103 skipped |
+| Native suite, `HANLY_REQUIRE_NATIVE=1` | 118 passed, 33 skipped (other-platform cases) |
+| Native suite, CI mirror (Python 3.10, PyQt6 6.11.0, torch 2.14 CPU) | 118 passed, 33 skipped |
+| Packaged suite, `HANLY_REQUIRE_PACKAGED=1`, full 40-char `HANLY_EXPECTED_SOURCE_COMMIT` | 4 passed (inventory, commit identity, frozen worker, Control Center page) |
+| `ruff check packages packaging tests tools benchmarks` | clean |
+| `mypy --platform linux …` (the CI gate) | clean, 301 files |
+
+Host-platform `mypy` still reports the 22 POSIX-only API errors recorded in
+the 2026-09-26 Windows validation. They are pre-existing and outside this
+update; CI runs mypy on Linux.
+
+### Remote CI
+
+GitHub Actions `CI` run `36343707812` on `674c1e1` had seven jobs. Six passed:
+quality py3.10–3.13, native linux and native macos. **`native (windows)`
+failed** at "Run the native tests". Job logs need authentication, and this
+host has no `gh` and no token, so the failing case is **unknown**. The same
+suite passed locally in both environments above. The previous branch run on
+`14e9c57` passed. This branch has several earlier failed runs whose causes
+were not examined here. The failed check is **not counted as passing**.
+
+### Real Windows visual observations (packaged, isolated profile)
+
+- **Explorer icon:** rendered through the shell's own
+  `IShellItemImageFactory` at 16/32/48/256. It shows the purple B2 bubble at
+  every size, so no stale pink icon cache was seen for this path.
+  Explorer was not restarted and no pinned shortcut was touched.
+- **Taskbar:** the running build's button shows the purple B2 bubble.
+- **Title bar at 100%:** the purple-outlined face without glasses, per the
+  mapping.
+- **Not observed:** the primary display was showing the user's full-screen
+  video, which hides the taskbar and its tray. I did not interrupt it, so the
+  **tray** and **Alt+Tab** were not seen on screen. The same goes for
+  **125/150% scaling** and the **200% B2 fallback**: display scaling was left
+  at 100% because changing it was not approved. Automated evidence only:
+  tray bytes (`hanly-icon-64.png`) are byte-identical in the bundle, and
+  native tests pin the Qt size selection.
+- The Control Center's pink "한" sidebar mark is the UI accent `#E88CA1`,
+  which the Phase A handoff records as UI color, not icon identity.
+
+### Asset and favicon checks (fresh bundle)
+
+- All 13 bundled icon files are byte-identical to
+  `packages/hanly-app/src/hanly_app/assets/icons/`.
+- The executable carries 7 `RT_ICON` frames (16–256). Each is byte-identical
+  to a frame of `packaging/icons/hanly.ico`.
+- 371 bundled PNG/ICO/ICNS files were scanned, and none matches any of the
+  15 archived pink SHA-256s. No `design/` source, `.icon` package, build
+  script or rollback manifest is bundled.
+- **Favicon, payload only:** the bundled page links `favicon.ico`, and
+  `_inline_assets` inlines it. The bundled `favicon.ico` equals the
+  committed purple face: frames 16/32/48, lavender `#C4BBEF` among its
+  dominant colors, no pink hash. The Windows pywebview window has no tab
+  strip or address bar, so **no visible favicon surface exists** to inspect.
+  This is payload validation, not on-screen validation.
+
+### Findings
+
+- **Fixed now — `f5b583d`:** all five `# noqa: N802` in `hanly_dialog.py`
+  were dead. Ruff selects only `E,F,I,UP`, and `RUF100` reported each one as
+  unused. Only the comments were removed; the Qt/`QMessageBox` method names
+  are unchanged. Behavior is unchanged, and existing dialog/prompt native
+  tests (6 passed) cover the overrides, so no new test was warranted.
+- **Dismissed as a product defect (local environment) — `.venv` is not
+  release-constrained:** it carries PyQt6-Qt6 6.10.2 and torch 2.13. A
+  bundle built from it failed the packaged worker with `WinError 1114`
+  loading `c10.dll`, the conflict `packaging/README.md` documents. The same
+  conflict explains 12–13 portable failures in
+  `benchmarks/dev/tests/test_easyocr_stages.py` under `.venv`: an access
+  violation importing torch after other suites, raising `OSError` that
+  `importorskip` does not convert to a skip. Both pass in the constrained
+  env. Its editable installs also carried stale 0.5.2 metadata, which gave
+  the first build `version 0.5.2`; they were refreshed locally with
+  `pip install --no-deps -e`. **Deferred:** re-create `.venv` with
+  `-c packaging/release-constraints.txt`. Trigger: the next local Windows
+  build or gate run that uses `.venv`.
+- **Deferred:** `control_center_process.py:813,898` carry `# noqa: BLE001`,
+  also dead under the current rule selection. Trigger: the next change to
+  that file. It is outside this update's scope.
+- **Deferred:** remote Windows native CI failure. Trigger: the next push.
+  Read the job log with an authenticated `gh run view --log-failed`, and
+  merge only on a green `native (windows)`.
+
+### `benchmarks/.gitkeep`
+
+This path does not exist in the tree and never existed in any branch's
+history (`git log --all -- benchmarks/.gitkeep` is empty). The only tracked
+`.gitkeep` is `benchmarks/fixtures/ocr/generated/.gitkeep`, added in
+`d66a361`. It holds a two-line note on why that directory is empty.
+`benchmarks/` itself always exists through tracked code. The generator
+creates `generated/` itself (`write_sample` calls `mkdir(parents=True)`),
+and nothing is ignored there. So the file is not needed for tooling, but
+removing it would drop the directory and its explanation from checkouts.
+**Kept; nothing removed.**
+
+### Continuation
+
+1. Push (human). Read the `native (windows)` log of the new CI run. If it
+   fails, fix narrowly with a regression test. Merge only once every CI job
+   is green.
+2. Brief human check on the primary display, with no full-screen app
+   covering it: the tray icon, and Alt+Tab while Hanly runs. Optionally
+   switch display scaling to 125/150% (expect the face in the title bar)
+   and 200% (expect the B2 icon), then restore it.
+3. Re-create `.venv` against the release constraints.
+
+Screenshots, build output and the isolated profile were kept outside the
+repository.
