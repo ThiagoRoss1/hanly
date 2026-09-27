@@ -27,9 +27,9 @@ WINDOW_FACE_SIZES = (16, 20, 24)
 #: Where the window icon stops being the face and becomes the application icon.
 _APPLICATION_ICON_FROM = 32
 
-#: The Dock and Cmd+Tab artwork: the bundle's 1024 px icon with a transparent
-#: margin, so it sits on Apple's icon grid beside other applications.
-MACOS_ICON_SIZE = 1248
+#: The Dock and Cmd+Tab artwork, the same 1024 px image the bundle's icon holds:
+#: an 824 px shape on Apple's icon grid, so it sits beside other applications.
+MACOS_ICON_SIZE = 1024
 
 #: The status item is drawn at about 22 points on macOS, the tray icon from a
 #: larger source on Windows, where the shell picks its own small-icon size.

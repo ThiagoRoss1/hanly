@@ -31,10 +31,9 @@ def test_every_packaged_window_face_is_the_size_its_name_says(size: int) -> None
         assert image.mode == "RGBA"
 
 
-def test_the_macos_icon_is_the_bundles_artwork_inside_a_transparent_margin() -> None:
+def test_the_macos_icon_is_the_bundles_artwork_on_apples_icon_grid() -> None:
     from PIL import Image, ImageChops
 
-    margin = (app_icon.MACOS_ICON_SIZE - 1024) // 2
     with Image.open(app_icon.macos_icon_path()) as image:
         assert image.size == (app_icon.MACOS_ICON_SIZE, app_icon.MACOS_ICON_SIZE)
         assert image.mode == "RGBA"
@@ -42,11 +41,9 @@ def test_the_macos_icon_is_the_bundles_artwork_inside_a_transparent_margin() -> 
     with Image.open(ROOT / "packaging/icons/hanly.icns") as bundle:
         artwork = bundle.convert("RGBA")
 
-    inner = runtime.crop((margin, margin, margin + 1024, margin + 1024))
-    assert ImageChops.difference(inner, artwork).getbbox() is None
-    opaque = artwork.getchannel("A").getbbox()
-    assert opaque is not None
-    assert runtime.getchannel("A").getbbox() == tuple(edge + margin for edge in opaque)
+    assert ImageChops.difference(runtime, artwork).getbbox() is None
+    # The 824 px shape centered on the 1024 px canvas, with nothing outside it.
+    assert runtime.getchannel("A").getbbox() == (100, 100, 924, 924)
 
 
 def test_an_unpackaged_size_is_refused_rather_than_scaled() -> None:
