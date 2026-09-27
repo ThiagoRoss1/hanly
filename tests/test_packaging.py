@@ -1663,3 +1663,14 @@ def test_a_bundle_missing_a_window_face_fails_its_inventory(tmp_path: Path, size
 
     assert not inventory.ok
     assert inventory.missing == (relative,)
+
+
+def test_a_bundle_missing_the_macos_icon_fails_its_inventory(tmp_path: Path) -> None:
+    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
+    relative = "hanly_app/assets/icons/hanly-macos-icon.png"
+    bundle.joinpath("_internal", *relative.split("/")).unlink()
+
+    inventory = inspect_bundle(bundle)
+
+    assert not inventory.ok
+    assert inventory.missing == (relative,)

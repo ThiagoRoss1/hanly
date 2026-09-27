@@ -27,6 +27,10 @@ WINDOW_FACE_SIZES = (16, 20, 24)
 #: Where the window icon stops being the face and becomes the application icon.
 _APPLICATION_ICON_FROM = 32
 
+#: The Dock and Cmd+Tab artwork: the bundle's 1024 px icon with a transparent
+#: margin, so it sits on Apple's icon grid beside other applications.
+MACOS_ICON_SIZE = 1248
+
 #: The status item is drawn at about 22 points on macOS, the tray icon from a
 #: larger source on Windows, where the shell picks its own small-icon size.
 _TRAY_SIZE = 24 if sys.platform == "darwin" else 64
@@ -48,6 +52,12 @@ def window_face_path(size: int) -> Path:
     return Path(str(_icons().joinpath(f"window-face-{size}.png")))
 
 
+def macos_icon_path() -> Path:
+    """The packaged macOS application icon, square treatment included."""
+
+    return Path(str(_icons().joinpath("hanly-macos-icon.png")))
+
+
 def favicon_data_uri() -> str:
     """The Control Center's favicon, inline, because its page is one document."""
 
@@ -55,17 +65,21 @@ def favicon_data_uri() -> str:
     return "data:image/x-icon;base64," + base64.b64encode(data).decode("ascii")
 
 
-def qt_icon() -> Any:
-    """A ``QIcon`` of the face below 32 px and the application icon from 32 px up.
+def qt_icon(platform: str = sys.platform) -> Any:
+    """The application-wide ``QIcon`` for ``platform``.
 
-    Title bars ask for a small size and taskbars, Alt+Tab and the Dock a larger
-    one, so one application-wide icon serves both. At 200% scaling a title bar
-    asks for 32 physical pixels and so shows the application icon.
+    macOS shows it only in the Dock and Cmd+Tab, which expect the square
+    treatment the bundle carries. Elsewhere it is the face below 32 px for title
+    bars and the application icon from 32 px up for the taskbar and Alt+Tab; at
+    200% scaling a title bar asks for 32 physical pixels and so shows the latter.
     """
 
     from PyQt6.QtGui import QIcon
 
     icon = QIcon()
+    if platform == "darwin":
+        icon.addFile(str(macos_icon_path()))
+        return icon
     for size in WINDOW_FACE_SIZES:
         icon.addFile(str(window_face_path(size)))
     for size in ICON_SIZES:
@@ -90,9 +104,11 @@ def _icons() -> Any:
 __all__ = [
     "APPLICATION_NAME",
     "ICON_SIZES",
+    "MACOS_ICON_SIZE",
     "WINDOW_FACE_SIZES",
     "favicon_data_uri",
     "icon_path",
+    "macos_icon_path",
     "qt_icon",
     "tray_image",
     "window_face_path",

@@ -51,6 +51,7 @@ REQUIRED_DATA_FILES = (
         for size in (16, 24, 32, 48, 64, 128, 256, 512)
     ),
     *(f"hanly_app/assets/icons/window-face-{size}.png" for size in (16, 20, 24)),
+    "hanly_app/assets/icons/hanly-macos-icon.png",
     "hanly_app/assets/icons/favicon.ico",
 )
 
