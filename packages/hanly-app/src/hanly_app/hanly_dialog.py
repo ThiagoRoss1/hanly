@@ -89,14 +89,14 @@ class HanlyPrompt(QDialog):
         layout.addLayout(self._buttons)
         self.setMinimumWidth(380)
 
-    def setWindowTitle(self, title: str | None) -> None:  # noqa: N802 - Qt's name
+    def setWindowTitle(self, title: str | None) -> None:
         super().setWindowTitle(title)
         self._title.setText(title or "")
 
-    def setText(self, text: str) -> None:  # noqa: N802 - QMessageBox's name
+    def setText(self, text: str) -> None:
         self._text.setText(text)
 
-    def addButton(self, text: str, role: PromptRole) -> QPushButton:  # noqa: N802
+    def addButton(self, text: str, role: PromptRole) -> QPushButton:
         button = QPushButton(text, self)
         button.setProperty("role", role.value)
         button.setAccessibleName(text)
@@ -109,7 +109,7 @@ class HanlyPrompt(QDialog):
         self._buttons.insertWidget(index, button)
         return button
 
-    def clickedButton(self) -> QPushButton | None:  # noqa: N802
+    def clickedButton(self) -> QPushButton | None:
         return self._clicked
 
     def _choose(self, button: QPushButton, role: PromptRole) -> None:
@@ -119,7 +119,7 @@ class HanlyPrompt(QDialog):
         else:
             self.accept()
 
-    def showEvent(self, event: QShowEvent | None) -> None:  # noqa: N802
+    def showEvent(self, event: QShowEvent | None) -> None:
         super().showEvent(event)
         bring_to_front(self)
 
