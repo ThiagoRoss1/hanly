@@ -7,6 +7,11 @@ package-data and PyInstaller globs only read
 
 To restore, copy each file back to its original path and revert
 `hanly-macos-icon.png`'s size in `hanly_app.app_icon.MACOS_ICON_SIZE` to 1248.
+Update the macOS geometry assertion in `tests/test_app_identity.py` to the
+archived alpha bounds `(124, 124, 1124, 1124)` as well; keep the full-channel
+runtime/bundle pixel comparison. Then rerun the identity and native Qt icon
+tests and rebuild the package. Restoring assets alone leaves the purple
+geometry assertion in place and correctly fails that test.
 
 | Archived file | Original path | SHA-256 |
 | --- | --- | --- |

@@ -1,5 +1,8 @@
 # Purple Icon Identity Review Handoff
 
+Phase B outcome and the Windows continuation are appended below. The Phase A
+sections retain their original measurements and chronology.
+
 ## Bundle
 
 - Scope: the human's approved purple icon integration — the Windows purple
@@ -130,3 +133,133 @@ executable icon in Explorer, taskbar, Alt+Tab, tray, title-bar face at
 - **Dismissed:** the Windows package's `source/build_assets.py`, preview and
   README are not copied; the package README says it mirrors only the listed
   destinations.
+
+## Post-Bundle Review Outcome — Phase B, 2026-09-27
+
+**Verdict: Accept with test/documentation hardening.** Reviewed on macOS
+26.6.2 arm64, Python 3.13.11, Xcode Icon Composer `ictool` 27.0. No product
+behavior or artwork was changed during review. Windows visual acceptance
+remains outstanding; the automated macOS gates pass. This review does not
+claim an independent live Dock/Cmd+Tab/tray confirmation: see the visual
+limitation below.
+
+### Fixed now
+
+1. `c464029` — the runtime/bundle comparison used
+   `ImageChops.difference(...).getbbox()` on RGBA images. Pillow's default
+   alpha-only bounding-box behavior could accept different RGB values when
+   alpha matched. An opaque center-pixel color mutation passed the old
+   assertion and failed the new full-channel byte comparison. The real
+   runtime PNG and decoded 1024 px `.icns` image pass. Dimensions remain
+   explicitly checked.
+2. The pink rollback manifest omitted the purple-only geometry assertion.
+   Assets plus `MACOS_ICON_SIZE` alone would leave a failing test. The
+   instructions now include the measured pink alpha bounds
+   `(124, 124, 1124, 1124)`, retain full-channel comparison, and require tests
+   and a rebuild.
+
+### Independently reproduced
+
+- Two native 824 px `TintedLight` renders were byte-identical. Centering the
+  rendered artwork on 1024 px reproduced the committed runtime RGBA pixels;
+  rebuilding all ten `.icns` slots reproduced the committed `.icns` bytes.
+- The native 1024 px rendition reproduced the approved preview pixel for
+  pixel. The delivered effect is baked into static images, not a runtime
+  appearance-dependent Liquid Glass icon.
+- All 13 copied Windows assets match the approved asset package byte for
+  byte. All 15 pink rollback assets match both their manifest SHA-256 and
+  their original files at `0901b62`.
+- Decoding the generated Control Center page's inline favicon reproduces
+  the committed purple face ICO bytes exactly.
+- Both reconstructed applications contain byte-identical active icon assets.
+  No archived pink hash occurs in bundled PNG/ICO/ICNS files, and no
+  `design/` source or rollback tree is collected.
+
+### Gates and fresh macOS release artifacts
+
+Built from clean `c464029cf9048d4dda2024355f6cfe527b9ccdd0`, version
+0.5.3, arm64. Subsequent changes in this review are documentation only.
+
+| Gate | Result |
+|---|---|
+| Portable suite | 2333 passed, 2 skipped |
+| Native suite, required | 122 passed |
+| Ruff | clean |
+| mypy | clean, 301 source files |
+| ZIP reconstructed application, packaged suite | 4 passed, required full commit check |
+| DMG reconstructed application, packaged suite | 4 passed, required full commit check |
+| DMG structure check | passed |
+| `codesign --verify --deep --strict`, ZIP and DMG copies | passed |
+
+Packaged gates include inventory, source identity, the isolated real
+OCR/morphology/dictionary worker, and the real Control Center page/bridge
+with clean exit. Two harness/environment issues were corrected before final
+results: sandboxed process enumeration/Vision calls were blocked (the full
+portable rerun outside that sandbox passed); an abbreviated expected hash
+was refused by the source-identity gate (both final runs used the full hash).
+Neither was dismissed as a product failure or counted as a passing check.
+
+### Visual evidence and limits
+
+- Independently opened the fresh build directory in Finder's icon view:
+  the purple continuous-corner icon is visible, with artwork inside the
+  container and no legacy grey enclosure.
+- Launched the ZIP application on a disposable profile, not the user's
+  profile. CUA selection of Hanly and of the Dock timed out, so live
+  Dock/Cmd+Tab/tray visuals were **not independently confirmed in Phase B**.
+  Phase A's screenshots remain historical evidence, not this review's own
+  observation. The isolated process was stopped with SIGTERM after the
+  inspection attempt; its exit was verified.
+- Qt/native tests verify the macOS runtime icon and the mixed Windows/Linux
+  size selection. Tray bytes and inline favicon payload are covered by
+  identity tests; these are automated evidence, not on-screen inspection.
+- Screenshots, build output and temporary profiles were not committed.
+  Original commits were not rewritten; no push or merge was performed.
+
+### Deferred / dismissed
+
+- **Deferred:** lower `.icns` slots use Lanczos reductions. Revisit only if
+  real small Finder sizes show unacceptable softness; this review found no
+  reason to replace approved artwork.
+- **Deferred:** independently inspect the live macOS Dock, Cmd+Tab and
+  menu-bar tray once computer-use access works, or by a brief human check.
+  Trigger: before declaring every icon surface visually accepted. No code
+  correction is justified by an automation timeout.
+- **Deferred:** all real Windows surfaces below. Trigger: the Windows
+  continuation after pulling these commits.
+- **Dismissed:** retained pink/blue source appearance data in the editable
+  Icon Composer source does not contaminate the selected purple static
+  rendition; the native reproduction and packaged hashes establish what
+  actually ships.
+
+### Windows continuation — execute after push/pull
+
+Read repository instructions and this handoff first; inspect the branch and
+worktree. Keep `visual/interface-update` and its existing commit boundaries.
+Do not redesign/recolor icons or rewrite history.
+
+1. Confirm the pulled branch contains `b7c4b8c` and `c464029`, then run
+   identity/packaging/Qt-bootstrap tests, required native tests, the portable
+   suite, Ruff and mypy. Record every failure; a skipped required check is
+   not acceptance.
+2. Build from a clean committed tree. Run required packaged tests with
+   `HANLY_EXPECTED_SOURCE_COMMIT` set to the **full 40-character hash of the
+   build**, and verify the release executable uses the approved purple ICO.
+3. Inspect the built executable in Explorer; launch with an isolated profile
+   and inspect taskbar, Alt+Tab, tray and title bar. At 100/125/150% expect
+   the no-glasses face in the title bar; at 200% expect the documented B2
+   app icon there. Do not silently add a DPI workaround.
+4. Verify the Control Center's embedded favicon bytes are the purple face.
+   If the host does not expose a visible favicon, report that distinction
+   rather than claiming on-screen validation.
+5. Check bundled active assets against the committed files and confirm no
+   archived pink assets/design sources are packaged. If Windows icon caching
+   obscures the result, distinguish caching from file/rendering defects;
+   do not restart Explorer or alter pinned shortcuts without user approval.
+6. Append Windows results, exact build commit, findings and remaining limits
+   to this handoff. Commit only authorized, narrow fixes separately, using
+   the configured human author and no attribution trailers. No push/merge
+   without the human's instruction.
+
+The user owns the next push. Remote CI and real Windows acceptance were not
+available in this macOS review and must be checked before final merge.
