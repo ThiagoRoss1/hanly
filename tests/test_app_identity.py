@@ -32,7 +32,7 @@ def test_every_packaged_window_face_is_the_size_its_name_says(size: int) -> None
 
 
 def test_the_macos_icon_is_the_bundles_artwork_on_apples_icon_grid() -> None:
-    from PIL import Image, ImageChops
+    from PIL import Image
 
     with Image.open(app_icon.macos_icon_path()) as image:
         assert image.size == (app_icon.MACOS_ICON_SIZE, app_icon.MACOS_ICON_SIZE)
@@ -41,7 +41,8 @@ def test_the_macos_icon_is_the_bundles_artwork_on_apples_icon_grid() -> None:
     with Image.open(ROOT / "packaging/icons/hanly.icns") as bundle:
         artwork = bundle.convert("RGBA")
 
-    assert ImageChops.difference(runtime, artwork).getbbox() is None
+    assert runtime.size == artwork.size
+    assert runtime.tobytes() == artwork.tobytes()
     # The 824 px shape centered on the 1024 px canvas, with nothing outside it.
     assert runtime.getchannel("A").getbbox() == (100, 100, 924, 924)
 
