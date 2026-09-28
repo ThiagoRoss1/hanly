@@ -15,7 +15,7 @@ python -m pip install -e "packages/hanly-app[dev]"
 ```
 
 That extra adds Pillow, which the image-driven campaigns need. It must come
-*after* `packages/hanly` is installed — `hanly-app` depends on `hanly==0.5.3`,
+*after* `packages/hanly` is installed — `hanly-app` depends on `hanly==0.9.0`,
 which exists only in this checkout.
 
 Every command below runs from the repository root.
