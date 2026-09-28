@@ -14,6 +14,20 @@ from typing import Any, cast
 from .hotkeys import HotkeyError, canonical_hotkey
 
 
+class OCRBackend(str, Enum):
+    """Which text recognizer a lookup uses.
+
+    ``auto`` is the default and picks the best recognizer the machine has:
+    Apple Vision on macOS, which reads Korean conjugation endings that the
+    bundled EasyOCR model does not, and EasyOCR everywhere else. The explicit
+    values exist so a backend can be pinned for comparison or debugging.
+    """
+
+    AUTO = "auto"
+    VISION = "vision"
+    EASYOCR = "easyocr"
+
+
 class CaptureMode(str, Enum):
     """The desktop area available to a future capture service."""
 
@@ -28,6 +42,21 @@ class Theme(str, Enum):
     SYSTEM = "system"
     LIGHT = "light"
     DARK = "dark"
+
+
+class PopupDefaultSize(str, Enum):
+    """How each newly presented popup initially opens."""
+
+    COMPACT = "compact"
+    EXPANDED = "expanded"
+
+
+class TechnicalDetailLevel(str, Enum):
+    """Developer-oriented detail shown beneath the reading content."""
+
+    OFF = "off"
+    BASIC = "basic"
+    FULL = "full"
 
 
 class LookupPreload(str, Enum):
@@ -105,12 +134,15 @@ SETTABLE_FIELDS = frozenset(
         "capture_hotkey",
         "hover_activation",
         "lookup_preload",
+        "ocr_backend",
         "hover_delay_ms",
         "capture_mode",
         "capture_monitor",
         "capture_region",
         "theme",
         "popup_enabled",
+        "popup_default_size",
+        "technical_details",
         "update_checks_enabled",
     }
 )
@@ -140,6 +172,17 @@ def _coerce_preload(value: object) -> LookupPreload:
         except ValueError as error:
             raise ValueError("lookup_preload must be a supported choice") from error
     raise ValueError("lookup_preload must be a supported choice")
+
+
+def _coerce_ocr_backend(value: object) -> OCRBackend:
+    if isinstance(value, OCRBackend):
+        return value
+    if isinstance(value, str):
+        try:
+            return OCRBackend(value)
+        except ValueError as error:
+            raise ValueError("ocr_backend must be a supported choice") from error
+    raise ValueError("ocr_backend must be a supported choice")
 
 
 def _coerce_activation(value: object) -> HoverActivation:
@@ -195,6 +238,24 @@ def _coerce_theme(value: object) -> Theme:
         except ValueError as error:
             raise ValueError("theme must be a supported theme") from error
     raise ValueError("theme must be a supported theme")
+
+
+def _coerce_popup_size(value: object) -> PopupDefaultSize:
+    if isinstance(value, PopupDefaultSize):
+        return value
+    try:
+        return PopupDefaultSize(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("popup_default_size must be compact or expanded") from error
+
+
+def _coerce_technical_details(value: object) -> TechnicalDetailLevel:
+    if isinstance(value, TechnicalDetailLevel):
+        return value
+    try:
+        return TechnicalDetailLevel(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("technical_details must be off, basic, or full") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +342,9 @@ class AppConfig:
     capture_hotkey: str = DEFAULT_CAPTURE_HOTKEY
     hover_activation: HoverActivation = HoverActivation.PUSH_TO_HOVER
     lookup_preload: LookupPreload = LookupPreload.WHEN_CAPTURE_STARTS
+    #: Applied when the lookup engine next loads, because the recognizer is
+    #: constructed once per engine rather than per lookup.
+    ocr_backend: OCRBackend = OCRBackend.AUTO
     # 80 ms sits at the low end of the architecture's empirical hover range.
     # It became affordable once a flat ROI stopped costing a full OCR call and
     # nearby cursor positions started reusing one cached recognition.
@@ -294,6 +358,8 @@ class AppConfig:
     capture_region: CaptureRegion | None = None
     theme: Theme = Theme.SYSTEM
     popup_enabled: bool = True
+    popup_default_size: PopupDefaultSize = PopupDefaultSize.COMPACT
+    technical_details: TechnicalDetailLevel = TechnicalDetailLevel.OFF
     update_checks_enabled: bool = True
 
     def __post_init__(self) -> None:
@@ -305,6 +371,8 @@ class AppConfig:
             )
         if not isinstance(self.lookup_preload, LookupPreload):
             object.__setattr__(self, "lookup_preload", _coerce_preload(self.lookup_preload))
+        if not isinstance(self.ocr_backend, OCRBackend):
+            object.__setattr__(self, "ocr_backend", _coerce_ocr_backend(self.ocr_backend))
         if isinstance(self.capture_hotkey, str) and not self.capture_hotkey.strip():
             object.__setattr__(self, "capture_hotkey", UNBOUND_HOTKEY)
         else:
@@ -325,6 +393,16 @@ class AppConfig:
             object.__setattr__(self, "theme", _coerce_theme(self.theme))
         if not isinstance(self.popup_enabled, bool):
             raise ValueError("popup_enabled must be a boolean")
+        if not isinstance(self.popup_default_size, PopupDefaultSize):
+            object.__setattr__(
+                self, "popup_default_size", _coerce_popup_size(self.popup_default_size)
+            )
+        if not isinstance(self.technical_details, TechnicalDetailLevel):
+            object.__setattr__(
+                self,
+                "technical_details",
+                _coerce_technical_details(self.technical_details),
+            )
         if not isinstance(self.update_checks_enabled, bool):
             raise ValueError("update_checks_enabled must be a boolean")
 
@@ -343,7 +421,10 @@ class AppConfig:
             "hover_delay_ms": self.hover_delay_ms,
             "hover_hotkey": self.hover_hotkey,
             "lookup_preload": self.lookup_preload.value,
+            "ocr_backend": self.ocr_backend.value,
             "popup_enabled": self.popup_enabled,
+            "popup_default_size": self.popup_default_size.value,
+            "technical_details": self.technical_details.value,
             "theme": self.theme.value,
             "update_checks_enabled": self.update_checks_enabled,
         }
@@ -400,6 +481,9 @@ class AppConfig:
                 lookup_preload=_coerce_preload(
                     values.get("lookup_preload", defaults.lookup_preload)
                 ),
+                ocr_backend=_coerce_ocr_backend(
+                    values.get("ocr_backend", defaults.ocr_backend)
+                ),
                 hover_delay_ms=cast(int, values.get("hover_delay_ms", defaults.hover_delay_ms)),
                 capture_mode=_coerce_capture_mode(
                     values.get("capture_mode", defaults.capture_mode)
@@ -412,6 +496,12 @@ class AppConfig:
                 ),
                 theme=_coerce_theme(values.get("theme", defaults.theme)),
                 popup_enabled=cast(bool, values.get("popup_enabled", defaults.popup_enabled)),
+                popup_default_size=_coerce_popup_size(
+                    values.get("popup_default_size", defaults.popup_default_size)
+                ),
+                technical_details=_coerce_technical_details(
+                    values.get("technical_details", defaults.technical_details)
+                ),
                 update_checks_enabled=cast(
                     bool,
                     values.get("update_checks_enabled", defaults.update_checks_enabled),
@@ -562,6 +652,9 @@ class ConfigManager:
             lookup_preload=_coerce_preload(
                 changes.get("lookup_preload", self._config.lookup_preload)
             ),
+            ocr_backend=_coerce_ocr_backend(
+                changes.get("ocr_backend", self._config.ocr_backend)
+            ),
             hover_delay_ms=cast(int, changes.get("hover_delay_ms", self._config.hover_delay_ms)),
             capture_mode=_coerce_capture_mode(
                 changes.get("capture_mode", self._config.capture_mode)
@@ -574,6 +667,12 @@ class ConfigManager:
             ),
             theme=_coerce_theme(changes.get("theme", self._config.theme)),
             popup_enabled=cast(bool, changes.get("popup_enabled", self._config.popup_enabled)),
+            popup_default_size=_coerce_popup_size(
+                changes.get("popup_default_size", self._config.popup_default_size)
+            ),
+            technical_details=_coerce_technical_details(
+                changes.get("technical_details", self._config.technical_details)
+            ),
             update_checks_enabled=cast(
                 bool,
                 changes.get("update_checks_enabled", self._config.update_checks_enabled),
@@ -598,5 +697,7 @@ __all__ = [
     "ConfigManager",
     "HoverActivation",
     "LookupPreload",
+    "PopupDefaultSize",
+    "TechnicalDetailLevel",
     "Theme",
 ]

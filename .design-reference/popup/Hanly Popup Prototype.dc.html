@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --font-ui:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono",Consolas,"SFMono-Regular",Menlo,"Liberation Mono",monospace;
+  --font-read:"Gowun Batang",serif;
+  --font-ko:"IBM Plex Sans KR",var(--font-ui);
+  --ease-soft:cubic-bezier(.32,.72,0,1);
+  --acc:250ms;
+  --lab-bg:#EDECEA;--lab-panel:#FAFAF9;--lab-raised:#FFFFFF;--lab-border:#D8D6D4;--lab-soft:#E4E2E0;
+  --lab-ink:#202124;--lab-ink-2:#5F6268;--lab-ink-3:#85888F;--lab-accent:#B75C76;--lab-wash:rgba(232,140,161,.16);
+}
+[data-mode="light"]{
+  --stage-bg:#DBD9D6;--stage-ink:#6B6E73;--stage-hi:#202124;--stage-cursor:#FFFFFF;--stage-ring:rgba(0,0,0,.24);
+  --pop-bg:#FFFFFF;--pop-foot:#F5F4F2;--pop-border:#D3D1CE;--pop-line:#E7E5E3;--wash:#F1F0EE;
+  --ink:#202124;--ink-2:#5F6268;--ink-3:#85888F;
+  --accent:#E88CA1;--accent-ink:#B75C76;--accent-wash:rgba(232,140,161,.16);--accent-line:rgba(232,140,161,.45);
+  --warn:#7E5A0D;--warn-wash:rgba(224,169,59,.18);--warn-line:rgba(224,169,59,.55);
+  --danger:#A0302A;--danger-wash:rgba(160,48,42,.10);--danger-line:rgba(160,48,42,.34);
+  --pop-shadow:0 18px 44px rgba(28,18,24,.22),0 2px 6px rgba(28,18,24,.10);
+}
+[data-mode="dark"]{
+  --stage-bg:#0D0E10;--stage-ink:#85888F;--stage-hi:#E6E6E8;--stage-cursor:#FFFFFF;--stage-ring:rgba(0,0,0,.6);
+  --pop-bg:#232428;--pop-foot:#1C1D20;--pop-border:#3A3C41;--pop-line:#2F3135;--wash:#292A2E;
+  --ink:#F2F2F3;--ink-2:#B8BAC0;--ink-3:#858890;
+  --accent:#F08FA6;--accent-ink:#F4A5B6;--accent-wash:rgba(240,143,166,.14);--accent-line:rgba(240,143,166,.4);
+  --warn:#E7BC74;--warn-wash:rgba(231,188,116,.12);--warn-line:rgba(231,188,116,.42);
+  --danger:#F09086;--danger-wash:rgba(240,144,134,.12);--danger-line:rgba(240,144,134,.4);
+  --pop-shadow:0 22px 52px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.45);
+}
+html,body{margin:0;padding:0;background:var(--lab-bg)}
+button,input{font-family:inherit}
+a{color:var(--lab-accent);text-decoration:none}
+a:hover{color:#E88CA1}
+:focus-visible{outline:2px solid #E88CA1;outline-offset:2px}
+@keyframes hlyPopA{from{opacity:0;transform:scale(.972)}to{opacity:1;transform:none}}
+@keyframes hlyPopB{from{opacity:0;transform:scale(.972)}to{opacity:1;transform:none}}
+[data-pop="a"]{animation:hlyPopA 220ms var(--ease-soft) both}
+[data-pop="b"]{animation:hlyPopB 220ms var(--ease-soft) both}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</helmet>
+
+<div style="font-family:var(--font-ui);min-height:100vh;box-sizing:border-box;background:var(--lab-bg);color:var(--lab-ink);padding:22px 24px 44px;-webkit-font-smoothing:antialiased">
+
+  <header style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;padding-bottom:16px;border-bottom:1px solid var(--lab-soft)">
+    <div style="min-width:0">
+      <div style="font-size:10.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--lab-ink-3)">Hanly · prototype</div>
+      <h1 style="margin:3px 0 0;font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.15">Dictionary popup</h1>
+      <p style="margin:4px 0 0;max-width:640px;font-size:12.5px;line-height:1.55;color:var(--lab-ink-2);text-wrap:pretty">One card at two densities. Meaning first, construction second, technical detail on demand. Both themes render the same markup — everything below reacts to the test panel on the right.</p>
+    </div>
+    <button type="button" onClick="{{ replay }}" style="margin-left:auto;flex:none;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-size:12px;font-weight:600;color:var(--lab-ink);background:var(--lab-raised);border:1px solid var(--lab-border);border-radius:9px;padding:0 13px" style-hover="background:var(--lab-panel)">Replay appear</button>
+  </header>
+
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 252px;gap:20px;align-items:start;margin-top:20px">
+
+    <div style="min-width:0;display:flex;flex-direction:column;gap:26px">
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">
+        <sc-for list="{{ stages }}" as="st" hint-placeholder-count="2">
+          <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+            <div style="display:flex;align-items:baseline;gap:9px">
+              <span style="font-size:11px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--lab-ink-3)">{{ st.label }}</span>
+              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--lab-ink-3)">{{ st.dims }}</span>
+              <span style="margin-left:auto;font-size:10.5px;color:var(--lab-ink-3)">sizes to content</span>
+            </div>
+
+            <div data-mode="{{ st.mode }}" style="background:var(--stage-bg);border-radius:14px;padding:30px 28px 38px;overflow:hidden">
+              <div style="max-width:430px;display:flex;flex-direction:column;align-items:flex-start">
+                <div style="font-family:var(--font-read);font-size:15px;line-height:1.7;color:var(--stage-ink);white-space:pre-wrap">{{ sentPre }}<span style="position:relative;color:var(--stage-hi)">{{ surface }}<span style="position:absolute;left:0;right:0;bottom:-3px;height:1.5px;background:var(--accent);opacity:.75"></span></span>{{ sentPost }}<span style="display:inline-block;width:8px;height:8px;margin-left:8px;vertical-align:middle;border-radius:50%;background:var(--stage-cursor);box-shadow:0 0 0 3px var(--stage-ring)"></span></div>
+
+                <div data-pop="{{ tick }}" ref="{{ st.ref }}" style="{{ cardStyle }}">
+
+                  <div style="padding:16px 18px 0">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px">
+                      <div style="min-width:0">
+                        <div style="font-family:var(--font-read);font-size:31px;font-weight:700;line-height:1.08;letter-spacing:-.01em">{{ lemma }}</div>
+                        <div style="margin-top:5px;display:flex;align-items:baseline;gap:8px;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3)">
+                          <span>{{ pron }}</span>
+                          <sc-if value="{{ showRoman }}" hint-placeholder-val="{{ false }}"><span style="opacity:.8">{{ roman }}</span></sc-if>
+                        </div>
+                      </div>
+                      <sc-if value="{{ hasHanja }}" hint-placeholder-val="{{ true }}">
+                        <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:2px;padding-top:9px">
+                          <span style="font-family:var(--font-read);font-size:19px;line-height:1.1;color:var(--ink-2)">{{ hanja }}</span>
+                          <span style="font-family:var(--font-mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)">hanja</span>
+                        </div>
+                      </sc-if>
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:13px">
+                      <sc-for list="{{ chips }}" as="c" hint-placeholder-count="3">
+                        <span style="{{ c.style }}">{{ c.label }}</span>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:14px;padding:0 18px;display:flex;flex-direction:column">
+                    <sc-for list="{{ senses }}" as="s" hint-placeholder-count="2">
+                      <div style="{{ s.rowStyle }}">
+                        <div style="display:flex;align-items:baseline;gap:13px">
+                          <span style="flex:none;width:11px;font-family:var(--font-mono);font-size:11px;line-height:1;color:var(--accent-ink)">{{ s.n }}</span>
+                          <div style="flex:1;min-width:0">
+                            <div style="font-size:14.5px;font-weight:650;letter-spacing:-.005em">{{ s.gloss }}</div>
+                            <div style="{{ s.defStyle }}">{{ s.def }}</div>
+                            <sc-if value="{{ s.showExample }}" hint-placeholder-val="{{ false }}">
+                              <div style="margin-top:10px;padding-left:11px;border-left:2px solid var(--accent-line)">
+                                <div style="font-family:var(--font-read);font-size:13.5px;line-height:1.5">{{ s.ko }}</div>
+                                <div style="margin-top:3px;font-size:11.5px;line-height:1.45;color:var(--ink-3)">{{ s.en }}</div>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{ s.hasMore }}" hint-placeholder-val="{{ false }}">
+                              <button type="button" style="margin-top:9px;display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:11px;color:var(--ink-3);background:transparent;border:0;padding:0" style-hover="color:var(--accent-ink)">+ 2 more examples</button>
+                            </sc-if>
+                          </div>
+                        </div>
+                      </div>
+                    </sc-for>
+                  </div>
+
+                  <sc-if value="{{ isCompact }}" hint-placeholder-val="{{ true }}">
+                    <div style="margin:0 18px;padding:13px 0 14px;border-top:1px solid var(--pop-line)">
+                      <sc-if value="{{ showLemmaLine }}" hint-placeholder-val="{{ true }}">
+                        <div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:8px">
+                          <span style="font-family:var(--font-mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)">read as</span>
+                          <span style="font-family:var(--font-read);font-size:15px;color:var(--ink-2)">{{ surface }}</span>
+                          <span style="font-size:12px;color:var(--accent)">→</span>
+                          <span style="font-family:var(--font-read);font-size:15px;font-weight:700;color:var(--ink)">{{ lemma }}</span>
+                        </div>
+                      </sc-if>
+                      <div style="margin-top:7px;display:flex;align-items:baseline;flex-wrap:wrap;gap:7px">
+                        <sc-for list="{{ pieces }}" as="p" hint-placeholder-count="2">
+                          <span style="display:inline-flex;align-items:baseline;gap:7px">
+                            <sc-if value="{{ p.sep }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;color:var(--accent)">+</span></sc-if>
+                            <span style="{{ p.tokenStyle }}">{{ p.t }}</span>
+                          </span>
+                        </sc-for>
+                      </div>
+                      <div style="margin-top:3px;font-size:11px;color:var(--ink-3)">{{ rolesLine }}</div>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ isExpanded }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:0 18px;padding:14px 0;border-top:1px solid var(--pop-line)">
+                      <button type="button" onClick="{{ toggleGrammar }}" style="width:100%;min-height:18px;display:flex;align-items:center;gap:9px;cursor:pointer;background:transparent;border:0;padding:0;color:inherit;text-align:left">
+                        <span style="font-family:var(--font-mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)">word analysis</span>
+                        <span style="margin-left:auto;font-size:11px;font-weight:600;color:var(--ink-2)">{{ grammarLabel }}</span>
+                        <span style="{{ grammarChevStyle }}"></span>
+                      </button>
+                      <div style="margin-top:10px;display:flex;align-items:flex-end;flex-wrap:wrap;gap:11px">
+                        <span style="display:flex;flex-direction:column;gap:2px">
+                          <span style="font-family:var(--font-read);font-size:17px;line-height:1.2;color:var(--ink-2)">{{ surface }}</span>
+                          <span style="font-family:var(--font-mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)">surface</span>
+                        </span>
+                        <span style="font-size:13px;line-height:1;color:var(--accent);padding-bottom:14px">→</span>
+                        <span style="display:flex;flex-direction:column;gap:2px">
+                          <span style="font-family:var(--font-read);font-size:17px;line-height:1.2;font-weight:700;color:var(--ink)">{{ lemma }}</span>
+                          <span style="font-family:var(--font-mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)">lemma</span>
+                        </span>
+                      </div>
+                      <div style="margin-top:11px;padding-top:10px;border-top:1px dashed var(--pop-line);display:flex;align-items:baseline;flex-wrap:wrap;gap:7px">
+                        <sc-for list="{{ pieces }}" as="p" hint-placeholder-count="3">
+                          <span style="display:inline-flex;align-items:baseline;gap:7px">
+                            <sc-if value="{{ p.sep }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;color:var(--accent)">+</span></sc-if>
+                            <span style="{{ p.tokenStyle }}">{{ p.t }}</span>
+                          </span>
+                        </sc-for>
+                      </div>
+                      <div style="margin-top:3px;font-size:11px;color:var(--ink-3)">{{ rolesLine }}</div>
+                      <div style="{{ grammarRowsStyle }}">
+                        <div style="overflow:hidden">
+                          <div style="margin-top:12px;display:flex;flex-direction:column;gap:9px">
+                            <sc-for list="{{ morphRows }}" as="m" hint-placeholder-count="3">
+                              <div style="display:flex;align-items:baseline;gap:11px">
+                                <span style="flex:none;width:74px;font-family:var(--font-read);font-size:14px;color:var(--ink)">{{ m.t }}</span>
+                                <span style="flex:none;width:96px;font-size:11px;font-weight:650;color:var(--ink-2)">{{ m.role }}</span>
+                                <span style="flex:1;min-width:0;font-size:11.5px;line-height:1.45;color:var(--ink-3);text-wrap:pretty">{{ m.gloss }}</span>
+                              </div>
+                            </sc-for>
+                            <p style="margin:3px 0 0;padding:9px 11px;background:var(--wash);border-radius:9px;font-size:11.5px;line-height:1.55;color:var(--ink-2);text-wrap:pretty">{{ explain }}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ showFull }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin:0 18px;padding:11px 0 12px;border-top:1px solid var(--pop-line);display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-family:var(--font-mono);font-size:10px;color:var(--ink-3)">
+                      <sc-for list="{{ techRows }}" as="r" hint-placeholder-count="4">
+                        <span style="color:var(--ink-3);opacity:.72">{{ r.k }}</span>
+                        <span style="color:var(--ink-2)">{{ r.v }}</span>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{ showOthers }}" hint-placeholder-val="{{ true }}">
+                    <div style="{{ othersRowsStyle }}">
+                      <div style="overflow:hidden">
+                        <div style="margin:0 18px;padding:11px 0 12px;border-top:1px solid var(--pop-line);display:flex;flex-direction:column;gap:9px">
+                          <sc-for list="{{ others }}" as="o" hint-placeholder-count="2">
+                            <button type="button" style="display:flex;align-items:baseline;gap:9px;cursor:pointer;background:transparent;border:0;padding:0;text-align:left;color:inherit">
+                              <span style="font-family:var(--font-read);font-size:15px">{{ o.w }}</span>
+                              <span style="font-size:11px;color:var(--ink-3)">{{ o.pos }}</span>
+                              <span style="font-size:11.5px;color:var(--ink-2)">{{ o.gloss }}</span>
+                            </button>
+                          </sc-for>
+                        </div>
+                      </div>
+                    </div>
+                  </sc-if>
+
+                  <div style="padding:9px 13px;background:var(--pop-foot);border-top:1px solid var(--pop-line);display:flex;align-items:center;gap:11px">
+                    <sc-if value="{{ showOthers }}" hint-placeholder-val="{{ true }}">
+                      <button type="button" onClick="{{ toggleOthers }}" style="height:26px;display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;font-size:11.5px;line-height:1;color:var(--ink-2);background:transparent;border:0;border-radius:7px;padding:0 8px;margin-left:-3px;transition:background 150ms,color 150ms" style-hover="background:var(--wash);color:var(--ink)">
+                        Other entries <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3)">(2)</span>
+                        <span style="{{ othersChevStyle }}"></span>
+                      </button>
+                    </sc-if>
+                    <sc-if value="{{ showBasic }}" hint-placeholder-val="{{ false }}">
+                      <span style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:10px;line-height:1;color:var(--ink-3);white-space:nowrap">{{ footerMeta }}</span>
+                    </sc-if>
+                    <button type="button" onClick="{{ toggleSize }}" aria-label="{{ sizeLabel }}" style="margin-left:auto;flex:none;height:26px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;font-size:11px;font-weight:600;line-height:1;color:var(--ink-2);background:transparent;border:1px solid var(--pop-border);border-radius:999px;padding:0 11px;transition:background 150ms,color 150ms" style-hover="background:var(--wash);color:var(--ink)">
+                      {{ sizeLabel }}<span style="{{ sizeChevStyle }}"></span>
+                    </button>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <h2 style="margin:0;font-size:13px;font-weight:650;letter-spacing:-.01em">Non-success states</h2>
+          <p style="margin:0;font-size:11.5px;color:var(--lab-ink-2)">Human sentence first, one useful suggestion, technical line only when details are on.</p>
+        </div>
+        <sc-for list="{{ stages }}" as="st" hint-placeholder-count="2">
+          <div data-mode="{{ st.mode }}" style="background:var(--stage-bg);border-radius:14px;padding:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(252px,1fr));gap:14px">
+            <sc-for list="{{ states }}" as="n" hint-placeholder-count="4">
+              <div style="{{ n.cardStyle }}">
+                <div style="padding:14px 16px 15px;display:flex;gap:11px">
+                  <span style="{{ n.glyphStyle }}">{{ n.glyph }}</span>
+                  <div style="min-width:0">
+                    <sc-if value="{{ n.hasWord }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-family:var(--font-read);font-size:19px;font-weight:700;line-height:1.2;margin-bottom:5px">{{ n.word }}</div>
+                    </sc-if>
+                    <div style="font-size:13px;font-weight:650;letter-spacing:-.005em">{{ n.title }}</div>
+                    <div style="margin-top:4px;font-size:12px;line-height:1.5;color:var(--ink-2);text-wrap:pretty">{{ n.body }}</div>
+                    <div style="margin-top:5px;font-size:12px;line-height:1.5;color:var(--ink-3);text-wrap:pretty">{{ n.tip }}</div>
+                    <sc-if value="{{ n.hasBar }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin-top:11px;height:3px;border-radius:2px;background:var(--wash);position:relative;overflow:hidden">
+                        <span style="{{ n.barStyle }}"></span>
+                      </div>
+                    </sc-if>
+                  </div>
+                </div>
+                <sc-if value="{{ showTech }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:auto;padding:8px 16px;background:var(--pop-foot);border-top:1px solid var(--pop-line);font-family:var(--font-mono);font-size:9.5px;letter-spacing:.06em;color:var(--ink-3)">{{ n.tech }}</div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+
+    </div>
+
+    <aside style="position:sticky;top:22px;display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--lab-panel);border:1px solid var(--lab-border);border-radius:13px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 6px 18px rgba(0,0,0,.05)">
+      <div>
+        <div style="font-size:12px;font-weight:700;letter-spacing:-.005em">Test panel</div>
+        <p style="margin:3px 0 0;font-size:11px;line-height:1.5;color:var(--lab-ink-3)">Prototype only — not part of the popup.</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span style="font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--lab-ink-3)">Word</span>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <sc-for list="{{ specimens }}" as="sp" hint-placeholder-count="2">
+            <button type="button" onClick="{{ sp.go }}" style="{{ sp.style }}">
+              <span style="font-family:var(--font-read);font-size:15px">{{ sp.ko }}</span>
+              <span style="font-size:11px;color:var(--lab-ink-3)">{{ sp.note }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span style="font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--lab-ink-3)">Default size</span>
+        <div style="display:flex;padding:3px;background:var(--lab-soft);border-radius:10px">
+          <sc-for list="{{ sizeOpts }}" as="o" hint-placeholder-count="2">
+            <button type="button" onClick="{{ o.go }}" style="{{ o.style }}">{{ o.label }}</button>
+          </sc-for>
+        </div>
+        <p style="margin:1px 0 0;font-size:10.5px;line-height:1.45;color:var(--lab-ink-3)">{{ sizeNote }}</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <span style="font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--lab-ink-3)">Technical details</span>
+        <div style="display:flex;padding:3px;background:var(--lab-soft);border-radius:10px">
+          <sc-for list="{{ detailOpts }}" as="o" hint-placeholder-count="3">
+            <button type="button" onClick="{{ o.go }}" style="{{ o.style }}">{{ o.label }}</button>
+          </sc-for>
+        </div>
+        <p style="margin:1px 0 0;font-size:10.5px;line-height:1.45;color:var(--lab-ink-3)">{{ detailNote }}</p>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;padding-top:11px;border-top:1px solid var(--lab-soft)">
+        <span style="font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--lab-ink-3)">Optional sections</span>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <sc-for list="{{ toggles }}" as="t" hint-placeholder-count="5">
+            <button type="button" onClick="{{ t.go }}" style="{{ t.style }}">
+              <span style="{{ t.boxStyle }}">{{ t.mark }}</span>{{ t.label }}
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;padding-top:11px;border-top:1px solid var(--lab-soft)">
+        <span style="font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--lab-ink-3)">Always on</span>
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          <sc-for list="{{ coreFields }}" as="c" hint-placeholder-count="4">
+            <span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;background:var(--lab-wash);border-radius:999px;font-size:10.5px;font-weight:600;color:var(--lab-accent)">{{ c }}</span>
+          </sc-for>
+        </div>
+        <p style="margin:1px 0 0;font-size:10.5px;line-height:1.45;color:var(--lab-ink-3)">Core reading fields cannot be switched off. Hanja is omitted only when the entry has none.</p>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const DATA = {
+  noun: {
+    surface: '문화를', lemma: '문화', hanja: '文化', pron: '[문화]', roman: 'munhwa',
+    pos: '명사', topik: 'TOPIK 2', category: '문화 › 예술', extras: ['단어', '한자어'],
+    sentPre: '한국 ', sentPost: ' 배우고 있어요.',
+    senses: [
+      { gloss: 'culture', def: 'The lifestyle, values and habits that a society creates and shares.', ko: '한국 문화를 배우고 있어요.', en: "I'm learning about Korean culture.", more: true },
+      { gloss: 'refinement', def: 'The refined side of human activity, such as art, learning and manners.', ko: '그는 문화 수준이 높은 사람이다.', en: 'He is a person of high refinement.' }
+    ],
+    pieces: [
+      { t: '문화', role: 'noun', gloss: 'the dictionary word' },
+      { t: '를', role: 'object particle', gloss: 'marks 문화 as the object of the verb' }
+    ],
+    explain: '문화 is the dictionary word. 를 is attached because it is the object of 배우다.',
+    others: [
+      { w: '문화 (文華)', pos: '명사', gloss: 'literary brilliance' },
+      { w: '문화 (門下)', pos: '명사', gloss: 'under a teacher' }
+    ],
+    ocr: '97%', tech: [['provider', 'krdict v1 · sqlite3'], ['lookup', 'hit · 1 entry'], ['timing', '214 ms'], ['request', 'req#0412']]
+  },
+  verb: {
+    surface: '깨뜨렸습니다', lemma: '깨뜨리다', hanja: '', pron: '[깨뜨리다]', roman: 'kkaetteurida',
+    pos: '동사', topik: 'TOPIK 3', category: '행위 › 파손', extras: ['단어', '고유어'],
+    sentPre: '실수로 컵을 ', sentPost: '.',
+    senses: [
+      { gloss: 'to break, to smash', def: 'To hit or drop something hard so that it comes apart.', ko: '접시를 깨뜨렸습니다.', en: 'I broke the plate.', more: true },
+      { gloss: 'to shatter, to disrupt', def: 'To put an end to a silence, a record or a settled mood.', ko: '그가 침묵을 깨뜨렸다.', en: 'He broke the silence.' }
+    ],
+    pieces: [
+      { t: '깨뜨리-', role: 'verb stem', gloss: 'to break / to smash' },
+      { t: '-었-', role: 'past', gloss: 'past tense' },
+      { t: '-습니다', role: 'formal polite', gloss: 'formal polite declarative ending' }
+    ],
+    explain: '깨뜨리다 is conjugated in the past tense and ends with the formal polite -습니다 style.',
+    others: [
+      { w: '깨다', pos: '동사', gloss: 'to break; to wake up' },
+      { w: '깨트리다', pos: '동사', gloss: 'variant spelling' }
+    ],
+    ocr: '93%', tech: [['provider', 'krdict v1 · sqlite3'], ['lookup', 'hit · lemma via kiwi'], ['timing', '246 ms'], ['request', 'req#0417']]
+  }
+};
+
+const STATES = [
+  { key: 'empty', tone: 'n', glyph: '텅', title: 'Nothing to read there', body: 'No text was recognised in that region.', tip: 'Hover a little closer to the glyphs.', techB: 'no text found · roi 96×32', techF: 'EMPTY · roi 96×32 · 41 ms · req#0409' },
+  { key: 'nf', tone: 'n', glyph: '?', word: '뻘쭘하다', title: 'Not in the dictionary', body: 'The text was read cleanly, but nothing matched.', tip: 'Likely slang, a name, or a spelling the dictionary does not carry.', techB: 'OCR 95% · krdict v1', techF: 'NOT_FOUND · krdict v1 · tried 뻘쭘하다, 뻘쭘 · 188 ms · req#0411' },
+  { key: 'low', tone: 'w', glyph: '≈', word: '문호ㅏ', title: 'Too unclear to look up', body: 'Recognition was too weak to search safely.', tip: 'Try a larger region, or zoom the source text.', techB: 'OCR 31% · below the 60% floor', techF: 'UNUSABLE · conf 0.31 · floor 0.60 · roi 88×26 · 52 ms', bar: 31 },
+  { key: 'err', tone: 'd', glyph: '!', title: 'Lookup failed', body: 'The dictionary database did not answer.', tip: 'Open the Control Center to check resources.', techB: 'krdict v1 · lookup failed', techF: 'ERROR · KRDICTError: database is locked · req#0413' }
+];
+
+class Component extends DCLogic {
+  state = {
+    specimen: 'noun', defaultSize: 'compact', size: 'compact', detail: 'off',
+    f: { examples: true, topik: true, category: true, roman: false, others: true },
+    grammarOpen: false, othersOpen: false, tick: 'a', dims: {}
+  };
+
+  _els = {};
+
+  componentDidMount() { this._poll = setInterval(() => this.readDims(), 350); }
+  componentWillUnmount() { if (this._ro) this._ro.disconnect(); if (this._t) clearTimeout(this._t); if (this._poll) clearInterval(this._poll); }
+
+  schedule() {
+    if (this._t) clearTimeout(this._t);
+    this._t = setTimeout(() => { this._t = null; this.readDims(); }, 60);
+  }
+
+  observe = (mode) => (el) => {
+    if (!el) { delete this._els[mode]; return; }
+    if (this._els[mode] === el) return;
+    this._els[mode] = el;
+    if (!this._ro) this._ro = new ResizeObserver(() => this.schedule());
+    this._ro.observe(el);
+    this.schedule();
+  };
+
+  readDims() {
+    const cur = this.state.dims || {}, next = Object.assign({}, cur);
+    let changed = false;
+    for (const k in this._els) {
+      const el = this._els[k];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width) continue;
+      const v = Math.round(r.width) + ' × ' + Math.round(r.height) + ' px';
+      if (v !== cur[k]) { next[k] = v; changed = true; }
+    }
+    if (changed) this.setState({ dims: next });
+  }
+
+  flip() { return this.state.tick === 'a' ? 'b' : 'a'; }
+
+  seg(active) {
+    return 'flex:1;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11.5px;line-height:1;font-weight:' + (active ? 650 : 600) +
+      ';padding:0 8px;border:0;border-radius:8px;white-space:nowrap;background:' + (active ? 'var(--lab-raised)' : 'transparent') +
+      ';color:' + (active ? 'var(--lab-ink)' : 'var(--lab-ink-2)') +
+      ';box-shadow:' + (active ? '0 1px 2px rgba(0,0,0,.09)' : 'none') + ';transition:background 150ms,color 150ms';
+  }
+
+  chip(kind) {
+    const base = 'height:22px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;line-height:1;';
+    if (kind === 'accent') return base + 'padding:0 10px;background:var(--accent-wash);font-family:var(--font-ko);font-size:11px;font-weight:600;color:var(--accent-ink)';
+    if (kind === 'more') return base + 'padding:0 8px;border:1px solid var(--pop-border);font-family:var(--font-mono);font-size:10px;color:var(--ink-3)';
+    return base + 'padding:0 10px;background:var(--wash);font-family:var(--font-ko);font-size:11px;color:var(--ink-2)';
+  }
+
+  renderVals() {
+    const s = this.state;
+    const size = s.size, detail = s.detail, roman = s.f.roman;
+    const expanded = size === 'expanded';
+    const d = DATA[s.specimen];
+
+    const chips = [{ label: d.pos, style: this.chip('accent') }];
+    if (s.f.topik) chips.push({ label: d.topik, style: this.chip() });
+    if (s.f.category) chips.push({ label: d.category, style: this.chip() });
+    if (expanded) d.extras.forEach(x => chips.push({ label: x, style: this.chip() }));
+    else chips.push({ label: '+' + d.extras.length, style: this.chip('more') });
+
+    const senses = d.senses.map((x, i) => ({
+      n: i + 1, gloss: x.gloss, def: x.def,
+      defStyle: 'margin-top:4px;font-size:12.5px;line-height:1.5;color:var(--ink-2);text-wrap:pretty' +
+        (expanded ? '' : ';display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden'),
+      rowStyle: 'padding:' + (expanded ? '14px 0' : '12px 0') + (i ? ';border-top:1px solid var(--pop-line)' : ''),
+      showExample: expanded && s.f.examples, ko: x.ko, en: x.en,
+      hasMore: expanded && s.f.examples && !!x.more
+    }));
+
+    const pieces = d.pieces.map((p, i) => ({
+      t: p.t, sep: i > 0,
+      tokenStyle: 'font-family:var(--font-read);font-size:13.5px;color:var(--ink-2)'
+    }));
+
+    const acc = (open) => 'overflow:hidden;max-height:' + (open ? '340px' : '0px') + ';opacity:' + (open ? '1' : '0') +
+      ';transition:max-height var(--acc) var(--ease-soft),opacity 170ms var(--ease-soft)';
+    const chev = (open, c) => 'width:5.5px;height:5.5px;flex:none;margin:' + (open ? '1px' : '-2px') + ' 1px 0;border-right:1.3px solid ' + c + ';border-bottom:1.3px solid ' + c +
+      ';transform:rotate(' + (open ? '225deg' : '45deg') + ');transition:transform 200ms var(--ease-soft),margin 200ms var(--ease-soft)';
+
+    const states = STATES.map(n => {
+      const line = n.tone === 'w' ? 'var(--warn-line)' : n.tone === 'd' ? 'var(--danger-line)' : 'var(--pop-border)';
+      const gc = n.tone === 'w' ? 'var(--warn-wash);color:var(--warn)' : n.tone === 'd' ? 'var(--danger-wash);color:var(--danger)' : 'var(--wash);color:var(--ink-3)';
+      return {
+        cardStyle: 'display:flex;flex-direction:column;background:var(--pop-bg);border:1px solid ' + line + ';border-radius:13px;box-shadow:var(--pop-shadow);overflow:hidden;color:var(--ink)',
+        glyphStyle: 'width:26px;height:26px;flex:none;display:grid;place-items:center;border-radius:8px;font-family:var(--font-read);font-size:13px;font-weight:700;background:' + gc,
+        glyph: n.glyph, hasWord: !!n.word, word: n.word, title: n.title, body: n.body, tip: n.tip,
+        tech: detail === 'full' ? n.techF : n.techB,
+        hasBar: !!n.bar,
+        barStyle: 'position:absolute;left:0;top:0;bottom:0;width:' + (n.bar || 0) + '%;background:var(--warn);border-radius:2px'
+      };
+    });
+
+    return {
+      stages: [
+        { mode: 'dark', label: 'Dark', dims: s.dims.dark || '', ref: this.observe('dark') },
+        { mode: 'light', label: 'Light', dims: s.dims.light || '', ref: this.observe('light') }
+      ],
+      tick: s.tick,
+      surface: d.surface, lemma: d.lemma, pron: d.pron, roman: d.roman,
+      hanja: d.hanja, hasHanja: !!d.hanja, showRoman: roman,
+      sentPre: d.sentPre, sentPost: d.sentPost,
+      chips, senses, pieces, morphRows: d.pieces, explain: d.explain,
+      rolesLine: d.pieces.map(p => p.role).join(' · '),
+      showLemmaLine: d.surface !== d.lemma,
+      isCompact: !expanded, isExpanded: expanded,
+      cardStyle: 'margin-top:14px;margin-left:26px;box-sizing:border-box;width:' + (expanded ? 386 : 340) +
+        'px;background:var(--pop-bg);border:1px solid var(--pop-border);border-radius:14px;box-shadow:var(--pop-shadow);overflow:hidden;color:var(--ink);transition:width 300ms var(--ease-soft)',
+      grammarOpen: s.grammarOpen,
+      grammarLabel: s.grammarOpen ? 'Less' : 'Breakdown',
+      grammarChevStyle: chev(s.grammarOpen, 'var(--ink-3)'),
+      grammarRowsStyle: acc(s.grammarOpen),
+      toggleGrammar: () => this.setState({ grammarOpen: !s.grammarOpen }),
+      showOthers: s.f.others, others: d.others,
+      othersRowsStyle: acc(s.othersOpen && s.f.others),
+      othersChevStyle: chev(s.othersOpen, 'var(--ink-3)'),
+      toggleOthers: () => this.setState({ othersOpen: !s.othersOpen }),
+      showTech: detail !== 'off', showBasic: detail !== 'off', showFull: detail === 'full',
+      ocr: d.ocr,
+      footerMeta: detail === 'full' ? 'OCR ' + d.ocr : 'OCR ' + d.ocr + ' · krdict',
+      techRows: d.tech.map(t => ({ k: t[0], v: t[1] })),
+      sizeLabel: expanded ? 'Collapse' : 'Expand',
+      sizeChevStyle: chev(expanded, 'currentColor'),
+      toggleSize: () => this.setState({ size: expanded ? 'compact' : 'expanded', grammarOpen: false }),
+      replay: () => this.setState({ tick: this.flip(), size: s.defaultSize, grammarOpen: false, othersOpen: false }),
+      sizeNote: 'How a new popup opens. ' + (size === s.defaultSize
+        ? 'Replay appear reopens at this size.'
+        : 'This popup is currently ' + (expanded ? 'expanded' : 'collapsed') + ' — replay appear resets it.'),
+      states,
+      specimens: [
+        { key: 'noun', ko: '문화를', note: 'noun + particle' },
+        { key: 'verb', ko: '깨뜨렸습니다', note: 'conjugated verb' }
+      ].map(x => ({
+        ko: x.ko, note: x.note,
+        style: 'display:flex;align-items:baseline;gap:9px;cursor:pointer;text-align:left;padding:7px 10px;border-radius:9px;font:inherit;border:1px solid ' +
+          (s.specimen === x.key ? 'var(--lab-border)' : 'transparent') + ';background:' + (s.specimen === x.key ? 'var(--lab-raised)' : 'transparent') +
+          ';color:var(--lab-ink);box-shadow:' + (s.specimen === x.key ? '0 1px 2px rgba(0,0,0,.05)' : 'none'),
+        go: () => this.setState({ specimen: x.key, tick: this.flip(), grammarOpen: false, othersOpen: false })
+      })),
+      sizeOpts: [['compact', 'Compact'], ['expanded', 'Expanded']].map(o => ({
+        label: o[1], style: this.seg(s.defaultSize === o[0]),
+        go: () => this.setState({ defaultSize: o[0], size: o[0], tick: this.flip(), grammarOpen: false })
+      })),
+      detailOpts: [['off', 'Off'], ['basic', 'Basic'], ['full', 'Full']].map(o => ({
+        label: o[1], style: this.seg(detail === o[0]), go: () => this.setState({ detail: o[0] })
+      })),
+      detailNote: detail === 'off' ? 'Normal reading. No provider, timing or confidence.'
+        : detail === 'basic' ? 'Adds OCR confidence to the footer and the state cards.'
+        : 'Adds provider, lookup status, timing and request id.',
+      toggles: [['examples', 'Examples'], ['topik', 'TOPIK level'], ['category', 'Category chips'], ['roman', 'Romanization'], ['others', 'Other entries']].map(t => {
+        const on = s.f[t[0]];
+        return {
+          label: t[1], mark: on ? '✓' : '',
+          style: 'display:flex;align-items:center;gap:8px;cursor:pointer;text-align:left;font:inherit;font-size:11.5px;font-weight:600;color:' +
+            (on ? 'var(--lab-ink)' : 'var(--lab-ink-2)') + ';background:transparent;border:0;border-radius:8px;padding:6px 7px;transition:color 150ms',
+          boxStyle: 'width:15px;height:15px;flex:none;display:grid;place-items:center;border-radius:4.5px;font-size:9.5px;font-weight:700;color:#202124;background:' +
+            (on ? '#E88CA1' : 'transparent') + ';border:1px solid ' + (on ? '#E88CA1' : 'var(--lab-border)'),
+          go: () => this.setState({ f: Object.assign({}, s.f, { [t[0]]: !on }) })
+        };
+      }),
+      coreFields: ['Headword', 'Meaning', 'Lemma when needed', 'Essential construction', 'Hanja when available']
+    };
+  }
+}
+
+</script>
+</body>
+</html>

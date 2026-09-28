@@ -68,7 +68,7 @@ a KRDICT database you built yourself:
       "version": "20260819-v1"
     }
   },
-  "easyocr": { "languages": ["ko"] }
+  "easyocr": { "languages": ["ko", "en"] }
 }
 ```
 

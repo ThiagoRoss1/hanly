@@ -1,0 +1,82 @@
+{
+  "font": {
+    "name": "Noto Sans KR",
+    "licence": "OFL-1.1",
+    "filenames": [
+      "NotoSansKR-Regular.ttf",
+      "NotoSansKR-Regular.otf",
+      "NotoSansCJKkr-Regular.otf",
+      "NotoSansKR[wght].ttf"
+    ],
+    "index": 0
+  },
+  "samples": [
+    {
+      "id": "syn-light-medium-plain",
+      "text": "책을 읽습니다.",
+      "font_size": 20,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "medium_text", "regular_weight", "punctuation", "horizontal"]
+    },
+    {
+      "id": "syn-dark-medium-plain",
+      "text": "책을 읽습니다.",
+      "font_size": 20,
+      "background": 24,
+      "foreground": 235,
+      "tags": ["synthetic", "dark", "medium_text", "regular_weight", "punctuation", "horizontal"]
+    },
+    {
+      "id": "syn-light-small-plain",
+      "text": "떨어뜨렸어요",
+      "font_size": 12,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "small_text", "regular_weight", "horizontal"]
+    },
+    {
+      "id": "syn-light-large-plain",
+      "text": "떨어뜨렸어요",
+      "font_size": 34,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "large_text", "regular_weight", "horizontal"]
+    },
+    {
+      "id": "syn-light-mixed-script",
+      "text": "Hanly 버전 2.0 설치",
+      "font_size": 20,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "medium_text", "mixed_script", "punctuation", "horizontal"]
+    },
+    {
+      "id": "syn-light-scaled-down",
+      "text": "한국어 사전을 찾습니다",
+      "font_size": 28,
+      "scale": 0.5,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "small_text", "scaled", "horizontal"]
+    },
+    {
+      "id": "syn-light-compressed",
+      "text": "한국어 사전을 찾습니다",
+      "font_size": 20,
+      "jpeg_quality": 40,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "medium_text", "compressed", "horizontal"]
+    },
+    {
+      "id": "syn-light-blurred",
+      "text": "한국어 사전을 찾습니다",
+      "font_size": 20,
+      "blur_radius": 0.8,
+      "background": 255,
+      "foreground": 0,
+      "tags": ["synthetic", "light", "medium_text", "blurred", "horizontal"]
+    }
+  ]
+}

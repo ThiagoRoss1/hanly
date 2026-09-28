@@ -841,7 +841,7 @@ def test_a_cancelled_selection_restores_observation_in_one_dispatch(
     controller = _QtOwnedController(DesktopState.RUNNING)
     session._controller = controller
 
-    def cancelled() -> None:
+    def cancelled(*_theme: object) -> None:
         controller.calls.append("overlay")
         return None
 
@@ -1234,3 +1234,86 @@ def test_the_hover_mute_shortcut_never_starts_a_stopped_session() -> None:
 
     assert controller.calls == []
     assert controller.state is DesktopState.PAUSED
+
+
+def test_the_engine_status_remembers_a_load_the_page_may_have_missed() -> None:
+    """Loading can end before the Control Center asks; its last load is named."""
+
+    from types import SimpleNamespace
+
+    from hanly_app.application import _DesktopSession
+
+    session = SimpleNamespace(
+        _engine_state=("sleeping", ""),
+        _engine_sequence=0,
+        _preparing_sequence=0,
+        _diagnostics=SimpleNamespace(record=lambda *_args: None),
+        _dispatcher=lambda _callback: None,
+        refresh_tray=lambda: None,
+    )
+
+    _DesktopSession._on_engine_state(session, "preparing", "Loading the lookup engine...")  # type: ignore[arg-type]
+    _DesktopSession._on_engine_state(session, "ready", "Hanly is ready.")  # type: ignore[arg-type]
+    status = _DesktopSession.engine_status(session)  # type: ignore[arg-type]
+
+    assert status["state"] == "ready"
+    assert status["sequence"] == "2"
+    assert status["preparing_sequence"] == "1"
+
+
+def test_a_second_area_request_while_choosing_changes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Control Center can be clicked again while the prompt is open."""
+
+    from hanly_app.capture_selector import CaptureSelection
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    session._controller = _QtOwnedController(DesktopState.RUNNING)
+    shown: list[str] = []
+    nested: list[object] = []
+
+    def choose(*_theme: object) -> CaptureSelection:
+        shown.append("prompt")
+        # The Qt loop running under the open prompt delivers the second request.
+        nested.append(session._select_capture_area())
+        return CaptureSelection.whole_monitor()
+
+    monkeypatch.setattr(application_module, "select_capture_area", choose)
+    monkeypatch.setattr(threading, "current_thread", threading.main_thread)
+
+    first = session._select_capture_area()
+
+    assert shown == ["prompt"]
+    assert nested == [None]
+    assert first == CaptureSelection.whole_monitor()
+
+
+def test_quitting_while_choosing_restores_hover_and_the_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quit ends the open prompt's loop, which reads as no choice."""
+
+    pending: queue.Queue[Callable[[], None]] = queue.Queue()
+    session, _ = _session(tmp_path, pending)
+    controller = _QtOwnedController(DesktopState.RUNNING)
+    session._controller = controller
+    shown: list[str] = []
+
+    def quit_during_prompt(*_theme: object) -> None:
+        shown.append("prompt")
+        return None
+
+    monkeypatch.setattr(application_module, "select_capture_area", quit_during_prompt)
+    monkeypatch.setattr(threading, "current_thread", threading.main_thread)
+
+    assert session._select_capture_area() is None
+    assert controller.calls == ["mute=True", "mute=False"]
+    assert session._choosing_area is False
+
+    session._select_capture_area()
+
+    assert shown == ["prompt", "prompt"]

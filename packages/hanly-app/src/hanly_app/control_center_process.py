@@ -13,6 +13,8 @@ capture, and never takes the lookup engine with it.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -31,6 +33,7 @@ from .process_transport import (
     spawn_child,
     stop_process,
 )
+from .window_frame_win32 import allow_parent_foreground
 
 #: The bridge operations the page may call. The proxy in the child declares
 #: exactly these methods and the parent resolves them against this list, so a
@@ -105,13 +108,17 @@ class _ChildPhase(Enum):
 class ControlCenterOptions:
     """Window geometry and debug flag, as one value the spawn boundary takes."""
 
-    title: str = "Hanly · Control Center"
-    width: int = 1080
-    height: int = 760
+    title: str = "Hanly"
+    #: ``None`` means the host derives the size from the work area it finds, so
+    #: a short display is not asked to hold a window built for a tall one.
+    width: int | None = None
+    height: int | None = None
     debug: bool = False
 
     def __post_init__(self) -> None:
-        if self.width <= 0 or self.height <= 0:
+        if (self.width is not None and self.width <= 0) or (
+            self.height is not None and self.height <= 0
+        ):
             raise ValueError("Control Center dimensions must be positive")
 
 
@@ -529,6 +536,23 @@ def _failure(identifier: int, error_type: str, message: str) -> Message:
     }
 
 
+def hand_foreground_to_parent() -> None:
+    """Let the shell come in front of this window for what the user asked.
+
+    Windows and macOS both reserve the foreground for the process the user is
+    interacting with, and both let that process hand it over explicitly.
+    """
+
+    allow_parent_foreground()
+    if sys.platform == "darwin":
+        try:
+            from .app_identity_darwin import yield_activation_to
+
+            yield_activation_to(os.getppid())
+        except Exception:
+            pass
+
+
 class ControlCenterProxy:
     """The page's ``window.pywebview.api``, forwarding to the parent bridge.
 
@@ -569,6 +593,9 @@ class ControlCenterProxy:
         return self._call("set_region", region)
 
     def select_capture_area(self) -> object:
+        # The dialog opens in the shell, which may take the front only because
+        # this process, the one the user just clicked, allows it.
+        hand_foreground_to_parent()
         return self._call("select_capture_area")
 
     def set_hover_delay(self, delay_ms: object) -> object:

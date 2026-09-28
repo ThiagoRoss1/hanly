@@ -8,7 +8,7 @@ This view defines how the Hanly V1 desktop application starts and how an automat
 
 It does not define package ownership, implementation sequencing, browser or mobile behavior, DOM integration, subtitle processing, or HanlyOCR research.
 
-> **Current OCR decision (2026-08-26):** `EasyOCRProvider` is V1's only OCR implementation. The Paddle adapter, backend selector, managed Paddle model resources, and Paddle-only recognition-first hover fast path were removed at the human's direction. First launch provisions only `krdict`; EasyOCR owns its model storage. `OCRProvider` remains the one provider seam for a future approved second adapter. The 2026-08-24 decision and its operational snapshot are historical and superseded.
+> **Current OCR decision (2026-09-22):** V1 has two OCR implementations behind `OCRProvider`. `VisionProvider` (Apple Vision) is preferred on supported macOS; `EasyOCRProvider` is the cross-platform implementation and the fallback where Vision is unavailable. The internal `ocr_backend` setting selects `auto` (the default), `vision`, or `easyocr`; there is no user-facing provider selection. First launch provisions only `krdict`: Vision is part of macOS and EasyOCR owns its model storage. PaddleOCR stays removed. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 EasyOCR-only decision and the 2026-08-24 decision are historical.
 
 ## Startup flow
 
@@ -21,7 +21,7 @@ Startup is ordered as follows:
    - the SQLite database is present, readable, and schema-compatible;
    - required application assets are present.
 4. **Initialize Providers.** The provider categories may initialize in parallel:
-   - `OCRProvider`: the V1 implementation is `EasyOCRProvider`.
+   - `OCRProvider`: `VisionProvider` on supported macOS under `auto`, otherwise `EasyOCRProvider`.
    - `MorphologyProvider`: Kiwi / kiwipiepy is the initial implementation.
    - `DictionaryProvider`: KRDICT backed by read-only SQLite is the initial implementation.
 5. **Initialize Lookup Pipeline.** `LookupPipeline` orchestrates target resolution, linguistic analysis, and dictionary lookup through provider contracts. It never references EasyOCR, Kiwi, or KRDICT directly.
@@ -101,9 +101,42 @@ The hover delay is configurable and must be tuned empirically. Initial experimen
 
 > **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
 
-- **RF-INV-10:** The V1 OCR implementation is `EasyOCRProvider`; `LookupPipeline` remains coupled only to `OCRProvider`, leaving a future approved second adapter behind the same seam.
+- **RF-INV-10:** V1's OCR implementations are `VisionProvider` (preferred on supported macOS) and `EasyOCRProvider` (cross-platform and fallback); `LookupPipeline` remains coupled only to `OCRProvider`.
 - **RF-INV-11:** Desktop lookup execution is bounded / latest-wins, while final request-currency validation remains mandatory before presentation.
 - **RF-INV-12:** `LookupResult` represents successful, normal non-success, and processing-error outcomes without requiring every non-success to be an exception.
+- **RF-INV-13:** Surface text plus a cursor index is the whole input to the language stage, and pixel OCR and any future direct-text acquisition reach that one stage rather than each running their own.
+
+## Where acquisition ends and language begins
+
+The flow above reads a word off the screen, but nothing after target resolution
+depends on the fact that it came from pixels. That split is now explicit.
+
+```text
+capture -> OCR -> target resolution ─┐
+                                     ├─> TextSelection -> Hangul policy -> morphology
+future direct-text acquisition ──────┘        -> lexical candidate -> lemma -> KRDICT
+                                                                   -> LookupResult
+```
+
+`TextSelection` carries surface text and a cursor index, and nothing else that
+could only come from a screen. Rectangles, window handles, element references
+and desktop lifecycle stay with the client that owns them, so a consumer with no
+display can still run the language stage.
+
+`LookupPipeline.lookup(image, target)` is unchanged and remains the pixel
+facade. It still owns what only pixels can decide -- recognition, which region
+the pointer is in, and OCR confidence -- and then hands the resulting selection
+to the shared stage. A caller that already knows the word calls that stage
+directly and constructs no recognizer at all.
+
+This changes no presented outcome. `NOT_FOUND` remains a language result, an
+unusable selection remains normal non-success, OCR-provider selection is
+untouched, and the popup sees the same `LookupResult` it always did. Two
+diagnostic strings on unusable selections did move: the Hangul-policy message no
+longer says "OCR", since the stage no longer knows whether OCR produced the
+text, and a low-confidence non-Korean region now reports the confidence reason
+rather than the script reason, because confidence is judged in the facade before
+the selection is handed over. Neither status is ever presented.
 
 ## Failure and state considerations
 

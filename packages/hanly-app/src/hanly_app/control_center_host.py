@@ -17,6 +17,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from .app_icon import APPLICATION_NAME
 from .control_center import (
     ControlCenterUnavailable,
     control_center_document,
@@ -28,6 +29,7 @@ from .qt_bootstrap import (
     install_qt_thread_invoker,
     verify_primary_screen,
 )
+from .window_frame_win32 import FRAME_COLOURS, apply_frame_theme
 
 #: The backend module Hanly's single-Qt design requires. pywebview falls back
 #: to Cocoa, GTK, or WinForms when Qt cannot load, which would silently mix two
@@ -37,6 +39,58 @@ QT_BACKEND_MODULE = "webview.platforms.qt"
 ErrorReporter = Callable[[str, BaseException], None]
 
 
+#: The window never asks for more than this, and never for less than the
+#: minimum the layout needs.
+MAXIMUM_INITIAL_SIZE = (1080, 760)
+MINIMUM_INITIAL_SIZE = (760, 560)
+#: Share of the usable work area the first window aims to occupy vertically.
+#: The previous fixed 760 asked for 97% of the height of a 1408x787 MacBook
+#: work area, which reads as a window that nearly fills the screen.
+_PREFERRED_HEIGHT_FRACTION = 0.78
+#: Breathing room kept beside the window so it never meets the work area edge.
+_EDGE_MARGIN = 40
+
+
+def initial_window_size(
+    available_width: int, available_height: int
+) -> tuple[int, int]:
+    """The size to ask for on a work area of this size.
+
+    Width is preserved at its established value and only clamped when the work
+    area cannot hold it, because the composition was designed around it. Height
+    is derived, so a short display gets a window proportional to it rather than
+    one that fills the screen. A work area smaller than the minimum yields the
+    work area itself, which keeps the native window controls reachable.
+    """
+
+    max_width, max_height = MAXIMUM_INITIAL_SIZE
+    min_width, min_height = MINIMUM_INITIAL_SIZE
+
+    width = min(max_width, max(min_width, available_width - _EDGE_MARGIN))
+    preferred = round(available_height * _PREFERRED_HEIGHT_FRACTION)
+    height = min(max_height, max(min_height, preferred))
+
+    return min(width, available_width), min(height, available_height)
+
+
+#: A copy is the log view's visible records; far beyond that is not a copy.
+_MAX_COPY_CHARACTERS = 4_000_000
+#: The clipboard is written on the loop's thread, which is otherwise idle.
+_COPY_TIMEOUT_SECONDS = 3.0
+
+
+def _loop_invoker() -> Callable[[Callable[[], None]], None] | None:
+    """Post work to the Qt loop, once a Qt application exists to own one."""
+
+    try:
+        from PyQt6.QtGui import QGuiApplication
+    except ImportError:
+        return None
+    if QGuiApplication.instance() is None:
+        return None
+    return install_qt_thread_invoker()
+
+
 class ControlCenterHost:
     """Create the main window once and own the loop it runs in."""
 
@@ -44,16 +98,16 @@ class ControlCenterHost:
         self,
         bridge: object,
         *,
-        title: str = "Hanly · Control Center",
-        width: int = 1080,
-        height: int = 760,
+        title: str = APPLICATION_NAME,
+        width: int | None = None,
+        height: int | None = None,
         debug: bool = False,
         webview_module: object | None = None,
         diagnostics: DiagnosticLog | None = None,
         timeline: StartupTimeline | None = None,
         on_error: ErrorReporter | None = None,
     ) -> None:
-        if width <= 0 or height <= 0:
+        if (width is not None and width <= 0) or (height is not None and height <= 0):
             raise ValueError("Control Center dimensions must be positive")
         if on_error is not None and not callable(on_error):
             raise TypeError("on_error must be callable")
@@ -135,13 +189,34 @@ class ControlCenterHost:
         return 0
 
     def show(self) -> None:
-        """Bring the existing window forward, the ordinary focus path."""
+        """Bring the existing window forward, the ordinary focus path.
+
+        ``show`` alone does not clear a minimized window: the Qt backend
+        un-minimizes only through its own ``restore`` operation, so a window the
+        user sent to the Dock stayed there while the child kept running and
+        Hanly kept working, which read as the Control Center refusing to open.
+        """
 
         window = self._require_window()
+        self._restore(window)
         self._call_window(window, "show")
         self._activate_process()
         with self._lock:
             self._visible = True
+
+    def _restore(self, window: Any) -> None:
+        """Un-minimize unconditionally, because no readable state says whether to.
+
+        pywebview's ``window.minimized`` is the constructor's option, assigned
+        once and never updated; the Qt backend signals minimize and restore
+        through events instead. A genuinely minimized window therefore still
+        reports ``False``, so branching on it skipped the one call that brings
+        the window back. Restoring a window that is already up is a no-op, which
+        makes the unconditional call the safe direction to be wrong in.
+        """
+
+        if callable(getattr(window, "restore", None)):
+            self._call_window(window, "restore")
 
     def hide(self) -> None:
         """Hide the window without destroying it or stopping the loop."""
@@ -177,6 +252,32 @@ class ControlCenterHost:
             self._report("Control Center script", error)
             return None
 
+    def _resolve_size(self) -> tuple[int, int]:
+        """The requested size, deriving whatever the caller left unset.
+
+        A caller that asks for an explicit size gets it; only the defaults are
+        derived from the work area, so the packaging harness and tests can pin
+        a size without depending on the machine they run on.
+        """
+
+        derived = initial_window_size(*self._work_area())
+        return self._width or derived[0], self._height or derived[1]
+
+    @staticmethod
+    def _work_area() -> tuple[int, int]:
+        """The primary screen's usable area, or the historical size if unknown."""
+
+        try:
+            from PyQt6.QtWidgets import QApplication
+
+            screen = QApplication.primaryScreen()
+        except Exception:
+            screen = None
+        if screen is None:
+            return MAXIMUM_INITIAL_SIZE
+        available = screen.availableGeometry()
+        return available.width(), available.height()
+
     def _create_window(self, webview: Any) -> None:
         with self._lock:
             if self._window is not None:
@@ -186,19 +287,99 @@ class ControlCenterHost:
         if not callable(create_window):
             raise ControlCenterUnavailable("pywebview does not expose create_window")
 
+        width, height = self._resolve_size()
         window = create_window(
             title=self._title,
             html=control_center_document(),
             js_api=self._bridge,
-            width=self._width,
-            height=self._height,
-            min_size=(760, 560),
-            background_color="#F7F8FC",
+            width=width,
+            height=height,
+            min_size=MINIMUM_INITIAL_SIZE,
+            background_color="#FAFAF9",
         )
         self._subscribe(window)
+        self._expose_page_calls(window)
         with self._lock:
             self._window = window
             self._destroyed = False
+
+    def _expose_page_calls(self, window: Any) -> None:
+        """The page calls this child answers itself, never forwarding them.
+
+        Each touches only this window or this process's clipboard, carries
+        nothing the shell's bridge would see, and is refused unless its
+        argument is exactly what it expects.
+        """
+
+        expose = getattr(window, "expose", None)
+        if callable(expose):
+            expose(self.copy_text)
+        self._expose_frame_theme(window)
+
+    def copy_text(self, text: object) -> bool:
+        """Put the text the user asked to copy on the system clipboard.
+
+        The page's own clipboard API is missing inside the embedded web view,
+        so its Copy action falls back here. Only that action calls it, and the
+        text goes to the clipboard and nowhere else -- never a log or a trace.
+        """
+
+        if not isinstance(text, str) or len(text) > _MAX_COPY_CHARACTERS:
+            return False
+        post = self._to_qt_thread
+        if post is None:
+            return False
+        done = threading.Event()
+        copied: list[bool] = []
+
+        def write() -> None:
+            try:
+                from PyQt6.QtGui import QGuiApplication
+
+                clipboard = QGuiApplication.clipboard()
+                if clipboard is not None:
+                    clipboard.setText(text)
+                    copied.append(clipboard.text() == text)
+            except Exception as error:
+                self._report("Control Center copy", error)
+            finally:
+                done.set()
+
+        post(write)
+        return done.wait(_COPY_TIMEOUT_SECONDS) and copied == [True]
+
+    def _expose_frame_theme(self, window: Any) -> None:
+        """Let the page tell this window which mode it rendered.
+
+        Only Windows draws a frame Hanly can colour. This is the one page call
+        the child answers itself: it names a mode, changes nothing but the
+        frame, and never reaches the shell's bridge.
+        """
+
+        if sys.platform != "win32":
+            return
+        expose = getattr(window, "expose", None)
+        if callable(expose):
+            expose(self.frame_theme)
+
+    def frame_theme(self, mode: object) -> bool:
+        """Match the native title bar to ``mode``, ``"light"`` or ``"dark"``."""
+
+        if not isinstance(mode, str) or mode not in FRAME_COLOURS:
+            return False
+        native = getattr(self.window, "native", None)
+        post = self._to_qt_thread
+        if native is None or post is None:
+            return False
+
+        def apply() -> None:
+            try:
+                apply_frame_theme(int(native.winId()), mode)
+            except Exception as error:
+                self._report("Control Center frame", error)
+
+        post(apply)
+        return True
 
     def _start_loop(self, webview: Any, on_started: Callable[[], None] | None) -> None:
         start = getattr(webview, "start", None)
@@ -298,13 +479,14 @@ class ControlCenterHost:
         exists: a Dock tile that has already appeared does not go away.
         """
 
+        # Built here, on the thread that owns the loop, because it is the way
+        # everything else reaches that thread afterwards: activation, the
+        # title bar, and the clipboard.
+        self._to_qt_thread = _loop_invoker()
         if not self._on_cocoa():
             return
         from .app_identity_darwin import run_as_accessory_application
 
-        # Built here, on the thread that owns the loop, because it is the way
-        # everything else reaches that thread afterwards.
-        self._to_qt_thread = install_qt_thread_invoker()
         try:
             run_as_accessory_application()
         except Exception as error:

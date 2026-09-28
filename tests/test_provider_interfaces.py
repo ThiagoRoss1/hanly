@@ -8,6 +8,7 @@ from hanly import (
     BoundingBox,
     DictionaryEntry,
     DictionaryProvider,
+    MorphologyAnalysis,
     MorphologyProvider,
     OCRProvider,
     OCRResult,
@@ -106,6 +107,11 @@ def test_provider_protocol_methods_have_the_published_names() -> None:
     assert get_type_hints(ocr_method)["image"] is ROIImage
     assert get_type_hints(ocr_method)["return"] == Sequence[OCRResult]
     assert get_type_hints(morphology_method)["text"] is str
-    assert get_type_hints(morphology_method)["return"] == Sequence[TokenAnalysis]
+    # The engine is consumed independently, so the seam keeps accepting the
+    # older sequence return while newer providers report lexical units too.
+    assert (
+        get_type_hints(morphology_method)["return"]
+        == MorphologyAnalysis | Sequence[TokenAnalysis]
+    )
     assert get_type_hints(dictionary_method)["lemma"] is str
     assert get_type_hints(dictionary_method)["return"] == Sequence[DictionaryEntry]

@@ -59,11 +59,18 @@ load; they are not a claim of cryptographic authenticity. The spec refuses to
 build without both files rather than producing a bundle that cannot read
 anything.
 
-`packaging/release-constraints.txt` pins the three inputs that decide what a
-released bundle contains - `easyocr`, `pyinstaller`, and
-`pyinstaller-hooks-contrib` - and the build workflow installs with
-`-c packaging/release-constraints.txt`. It is a release-build constraint file,
-not a lock file for the whole dependency graph.
+`packaging/release-constraints.txt` pins the four inputs that decide what a
+released bundle contains - `easyocr`, `pyinstaller`,
+`pyinstaller-hooks-contrib`, and the Qt runtime wheel `PyQt6-Qt6` - and the
+build workflow installs with `-c packaging/release-constraints.txt`. It is a
+release-build constraint file, not a lock file for the whole dependency graph;
+`hanly-app` keeps its wider `PyQt6>=6.7,<7` range.
+
+The Qt runtime is pinned because PyQt6-Qt6 6.10 ships MSVC runtime 14.26. A
+frozen Windows bundle collects it into the same tree as Torch, and loading it
+first makes `c10.dll` fail to initialize (WinError 1114). 6.11.2 ships 14.44 and
+passed the same load boundaries. The packaged gate's frozen worker is the check
+that a built bundle really imports Torch.
 
 Morphology is collected unconditionally. `kiwipiepy`, `kiwipiepy_model`, and
 the top-level `_kiwipiepy` extension are imported by name at runtime, so
@@ -213,8 +220,17 @@ uses the platform's build output (`dist/<platform>/hanly-desktop`, or
 `HANLY_PACKAGED_APP`:
 
 ```bash
-python -m pytest --suite packaged
+HANLY_EXPECTED_SOURCE_COMMIT="$(git rev-parse HEAD)" python -m pytest --suite packaged
 ```
+
+`HANLY_EXPECTED_SOURCE_COMMIT` names the full commit the bundle must have been
+built from, and the gate compares it with the `source_commit` in the bundle's
+own `hanly_app/assets/hanly-build.json`, together with its version, platform
+and architecture. Package versions alone cannot tell two builds of one version
+apart, so a stale bundle of the current version would otherwise pass. The
+commit is supplied by whoever runs the gate -- CI passes the commit it built --
+and is never inferred from the checkout running the tests. Without it the
+identity case skips locally and fails under `HANLY_REQUIRE_PACKAGED`.
 
 ## Three suites, three machines
 

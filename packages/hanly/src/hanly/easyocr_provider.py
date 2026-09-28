@@ -37,15 +37,16 @@ _DEFAULT_SENSITIVE_OPTIONS: Mapping[str, Any] = {"mag_ratio": 2.0, "min_size": 4
 class EasyOCRConfig:
     """Explicit EasyOCR construction options supplied by composition code.
 
-    ``languages`` deliberately defaults to Korean alone. ``korean_g2`` already
-    recognizes the Latin letters, digits, and punctuation that appear beside
-    Korean text, so adding ``"en"`` would load a second character set without
-    widening what Hanly can read. GPU is never requested: V1 targets CPU-only
-    desktops, and a GPU option would make provider behavior depend on hardware
-    the rest of the runtime does not model.
+    ``languages`` defaults to Korean and English, which ``korean_g2`` reads
+    with one model. EasyOCR masks every character the listed languages do not
+    name, and Korean's list has no Latin letters: under Korean alone, Latin
+    text can only decode as Hangul lookalikes, which then look words up. GPU
+    is never requested: V1 targets CPU-only desktops, and a GPU option would
+    make provider behavior depend on hardware the rest of the runtime does not
+    model.
     """
 
-    languages: tuple[str, ...] = ("ko",)
+    languages: tuple[str, ...] = ("ko", "en")
     model_storage_directory: str | Path | None = None
     user_network_directory: str | Path | None = None
     download_enabled: bool = True
@@ -175,14 +176,7 @@ class EasyOCRProvider:
         except Exception as exc:
             raise EasyOCRProviderError(f"EasyOCR recognition failed: {exc}") from exc
 
-        try:
-            return _in_reading_order(_normalize_results(raw_results))
-        except EasyOCRProviderError:
-            raise
-        except Exception as exc:
-            raise EasyOCRProviderError(
-                f"EasyOCR returned malformed OCR output: {exc}"
-            ) from exc
+        return normalize_easyocr_results(raw_results)
 
     def prewarm(self) -> None:
         """Run one real, idempotent inference before the worker becomes ready.
@@ -217,26 +211,55 @@ class EasyOCRProvider:
 
     @staticmethod
     def _to_easyocr_image(image: ROIImage) -> Any:
-        try:
-            import numpy as np
-        except Exception as exc:
-            raise EasyOCRProviderError(f"NumPy is required by EasyOCR: {exc}") from exc
+        return easyocr_image_from_roi(image)
 
-        channels = image.bytes_per_pixel
-        shape: tuple[int, ...] = (image.height, image.width)
-        if channels > 1:
-            shape += (channels,)
-        array: Any = np.frombuffer(image.data, dtype=np.uint8).reshape(shape)
 
-        if image.pixel_format is PixelFormat.RGB_888:
-            # EasyOCR reads a three-channel array as BGR, a four-channel one as
-            # RGBA, and a two-dimensional one as grayscale. Only RGB needs a
-            # channel swap to arrive as the library expects.
-            array = array[..., ::-1]
+def easyocr_image_from_roi(image: ROIImage) -> Any:
+    """Convert a normalized ROI into the array EasyOCR expects.
 
-        # OpenCV, which EasyOCR normalizes its input with, needs a writable
-        # contiguous buffer; ``frombuffer`` returns a read-only view.
-        return np.array(array, dtype=np.uint8, copy=True)
+    Exposed so a developer tool driving EasyOCR's stages directly feeds the
+    recognizer the same pixels the provider would, rather than repeating this
+    channel handling and silently diverging from it.
+    """
+
+    try:
+        import numpy as np
+    except Exception as exc:
+        raise EasyOCRProviderError(f"NumPy is required by EasyOCR: {exc}") from exc
+
+    channels = image.bytes_per_pixel
+    shape: tuple[int, ...] = (image.height, image.width)
+    if channels > 1:
+        shape += (channels,)
+    array: Any = np.frombuffer(image.data, dtype=np.uint8).reshape(shape)
+
+    if image.pixel_format is PixelFormat.RGB_888:
+        # EasyOCR reads a three-channel array as BGR, a four-channel one as
+        # RGBA, and a two-dimensional one as grayscale. Only RGB needs a
+        # channel swap to arrive as the library expects.
+        array = array[..., ::-1]
+
+    # OpenCV, which EasyOCR normalizes its input with, needs a writable
+    # contiguous buffer; ``frombuffer`` returns a read-only view.
+    return np.array(array, dtype=np.uint8, copy=True)
+
+
+def normalize_easyocr_results(raw_results: Any) -> tuple[OCRResult, ...]:
+    """Normalize raw EasyOCR output into ordered contract values.
+
+    Exposed for the same reason as :func:`easyocr_image_from_roi`: a developer
+    tool that ran EasyOCR's stages itself must compare against the provider's
+    own normalization, not a second copy of it.
+    """
+
+    try:
+        return _in_reading_order(_normalize_results(raw_results))
+    except EasyOCRProviderError:
+        raise
+    except Exception as exc:
+        raise EasyOCRProviderError(
+            f"EasyOCR returned malformed OCR output: {exc}"
+        ) from exc
 
 
 def default_cpu_threads(core_count: int | None = None) -> int:
@@ -402,4 +425,6 @@ __all__ = [
     "EasyOCRProvider",
     "EasyOCRProviderError",
     "default_cpu_threads",
+    "easyocr_image_from_roi",
+    "normalize_easyocr_results",
 ]

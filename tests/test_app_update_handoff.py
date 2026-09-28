@@ -235,7 +235,11 @@ def test_the_script_is_written_outside_the_directory_it_removes(tmp_path: Path) 
     script = Path(command[-8])
     assert script.is_file()
     assert transaction.directory not in script.parents
-    assert directory == script.parent
+    # Never inside the script's own directory: a working directory stays in
+    # use for the helper's life and the relaunched Hanly's, so cleanup of it
+    # failed with "Access is denied" on Windows.
+    assert directory == script.parent.parent
+    assert script.parent not in (directory, *directory.parents)
     assert command[-7:] == handoff_arguments(transaction)
 
 

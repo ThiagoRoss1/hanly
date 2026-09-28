@@ -21,6 +21,7 @@ from hanly_app.lookup_process import (
     LookupEngine,
     LookupProcessError,
     LookupSettings,
+    create_lookup_engine,
     create_process_lookup_controller,
 )
 
@@ -485,3 +486,109 @@ def test_lookup_waiting_for_start_cannot_resurrect_a_stopped_engine(
         assert engine.state == "sleeping"
     finally:
         engine.close()
+
+
+# --- Diagnostic evidence across the spawn boundary --------------------------
+
+
+class _EvidenceSink:
+    """The kind of sink the microscope attaches in the shell."""
+
+    retain_evidence = True
+
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def emit(self, event: Any) -> None:
+        self.events.append(dict(event))
+
+
+class _PlainSink(_EvidenceSink):
+    retain_evidence = False
+
+
+def _spawned_settings(sink: Any) -> LookupSettings:
+    """Return the settings the child was actually spawned with."""
+
+    spawned: list[LookupSettings] = []
+    ready = threading.Event()
+
+    def record(child_settings: LookupSettings) -> None:
+        spawned.append(child_settings)
+        ready.set()
+
+    spawner = ThreadChildSpawner(on_start=record)
+    engine = create_lookup_engine(settings(), trace_sink=sink, spawn=spawner)
+    engine.attach()
+    try:
+        assert ready.wait(_WAIT_SECONDS)
+    finally:
+        engine.close()
+    return spawned[-1]
+
+
+def test_a_sink_that_wants_evidence_says_so_to_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The child builds its own tracing wrappers and cannot see the sink."""
+
+    RecordingProviders().install(monkeypatch)
+
+    assert _spawned_settings(_EvidenceSink()).trace_evidence is True
+
+
+def test_an_ordinary_trace_sink_leaves_evidence_off_in_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    RecordingProviders().install(monkeypatch)
+    spawned = _spawned_settings(_PlainSink())
+
+    assert spawned.trace is True
+    assert spawned.trace_evidence is False
+
+
+def test_tracing_disabled_carries_neither_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    RecordingProviders().install(monkeypatch)
+    spawned = _spawned_settings(None)
+
+    assert spawned.trace is False
+    assert spawned.trace_evidence is False
+
+
+def test_a_slow_load_is_observable_as_preparing_then_ready(
+    providers: RecordingProviders, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A controlled delay stands in for a real model load; production has none."""
+
+    import time
+
+    import hanly.easyocr_provider as easyocr_provider
+
+    slow = easyocr_provider.EasyOCRProvider
+    release = threading.Event()
+
+    class SlowOCR(slow):  # type: ignore[misc, valid-type]
+        def prewarm(self) -> None:
+            release.wait(5.0)
+            super().prewarm()
+
+    monkeypatch.setattr("hanly.easyocr_provider.EasyOCRProvider", SlowOCR)
+    states: list[str] = []
+    engine = _engine(
+        ThreadChildSpawner(), preload=False, on_state=lambda state, _detail: states.append(state)
+    )
+    try:
+        worker = threading.Thread(target=engine, args=(_request(1),))
+        worker.start()
+        deadline = time.monotonic() + 5.0
+        while engine.state != "preparing" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert engine.state == "preparing"
+        release.set()
+        worker.join(10.0)
+        assert engine.state == "ready"
+    finally:
+        release.set()
+        engine.close()
+
+    assert states[:2] == ["preparing", "ready"]

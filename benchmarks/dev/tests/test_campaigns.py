@@ -59,7 +59,8 @@ class _Dictionary:
 
     def lookup(self, lemma: str) -> tuple[DictionaryEntry, ...]:
         self.calls += 1
-        assert lemma == "읽다"
+        if lemma != "읽다":
+            return ()
         return (DictionaryEntry(headword=lemma, definitions=("to read",)),)
 
 
@@ -91,7 +92,9 @@ def test_campaign_uses_real_pipeline_seams_and_keeps_stage_and_total_timings(
         samples = store.read_samples()
 
     assert [result.status for result in results] == [LookupStatus.SUCCESS] * 4
-    assert ocr.calls == morphology.calls == dictionary.calls == 4
+    assert ocr.calls == morphology.calls == 4
+    # Each lookup probes the exact surface before the lemma.
+    assert dictionary.calls == 8
     assert {sample["stage"] for sample in samples} == {
         "ocr",
         "token_selection",

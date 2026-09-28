@@ -7,13 +7,16 @@ from hanly import (
     BoundingBox,
     DictionaryEntry,
     HanlyError,
+    LexicalCandidate,
     LookupStatus,
+    MorphologyAnalysis,
     MorphologyProvider,
     OCRResult,
     PixelFormat,
     Point,
     Quad,
     ROIImage,
+    TargetResolution,
     TokenAnalysis,
 )
 from hanly.providers import DictionaryProvider, OCRProvider
@@ -37,6 +40,11 @@ _ENTRY = DictionaryEntry(
     headword="읽다",
     definitions=("to read",),
     part_of_speech="동사",
+)
+_BOOK_ENTRY = DictionaryEntry(
+    headword="책",
+    definitions=("book",),
+    part_of_speech="명사",
 )
 
 
@@ -84,7 +92,11 @@ class _Dictionary:
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
         self.events.append("dictionary")
         self.lemmas.append(lemma)
-        return self.entries
+        # Only the forms it actually holds, so the surface and whole-form
+        # probes see a real miss rather than a universal hit.
+        if any(entry.headword == lemma for entry in self.entries):
+            return self.entries
+        return ()
 
 
 def _morphology(events: list[str], analyses: Sequence[TokenAnalysis] | None = None) -> _Morphology:
@@ -115,9 +127,12 @@ def _pipeline(
     )
 
 
-def test_multi_word_segment_reports_that_only_the_first_lemma_was_used() -> None:
-    """A substituted resolver may hand back a whole multi-word OCR region.
-    The first lemma still wins, but that reduction must not be silent."""
+def test_a_provider_without_spans_keeps_the_first_usable_lemma() -> None:
+    """A morphology provider written against the older contract stays valid.
+
+    Without spans nothing can be targeted, so the first usable lemma remains
+    the answer and no reduction is claimed that the evidence cannot support.
+    """
 
     line = OCRResult(
         text="책을 읽습니다.",
@@ -154,7 +169,7 @@ def test_multi_word_segment_reports_that_only_the_first_lemma_was_used() -> None
                 TokenAnalysis(token="읽습니다", lemma="읽다", part_of_speech="동사"),
             )
         ),
-        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+        dictionary_provider=_Dictionary(events, (_BOOK_ENTRY,)),
         word_resolver=_WholeRegionResolver(),
     )
 
@@ -163,8 +178,79 @@ def test_multi_word_segment_reports_that_only_the_first_lemma_was_used() -> None
     assert result.status is LookupStatus.SUCCESS
     assert result.context is not None
     assert result.context.lemma == "책"
-    assert any("3 usable lemmas" in note for note in result.diagnostics)
-    assert any("holds several words" in note for note in result.diagnostics)
+    assert result.diagnostics == ()
+
+
+def test_the_pointer_chooses_among_several_lexical_units() -> None:
+    """Korean writes compounds without spaces, so counting words cannot find
+    the ambiguous cases. Spans can, and the unselected units stay visible."""
+
+    from hanly.lookup_pipeline import LookupPipeline
+
+    line = OCRResult(
+        text="책읽는",
+        confidence=0.95,
+        quad=Quad.from_bounding_box(BoundingBox(left=0, top=0, right=192, bottom=48)),
+    )
+    analysis = MorphologyAnalysis(
+        tokens=(
+            TokenAnalysis(token="책", lemma="책", part_of_speech="NNG", start=0, length=1),
+            TokenAnalysis(token="읽", lemma="읽다", part_of_speech="VV", start=1, length=1),
+        ),
+        candidates=(
+            LexicalCandidate(lemma="책", start=0, end=1, part_of_speech="NNG"),
+            LexicalCandidate(lemma="읽다", start=1, end=3, part_of_speech="VV"),
+        ),
+    )
+
+    class _Analysis:
+        def analyze(self, text: str) -> MorphologyAnalysis:
+            del text
+            return analysis
+
+    class _PointingResolver:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def resolve_target(
+            self,
+            ocr_results: Sequence[OCRResult] | None,
+            target: Point | None,
+        ) -> tuple[OCRResult, str] | None:
+            del ocr_results, target
+            return line, line.text
+
+        def resolve_target_detail(
+            self,
+            ocr_results: Sequence[OCRResult] | None,
+            target: Point | None,
+        ) -> TargetResolution:
+            del ocr_results, target
+            return TargetResolution(
+                region=line, text=line.text, cursor_index=self.index, region_start=0
+            )
+
+    class _UnitsOnlyDictionary(_Dictionary):
+        """Neither `책읽는` nor `책읽다` is a word; only the units are."""
+
+        def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
+            found = super().lookup(lemma)
+            return found if lemma in {"책", "읽다"} else ()
+
+    for index, expected in ((0, "책"), (1, "읽다"), (2, "읽다")):
+        events: list[str] = []
+        pipeline = LookupPipeline(
+            ocr_provider=_OCR(events, (line,)),
+            morphology_provider=_Analysis(),
+            dictionary_provider=_UnitsOnlyDictionary(events, (_ENTRY,)),
+            word_resolver=_PointingResolver(index),
+        )
+
+        result = pipeline.lookup(_IMAGE, Point(x=24, y=24))
+
+        assert result.context is not None
+        assert result.context.lemma == expected, index
+        assert any("2 lexical units" in note for note in result.diagnostics)
 
 
 def test_narrowed_word_with_several_lemmas_reports_no_reduction_diagnostic() -> None:
@@ -270,14 +356,14 @@ def test_korean_target_with_spaces_and_punctuation_reaches_morphology_and_dictio
     pipeline = LookupPipeline(
         ocr_provider=_OCR(events, (line,)),
         morphology_provider=_AnyTextMorphology(),
-        dictionary_provider=_Dictionary(events, (_ENTRY,)),
+        dictionary_provider=_Dictionary(events, (_BOOK_ENTRY,)),
         word_resolver=_WholeRegionResolver(),
     )
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.SUCCESS
-    assert events == ["ocr", "resolver", "morphology", "dictionary"]
+    assert events == ["ocr", "resolver", "morphology", "dictionary", "dictionary"]
 
 
 def test_error_diagnostic_does_not_repeat_the_stage_prefix() -> None:
@@ -297,13 +383,18 @@ def test_pipeline_runs_stages_in_order_and_returns_success() -> None:
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 
-    assert events == ["ocr", "resolver", "morphology", "dictionary"]
+    # The surface is probed before the lemma, so the stage appears twice.
+    assert events == ["ocr", "resolver", "morphology", "dictionary", "dictionary"]
     assert result.status is LookupStatus.SUCCESS
     assert result.entries == (_ENTRY,)
     assert result.context is not None
     assert result.context.text == "읽습니다."
     assert result.context.lemma == "읽다"
     assert result.context.ocr_results == (_OCR_RESULT,)
+    assert result.context.selected_ocr is _OCR_RESULT
+    assert result.context.analyses == (
+        TokenAnalysis(token="읽습니다", lemma="읽다", part_of_speech="동사"),
+    )
     assert result.error is None
 
 
@@ -330,6 +421,7 @@ def test_pipeline_returns_unusable_for_low_confidence_when_configured() -> None:
     assert events == ["ocr", "resolver"]
     assert result.context is not None
     assert result.context.text == "읽습니다."
+    assert result.context.selected_ocr is _OCR_RESULT
     assert any("confidence" in diagnostic.lower() for diagnostic in result.diagnostics)
 
 
@@ -379,9 +471,10 @@ def test_pipeline_looks_up_only_the_first_usable_lemma_and_reports_not_found() -
     result = pipeline.lookup(_IMAGE, _TARGET)
 
     assert result.status is LookupStatus.NOT_FOUND
-    assert events == ["ocr", "resolver", "morphology", "dictionary"]
+    assert events == ["ocr", "resolver", "morphology", "dictionary", "dictionary"]
     assert result.context is not None
     assert result.context.lemma == "읽다"
+    assert result.context.analyses == analyses
     assert any("읽다" in diagnostic for diagnostic in result.diagnostics)
 
 

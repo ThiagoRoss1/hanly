@@ -739,6 +739,33 @@ def test_release_inputs_are_pinned_without_touching_package_ranges() -> None:
     assert "easyocr==1.7.2" in pins
     assert "pyinstaller==6.22.2" in pins
     assert "pyinstaller-hooks-contrib==2026.7" in pins
+    assert "PyQt6-Qt6==6.11.2" in pins
+    app_manifest = ROOT / "packages" / "hanly-app" / "pyproject.toml"
+    assert '"PyQt6>=6.7,<7"' in app_manifest.read_text(encoding="utf-8")
+
+
+def test_release_builds_cannot_resolve_the_qt_runtime_that_breaks_torch() -> None:
+    """PyQt6-Qt6 6.10 ships MSVC runtime 14.26; loaded before Torch on Windows,
+    ``c10.dll`` fails to initialize. 6.11.2 is the verified replacement."""
+
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    lines = RELEASE_CONSTRAINTS.read_text(encoding="utf-8").splitlines()
+    requirements = [
+        Requirement(line.split("#", 1)[0])
+        for line in lines
+        if line.split("#", 1)[0].strip()
+    ]
+    qt_runtime = [
+        requirement.specifier
+        for requirement in requirements
+        if canonicalize_name(requirement.name) == "pyqt6-qt6"
+    ]
+
+    assert len(qt_runtime) == 1
+    assert "6.11.2" in qt_runtime[0]
+    assert not any(qt_runtime[0].contains(v) for v in ("6.10.0", "6.10.1", "6.10.2"))
 
 
 def test_the_bundled_weights_are_the_two_easyocr_actually_loads() -> None:
@@ -1410,6 +1437,89 @@ def test_both_packages_agreeing_with_the_source_is_the_whole_check() -> None:
     assert identity["problems"] == []
 
 
+_CURRENT = "9" * 40
+_STALE = "cb2d437bbb7b856b0839c0a1907b0a3d96f54c27"
+
+
+def _stamped_bundle(root: Path, **fields: object) -> Path:
+    """A macOS-shaped bundle whose only content is its build stamp."""
+
+    stamp: dict[str, object] = {
+        "product": "hanly-desktop",
+        "platform": "macos",
+        "architecture": "arm64",
+        "version": "0.5.3",
+        "build_id": "d0a15bba-4da8-4cee-b65a-6dc363c6c0da",
+        "source_commit": _CURRENT,
+        "built_at": "2026-09-22T00:00:00+00:00",
+    }
+    stamp.update(fields)
+    assets = root / "Hanly.app" / "Contents" / "Resources" / "hanly_app" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "hanly-build.json").write_text(json.dumps(stamp), encoding="utf-8")
+    return root / "Hanly.app"
+
+
+def _source_identity(bundle: Path, **overrides: str) -> dict[str, object]:
+    expected = {
+        "expected_commit": _CURRENT,
+        "expected_version": "0.5.3",
+        "expected_platform": "macos",
+        "expected_architecture": "arm64",
+    }
+    expected.update(overrides)
+    return smoke_packaged_runtime.verify_source_identity(bundle, **expected)
+
+
+def test_a_same_version_bundle_from_an_older_commit_fails_the_source_check(
+    tmp_path: Path,
+) -> None:
+    """The stale bundle that passed the version-only gate at 0.5.3."""
+
+    identity = _source_identity(_stamped_bundle(tmp_path, source_commit=_STALE))
+
+    assert identity["ok"] is False
+    assert _STALE in cast(list[str], identity["problems"])[0]
+
+
+def test_a_bundle_from_the_expected_commit_passes_the_source_check(tmp_path: Path) -> None:
+    identity = _source_identity(_stamped_bundle(tmp_path))
+
+    assert identity["ok"] is True
+    assert identity["problems"] == []
+
+
+@pytest.mark.parametrize(
+    ("fields", "overrides"),
+    [
+        ({"version": "0.5.2"}, {}),
+        ({"architecture": "x86_64"}, {}),
+        ({"platform": "windows"}, {}),
+        ({"source_commit": None}, {}),
+        ({}, {"expected_commit": "cb2d437"}),
+    ],
+    ids=["version", "architecture", "platform", "no-commit", "abbreviated-expectation"],
+)
+def test_any_other_identity_mismatch_fails_the_source_check(
+    tmp_path: Path, fields: dict[str, object], overrides: dict[str, str]
+) -> None:
+    identity = _source_identity(_stamped_bundle(tmp_path, **fields), **overrides)
+
+    assert identity["ok"] is False
+
+
+def test_a_bundle_without_a_readable_stamp_fails_the_source_check(tmp_path: Path) -> None:
+    empty = tmp_path / "empty" / "Hanly.app"
+    empty.mkdir(parents=True)
+    garbled = _stamped_bundle(tmp_path / "garbled")
+    (garbled / "Contents" / "Resources" / "hanly_app" / "assets" / "hanly-build.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+
+    assert _source_identity(empty)["ok"] is False
+    assert _source_identity(garbled)["ok"] is False
+
+
 def test_an_identity_check_that_never_runs_the_executable_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1521,3 +1631,46 @@ def test_a_packaging_tool_that_names_no_file_writes_none(tmp_path: Path) -> None
 
     assert not Path("-force").exists()
     assert sorted(item.name for item in tmp_path.iterdir()) == []
+
+
+def test_the_windows_reader_needs_no_dependency_and_no_hidden_import() -> None:
+    """UI Automation is bound through ``ctypes``, so nothing was added to ship it.
+
+    ``collect_submodules("hanly_app")`` already carries the module into every
+    artifact, exactly as it carries the macOS adapter; a COM binding such as
+    ``comtypes`` would have been a runtime dependency on all three platforms.
+    """
+
+    manifest = (ROOT / "packages" / "hanly-app" / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    source = SPEC.read_text(encoding="utf-8")
+
+    assert "comtypes" not in manifest
+    assert "pywinauto" not in manifest
+    assert "uiautomation" not in manifest
+    assert "text_acquisition_uia" not in source
+    assert 'collect_submodules("hanly_app")' in source
+
+
+@pytest.mark.parametrize("size", (16, 20, 24))
+def test_a_bundle_missing_a_window_face_fails_its_inventory(tmp_path: Path, size: int) -> None:
+    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
+    relative = f"hanly_app/assets/icons/window-face-{size}.png"
+    bundle.joinpath("_internal", *relative.split("/")).unlink()
+
+    inventory = inspect_bundle(bundle)
+
+    assert not inventory.ok
+    assert inventory.missing == (relative,)
+
+
+def test_a_bundle_missing_the_macos_icon_fails_its_inventory(tmp_path: Path) -> None:
+    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
+    relative = "hanly_app/assets/icons/hanly-macos-icon.png"
+    bundle.joinpath("_internal", *relative.split("/")).unlink()
+
+    inventory = inspect_bundle(bundle)
+
+    assert not inventory.ok
+    assert inventory.missing == (relative,)

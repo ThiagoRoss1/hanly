@@ -23,12 +23,15 @@ from tools.build_package import PackageLayout, host_platform
 from tools.build_smoke_krdict import build_smoke_krdict
 from tools.release_version import product_version
 from tools.smoke_packaged_runtime import (
+    EXPECTED_SOURCE_VARIABLE,
     UI_TIMEOUT_SECONDS,
     _executable_in,
     inspect_bundle,
     run_packaged_self_check,
     verify_frozen_identity,
+    verify_source_identity,
 )
+from tools.update_artifacts import host_architecture
 
 #: Points the gate at a bundle outside ``dist/``, such as an extracted release.
 BUNDLE_VARIABLE = "HANLY_PACKAGED_APP"
@@ -64,6 +67,33 @@ def test_the_frozen_bundle_carries_every_runtime_dependency() -> None:
     inventory = inspect_bundle(_require_bundle())
 
     assert inventory.ok, f"missing from the bundle: {', '.join(inventory.missing)}"
+
+
+def test_the_frozen_bundle_was_built_from_the_expected_commit() -> None:
+    """A stale bundle of the same version passes every other check it ever passed.
+
+    The expected commit is named by whoever runs the gate -- CI passes the
+    commit it built -- rather than taken from the checkout running the tests,
+    which need not be the source of the artifact under test.
+    """
+
+    bundle = _require_bundle()
+    expected = os.environ.get(EXPECTED_SOURCE_VARIABLE, "").strip()
+    if not expected:
+        unavailable(
+            f"set {EXPECTED_SOURCE_VARIABLE} to the commit this bundle must be built from",
+            required_by=REQUIRE_PACKAGED,
+        )
+
+    identity = verify_source_identity(
+        bundle,
+        expected_commit=expected,
+        expected_version=product_version(),
+        expected_platform=host_platform(),
+        expected_architecture=host_architecture(),
+    )
+
+    assert identity["ok"], identity["problems"]
 
 
 def _predates_the_window_check(report: Mapping[str, object]) -> bool:

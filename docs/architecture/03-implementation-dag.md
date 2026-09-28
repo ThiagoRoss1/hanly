@@ -80,7 +80,7 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 - **Convergence:** `LookupPipeline`.
 - **Acceptance criteria:** OCR results are normalized and no EasyOCR objects leak through the `OCRProvider` seam.
 
-> **Current OCR decision (2026-08-26):** `EasyOCRProvider` is V1's only OCR implementation. The Paddle adapter, backend selector, managed Paddle model resources, and Paddle-only recognition-first hover fast path were removed at the human's direction. `OCRProvider` remains the one provider seam for a future approved second adapter; the 2026-08-24 decision and its operational snapshot are historical and superseded.
+> **Current OCR decision (2026-09-22):** `VisionProvider` (Apple Vision) is preferred on supported macOS and `EasyOCRProvider` is the cross-platform implementation and fallback, both behind `OCRProvider` and chosen by the internal `ocr_backend` setting (`auto`, `vision`, `easyocr`), with no user-facing selection. PaddleOCR stays removed. This DAG node built the EasyOCR adapter, which still unblocks V1 everywhere. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 and 2026-08-24 decisions are historical.
 
 ### B — Kiwi Morphology Provider
 
@@ -473,7 +473,7 @@ Detailed implementation plans are created just in time when a capability becomes
 
 > **Derived from approved cross-document architecture; not stated directly in this visual diagram.**
 
-- **DAG-INV-13:** `OCRProvider` remains abstract, `EasyOCRProvider` is the only V1 OCR implementation, and a future approved second adapter would enter behind the same provider seam.
+- **DAG-INV-13:** `OCRProvider` remains abstract; `VisionProvider` (preferred on supported macOS) and `EasyOCRProvider` (cross-platform and fallback) are the V1 OCR implementations behind that one seam.
 - **DAG-INV-14:** Application/composition wiring injects validated resource paths and configuration into concrete providers; neither providers nor `LookupPipeline` depend directly on `ResourceManager`.
 - **DAG-INV-15:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation required before presentation.
 - **DAG-INV-16:** Korean Test Fixtures are small deterministic inputs for ordinary automated tests, distinct from the non-blocking HanlyOCR benchmark dataset.

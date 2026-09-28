@@ -25,6 +25,7 @@ from typing import Any, Protocol, cast
 from hanly.resource_manager import ResourceManager
 
 from .app_build_identity import BuildStamp, ReceiptStore, read_build_stamp, receipt_store
+from .app_icon import tray_image
 from .app_manifest import PLATFORM_WINDOWS
 from .app_update import (
     APPLICATION_STEM,
@@ -101,9 +102,9 @@ from .permissions import (
 )
 from .qt_bootstrap import ensure_qt_application
 from .runtime import (
-    OCR_DISPLAY_NAME,
     HanlyRuntime,
     load_runtime,
+    ocr_display_name,
 )
 from .runtime_status import (
     ACTIVITY_LABELS,
@@ -261,6 +262,7 @@ class DesktopApplication:
         # Every Hanly window is transient -- the popup, the capture overlay,
         # and a Control Center that is not even in this process.
         self._qt.setQuitOnLastWindowClosed(False)
+        self._install_reopen_route()
         self._start_tray()
         self.open_control_center()
         try:
@@ -320,6 +322,33 @@ class DesktopApplication:
             self._diagnostics.add(str(refusal))
         except Exception as error:
             self._diagnostics.report("Start capture", error)
+
+    def _install_reopen_route(self) -> None:
+        """Let a macOS Dock click reach the Control Center it already owns.
+
+        The child is an accessory process with no Dock tile of its own, so
+        activating Hanly from the Dock reaches the shell and previously did
+        nothing while the window sat minimized. Only a live child is reopened,
+        so activation never resurrects a window the user closed on purpose.
+        """
+
+        from .app_reopen_darwin import install_reopen_filter
+
+        self._reopen_filter = install_reopen_filter(
+            self._qt, self.open_control_center, self._control_center_is_live
+        )
+
+    def _control_center_is_live(self) -> bool:
+        """Whether a Control Center child exists to be brought forward.
+
+        Liveness is probed rather than required of the protocol, so a
+        substituted Control Center that cannot report it simply never triggers
+        a reopen — the conservative direction, since the cost of a missed
+        reopen is a tray click and the cost of a wrong one is a window the user
+        closed coming back.
+        """
+
+        return bool(getattr(self._control_center, "running", False))
 
     def open_control_center(self) -> None:
         try:
@@ -464,7 +493,11 @@ class _DesktopSession:
         self._generation = 0
         self._pending_release: list[DesktopController] = []
         self._engine_state: tuple[str, str] = ("sleeping", "")
+        self._engine_sequence = 0
+        self._preparing_sequence = 0
+        self._choosing_area = False
         self._activation = settings.config.hover_activation
+        self._reopen_filter: object | None = None
 
         self.bridge = ControlCenterBridge(
             config_manager=settings,
@@ -477,7 +510,7 @@ class _DesktopSession:
             log_path=diagnostics.path,
             on_lifecycle_changed=self.refresh_tray,
             permission_service=self._permissions,
-            ocr_provider=OCR_DISPLAY_NAME,
+            ocr_provider=lambda: ocr_display_name(settings.config.ocr_backend),
             engine_status=self.engine_status,
             registered_hotkeys=self.registered_hotkeys,
             application_snapshot=self.application_snapshot,
@@ -499,6 +532,7 @@ class _DesktopSession:
             on_pause=lambda: self.desktop.stop_capture(),
             on_open_control_center=lambda: self.desktop.open_control_center(),
             on_quit=lambda: self.desktop.quit(),
+            icon_image=_tray_image(),
         )
 
     @property
@@ -583,7 +617,14 @@ class _DesktopSession:
         """Report where the lookup engine is, separately from shell readiness."""
 
         state, message = self._engine_state
-        return {"state": state, "message": message}
+        # Loading can finish before the page asks, so the last load it began is
+        # named too, and the page can still show that one happened.
+        return {
+            "state": state,
+            "message": message,
+            "sequence": str(self._engine_sequence),
+            "preparing_sequence": str(self._preparing_sequence),
+        }
 
     def application_snapshot(self) -> ApplicationSnapshot:
         """Derive the one label every surface shows, from every input at once.
@@ -689,6 +730,9 @@ class _DesktopSession:
         """Take engine news from whichever thread reported it, onto Qt."""
 
         self._engine_state = (state, message)
+        self._engine_sequence += 1
+        if state == "preparing":
+            self._preparing_sequence = self._engine_sequence
         self._diagnostics.record("Lookup engine", f"{state}: {message}" if message else state)
         self._dispatcher(self.refresh_tray)
 
@@ -862,6 +906,20 @@ class _DesktopSession:
         chosen: list[CaptureSelection | None] = []
 
         def choose() -> None:
+            if self._choosing_area:
+                # The Control Center stays clickable while the prompt is open,
+                # and a second choice nested inside the first left its overlay
+                # under the first prompt, unable to take input. The open one is
+                # brought forward instead, and this request changes nothing.
+                _raise_open_choice()
+                return
+            self._choosing_area = True
+            try:
+                choose_once()
+            finally:
+                self._choosing_area = False
+
+        def choose_once() -> None:
             controller = self._controller
             manual = self._manual
             observing = controller is not None and controller.state is DesktopState.RUNNING
@@ -872,7 +930,7 @@ class _DesktopSession:
             if observing and controller is not None:
                 controller.set_hover_muted(True)
             try:
-                chosen.append(select_capture_area())
+                chosen.append(select_capture_area(self._settings.config.theme))
             finally:
                 if observing and controller is not None:
                     controller.set_hover_muted(muted)
@@ -1273,6 +1331,30 @@ def _readiness_milestone(timeline: StartupTimeline) -> Callable[[RuntimeStatus],
             timeline.reached("runtime ready")
 
     return observe
+
+
+def _raise_open_choice() -> None:
+    """Bring the capture-area choice already on screen back in front."""
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+
+        from .hanly_dialog import bring_to_front
+
+        window = QApplication.activeModalWidget()
+        if window is not None:
+            bring_to_front(window)
+    except Exception:
+        pass
+
+
+def _tray_image() -> object | None:
+    """Hanly's icon for the status item; the tray's neutral default otherwise."""
+
+    try:
+        return tray_image()
+    except Exception:
+        return None
 
 
 def _load_settings(path: Path, diagnostics: DiagnosticLog) -> ConfigManager:

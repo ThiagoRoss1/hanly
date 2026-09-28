@@ -79,13 +79,25 @@ def _snapshot(
             "region": None,
             "targets": [],
         },
-        "config": {"hover_delay_ms": 150, "hotkey": "ctrl+shift+space"},
+        "config": {
+            "hover_delay_ms": 150,
+            "hotkey": "ctrl+shift+space",
+            "hover_hotkey": "ctrl+shift+f9",
+            "capture_hotkey": "ctrl+shift+f10",
+            "hover_activation": "push_to_hover",
+            "lookup_preload": "when_capture_starts",
+            "theme": "light",
+        },
         "runtime": {
             "ocr_provider": "EasyOCR",
+            "app_version": "0.5.3",
+            "hover_delay_bounds": {"min": 20, "max": 2000},
             "resources": [],
             "diagnostics": [],
             "log_path": None,
             "status": {"phase": phase, "stage": "", "message": message},
+            "engine": {"state": "sleeping", "message": ""},
+            "hotkeys": {},
         },
         "updates": {
             "available": False,
@@ -96,6 +108,11 @@ def _snapshot(
             "progress": None,
             "application": None,
             "restart_required": False,
+            "plan": None,
+            "awaiting_confirmation": False,
+            "cancellable": False,
+            "activity": [],
+            "outcome": None,
         },
         "permissions": NO_PERMISSIONS if permissions is None else permissions,
     }
@@ -187,9 +204,9 @@ def test_update_work_keeps_refreshing_while_the_runtime_is_already_ready(
     )
 
     assert trace[0]["timer_running"] is True
-    assert trace[0]["check_disabled"] is True
+    assert trace[0]["update_mode"] == "busy"
     assert trace[-1]["timer_running"] is False
-    assert trace[-1]["check_disabled"] is False
+    assert trace[-1]["update_mode"] == "idle"
 
 
 def test_a_ready_runtime_does_not_cancel_the_refresh_an_update_still_needs(
@@ -238,7 +255,7 @@ def test_a_platform_without_privacy_gates_renders_no_permission_panel(
 ) -> None:
     trace = _run([_snapshot("ready")], tmp_path)
 
-    assert trace[0]["permissions_hidden"] is True
+    assert "permissions" not in trace[0]["nav_pages"]
     assert trace[0]["permission_rows"] == []
 
 
@@ -250,11 +267,11 @@ def test_granted_permissions_are_shown_without_offering_a_grant_action(
         tmp_path,
     )
 
-    assert trace[0]["permissions_hidden"] is False
-    assert [(row["permission"], row["badge"], row["grant_offered"]) for row in
+    assert "permissions" in trace[0]["nav_pages"]
+    assert [(row["label"], row["badge"], row["grant_offered"]) for row in
             trace[0]["permission_rows"]] == [
-        ("screen_recording", "Granted", False),
-        ("accessibility", "Granted", False),
+        ("Screen Recording", "granted", False),
+        ("Accessibility", "granted", False),
     ]
     # Nothing is pending, so a settled page with every grant in place is quiet.
     assert trace[0]["timer_running"] is False
@@ -268,12 +285,12 @@ def test_a_missing_grant_is_named_and_offers_the_action_that_fixes_it(
         tmp_path,
     )
 
-    rows = {row["permission"]: row for row in trace[0]["permission_rows"]}
-    assert rows["screen_recording"]["state"] == "required"
-    assert rows["screen_recording"]["badge"] == "Required"
-    assert rows["screen_recording"]["grant_offered"] is True
-    assert "Hanly may need restarting." in rows["screen_recording"]["detail"]
-    assert rows["accessibility"]["grant_offered"] is False
+    rows = {row["label"]: row for row in trace[0]["permission_rows"]}
+    assert rows["Screen Recording"]["granted"] is False
+    assert rows["Screen Recording"]["badge"] == "required"
+    assert rows["Screen Recording"]["grant_offered"] is True
+    assert "Hanly may need restarting." in rows["Screen Recording"]["detail"]
+    assert rows["Accessibility"]["grant_offered"] is False
     # A permission the user has not been asked about yet is not something the
     # page should poll for on its own.
     assert trace[0]["timer_running"] is False
@@ -289,7 +306,7 @@ def test_an_unreadable_grant_is_reported_as_unknown_rather_than_denied(
     )
 
     row = trace[0]["permission_rows"][0]
-    assert row["badge"] == "Unknown"
+    assert row["badge"] == "unknown"
     assert row["grant_offered"] is True
 
 
@@ -311,9 +328,9 @@ def test_clicking_grant_watches_for_the_change_and_stops_once_it_lands(
     # The click is what starts the watching, and it keeps going while the grant
     # is still missing.
     assert trace[1]["timer_running"] is True
-    assert trace[1]["permission_rows"][0]["badge"] == "Required"
+    assert trace[1]["permission_rows"][0]["badge"] == "required"
 
-    assert trace[-1]["permission_rows"][0]["badge"] == "Granted"
+    assert trace[-1]["permission_rows"][0]["badge"] == "granted"
     assert trace[-1]["timer_running"] is False
     assert trace[-1]["intervals_created"] == 1
     assert trace[-1]["clears_requested"] == 1
@@ -330,7 +347,7 @@ def test_a_grant_the_user_never_makes_stops_being_watched_for(tmp_path: Path) ->
     )
 
     assert trace[-1]["timer_running"] is False
-    assert trace[-1]["permission_rows"][0]["badge"] == "Required"
+    assert trace[-1]["permission_rows"][0]["badge"] == "required"
     assert len(trace) < 90
 
 
@@ -347,7 +364,7 @@ def test_a_bridge_that_never_answers_is_reported_rather_than_rendered(
     trace = _run([{"__reject__": "Hanly is no longer available."}], tmp_path)
 
     assert trace[0]["connection_hidden"] is False
-    assert trace[0]["connection_state"] == "Connection lost"
+    assert trace[0]["connection"] == "lost"
     assert trace[0]["app_state"] == "Connection lost"
     assert trace[0]["reconnect_hidden"] is False
     # An unreachable parent is not something to poll for.
@@ -364,7 +381,7 @@ def test_the_explicit_retry_reconnects_without_starting_a_poll(tmp_path: Path) -
         actions=[{"step": 0, "click": "reconnect"}],
     )
 
-    assert trace[0]["connection_state"] == "Connection lost"
+    assert trace[0]["connection"] == "lost"
     assert trace[-1]["connection_hidden"] is True
     assert trace[-1]["runtime_state"] == "ready"
     assert trace[-1]["timer_running"] is False
@@ -377,5 +394,84 @@ def test_lost_connection_stops_an_already_running_poll(tmp_path: Path) -> None:
     )
 
     assert trace[0]["timer_running"] is True
-    assert trace[-1]["connection_state"] == "Connection lost"
+    assert trace[-1]["connection"] == "lost"
     assert trace[-1]["timer_running"] is False
+
+
+def _engine(snapshot: dict[str, Any], **engine: str) -> dict[str, Any]:
+    snapshot["runtime"]["engine"] = {"state": "sleeping", "message": "", **engine}
+    return snapshot
+
+
+@pytest.mark.parametrize(
+    ("state", "label"),
+    [("sleeping", "sleeping"), ("preparing", "loading"), ("ready", "loaded"), ("error", "error")],
+)
+def test_every_engine_state_has_its_label(tmp_path: Path, state: str, label: str) -> None:
+    trace = _run([_engine(_snapshot("ready"), state=state)], tmp_path)
+
+    assert trace[-1]["engine_state"] == label
+
+
+def test_a_load_that_finished_before_the_page_asked_is_still_shown(tmp_path: Path) -> None:
+    """The push arrives, the engine is already ready: loading still appears.
+
+    The runtime phase stays ``preparing`` only so the page keeps asking.
+    """
+
+    trace = _run(
+        [
+            _engine(_snapshot("preparing"), state="sleeping", preparing_sequence="0"),
+            _engine(_snapshot("preparing"), state="ready", preparing_sequence="3"),
+        ],
+        tmp_path,
+    )
+
+    assert trace[0]["engine_state"] == "sleeping"
+    assert trace[-1]["engine_state"] == "loading"
+
+
+def test_a_load_already_shown_is_not_shown_again(tmp_path: Path) -> None:
+    trace = _run(
+        [
+            _engine(_snapshot("preparing"), state="preparing", preparing_sequence="3"),
+            _engine(_snapshot("preparing"), state="ready", preparing_sequence="3"),
+        ],
+        tmp_path,
+    )
+
+    assert trace[0]["engine_state"] == "loading"
+    assert trace[-1]["engine_state"] == "loaded"
+
+
+def test_unchanged_permissions_are_not_rebuilt_on_every_refresh(tmp_path: Path) -> None:
+    """Each rebuild replayed the rows' entrance, which read as flashing while
+    the page kept refreshing. Only a changed answer redraws them."""
+
+    required = _macos_permissions("required", "required")
+    trace = _run(
+        [
+            _snapshot("preparing", permissions=required),
+            _snapshot("preparing", permissions=required),
+            _snapshot("preparing", permissions=required),
+            _snapshot("preparing", permissions=_macos_permissions("granted", "required")),
+        ],
+        tmp_path,
+    )
+
+    rebuilds = [step["permission_rebuilds"] for step in trace]
+    assert rebuilds[0] == rebuilds[2], "identical refreshes rebuilt the rows"
+    assert rebuilds[-1] == rebuilds[2] + 1, "a changed grant must redraw them"
+    assert [row["badge"] for row in trace[-1]["permission_rows"]] == ["granted", "required"]
+
+
+def test_a_page_opened_after_a_load_does_not_replay_it(tmp_path: Path) -> None:
+    """A window opened long after the engine loaded has no load to show: the
+    first answer it receives is where it starts counting from."""
+
+    trace = _run(
+        [_engine(_snapshot("ready"), state="ready", preparing_sequence="3")],
+        tmp_path,
+    )
+
+    assert trace[0]["engine_state"] == "loaded"

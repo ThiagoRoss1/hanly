@@ -534,3 +534,112 @@ def test_reader_eof_reaps_child_before_forgetting_ownership() -> None:
     assert child.process.joined
     assert not child.process.is_alive()
     assert not manager.running
+
+
+def test_a_dock_reactivation_reopens_only_a_live_control_center() -> None:
+    """Command-Tab back to Hanly must not resurrect a window the user closed.
+
+    The child is an accessory process with no Dock tile, so activating Hanly
+    reaches the shell; routing that to the existing open path is what makes the
+    Dock icon work while the window sits minimized.
+    """
+
+    from hanly_app.app_reopen_darwin import ApplicationReopenFilter
+
+    opened: list[str] = []
+    live = {"running": True}
+    clock = {"now": 100.0}
+    reopen = ApplicationReopenFilter(
+        lambda: opened.append("show"),
+        lambda: live["running"],
+        clock=lambda: clock["now"],
+    )
+
+    assert reopen.application_activated() is True
+    assert opened == ["show"]
+
+    clock["now"] += 10.0
+    live["running"] = False
+    assert reopen.application_activated() is False
+    assert opened == ["show"], "a closed Control Center stays closed"
+
+
+def test_repeated_activations_are_debounced() -> None:
+    """macOS delivers several activations while a window comes forward."""
+
+    from hanly_app.app_reopen_darwin import ApplicationReopenFilter
+
+    opened: list[str] = []
+    clock = {"now": 0.0}
+    reopen = ApplicationReopenFilter(
+        lambda: opened.append("show"), lambda: True, clock=lambda: clock["now"]
+    )
+
+    assert reopen.application_activated() is True
+    clock["now"] += 0.1
+    assert reopen.application_activated() is False
+    clock["now"] += 5.0
+    assert reopen.application_activated() is True
+
+    assert opened == ["show", "show"]
+
+
+def test_a_click_on_the_popup_does_not_reopen_the_control_center() -> None:
+    """Expand or Close on the popup activates the shell, but asks for nothing."""
+
+    from hanly_app.app_reopen_darwin import ApplicationReopenFilter
+
+    opened: list[str] = []
+    pointer = {"on_own_window": True}
+    clock = {"now": 0.0}
+    reopen = ApplicationReopenFilter(
+        lambda: opened.append("show"),
+        lambda: True,
+        clicked_own_window=lambda: pointer["on_own_window"],
+        clock=lambda: clock["now"],
+    )
+
+    assert reopen.application_activated() is False
+    pointer["on_own_window"] = False
+    clock["now"] += 5.0
+    assert reopen.application_activated() is True, "the Dock still reopens it"
+    assert opened == ["show"]
+
+
+def test_choosing_an_area_first_lets_the_shell_come_to_the_front(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows only lets the process the user clicked hand the foreground on."""
+
+    from hanly_app import control_center_process
+
+    order: list[str] = []
+    monkeypatch.setattr(
+        control_center_process, "hand_foreground_to_parent", lambda: order.append("allow")
+    )
+    proxy = ControlCenterProxy(lambda name, *_args: order.append(name))
+
+    proxy.select_capture_area()
+
+    assert order == ["allow", "select_capture_area"]
+
+
+def test_the_hand_over_reaches_both_platform_mechanisms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows allows the parent's foreground; macOS yields activation to it."""
+
+    import os
+
+    from hanly_app import app_identity_darwin, control_center_process
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        control_center_process, "allow_parent_foreground", lambda: calls.append("windows")
+    )
+    monkeypatch.setattr(control_center_process.sys, "platform", "darwin")
+    monkeypatch.setattr(app_identity_darwin, "yield_activation_to", calls.append)
+
+    control_center_process.hand_foreground_to_parent()
+
+    assert calls == ["windows", os.getppid()]

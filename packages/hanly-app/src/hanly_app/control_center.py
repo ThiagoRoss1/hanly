@@ -21,6 +21,8 @@ from typing import Any, Protocol
 
 from hanly.resource_manager import ResourceManager
 
+from .app_icon import favicon_data_uri
+from .app_update import installed_version
 from .capture import CaptureService, MonitorInfo, ScreenRect
 from .capture_selector import CaptureSelection
 from .config import (
@@ -32,6 +34,9 @@ from .config import (
     ConfigManager,
     HoverActivation,
     LookupPreload,
+    OCRBackend,
+    PopupDefaultSize,
+    TechnicalDetailLevel,
 )
 from .desktop_controller import DesktopState
 from .diagnostics import LEVELS, DiagnosticLog, diagnostics_bundle
@@ -176,10 +181,20 @@ def _inline_assets(assets: ControlCenterAssets) -> str:
         '<link rel="stylesheet" href="control_center.css">',
         f"<style>\n{assets.css}\n</style>",
     )
+    document = document.replace(
+        '<link rel="icon" href="favicon.ico">',
+        f'<link rel="icon" href="{favicon_data_uri()}">',
+    )
     return document.replace(
         '<script src="control_center.js"></script>',
         f"<script>\n{assets.javascript}\n</script>",
     )
+
+
+def _vision_is_available() -> bool:
+    from hanly.vision_provider import VisionProvider
+
+    return VisionProvider.is_available()
 
 
 class ControlCenterBridge:
@@ -210,17 +225,20 @@ class ControlCenterBridge:
         on_quit: Callable[[], None] | None = None,
         log_path: Path | None = None,
         permission_service: PermissionService | None = None,
-        ocr_provider: str = "EasyOCR",
+        ocr_provider: str | Callable[[], str] = "EasyOCR",
         engine_status: Callable[[], Mapping[str, str]] | None = None,
         registered_hotkeys: Callable[[], Mapping[str, str]] | None = None,
         application_snapshot: Callable[[], ApplicationSnapshot] | None = None,
         diagnostic_log: DiagnosticLog | None = None,
+        vision_available: Callable[[], bool] | None = None,
     ) -> None:
         if config_manager is not None and not isinstance(config_manager, ConfigManager):
             raise TypeError("config_manager must be a ConfigManager")
 
-        if not isinstance(ocr_provider, str) or not ocr_provider.strip():
-            raise ValueError("ocr_provider must be a non-empty string")
+        if not callable(ocr_provider) and (
+            not isinstance(ocr_provider, str) or not ocr_provider.strip()
+        ):
+            raise ValueError("ocr_provider must be a non-empty string or a callable")
         if diagnostics is not None and not callable(diagnostics):
             raise TypeError("diagnostics must be callable")
         if on_lifecycle_changed is not None and not callable(on_lifecycle_changed):
@@ -248,7 +266,9 @@ class ControlCenterBridge:
         # Both arrive with the prepared runtime, through attach_runtime().
         self._capture_service: MonitorSource | CaptureService | None = None
         self._resource_manager = resource_manager
-        self._ocr_provider = ocr_provider.strip()
+        self._ocr_provider = ocr_provider
+        self._vision_probe = vision_available or _vision_is_available
+        self._vision_available: bool | None = None
         self._diagnostics = diagnostics
         self._runtime_status = runtime_status
         self._engine_status = engine_status
@@ -289,7 +309,13 @@ class ControlCenterBridge:
             },
             "config": config.to_dict(),
             "runtime": {
-                "ocr_provider": self._ocr_provider,
+                "ocr_provider": self._ocr_name(),
+                "ocr_backends": self._ocr_backends(),
+                "app_version": _installed_version(),
+                "hover_delay_bounds": {
+                    "min": HOVER_DELAY_MIN_MS,
+                    "max": HOVER_DELAY_MAX_MS,
+                },
                 "resources": self._resources(),
                 "status": self._status_snapshot(),
                 "engine": self._engine_snapshot(),
@@ -429,10 +455,13 @@ class ControlCenterBridge:
             "capture_hotkey",
             "hover_activation",
             "lookup_preload",
+            "ocr_backend",
             "hover_delay_ms",
             "capture_mode",
             "theme",
             "popup_enabled",
+            "popup_default_size",
+            "technical_details",
             "update_checks_enabled",
         }
         unknown = set(changes) - supported
@@ -450,6 +479,22 @@ class ControlCenterBridge:
         if "lookup_preload" in values:
             values["lookup_preload"] = _validated_choice(
                 values["lookup_preload"], LookupPreload, "lookup engine preload"
+            )
+        if "ocr_backend" in values:
+            values["ocr_backend"] = _validated_choice(
+                values["ocr_backend"], OCRBackend, "text recognizer"
+            )
+            if values["ocr_backend"] not in self._ocr_backends():
+                raise ControlCenterUnavailable("Apple Vision is only available on macOS")
+        if "popup_default_size" in values:
+            values["popup_default_size"] = _validated_choice(
+                values["popup_default_size"], PopupDefaultSize, "default popup size"
+            )
+        if "technical_details" in values:
+            values["technical_details"] = _validated_choice(
+                values["technical_details"],
+                TechnicalDetailLevel,
+                "technical details",
             )
         self._update_config(**values)
         return self.get_state()
@@ -624,7 +669,7 @@ class ControlCenterBridge:
             "hotkeys": self._registered_bindings(),
             "resources": self._resources(),
             "permissions": self._permissions_snapshot(),
-            "ocr_provider": self._ocr_provider,
+            "ocr_provider": self._ocr_name(),
         }
 
     def set_retry(self, on_retry_runtime: Callable[[], None]) -> None:
@@ -664,6 +709,30 @@ class ControlCenterBridge:
         """Reapply persisted config and transient target/region state."""
 
         self._apply_live_config()
+
+    def _ocr_backends(self) -> list[str]:
+        """The recognizer choices this machine can actually honour.
+
+        Probed once: Vision's availability cannot change while Hanly runs, and
+        the page asks for state on every refresh.
+        """
+
+        if self._vision_available is None:
+            try:
+                self._vision_available = bool(self._vision_probe())
+            except Exception:
+                self._vision_available = False
+        choices = [OCRBackend.AUTO.value]
+        if self._vision_available:
+            choices.append(OCRBackend.VISION.value)
+        choices.append(OCRBackend.EASYOCR.value)
+        return choices
+
+    def _ocr_name(self) -> str:
+        """The recognizer in use now, which the preference can change live."""
+
+        provider = self._ocr_provider
+        return provider().strip() if callable(provider) else provider.strip()
 
     def _current_config(self) -> AppConfig:
         return self._config_manager.config if self._config_manager is not None else self._config
@@ -870,6 +939,19 @@ class ControlCenterBridge:
             }
             resources.append(resource)
         return resources
+
+
+def _installed_version() -> str | None:
+    """Report the running product version, or nothing rather than a guess.
+
+    A source tree without installed metadata is a real case, and the page shows
+    no version at all instead of a placeholder that looks like one.
+    """
+
+    try:
+        return installed_version()
+    except Exception:
+        return None
 
 
 #: The only host a release page may live on, and the path segment that says

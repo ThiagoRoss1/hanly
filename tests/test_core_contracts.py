@@ -7,6 +7,7 @@ import pytest
 from hanly import (
     BoundingBox,
     DictionaryEntry,
+    DictionarySense,
     HanlyError,
     LookupContext,
     LookupResult,
@@ -312,7 +313,14 @@ def test_lookup_result_is_frozen() -> None:
 
 def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None:
     ocr_result = OCRResult(text="한국어", confidence=0.9, quad=_quad(0, 0, 10, 10))
-    context = LookupContext(text="한국어", lemma="한국어", ocr_results=(ocr_result,))
+    analysis = TokenAnalysis("한국어", "한국어", "NNG")
+    context = LookupContext(
+        text="한국어",
+        lemma="한국어",
+        ocr_results=(ocr_result,),
+        selected_ocr=ocr_result,
+        analyses=(analysis,),
+    )
     result = LookupResult(status=LookupStatus.EMPTY, context=context)
 
     assert is_dataclass(context)
@@ -321,11 +329,17 @@ def test_lookup_context_carries_only_normalized_optional_engine_inputs() -> None
         "text",
         "lemma",
         "ocr_results",
+        "selected_ocr",
+        "analyses",
         "word_region",
+        "candidate",
+        "components",
     ]
     assert result.context == context
     assert result.context.ocr_results == (ocr_result,)
     assert isinstance(result.context.ocr_results, tuple)
+    assert result.context.selected_ocr is ocr_result
+    assert result.context.analyses == (analysis,)
     # Geometry is optional evidence, not something every outcome carries.
     assert result.context.word_region is None
 
@@ -401,11 +415,16 @@ def test_public_export_surface_is_explicit() -> None:
         "DictionaryEntry",
         "DictionaryProvider",
         "HanlyError",
+        "LanguagePipeline",
         "LookupContext",
         "LookupPipeline",
         "LookupResult",
         "LookupStatus",
         "MorphologyProvider",
+        "DictionarySense",
+        "LexicalCandidate",
+        "LexicalComponent",
+        "MorphologyAnalysis",
         "OCRProvider",
         "OCRResult",
         "PixelFormat",
@@ -415,7 +434,35 @@ def test_public_export_surface_is_explicit() -> None:
         "ROIImage",
         "ResourceMetadata",
         "ResourceStatus",
+        "TargetResolution",
+        "TextSelection",
         "TokenAnalysis",
     }
 
     assert set(hanly.__all__) == expected
+
+
+def test_dictionary_entry_derives_the_representation_it_was_not_given() -> None:
+    """Senses and definitions are one truth seen two ways, never two truths."""
+
+    from_senses = DictionaryEntry(
+        headword="예쁘다",
+        senses=(
+            DictionarySense(definition="looking good", gloss="pretty", sense_id="1"),
+            DictionarySense(definition="looking good", gloss="lovely", sense_id="2"),
+        ),
+    )
+    assert from_senses.definitions == ("looking good", "looking good")
+
+    from_definitions = DictionaryEntry(headword="책", definitions=("a book",))
+    assert from_definitions.senses == (DictionarySense(definition="a book"),)
+    assert from_definitions.senses[0].gloss is None
+
+
+def test_dictionary_entry_rejects_senses_that_contradict_definitions() -> None:
+    with pytest.raises(ValueError, match="disagree"):
+        DictionaryEntry(
+            headword="책",
+            definitions=("a book",),
+            senses=(DictionarySense(definition="something else"),),
+        )

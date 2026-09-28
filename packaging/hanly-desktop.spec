@@ -48,6 +48,8 @@ UPDATE_HELPER = os.environ.get("HANLY_UPDATE_HELPER", "")
 
 #: The weights a frozen build loads; it cannot download them.
 MODEL_DIRECTORY = APP_SOURCE / "hanly_app" / "assets" / "easyocr_models"
+#: The executable and bundle icons, which exist only at build time.
+ICON_DIRECTORY = ROOT / "packaging" / "icons"
 MODEL_FILES = ("craft_mlt_25k.pth", "korean_g2.pth")
 
 MANDATORY_PACKAGES = ("kiwipiepy", "kiwipiepy_model")
@@ -122,6 +124,8 @@ datas = collect_data_files(
         "assets/control_center/*.html",
         "assets/control_center/*.css",
         "assets/control_center/*.js",
+        "assets/icons/*.png",
+        "assets/icons/*.ico",
         "assets/easyocr_models/*.pth",
         # Written by the release build before this freeze; a source checkout
         # has none, and one built without it has no schema-2 identity.
@@ -229,6 +233,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon=str(ICON_DIRECTORY / "hanly.ico") if sys.platform == "win32" else None,
 )
 coll = COLLECT(
     exe,
@@ -241,6 +246,7 @@ if sys.platform == "darwin":
     BUNDLE(
         coll,
         name=BUNDLE_NAME,
+        icon=str(ICON_DIRECTORY / "hanly.icns"),
         bundle_identifier=BUNDLE_IDENTIFIER,
         version=APPLICATION_VERSION,
         info_plist={

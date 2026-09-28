@@ -327,6 +327,8 @@ jobs:
         env:
           RUNNER_PLATFORM: ${{ matrix.platform }}
           HANLY_REQUIRE_PACKAGED: "1"
+          # The commit the build step stamped; a bundle from any other fails.
+          HANLY_EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           display=""

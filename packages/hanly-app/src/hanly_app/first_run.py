@@ -483,7 +483,7 @@ def _default_runtime_payload() -> dict[str, Any]:
             },
         },
         "easyocr": {
-            "languages": ["ko"],
+            "languages": ["ko", "en"],
         },
         "updates": {
             "github": {

@@ -66,6 +66,22 @@ FIXTURE_XML = """<?xml version="1.0" encoding="utf-8"?>
 </Lexicon></LexicalResource>
 """
 
+SHARED_DEFINITION_XML = """<?xml version="1.0" encoding="utf-8"?>
+<LexicalResource><Lexicon>
+  <LexicalEntry att="id" val="40">
+    <feat att="lexicalUnit" val="단어" />
+    <feat att="homonym_number" val="0" />
+    <feat att="partOfSpeech" val="형용사" />
+    <Lemma><feat att="writtenForm" val="예쁘다" /></Lemma>
+    <Sense att="id" val="400">
+      <feat att="definition" val="보기에 좋다." />
+      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="pretty; beautiful" /><feat att="definition" val="looking good" /></Equivalent>
+      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="lovely" /><feat att="definition" val="looking good" /></Equivalent>
+    </Sense>
+  </LexicalEntry>
+</Lexicon></LexicalResource>
+"""
+
 
 @cache
 def _database_image(xml: str) -> bytes:

@@ -41,6 +41,11 @@ TRANSFER_CORRIDOR_PIXELS = 24
 #: to one running plus one latest pending, so this is already generous.
 ORIGIN_LIMIT = 8
 
+#: The ratio between captured image pixels and screen coordinates. See
+#: :func:`screen_rect`: it is the one place the two spaces could diverge, and on
+#: the platforms measured so far they do not.
+SCREEN_SCALE = 1.0
+
 
 @dataclass(frozen=True, slots=True)
 class RetainedTarget:
@@ -117,7 +122,7 @@ def expanded(rect: ScreenRect, margin: int) -> ScreenRect:
 
 
 def screen_rect(
-    region: ScreenRect, bounds: BoundingBox, *, scale: float = 1.0
+    region: ScreenRect, bounds: BoundingBox, *, scale: float = SCREEN_SCALE
 ) -> ScreenRect | None:
     """Place an ROI-local box on the screen the capture came from.
 
@@ -154,12 +159,23 @@ class CaptureOrigins:
         self._limit = limit
         self._lock = RLock()
         self._origins: dict[int, ScreenRect] = {}
+        self._words: dict[int, ScreenRect] = {}
 
     def remember(self, request_id: int, region: ScreenRect) -> None:
         with self._lock:
             self._origins[request_id] = region
-            while len(self._origins) > self._limit:
-                self._origins.pop(next(iter(self._origins)))
+            self._trim()
+
+    def remember_word(self, request_id: int, word: ScreenRect) -> None:
+        """Record a word read without pixels, whose own rectangle is known.
+
+        Direct text answers with the word's screen bounds rather than a capture
+        region, and its result carries no ROI-local geometry to map.
+        """
+
+        with self._lock:
+            self._words[request_id] = word
+            self._trim()
 
     def origin(self, request_id: int | None) -> ScreenRect | None:
         if request_id is None:
@@ -167,14 +183,27 @@ class CaptureOrigins:
         with self._lock:
             return self._origins.get(request_id)
 
+    def word(self, request_id: int | None) -> ScreenRect | None:
+        if request_id is None:
+            return None
+        with self._lock:
+            return self._words.get(request_id)
+
     def clear(self) -> None:
         with self._lock:
             self._origins.clear()
+            self._words.clear()
+
+    def _trim(self) -> None:
+        for recent in (self._origins, self._words):
+            while len(recent) > self._limit:
+                recent.pop(next(iter(recent)))
 
 
 __all__ = [
     "ORIGIN_LIMIT",
     "POPUP_TRANSFER_MS",
+    "SCREEN_SCALE",
     "TRANSFER_CORRIDOR_PIXELS",
     "WORD_MARGIN_PIXELS",
     "CaptureOrigins",

@@ -183,6 +183,16 @@ def test_the_packaged_gate_cannot_pass_by_skipping_itself() -> None:
     assert "xvfb-run" in step["run"], "the frozen window needs a display on Linux"
 
 
+def test_the_packaged_gate_names_the_commit_its_bundle_must_come_from() -> None:
+    """A same-version bundle from another commit must fail, not pass as current."""
+
+    step = _step(_workflow("build.yml"), "build", step_id="packaged_tests")
+    build = _step(_workflow("build.yml"), "build", step_id="build")
+
+    assert step["env"]["HANLY_EXPECTED_SOURCE_COMMIT"] == "${{ github.sha }}"
+    assert build["env"]["BUILD_COMMIT"] == "${{ github.sha }}"
+
+
 @pytest.mark.parametrize(
     ("workflow_name", "job_name"),
     [("ci.yml", "quality"), ("ci.yml", "native"), ("build.yml", "build")],

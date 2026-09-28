@@ -70,10 +70,12 @@ def test_provider_satisfies_the_engine_ocr_protocol() -> None:
     assert isinstance(provider, OCRProvider)
 
 
-def test_default_configuration_requests_korean_only_on_the_cpu() -> None:
+def test_default_configuration_requests_korean_and_english_on_the_cpu() -> None:
+    """Korean alone masks Latin output, so Latin text decoded as Hangul."""
+
     options = EasyOCRConfig().to_reader_kwargs()
 
-    assert options["lang_list"] == ["ko"]
+    assert options["lang_list"] == ["ko", "en"]
     assert options["gpu"] is False
 
 
@@ -320,7 +322,8 @@ class _FakeMorphology:
 
 class _FakeDictionary:
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
-        assert lemma == "읽다"
+        if lemma != "읽다":
+            return ()
         return (DictionaryEntry(headword="읽다", definitions=("to read",)),)
 
 

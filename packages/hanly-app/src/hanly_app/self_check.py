@@ -34,9 +34,9 @@ SELF_CHECK_MODES = ("worker", "ui")
 #: opens before any resource exists, so checking it must not provision one.
 RUNTIME_SELF_CHECK_MODES = ("worker",)
 
-#: Controls the page has to have rendered before the window is usable. Between
-#: them they cover starting capture, reporting readiness, and leaving.
-UI_PROBE_ELEMENTS = ("control-center", "start-capture", "runtime-state", "quit-hanly")
+#: Controls the page has to have rendered before the window is usable: the
+#: shell's navigation, the capture control, the runtime state, and leaving.
+UI_PROBE_ELEMENTS = ("nav", "toggle-capture", "live-runtime", "quit-ask")
 
 #: How long the window may take to load its document and inject the bridge.
 UI_READY_TIMEOUT_SECONDS = 60.0

@@ -92,13 +92,24 @@ Read `docs/architecture/01`–`04` before changing anything structural. The big 
 
 ## OCR backend
 
-**EasyOCR is the only OCR backend (2026-08-26).** PaddleOCR was removed at the
-human's direction: the adapter, its recognition-first hover fast path, the
-`ocr_backend` selector, and the two managed model resources are gone. A first
-launch provisions only `krdict`, and the desktop constructs `EasyOCRProvider`.
-Do not reintroduce a backend-selection seam or restore Paddle from an older
-revision; `OCRProvider` remains the abstraction if a second adapter is ever
-wanted again.
+**Two OCR backends (approved 2026-09-22).** PaddleOCR was removed at the
+human's direction on 2026-08-26 and must not be restored. Apple Vision was added
+at the human's direction on 2026-09-20 after measurement and approved as
+architecture on 2026-09-22: EasyOCR's bundled `korean_g2` systematically loses
+the `ㅆ` batchim that marks the Korean past tense, scoring **0/7** on the
+acceptance words, while Vision scores **7/7** with faster warm recognition.
+
+`config.OCRBackend` is an internal setting: `auto` (the default) prefers Vision
+where the platform provides it and falls back to EasyOCR, and `vision`/`easyocr`
+pin one. There is no user-facing provider selection. `auto` is resolved in the
+shell by `HanlyRuntime.resolved_ocr_backend()`; the lookup child receives a
+concrete decision in `LookupSettings`. A first launch still provisions only
+`krdict`; Vision is part of macOS and downloads nothing.
+
+`OCRProvider` remains the seam, and `EasyOCRProvider` remains the cross-platform
+adapter. Do not add a third backend, a plugin system, or dictionary-backed
+spelling correction. The decision, its bounded evidence and its revisit
+condition are in `docs/architecture/DECISION-2026-09-22-ocr-backend.md`.
 
 Measurements, the diagnosed defects behind the swap, and the deferred items are
 in `docs/execution/reports/ocr-latency-and-roadmap.md`. Read it before changing

@@ -46,6 +46,10 @@ def _easyocr_config(tmp_path: Path, **easyocr: object) -> Path:
     _krdict_database(tmp_path / "data" / "krdict.sqlite3")
     payload: dict[str, object] = {
         "resources": {"krdict": {"path": "data/krdict.sqlite3", "kind": "krdict"}},
+        # These cases are about the EasyOCR composition specifically, so the
+        # recognizer is pinned rather than left to the automatic choice, which
+        # prefers Apple Vision on a machine that has it.
+        "ocr_backend": "easyocr",
     }
     if easyocr:
         payload["easyocr"] = easyocr
@@ -101,8 +105,9 @@ class _FakeKRDICT:
         _PROVIDER_THREADS["krdict"] = threading.get_ident()
 
     def lookup(self, lemma: str) -> Sequence[DictionaryEntry]:
-        assert lemma == "책"
         _PROVIDER_THREADS["krdict_lookup"] = threading.get_ident()
+        if lemma != "책":
+            return ()
         return (DictionaryEntry(headword="책", definitions=("book",)),)
 
     def close(self) -> None:
@@ -146,7 +151,8 @@ def test_easyocr_options_are_validated_and_rooted_at_the_config_file(
     easyocr_config = load_runtime(config).easyocr_config
 
     assert easyocr_config is not None
-    assert easyocr_config.languages == ("ko",)
+    # The list earlier first launches wrote reads as the current default.
+    assert easyocr_config.languages == ("ko", "en")
     assert easyocr_config.model_storage_directory == (
         tmp_path / "models" / "easyocr"
     ).resolve()
@@ -274,3 +280,12 @@ def test_the_shell_builds_no_provider_and_the_child_gets_the_validated_path(
     assert len(set(recorder.threads.values())) == 1
     assert executor_thread not in set(recorder.threads.values())
     assert recorder.databases == [(tmp_path / "data" / "krdict.sqlite3").resolve()]
+
+
+def test_a_deliberate_language_list_is_kept(tmp_path: Path) -> None:
+    config = _easyocr_config(tmp_path, languages=["ko", "ja"])
+
+    easyocr_config = load_runtime(config).easyocr_config
+
+    assert easyocr_config is not None
+    assert easyocr_config.languages == ("ko", "ja")

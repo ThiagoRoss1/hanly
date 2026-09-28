@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .capture import ScreenRect
-from .config import CaptureMode
+from .config import CaptureMode, Theme
 
 
 class CaptureSelectorError(RuntimeError):
@@ -38,7 +38,7 @@ class CaptureSelection:
         return cls(CaptureMode.REGION, region)
 
 
-def select_capture_area() -> CaptureSelection | None:
+def select_capture_area(theme: Theme = Theme.SYSTEM) -> CaptureSelection | None:
     """Ask for a whole monitor or a snipping-style region.
 
     The shared bootstrap owns the OCR-before-Qt ordering and the one
@@ -46,7 +46,7 @@ def select_capture_area() -> CaptureSelection | None:
     the Qt thread of a running one.
     """
 
-    QApplication, QMessageBox = _import_qt_widgets()
+    QApplication, Prompt = _import_qt_widgets()
     application = _shared_application(QApplication)
     # Restored below: leaving this off would let the desktop keep running with
     # no window after the main one is closed, which is the unreachable
@@ -54,24 +54,26 @@ def select_capture_area() -> CaptureSelection | None:
     quit_on_last_window = application.quitOnLastWindowClosed()
     application.setQuitOnLastWindowClosed(False)
     try:
-        return _choose(application, QMessageBox)
+        return _choose(application, Prompt, theme)
     finally:
         application.setQuitOnLastWindowClosed(quit_on_last_window)
 
 
-def _choose(application: Any, QMessageBox: Any) -> CaptureSelection | None:
+def _choose(
+    application: Any, Prompt: Any, theme: Theme = Theme.SYSTEM
+) -> CaptureSelection | None:
     """Ask for a monitor or a region, and read back what was picked."""
 
-    prompt = QMessageBox()
-    prompt.setWindowTitle("Start Hanly")
+    prompt = Prompt(theme=theme)
+    prompt.setWindowTitle("Where should Hanly read?")
     prompt.setText("Choose the area Hanly should watch. This is saved as a setting.")
     whole_button = prompt.addButton(
-        "Whole monitor", QMessageBox.ButtonRole.AcceptRole
+        "Whole monitor", Prompt.ButtonRole.AcceptRole
     )
     region_button = prompt.addButton(
-        "Select an area", QMessageBox.ButtonRole.ActionRole
+        "Select an area", Prompt.ButtonRole.ActionRole
     )
-    cancel_button = prompt.addButton(QMessageBox.StandardButton.Cancel)
+    cancel_button = prompt.addButton("Cancel", Prompt.ButtonRole.RejectRole)
     prompt.exec()
     clicked = prompt.clickedButton()
     if clicked is cancel_button or clicked is None:
@@ -94,10 +96,12 @@ def _import_qt_widgets() -> tuple[Any, Any]:
     """
 
     try:
-        from PyQt6.QtWidgets import QApplication, QMessageBox
+        from PyQt6.QtWidgets import QApplication
+
+        from .hanly_dialog import HanlyPrompt
     except ImportError as error:
         raise CaptureSelectorError("capture selection requires the Qt runtime") from error
-    return QApplication, QMessageBox
+    return QApplication, HanlyPrompt
 
 
 def _shared_application(application_type: Any) -> Any:
@@ -125,6 +129,8 @@ def _select_region(application: object) -> ScreenRect | None:
     from PyQt6.QtCore import QPoint, QRect, Qt
     from PyQt6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen
     from PyQt6.QtWidgets import QApplication, QDialog
+
+    from .hanly_dialog import bring_to_front
 
     if not isinstance(application, QApplication):
         raise TypeError("application must be a QApplication")
@@ -226,6 +232,8 @@ def _select_region(application: object) -> ScreenRect | None:
             )
 
     overlay = RegionOverlay()
+    overlay.show()
+    bring_to_front(overlay)
     overlay.exec()
     return overlay.result_region
 

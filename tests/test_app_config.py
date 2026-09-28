@@ -9,12 +9,16 @@ from hanly_app.config import (
     DEFAULT_CAPTURE_HOTKEY,
     DEFAULT_HOVER_HOTKEY,
     HOVER_HOTKEY_FALLBACKS,
+    SETTABLE_FIELDS,
     AppConfig,
     CaptureMode,
     CaptureRegion,
     ConfigManager,
     HoverActivation,
     LookupPreload,
+    OCRBackend,
+    PopupDefaultSize,
+    TechnicalDetailLevel,
     Theme,
 )
 
@@ -27,6 +31,8 @@ def test_default_config_is_valid_and_contains_only_desktop_preferences() -> None
     assert config.capture_mode is CaptureMode.FULL_MONITOR
     assert config.theme is Theme.SYSTEM
     assert config.popup_enabled is True
+    assert config.popup_default_size is PopupDefaultSize.COMPACT
+    assert config.technical_details is TechnicalDetailLevel.OFF
     assert config.update_checks_enabled is True
     assert "confidence_threshold" not in config.to_dict()
 
@@ -47,6 +53,8 @@ def test_config_manager_round_trips_typed_json(tmp_path: Path) -> None:
         capture_mode=CaptureMode.REGION,
         theme=Theme.DARK,
         popup_enabled=False,
+        popup_default_size=PopupDefaultSize.EXPANDED,
+        technical_details=TechnicalDetailLevel.FULL,
         update_checks_enabled=False,
     )
     manager = ConfigManager(path)
@@ -78,6 +86,8 @@ def test_update_validates_and_persists_a_new_config(tmp_path: Path) -> None:
         ("hover_delay_ms", -1),
         ("capture_mode", "continuous_ocr"),
         ("theme", "neon"),
+        ("popup_default_size", "huge"),
+        ("technical_details", "everything"),
     ],
 )
 def test_invalid_preferences_are_rejected(field: str, value: Any) -> None:
@@ -127,6 +137,21 @@ def test_settings_written_before_capture_preferences_still_load(tmp_path: Path) 
     assert loaded.hotkey == "ctrl+alt+k"
     assert loaded.capture_monitor is None
     assert loaded.capture_region is None
+    assert loaded.popup_default_size is PopupDefaultSize.COMPACT
+    assert loaded.technical_details is TechnicalDetailLevel.OFF
+
+
+def test_popup_preferences_update_and_round_trip(tmp_path: Path) -> None:
+    manager = ConfigManager(tmp_path / "settings.json")
+
+    updated = manager.update(
+        popup_default_size="expanded",
+        technical_details="basic",
+    )
+
+    assert updated.popup_default_size is PopupDefaultSize.EXPANDED
+    assert updated.technical_details is TechnicalDetailLevel.BASIC
+    assert ConfigManager(manager.path).load() == updated
 
 
 def test_region_mode_without_a_region_stays_loadable(tmp_path: Path) -> None:
@@ -300,3 +325,47 @@ def test_migration_is_idempotent_across_a_save_and_reload(tmp_path: Path) -> Non
 
     assert second.load() == first
     assert second.migrations == ()
+
+
+_SETTABLE_SAMPLES: dict[str, object] = {
+    "hotkey": "ctrl+alt+k",
+    "hover_hotkey": "ctrl+alt+h",
+    "capture_hotkey": "ctrl+alt+c",
+    "hover_activation": HoverActivation.ALWAYS_ACTIVE,
+    "lookup_preload": LookupPreload.ALWAYS,
+    "ocr_backend": OCRBackend.EASYOCR,
+    "hover_delay_ms": 220,
+    "capture_mode": CaptureMode.REGION,
+    "capture_monitor": 1,
+    "capture_region": CaptureRegion(left=1, top=2, width=3, height=4),
+    "theme": Theme.DARK,
+    "popup_enabled": False,
+    "popup_default_size": PopupDefaultSize.EXPANDED,
+    "technical_details": TechnicalDetailLevel.FULL,
+    "update_checks_enabled": False,
+}
+
+
+def test_every_settable_field_has_a_sample_so_this_test_cannot_rot() -> None:
+    assert set(_SETTABLE_SAMPLES) == set(SETTABLE_FIELDS)
+
+
+@pytest.mark.parametrize("field", sorted(SETTABLE_FIELDS))
+def test_a_settable_field_actually_survives_being_set(
+    tmp_path: Path, field: str
+) -> None:
+    """``candidate()`` builds the new config field by field.
+
+    A field listed as settable but missing from that constructor is accepted
+    without error and then silently discarded, so the interface offers a
+    control that does nothing. ``ocr_backend`` shipped in exactly that state.
+    """
+
+    manager = ConfigManager(tmp_path / "settings.json")
+    manager.load()
+    value = _SETTABLE_SAMPLES[field]
+
+    updated = manager.update(**{field: value})
+
+    assert getattr(updated, field) == value, f"{field} was dropped by candidate()"
+    assert getattr(ConfigManager(tmp_path / "settings.json").load(), field) == value
