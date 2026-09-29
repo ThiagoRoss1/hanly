@@ -8,9 +8,11 @@
 //
 //   node control_center_harness.js <control_center.js> <snapshots.json> [<actions.json>]
 //
-// An action entry names a timer step and either a permission to click "Grant
-// access" for, or an element id to click, so the page's own post-grant
-// watching and its explicit retry can both be observed.
+// An action entry names a timer step and one of: a permission to click "Grant
+// access" for, an element id to click, a navigation section to give keyboard
+// focus to ("focus_nav"), or a hover-delay slider value to drag to without
+// releasing ("slide"). Focus is tracked as document.activeElement, so a page
+// that detaches the focused node is seen to lose it.
 
 "use strict";
 
@@ -102,8 +104,8 @@ function element(id) {
         .filter(function (entry) { return entry.type === type; })
         .forEach(function (entry) { entry.handler(event); });
     },
-    blur() {},
-    focus() {},
+    blur() { if (document.activeElement === node) document.activeElement = null; },
+    focus() { document.activeElement = node; },
     querySelector() { return element(); }
   };
   Object.defineProperty(node, "innerHTML", {
@@ -121,6 +123,7 @@ const documentElement = element("html");
 
 const document = {
   documentElement: documentElement,
+  activeElement: null,
   getElementById(id) {
     if (!elements.has(id)) elements.set(id, element(id));
     return elements.get(id);
@@ -220,10 +223,21 @@ function navPages() {
     .filter(Boolean);
 }
 
+// Only a node still attached to the navigation counts as focus inside it.
+function focusedNavPage() {
+  const active = document.activeElement;
+  const nav = document.getElementById("nav");
+  return active && active.parentNode === nav && nav.children.indexOf(active) !== -1
+    ? active.dataset.page : null;
+}
+
 function report(step) {
   return {
     step: step,
     nav_pages: navPages(),
+    focused_nav_page: focusedNavPage(),
+    delay_slider: document.getElementById("hover-delay-slider").value,
+    delay_field: document.getElementById("hover-delay-value").value,
     permission_rows: permissionRows(),
     permission_rebuilds: document.getElementById("permission-list").clears || 0,
     timer_running: timer !== null,
@@ -248,6 +262,18 @@ function applyActions(step) {
   due.forEach(function (action) {
     if (action.click) {
       document.getElementById(action.click).dispatch("click", {});
+      return;
+    }
+    if (action.focus_nav) {
+      document.getElementById("nav").children
+        .filter(function (child) { return child.dataset.page === action.focus_nav; })
+        .forEach(function (child) { child.focus(); });
+      return;
+    }
+    if (action.slide !== undefined) {
+      const slider = document.getElementById("hover-delay-slider");
+      slider.value = String(action.slide);
+      slider.dispatch("input", { target: slider });
       return;
     }
     document

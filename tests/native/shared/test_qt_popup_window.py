@@ -65,6 +65,22 @@ def test_the_popup_never_takes_focus_or_activates_the_application(
     assert popup_view.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating) is True
 
 
+def test_the_popup_actions_are_pointer_only_by_design(
+    popup_view: QtPopupView,
+) -> None:
+    """Keyboard focus on Expand or Close would activate Hanly over the app the
+    user is reading, so the actions deliberately take none (A-32, 2026-09-28)."""
+
+    popup_view.show_result(_result(), PopupPosition(10, 10))
+    buttons = popup_view.findChildren(QPushButton)
+
+    assert buttons
+    assert all(
+        button.focusPolicy() is Qt.FocusPolicy.NoFocus for button in buttons
+    )
+    popup_view.hide()
+
+
 def test_the_popup_stays_a_frameless_always_on_top_tool_window(
     popup_view: QtPopupView,
 ) -> None:

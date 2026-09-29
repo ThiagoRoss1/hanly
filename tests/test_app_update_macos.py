@@ -123,6 +123,20 @@ def test_a_disk_image_holding_more_than_one_volume_is_refused(tmp_path: Path) ->
     assert len(tools.detached) == 2
 
 
+def test_a_refused_multi_volume_image_names_the_volumes_left_attached(
+    tmp_path: Path,
+) -> None:
+    tools = _Tools(attach_entities=2, failures=("/dev/disk9s2",))
+
+    with pytest.raises(BundleError, match="exactly one volume") as refused:
+        with mounted_image(tmp_path / "hanly.dmg", runner=tools):
+            pass
+
+    assert "1 of its volumes are still attached" in str(refused.value)
+    assert "/dev/disk9s2" in str(refused.value)
+    assert "/dev/disk9s1" not in str(refused.value)
+
+
 def test_an_image_that_will_not_detach_says_how_to_close_it(tmp_path: Path) -> None:
     tools = _Tools(failures=("detach",))
 

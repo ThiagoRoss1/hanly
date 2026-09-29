@@ -1077,6 +1077,24 @@ def test_the_export_writes_a_shareable_report_beside_the_log(tmp_path: Path) -> 
     assert "platform" in payload and "versions" in payload
 
 
+def test_two_exports_in_the_same_second_keep_both_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hanly_app import control_center
+
+    monkeypatch.setattr(control_center, "_export_stamp", lambda: "20260928T000000Z")
+    bridge, log, _log_path = _log_bridge(tmp_path)
+    log.record("Capture", "first")
+    first = Path(str(bridge.export_diagnostics()["path"]))
+    log.record("Capture", "second")
+    second = Path(str(bridge.export_diagnostics()["path"]))
+
+    assert first != second
+    assert second.name == "hanly-diagnostics-20260928T000000Z-2.json"
+    assert len(json.loads(first.read_text(encoding="utf-8"))["records"]) == 1
+    assert len(json.loads(second.read_text(encoding="utf-8"))["records"]) == 2
+
+
 def test_a_build_without_a_log_says_so_rather_than_exporting_nothing(
     tmp_path: Path,
 ) -> None:

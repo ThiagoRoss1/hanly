@@ -348,14 +348,17 @@ def _shaped_as(directory: Path, only_entries: frozenset[str] | None) -> bool:
     if only_entries is None:
         return True
     try:
-        # Regular files only: a directory or link bearing an expected name
-        # would carry whatever it holds into the removal.
-        return all(
-            entry.name in only_entries and entry.is_file() and not entry.is_symlink()
-            for entry in directory.iterdir()
-        )
+        entries = list(directory.iterdir())
     except OSError:
         return False
+    # An empty directory is evidence of nothing: in a shared temporary root it
+    # may belong to anyone who picked the same prefix. Regular files only, since
+    # a directory or link bearing an expected name would carry whatever it
+    # holds into the removal.
+    return bool(entries) and all(
+        entry.name in only_entries and entry.is_file() and not entry.is_symlink()
+        for entry in entries
+    )
 
 
 def update_staging_locations(

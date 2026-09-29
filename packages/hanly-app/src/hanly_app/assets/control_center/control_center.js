@@ -115,7 +115,7 @@
 
   const OCR_HELP = {
     auto: "Picks the best recognizer this machine has.",
-    vision: "Built into macOS. Reads Korean verb endings most accurately.",
+    vision: "Built into macOS. Read Korean verb endings best in Hanly's tests.",
     easyocr: "Bundled model. Works everywhere, less accurate on conjugations."
   };
 
@@ -168,6 +168,9 @@
   let recording = null;
   let regionDirty = false;
   let delayEditing = false;
+  // A drag in progress belongs to the user until it lands; a refresh must not
+  // snap the thumb back to the saved value underneath them.
+  let sliderEditing = false;
   let readinessLoading = true;
   let logFilters = { level: "all", subsystem: "all", search: "" };
   let thinkTick = "a";
@@ -468,6 +471,11 @@
     // section that no longer exists.
     if (!items.some(function (item) { return item.id === page; })) page = "capture";
 
+    // The buttons are rebuilt, so a focused one would otherwise be detached and
+    // keyboard focus would fall back to the top of the page.
+    const focused = document.activeElement;
+    const focusedPage = focused && focused.parentNode === nav ? focused.dataset.page : null;
+
     Array.prototype.slice.call(nav.children).forEach(function (child) {
       if (child !== bubble) nav.removeChild(child);
     });
@@ -480,6 +488,7 @@
       button.appendChild(el("span", "nav-dot"));
       button.appendChild(el("span", "nav-label", item.label));
       nav.appendChild(button);
+      if (item.id === focusedPage) button.focus();
     });
 
     const index = Math.max(0, items.findIndex(function (item) { return item.id === page; }));
@@ -657,7 +666,7 @@
     const bounds = delayBounds();
     const value = config().hover_delay_ms || bounds.min;
     const slider = byId("hover-delay-slider");
-    if (slider) {
+    if (slider && !sliderEditing) {
       slider.min = String(bounds.min);
       slider.max = String(bounds.max);
       slider.value = String(value);
@@ -666,7 +675,7 @@
     }
     // A value being typed is the user's, not the snapshot's, until it commits.
     const input = byId("hover-delay-value");
-    if (input && !delayEditing) input.value = String(value);
+    if (input && !delayEditing && !sliderEditing) input.value = String(value);
   }
 
   function slideDelay(raw) {
@@ -1614,10 +1623,15 @@
     settings({ ocr_backend: event.target.value });
   });
 
-  on("hover-delay-slider", "input", function (event) { slideDelay(event.target.value); });
+  on("hover-delay-slider", "input", function (event) {
+    sliderEditing = true;
+    slideDelay(event.target.value);
+  });
   on("hover-delay-slider", "change", function (event) {
+    sliderEditing = false;
     invoke("set_hover_delay", slideDelay(event.target.value));
   });
+  on("hover-delay-slider", "blur", function () { sliderEditing = false; });
   on("hover-delay-value", "focus", function () { delayEditing = true; });
   on("hover-delay-value", "blur", function (event) {
     if (delayEditing) commitDelay(event.target.value);

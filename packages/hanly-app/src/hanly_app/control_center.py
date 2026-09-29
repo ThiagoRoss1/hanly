@@ -639,13 +639,11 @@ class ControlCenterBridge:
 
         records = log.records()
         bundle = diagnostics_bundle(records, state=self._export_state())
-        destination = self._log_path.with_name(
-            f"hanly-diagnostics-{_export_stamp()}.json"
-        )
         try:
-            destination.write_text(
+            destination = _write_new_report(
+                self._log_path.parent,
+                f"hanly-diagnostics-{_export_stamp()}",
                 json.dumps(bundle, indent=2, sort_keys=True, ensure_ascii=False),
-                encoding="utf-8",
             )
         except OSError as error:
             raise ControlCenterUnavailable(
@@ -988,11 +986,26 @@ def _empty_log_file(log: DiagnosticLog) -> str | None:
 
 
 def _export_stamp() -> str:
-    """A file name that sorts, and that a second export cannot collide with."""
+    """A file-name stamp that sorts; two exports in one second share it."""
 
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _write_new_report(directory: Path, stem: str, text: str) -> Path:
+    """Create a report that never replaces an earlier one with the same stamp."""
+
+    for attempt in range(1, 100):
+        suffix = "" if attempt == 1 else f"-{attempt}"
+        destination = directory / f"{stem}{suffix}.json"
+        try:
+            with destination.open("x", encoding="utf-8") as handle:
+                handle.write(text)
+        except FileExistsError:
+            continue
+        return destination
+    raise FileExistsError(f"too many diagnostics reports named {stem}")
 
 
 def _rebinds(previous: AppConfig, candidate: AppConfig) -> bool:

@@ -331,6 +331,22 @@ def test_a_temporary_directory_holding_more_than_the_handoff_is_not_hanlys(
     assert (staging / "somebody-elses.txt").is_file()
 
 
+def test_an_empty_temporary_directory_with_the_prefix_is_not_hanlys(
+    tmp_path: Path,
+) -> None:
+    """Emptiness proves nothing about who made a directory in a shared root."""
+
+    clock = _Clock()
+    staging = tmp_path / "hanly-update.somebody"
+    staging.mkdir()
+    os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
+
+    report = sweep_staging(update_staging_locations(None, tmp_path), clock=clock)
+
+    assert staging in report.preserved
+    assert staging.is_dir()
+
+
 def test_a_directory_still_in_use_is_left_for_a_later_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -339,6 +355,7 @@ def test_a_directory_still_in_use_is_left_for_a_later_launch(
     clock = _Clock()
     staging = tmp_path / "hanly-update.abc"
     staging.mkdir()
+    (staging / "hanly-update.sh").write_text("# handoff", encoding="utf-8")
     os.utime(staging, (clock.now - MIN_AGE_SECONDS - 1,) * 2)
 
     def held(path: Path, *_args: object, **_kwargs: object) -> None:

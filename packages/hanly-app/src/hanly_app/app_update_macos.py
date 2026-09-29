@@ -222,8 +222,15 @@ def _attach(image: Path, holder: Path, runner: CommandRunner) -> AttachedImage:
     )
     entities = _mounted_entities(_output_bytes(completed))
     if len(entities) != 1:
-        _detach_all(entities, runner)
-        raise BundleError("the downloaded disk image does not hold exactly one volume")
+        stuck = _detach_all(entities, runner)
+        message = "the downloaded disk image does not hold exactly one volume"
+        if stuck:
+            devices = " ".join(entity.device for entity in stuck)
+            message += (
+                f", and {len(stuck)} of its volumes are still attached. Eject them "
+                f"from Finder, or run hdiutil detach for each of: {devices}"
+            )
+        raise BundleError(message)
     return entities[0]
 
 
@@ -271,12 +278,18 @@ def _detach(attached: AttachedImage, runner: CommandRunner) -> None:
         ) from None
 
 
-def _detach_all(entities: list[AttachedImage], runner: CommandRunner) -> None:
+def _detach_all(
+    entities: list[AttachedImage], runner: CommandRunner
+) -> list[AttachedImage]:
+    """Detach every volume, and return the ones that would not go."""
+
+    stuck: list[AttachedImage] = []
     for entity in entities:
         try:
             _run(runner, [HDIUTIL, "detach", entity.device], "detach")
         except BundleError:
-            continue
+            stuck.append(entity)
+    return stuck
 
 
 def _read_plist(path: Path, what: str) -> dict[str, Any]:
