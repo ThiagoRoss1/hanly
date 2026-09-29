@@ -55,16 +55,12 @@ class ResourceUpdateError(UpdateServiceError):
     """Raised when a resource cannot be downloaded, validated, or activated."""
 
 
-#: The largest a Zstandard frame header can be: a 4-byte magic number plus at
-#: most 14 bytes of header, the last 8 of which are the declared content size.
-#: Reading exactly this many bytes is enough to parse any frame's parameters
-#: and is not more conservative than the format requires.
+#: Zstandard's maximum frame header is 18 bytes including magic; reading it
+#: suffices to parse any frame parameters.
 _ZSTD_FRAME_HEADER_BYTES = 18
 
-#: Decompression ceiling for a frame whose content size is absent or larger
-#: than anything Hanly ships. KRDICT is ~92 MB, so this leaves it several times
-#: the room it needs while still bounding a hostile frame to a size a user's
-#: disk survives.
+#: Bound frames without a trustworthy size; KRDICT's ~92 MB still has ample
+#: headroom without letting a hostile frame exhaust the disk.
 _ZSTD_MAX_OUTPUT_BYTES = 512 * 1024 * 1024
 
 #: Read size for the bounded decompression loop, so the ceiling is enforced
@@ -801,10 +797,8 @@ def _extract_zip(archive: Path, target: Path) -> None:
 
 
 def _extract_gztar(archive: Path, target: Path) -> None:
-    # ``tarfile`` reproduces symlinks, hard links, and device nodes verbatim,
-    # any of which can escape the extraction root after the path check passes.
-    # A Hanly bundle is only directories and regular files, so nothing else is
-    # accepted rather than filtered.
+    # tarfile can materialize links and devices outside a validated path;
+    # Hanly bundles permit only directories and regular files.
     with tarfile.open(archive, "r:gz") as bundle:
         members = bundle.getmembers()
         for member in members:

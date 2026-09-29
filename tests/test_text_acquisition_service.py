@@ -232,10 +232,8 @@ def test_the_submitting_thread_keeps_working_while_a_read_is_blocked() -> None:
     service = _service(reader, timeout_ms=5_000)
     try:
         service.submit(_POINT, lambda _a: None)
-        # Scheduling returned while the provider is still inside read_at, which
-        # is the whole claim: it handed the work over rather than performing it.
-        # Proved by ordering rather than by a clock, so a loaded host cannot
-        # turn this into a flake.
+    # Ordering proves scheduling returned before read_at completed, without
+    # a timing assertion that could flake on a loaded host.
         assert reader.entered.wait(timeout=5.0), "the read never started"
         assert not block.is_set(), "the reader was released before the check"
 

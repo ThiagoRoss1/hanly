@@ -61,11 +61,8 @@ class ControlCenterUnavailable(RuntimeError):
 RUNTIME_NOT_READY = "Hanly is still preparing its lookup runtime."
 
 
-#: Shows the selection overlay and returns the choice, or ``None`` if the user
-#: cancelled. Supplied by composition so the bridge stays free of Qt. The
-#: selector owns suspending and restoring observation for the choice: the
-#: overlay covers the virtual desktop, and only composition knows the thread
-#: that may touch capture.
+#: Composition supplies the selector so this bridge stays Qt-free; the
+#: selector suspends observation while its overlay covers the desktop.
 CaptureAreaSelector = Callable[[], "CaptureSelection | None"]
 
 

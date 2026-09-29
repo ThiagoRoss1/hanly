@@ -483,13 +483,8 @@ def test_worker_construction_reports_what_each_provider_cost() -> None:
     )
 
 
-# --- Traced/untraced parity -------------------------------------------------
-#
-# ``LookupPipeline`` probes the resolver for ``resolve_target_detail`` and falls
-# back to the pair contract with ``cursor_index=0``. A tracing wrapper that does
-# not forward the richer method therefore moves the pointer to the start of the
-# resolved word, and the lookup selects a different lexical candidate with
-# tracing on than with it off. These fixtures are the guard for that.
+# Tracing must forward resolve_target_detail; otherwise the cursor resets to
+# the word start and can select a different lexical candidate.
 
 _COMPOUND = OCRResult(
     text="책상",

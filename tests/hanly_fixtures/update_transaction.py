@@ -249,10 +249,8 @@ def _script(journal: UpdateJournal) -> Path:
     return script
 
 
-#: The replacement has to be a real program: the helper starts it with
-#: ``Start-Process`` and waits for it to write a readiness file, which a text
-#: file cannot do. ``LINGER_SECONDS`` keeps a rejected build holding the
-#: installation open, which is the state a rollback has to cope with.
+#: The helper needs a real process to start and acknowledge readiness; linger
+#: keeps a rejected build holding the installation during rollback.
 _PROBE_SOURCE = """
 #include <stdio.h>
 #include <string.h>

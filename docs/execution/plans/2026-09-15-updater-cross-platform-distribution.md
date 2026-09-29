@@ -1,18 +1,21 @@
 # Hanly cross-platform updater and distribution — execution plan
 
+> **Historical:** this updater wave was implemented. The status below is its
+> state when written; use `docs/CODE-MAP.md` and `packaging/README.md` now.
+
 Date: 2026-09-15. Planner: Codex. Intended executor: Claude.
 
 **Status: the single current implementation plan for the next updater wave;
 architecture recommendations pending Thiago's acceptance. Planning only has
 been performed.** This document supersedes
-[the Windows execution plan](updater-differential-execution-plan-2026-09-15.md),
+[the Windows execution plan](2026-09-15-updater-differential.md),
 including its subsequent Linux recommendation. The
-[Windows review handoff](review-handoffs/updater-differential-2026-09-15.md)
+[Windows review handoff](../review-handoffs/updater-differential-2026-09-15.md)
 remains unchanged historical implementation/test evidence. Neither an old
 unchecked checklist nor a historical recommendation adds work to this wave.
 
 On execution, complete the ordered phases below as **one Phase A, Gate-tier
-wave in one Claude session** under [05](05-execution-plan.md), with focused checks
+wave in one Claude session** under [05](../05-execution-plan.md), with focused checks
 during development, one convergence gate and one final Review Handoff. Thiago
 explicitly authorizes feature/bundle commits for this execution, as specified
 below; the earlier default prohibition on commits does not apply. Do not start

@@ -1,5 +1,8 @@
 # Lookup and popup correction — operator notes
 
+> **Historical:** these notes describe the 2026-09-19 correction, not the
+> current release procedure. Use `docs/CODE-MAP.md` for the current paths.
+
 What changed in Bundle A, and what you have to do about it. Based on the actual
 implemented diff.
 

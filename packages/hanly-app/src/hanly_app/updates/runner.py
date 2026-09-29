@@ -209,9 +209,7 @@ def _remove_if_empty(path: Path) -> None:
         pass
 
 
-# --------------------------------------------------------------------------
-# Schema 2: one runner, three ways of applying what it decided
-# --------------------------------------------------------------------------
+# Schema 2: one runner, three application strategies.
 
 
 class TreeUpdateRunner:

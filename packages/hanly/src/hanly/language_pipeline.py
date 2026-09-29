@@ -71,10 +71,8 @@ class LanguagePipeline:
         if not isinstance(selection, TextSelection):
             raise TypeError("selection must be a TextSelection")
 
-        # The stage owns the language fields and clears whatever a caller left
-        # in them. Passing a previous result's context back as evidence is a
-        # natural thing to do, and without this an early return would carry a
-        # lemma that contradicts its own text.
+        # Clear caller-supplied language fields so early returns cannot retain
+        # a stale lemma from a previous result.
         base = (
             LookupContext()
             if evidence is None
@@ -551,11 +549,8 @@ def _complete_form(
     if any(character.isspace() for character in span):
         return None
 
-    # Substituting the final lemma for its surface is only right when that
-    # lemma is the dictionary form of an inflected predicate. A noun whose span
-    # swallowed a derivational suffix keeps its bare lemma, so the same
-    # substitution would silently drop characters -- `고소득층` would be asked
-    # for as `고소득`, which is a different word the dictionary also has.
+    # Only an inflected predicate may replace its surface with a lemma. For a
+    # noun, that could turn 고소득층 into the different headword 고소득.
     swallowed_suffix = last.end > last.start + len(last.lemma)
     predicate = (last.part_of_speech or "").upper().startswith("V")
     if swallowed_suffix and not predicate:

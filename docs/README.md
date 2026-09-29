@@ -26,7 +26,7 @@ Kept while V1 is being finished; may be archived afterwards.
 | [`execution/CONTEXT.md`](execution/CONTEXT.md) | One-page constraint sheet derived from `01`–`04`; a test keeps its invariant lists in sync |
 | [`execution/review-handoffs/`](execution/review-handoffs/) | One handoff per implementation run, with its later review outcome |
 | [`execution/checkpoints/`](execution/checkpoints/) | Pause/resume ledgers |
-| [`execution/plans/`](execution/plans/) and the plan files at the root of `execution/` | Human-authorized plans and briefs; executed ones are history |
+| [`execution/plans/`](execution/plans/) | Human-authorized plans and briefs; executed ones are history |
 | [`execution/reports/`](execution/reports/) | Durable evidence: investigations, measurements, audits |
 
 ## History

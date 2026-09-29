@@ -441,10 +441,8 @@ class _Ditto:
         if self.returncode == 0:
             archive, destination = Path(command[-2]), Path(command[-1])
             with zipfile.ZipFile(archive) as bundle:
-                # ``ditto -x -k`` consumes the ``__MACOSX`` sidecar rather than
-                # writing it, folding its attributes back into the files it
-                # creates. A plain extractor writes it out as a directory, which
-                # is the difference this double exists to keep.
+    # ditto folds __MACOSX attributes into extracted files; a generic
+    # extractor instead leaves the sidecar as a directory.
                 bundle.extractall(
                     destination,
                     members=[

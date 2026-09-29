@@ -328,10 +328,8 @@ class UpdateCoordinator:
     ) -> None:
         future = self._executor.submit(operation)
         self._future = future
-        # ``Future.add_done_callback`` invokes immediately when a very fast
-        # test double completes before registration. The bridge call holds
-        # the coordinator lock while submitting, so always hand the callback
-        # to a tiny daemon thread to avoid re-entering that lock synchronously.
+        # add_done_callback can run inline for an already-complete future;
+        # dispatch separately to avoid re-entering the held coordinator lock.
         future.add_done_callback(
             lambda completed: Thread(
                 target=self._deliver,

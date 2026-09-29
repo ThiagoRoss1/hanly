@@ -113,9 +113,9 @@ temporary directory was removed after capture; no release artifact remains.
 ```powershell
 & .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onedir `
   --name han3_packaged_probe `
-  --distpath C:\Users\Thiago\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\dist `
-  --workpath C:\Users\Thiago\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\work `
-  --specpath C:\Users\Thiago\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\spec `
+  --distpath C:\Users\<user>\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\dist `
+  --workpath C:\Users\<user>\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\work `
+  --specpath C:\Users\<user>\AppData\Local\Temp\han3-packaging-final-b31937bb97174cae92036fd6b3cb41e0\spec `
   .\spikes\packaging_feasibility.py
 ```
 
@@ -184,8 +184,8 @@ module=build spec=FOUND import=OK elapsed=0.141s origin='C:\\Hanly\\.venv\\Lib\\
 import_order=paddleocr_then_paddle exit=0 elapsed=6.371s output='import_order_ok'
 import_order=paddle_then_paddleocr exit=1 elapsed=2.453s output='OSError: [WinError 127] N�o foi poss�vel encontrar o procedimento especificado. Error loading "C:\\Hanly\\.venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
 [packaging_tools]
-path_tool=pyinstaller path=C:\Users\Thiago\AppData\Local\Programs\Python\Python313\Scripts\pyinstaller.EXE
-command=C:\Users\Thiago\AppData\Local\Programs\Python\Python313\Scripts\pyinstaller.EXE --version exit=0 stdout='6.14.0'
+path_tool=pyinstaller path=C:\Users\<user>\AppData\Local\Programs\Python\Python313\Scripts\pyinstaller.EXE
+command=C:\Users\<user>\AppData\Local\Programs\Python\Python313\Scripts\pyinstaller.EXE --version exit=0 stdout='6.14.0'
 command=C:\Hanly\.venv\Scripts\python.exe -m PyInstaller --version exit=0 stdout='6.22.2'
 command=C:\Hanly\.venv\Scripts\python.exe -m build --version exit=0 stdout='build 1.5.0 (C:\\Hanly\\.venv\\Lib\\site-packages\\build)'
 command=C:\Hanly\.venv\Scripts\python.exe -m pip --version exit=0 stdout='pip 26.2.1 from C:\\Hanly\\.venv\\Lib\\site-packages\\pip (python 3.13)'

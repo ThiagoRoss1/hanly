@@ -636,10 +636,8 @@ function Start-Candidate {{
   }}
 }}
 
-# A schema-2 answer is compared as whole bytes against the file staging wrote,
-# so this script never reassembles the record and never has to agree with the
-# installer about field order. A schema-1 transaction still answers by version,
-# which is all a helper of that generation ever asked for.
+# Compare schema-2 receipts byte-for-byte with staging, avoiding field-order
+# drift; schema 1 still acknowledges by version.
 function Test-Started {{
   if ($ackPath) {{
     if (-not (Test-Path -LiteralPath $ackPath)) {{ return $false }}

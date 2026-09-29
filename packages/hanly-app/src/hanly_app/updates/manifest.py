@@ -522,16 +522,8 @@ def _require_no_path_shadowing(entries: Mapping[str, FileEntry]) -> None:
             raise ManifestError(f"{path} is listed as both a file and a directory")
 
 
-# --------------------------------------------------------------------------
-# Schema 2: the whole tree, on every platform
-#
-# V1 describes a Windows list of regular files. A macOS bundle and a Linux
-# onedir are not that: they carry empty directories, permission bits that
-# decide whether the program can be executed at all, and hundreds of relative
-# links between bundled libraries. A manifest that dropped any of those would
-# describe a tree that cannot be reconstructed, so V2 names every entry and
-# what makes it that entry.
-# --------------------------------------------------------------------------
+# Schema 2 inventories the full tree, including empty directories, modes, and
+# symlinks, so macOS and Linux bundles can be reconstructed faithfully.
 
 #: Incremented separately from V1: a build publishes both, and a client reads
 #: whichever it understands.
@@ -584,10 +576,8 @@ UNSUPPORTED = "unsupported"
 MAX_XATTR_VALUE_BYTES = 64 * 1024
 MAX_XATTR_MANIFEST_BYTES = 1024 * 1024
 
-#: Only the permission bits. setuid, setgid, and the sticky bit are refused
-#: rather than reproduced: a published desktop application needs none of them,
-#: and an updater that could set them is a privilege escalation waiting to be
-#: pointed at a hostile manifest.
+#: Preserve ordinary permission bits only. Refuse setuid, setgid, and sticky
+#: bits so a hostile manifest cannot turn updates into privilege escalation.
 _ALL_MODE_BITS = 0o7777
 _FORBIDDEN_MODE_BITS = 0o7000
 

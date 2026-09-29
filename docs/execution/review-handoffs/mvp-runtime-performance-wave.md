@@ -4,7 +4,7 @@ Branch `perf/mvp-runtime-lifecycle`, based on integrated `main` at `f508710`.
 Seven commits, listed at the end. Nothing merged, nothing tagged, no release
 published, Linear untouched.
 
-The plan is `docs/execution/mvp-runtime-performance-wave.md`; the live execution
+The plan is `docs/execution/plans/mvp-runtime-performance-wave.md`; the live execution
 record, with per-task decisions, defects and measurements, is
 `docs/execution/checkpoints/mvp-runtime-performance-wave.md`. This document is
 the wave-level summary and the honest statement of what was and was not proven.

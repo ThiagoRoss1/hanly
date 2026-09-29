@@ -351,10 +351,8 @@ def _shaped_as(directory: Path, only_entries: frozenset[str] | None) -> bool:
         entries = list(directory.iterdir())
     except OSError:
         return False
-    # An empty directory is evidence of nothing: in a shared temporary root it
-    # may belong to anyone who picked the same prefix. Regular files only, since
-    # a directory or link bearing an expected name would carry whatever it
-    # holds into the removal.
+        # An empty prefixed directory proves no ownership in a shared temp root.
+        # Accept regular files only; a link or directory could carry foreign data.
     return bool(entries) and all(
         entry.name in only_entries and entry.is_file() and not entry.is_symlink()
         for entry in entries

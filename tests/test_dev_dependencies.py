@@ -48,10 +48,8 @@ _FIRST_PARTY = frozenset({"benchmarks", "hanly", "hanly_app", "tests", "tools"})
 #: Locates ``dev = [...]`` for the runtimes without ``tomllib``, currently 3.10.
 _DEV_GROUP = re.compile(r"^dev\s*=\s*(\[.*?^\])", re.DOTALL | re.MULTILINE)
 
-#: Top-level standard-library modules newer than the supported floor. This guard
-#: runs on whichever interpreter is at hand, so a module that is stdlib there but
-#: not on 3.10 would pass locally and fail the oldest CI lane -- which is how
-#: ``tomllib`` earned its place here.
+#: This guard may run on newer Python, so list stdlib modules absent from
+#: the supported 3.10 floor (including ``tomllib``).
 _NEWER_THAN_THE_SUPPORTED_FLOOR = frozenset({"tomllib"})
 
 

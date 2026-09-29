@@ -23,7 +23,7 @@ Read before editing:
 
 - `C:\Hanly\CLAUDE.md`
 - `C:\Hanly\docs\CODE-MAP.md`
-- CI failure transcript: `C:\Users\Thiago\.codex\attachments\cc36d74c-4859-4ea1-ab1f-921629e57d13\pasted-text.txt`
+- CI failure transcript: `C:\Users\<user>\.codex\attachments\cc36d74c-4859-4ea1-ab1f-921629e57d13\pasted-text.txt`
 
 ## Baseline evidence
 

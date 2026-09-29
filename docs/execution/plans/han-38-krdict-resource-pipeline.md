@@ -1,11 +1,14 @@
 # HAN-38 KRDICT Production Database & Resource Pipeline Implementation Plan
 
+> **Historical:** HAN-38 was implemented. This plan records the execution
+> boundary at the time; current resource behavior is in `docs/CODE-MAP.md`.
+
 ## Authorization and execution boundary
 
 - Linear issue: HAN-38 — KRDICT Production Database & Resource Pipeline.
 - Execution tier: Gate. This issue converges the KRDICT build/provider branch, local resource validation, remote delivery, first-run startup, and release production.
-- Authoritative flow: [`docs/architecture/04-agent-execution-flow.md`](../architecture/04-agent-execution-flow.md) and its synchronized HTML companion.
-- Operational manual: [`docs/execution/05-execution-plan.md`](05-execution-plan.md).
+- Authoritative flow: [`docs/architecture/04-agent-execution-flow.md`](../../architecture/04-agent-execution-flow.md) and its synchronized HTML companion.
+- Operational manual: [`docs/execution/05-execution-plan.md`](../05-execution-plan.md).
 - Implementation phase only: implement, run focused checks, run the bundle/project gates once, run the real integration evidence, write exactly one review handoff, move HAN-38 to `In Review`, and stop for human review.
 - Human gate: do not commit, push, merge, tag, publish a release, dispatch a production workflow, or mark HAN-38 `Done` without explicit human authorization.
 

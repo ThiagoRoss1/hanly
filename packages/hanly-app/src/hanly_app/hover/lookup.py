@@ -163,10 +163,8 @@ class HoverLookupRuntime:
         self._readiness_generation = 0
         self._readiness_waiting = False
         self._origins = origins if origins is not None else CaptureOrigins()
-        # The dwell and the popup crossing overlap in time, so they cannot
-        # share one timer: the production Qt scheduler reuses a single QTimer,
-        # and the dwell scheduled on the way out replaced the crossing's own
-        # callback, which is how an exit stopped dismissing anything at all.
+        # Dwell and popup crossing overlap; sharing one QTimer lets a new
+        # dwell replace the callback that should dismiss the popup.
         self._exit_scheduler = exit_scheduler
         self._scheduler = scheduler
         self._transfer_ms = float(transfer_ms)

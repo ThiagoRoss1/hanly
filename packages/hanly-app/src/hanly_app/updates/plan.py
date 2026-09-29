@@ -307,16 +307,8 @@ def _require_same_product(metadata: BuildIdentity, target: BuildIdentity) -> Non
 _ORDER: Mapping[str, int] = {ADD: 0, REPLACE: 1, DELETE: 2}
 
 
-# --------------------------------------------------------------------------
-# Schema 2: one planner for all three platforms
-#
-# The three strategies differ in how they apply a plan, never in how they
-# decide one. Windows moves individual files into a live installation; macOS
-# and Linux assemble a whole candidate and swap it. Both need the same three
-# answers first - what differs, which of it the payload has to carry, and what
-# this updater is not allowed to touch - so those answers are computed once
-# here and handed to whichever strategy runs.
-# --------------------------------------------------------------------------
+# Schema 2 computes differences, payload needs, and ownership limits once;
+# platform strategies differ only in how they apply the plan.
 
 #: How this installation's ownership of its own files was established.
 OWNERSHIP_RECEIPT = "receipt"

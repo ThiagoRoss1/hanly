@@ -58,13 +58,8 @@ from hanly_app.lookup.transport import (
 )
 from hanly_app.runtime_trace import JSONPrimitive, RuntimeTraceSink
 
-#: How long provider construction may take before the child is given up on.
-#: This wave measured a cold child ready in 5.1-7.2 s, against 12.55 s for the
-#: in-process build it replaced, so two minutes is an order of magnitude over
-#: the worst startup anyone has observed and still leaves a first launch room
-#: for a cold page cache and an antivirus scan of the runtime. It catches a
-#: child that will never report at all, and bounds how long "preparing" can
-#: last before it becomes a failure the user can act on.
+#: Cold startup measured at 5.1–7.2 s; two minutes allows a cold cache or
+#: antivirus scan while bounding an unresponsive child.
 READY_TIMEOUT_SECONDS = 120.0
 
 #: Bounded wait for the child to close its providers and SQLite handle.
@@ -116,10 +111,8 @@ class LookupSettings:
     #: Whether the child should report per-stage timings back for the
     #: developer-only trace sink. Off is the shipped path and costs nothing.
     trace: bool = False
-    #: Whether those reports should also carry the encoded private diagnostic
-    #: structures. It has to travel for the same reason ``ocr_backend`` does:
-    #: the child builds its own tracing wrappers and cannot see what kind of
-    #: sink the parent attached.
+    #: Tell the child whether to retain private evidence; its tracing wrappers
+    #: cannot inspect the parent's sink.
     trace_evidence: bool = False
     #: Whether the OCR report carries region boxes: coordinates only, never
     #: text or pixels, for the developer HUD's schematic.

@@ -38,11 +38,8 @@ READY_ARGUMENT = "--update-ready"
 EXIT_WAIT_SECONDS = 120
 SWAP_ATTEMPTS = 30
 
-#: How long the new build has to report that it started. This is the bound the
-#: packaged UI smoke already allows a frozen build for the same milestone
-#: (``tools/smoke_packaged_runtime.UI_TIMEOUT_SECONDS``): a cold first launch
-#: pays for model loading and Qt initialization, and treating a slow start as a
-#: failure would roll back a working update.
+#: Match the packaged UI smoke's cold-start allowance; a shorter deadline
+#: could roll back a working build during model and Qt initialization.
 READY_WAIT_SECONDS = 600
 
 Spawn = Callable[[list[str], Path], None]
@@ -84,10 +81,8 @@ def start_handoff(
     script = _write_script(executable=executable, platform=platform)
     runner = spawn if spawn is not None else spawn_detached
     try:
-        # Started from the temporary root rather than from the script's own
-        # directory: a working directory is held open for a process's whole
-        # life, and the Hanly the script relaunches inherits it, so starting
-        # inside would keep that directory from ever being cleaned up.
+# Launch from the temp root, not the script directory; inherited working
+# directories remain held open and would prevent cleanup.
         runner(
             [*_launcher(platform, script), *handoff_arguments(transaction)],
             script.parent.parent,
@@ -295,11 +290,8 @@ launch() {{
   {launch}
 }}
 
-# A candidate that came up and is now being rejected has to be stopped before
-# the previous build goes back. POSIX renames a directory a program is running
-# from without complaint, so without this the rollback would leave two Hanlys:
-# the rejected one, out of a directory this script then deletes underneath it,
-# and the restored one at the installation path.
+# Stop a rejected candidate before restoring the previous build. POSIX would
+# otherwise rename its live directory and leave two Hanly processes running.
 stop_candidate() {{
   {stop}
 }}
@@ -342,11 +334,8 @@ while [ "$waited" -lt {ready_wait} ]; do
   sleep 1
 done
 
-# The new build never reported starting. The previous one is known to work, so
-# it goes back. It is moved aside rather than deleted: a removal that fails
-# part way through would leave the installation path in pieces with nothing
-# yet restored. A restore that itself fails launches nothing and keeps the
-# transaction, because its backup is then the only copy of a working Hanly.
+# Move the failed candidate aside before restoring the known-good build.
+# If restore fails, preserve the transaction and its only working backup.
 stop_candidate
 mv "$install" "$transaction/rejected" || exit 1
 mv "$backup" "$install" || exit 1
@@ -369,11 +358,8 @@ _WINDOWS_HANDOFF = """param(
 $ErrorActionPreference = 'Stop'
 $program = Join-Path $Install '{executable}'
 
-# ``-ArgumentList`` joins an array with spaces and quotes nothing, so a path
-# containing one - which most Windows installation paths do - would reach the
-# new build split across several arguments. The line is quoted here instead.
-# A relaunch that cannot start never throws: what follows it already handles a
-# build that did not come up, and losing the cleanup on the way out does not.
+# PowerShell's -ArgumentList does not quote paths containing spaces, so quote
+# the relaunch path explicitly; later rollback handles a failed relaunch.
 function Start-Hanly {{
   param([string]$Arguments = '')
 
@@ -386,10 +372,8 @@ function Start-Hanly {{
   }}
 }}
 
-# Windows refuses to rename a directory a running program was started from, so
-# a build that came up but is being rejected has to be stopped before the
-# previous one can go back. Without this the restore fails outright and leaves
-# the rejected build installed.
+# Windows cannot rename a running build's directory. Stop the rejected
+# candidate before restoring the previous installation.
 function Stop-Hanly {{
   param($Started)
 
@@ -451,12 +435,8 @@ while ((Get-Date) -lt $deadline) {{
   Start-Sleep -Seconds 1
 }}
 
-# The new build never reported starting. The previous one is known to work, so
-# it goes back. It is renamed aside rather than removed: a recursive delete
-# that fails part way through would leave the installation path in pieces with
-# nothing yet restored, and a rename either happens or does not. The rename is
-# retried for the same reason the first one is: stopping a process returns
-# before Windows has released the files it held.
+        # Restore the known-good build. Rename instead of deleting so a partial
+        # removal cannot strand the installation; retry until Windows releases it.
 Stop-Hanly $candidate
 
 $aside = $false
@@ -482,14 +462,8 @@ exit 1
 """
 
 
-# --------------------------------------------------------------------------
-# Schema 2: handing a whole-tree swap to the native helper
-#
-# The shell script above cannot give durable renames, exact process identity,
-# or a lock that survives the process that took it. A small C program can, and
-# does, and reads exactly one thing: the fixed descriptor below. Nothing it is
-# given is a script, a format, or a path it did not receive as an argument.
-# --------------------------------------------------------------------------
+# Schema 2 uses a native helper for durable renames, process identity, and a
+# persistent lock. It reads only the fixed descriptor below.
 
 #: The helper's own name, wherever it is built, shipped, or copied to.
 NATIVE_HELPER_NAME = "hanly-update-posix"

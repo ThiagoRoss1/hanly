@@ -3,7 +3,7 @@
 ## Bundle
 
 - Member issues: HAN-40 (Phase 2 of
-  `docs/execution/post-v013-technical-wave.md`)
+  `docs/execution/plans/2026-09-09-post-v013-technical-wave.md`)
 - Implementation ecosystem: first block by GPT-5.6 Sol orchestration with
   GPT-5.6 Luna xhigh workers; this continuation by Claude Opus directly, after
   a Phase B review of the first block returned **CONTINUE HAN-40**

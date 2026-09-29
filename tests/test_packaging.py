@@ -601,10 +601,8 @@ class _NativeTool:
     def __call__(self, command: list[str], **_options: object) -> object:
         self.commands.append(command)
         target = Path(command[-1])
-        # Archiving names the file it writes; unpacking names a directory that
-        # already exists, and what lands in it is the caller's business. A
-        # command ending in a flag - `hdiutil detach ... -force` - names no
-        # file at all, and writing one would leave a file called `-force`.
+    # Only archive commands name an output file; unpacking names a directory,
+    # and detach may end in a flag such as ``-force``.
         writes_a_file = (
             self.returncode == 0 and not command[-1].startswith("-") and not target.is_dir()
         )
@@ -928,10 +926,8 @@ def test_every_producer_and_consumer_names_the_same_release_products() -> None:
         "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
     }
-    # The release publishes exactly those four, plus the Windows update
-    # metadata, the resource manifest, and the sums. The metadata names come
-    # from the producer's own constants, so a rename fails here rather than in
-    # a release run.
+    # Derive metadata names from producer constants so a release rename fails
+    # this test instead of surfacing only during publication.
     assert produced < FIXED_RELEASE_ASSETS
     assert FIXED_RELEASE_ASSETS - produced == {
         MANIFEST_ASSET,

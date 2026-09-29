@@ -43,11 +43,8 @@ from .diagnostics import StartupTimeline
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 
 _LOOKUP_CACHE_SIZE = 32
-# One entry holds a few OCR results and their geometry, on the order of a
-# few hundred bytes, so a generous ring is cheap. It matters because live
-# screen content changes under the cursor -- a blinking text caret inside
-# the ROI is enough to miss -- and a small ring evicts a region the user
-# is still moving around in.
+# A generous ring is cheap and survives ROI changes as small as a blinking
+# caret while the user moves within the same text.
 _OCR_CACHE_SIZE = 96
 # Text-presence gate sampling. Tuned to reject flat regions only; see
 # :class:`_TextPresenceGate`.
@@ -71,10 +68,8 @@ class Worker(Protocol):
         ...
 
 
-# Each factory names the protocol it must produce. Returning ``object`` was
-# what forced the call site to suppress mypy; the provider protocols are
-# structural, so any conforming adapter still satisfies these without
-# inheriting anything.
+    # Structural provider protocols keep factories typed without requiring
+    # concrete adapters to inherit from them.
 OCRProviderFactory = Callable[[], OCRProvider]
 MorphologyProviderFactory = Callable[[], MorphologyProvider]
 DictionaryProviderFactory = Callable[[], DictionaryProvider]
@@ -316,10 +311,8 @@ class LookupWorker:
         if self._sensitive_pipeline is None or not _nothing_was_read_at_target(result):
             return result
 
-        # The cursor sits on something the ordinary detection pass did not
-        # report as text at all, a lone Hangul syllable at a normal UI size is
-        # the case that motivated this. One keener retry is worth its cost here
-        # because it only runs when the alternative is showing the user nothing.
+        # Retry only when ordinary detection found nothing under the cursor;
+        # isolated Hangul syllables motivate this cost.
         emit_trace(
             self._trace_sink,
             "ocr_sensitive_retry",

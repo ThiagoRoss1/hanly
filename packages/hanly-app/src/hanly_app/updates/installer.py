@@ -622,14 +622,8 @@ def _megabytes(value: int) -> str:
     return f"{value / (1000 * 1000):.0f} MB"
 
 
-# --------------------------------------------------------------------------
-# Schema 2: one preparation for all three platforms
-#
-# Preparing an update is the same work everywhere: pin the release so nothing
-# can move under it, read the one metadata package, find this machine's entry,
-# read the installation, establish what it is, and plan. Only what happens to
-# the plan afterwards differs, which is what a staging strategy is.
-# --------------------------------------------------------------------------
+# Schema 2 shares release pinning, installation inspection, and planning across
+# platforms; only staging and application differ.
 
 #: The largest checksum listing this build reads. A release lists a dozen
 #: assets; anything past this is not a document to parse.
@@ -1143,9 +1137,7 @@ def _require_cancel(should_cancel: CancelHook | None) -> None:
         raise UpdateCancelled("the update was cancelled before anything changed")
 
 
-# --------------------------------------------------------------------------
-# Windows: adapt the working in-place transaction, do not rewrite it
-# --------------------------------------------------------------------------
+# Windows in-place update transaction.
 
 #: Room for the journal, the staged control file, and the helper's own log.
 METADATA_MARGIN_BYTES = 16 * 1024 * 1024
@@ -1391,9 +1383,7 @@ def _payload_members(
     return found
 
 
-# --------------------------------------------------------------------------
-# macOS and Linux: build the whole new installation, then swap it
-# --------------------------------------------------------------------------
+# macOS and Linux whole-tree update transaction.
 
 #: The private directory one POSIX update owns, beside the installation so the
 #: swap that follows is a rename on one filesystem.

@@ -3,7 +3,7 @@
 ## Bundle
 
 - Member issues: HAN-41 (Phase 3 of
-  `docs/execution/post-v013-technical-wave.md`)
+  `docs/execution/plans/2026-09-09-post-v013-technical-wave.md`)
 - Implementation ecosystem: Claude Opus, directly
 - Date: 2026-09-10
 - Branch: `codex/post-v013-technical-wave`, on top of `467193c`
@@ -179,7 +179,7 @@ any of them cannot move the product.
 
 Four Windows handoff tests failed before reaching PowerShell because the C
 probe would not compile. The harness passed paths straight into C string
-macros: `-DLOG="C:\Users\runneradmin\...\launched.txt"` is a string of escape
+macros: `-DLOG="C:\Users\<user>\...\launched.txt"` is a string of escape
 sequences, and `\U` is not a valid one.
 
 Fixed in the harness, not by weakening the tests:

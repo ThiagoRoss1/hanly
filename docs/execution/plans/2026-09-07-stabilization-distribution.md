@@ -15,7 +15,7 @@ REVIEW → HANDOFF → STOP.
 
 The user's bundle instructions override conflicting workflow ceremony in
 CLAUDE.md, generic skills, and architecture 04. Use
-[04-agent-execution-flow.md](../architecture/04-agent-execution-flow.md) for
+[04-agent-execution-flow.md](../../architecture/04-agent-execution-flow.md) for
 roles, human authority, shallow Luna delegation, implementation/review separation,
 and handoff. Do not use 05-execution-plan.md as operational authority. Preserve
 product boundaries in architecture 01–03 and CLAUDE.md: hanly-app → hanly,
@@ -265,7 +265,7 @@ Independent branches may finish in either order. Update the one ledger after
 meaningful units, not trivial edits. Resume from its exact next executable step,
 checking recorded files/baseline drift instead of replaying completed validation.
 
-Living recovery/handoff: [ledger](checkpoints/stabilization-distribution-2026-09-07.md).
+Living recovery/handoff: [ledger](../checkpoints/stabilization-distribution-2026-09-07.md).
 Entries: phase, task/mini-task ID, owner/status, files, what/why, focused command,
 result, relevant discovery, exact next step. Statuses: NOT_STARTED, IN_PROGRESS,
 COMPLETE, BLOCKED, FAILED, DEFERRED. COMPLETE means code/focused check, not release

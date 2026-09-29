@@ -153,10 +153,8 @@ def _install_resources(
     try:
         availability = service.check_for_updates()
     except UpdateServiceError as error:
-        # Reaching the release channel is only how a launch with no
-        # configuration of its own obtains resources. Say so, because the
-        # failure otherwise reads as a broken application to anyone running
-        # from a checkout before any release exists.
+            # A checkout without a release channel needs a local resource;
+            # report that setup gap rather than a generic app failure.
         raise FirstRunError(
             f"Hanly needs its Korean dictionary and could not reach "
             f"{PUBLIC_RELEASE_CHANNEL} to get it: {error}. Check the network "
@@ -352,13 +350,8 @@ def persist_installed_resource(
         )
 
     updated_entry = dict(entry)
-    # ``version`` is the operator's expected-version pin, which ResourceManager
-    # compares the observed version against; writing a release identity over it
-    # would report the freshly installed artifact as OUTDATED.
-    #
-    # ``installed_version`` is deliberately separate: KRDICT's version is the
-    # embedded SQLite schema contract, while the release version identifies the
-    # independently delivered database.
+        # Preserve the operator's expected-version pin; ResourceManager checks it.
+        # The release identity is separate from KRDICT's embedded schema version.
     if updated_entry.get("version") is None:
         updated_entry["installed_version"] = version
     if integrity_identity is not None:

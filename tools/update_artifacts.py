@@ -320,9 +320,7 @@ def _published_digests(path: Path) -> dict[str, str]:
     return digests
 
 
-# --------------------------------------------------------------------------
-# Schema 2: the stamp, the tree manifest, and the one delta per platform
-# --------------------------------------------------------------------------
+# Schema 2: build stamp, tree manifest, and per-platform delta.
 
 
 def allocate_build_id() -> str:
@@ -461,14 +459,8 @@ def tree_delta_path(output_directory: Path, base: TreeManifest, target: TreeMani
     )
 
 
-# --------------------------------------------------------------------------
-# Schema 2: one platform's release products, and the package that indexes them
-#
-# Each build job produces its own products and a private descriptor naming
-# them. One later job reads every descriptor and assembles the single update
-# package. No job writes a fragment of that package, and no release rebuilds
-# an application to produce one.
-# --------------------------------------------------------------------------
+# Each build job emits its products and descriptor; the assembly job combines
+# descriptors into one update package without rebuilding applications.
 
 MANIFEST_NAME = "manifest.json"
 DESCRIPTOR_NAME = "descriptor.json"

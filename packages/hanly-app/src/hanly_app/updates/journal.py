@@ -523,16 +523,8 @@ def _optional_path(value: Any) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
 
-# --------------------------------------------------------------------------
-# Schema 2: transaction identity, and the acknowledgement that commits one
-#
-# A version number is not an acknowledgement. The old contract had the new
-# build write its version into a file, which any build of that version - and
-# any leftover file - satisfies. Schema 2 binds the answer to one transaction,
-# one random nonce, one build UUID, and one manifest digest, so the only thing
-# that can produce it is the build this transaction installed, started from the
-# path this transaction installed it to.
-# --------------------------------------------------------------------------
+# Schema 2 binds startup acknowledgement to this transaction's nonce, build,
+# and manifest; a matching version or stale receipt alone cannot commit it.
 
 #: What an acknowledgement file is called, derived from its own challenge so a
 #: helper can name both from one argument.

@@ -554,10 +554,8 @@ class CaptureService:
             if candidate.bounds.contains(cursor):
                 return candidate
 
-        # Global mouse hooks report some events with pre-clamp coordinates, so
-        # a cursor the OS actually placed on a display can arrive outside every
-        # monitor rectangle. Resolving to the nearest monitor keeps that event
-        # usable; only having no monitor at all is a real failure.
+        # Hooks may report pre-clamp coordinates outside every monitor; use
+        # the nearest display for those otherwise valid cursor events.
         if not monitors:
             raise CaptureError("no monitor is available for capture")
         return min(monitors, key=lambda candidate: _distance_to(candidate.bounds, cursor))

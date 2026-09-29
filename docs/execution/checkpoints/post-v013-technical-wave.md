@@ -2,7 +2,7 @@
 
 ## Authority and working state
 
-- Approved plan: `docs/execution/post-v013-technical-wave.md`.
+- Approved plan: `docs/execution/plans/2026-09-09-post-v013-technical-wave.md`.
 - Execution order for this run: HAN-42 reconciliation, then HAN-40 only.
   HAN-41 is outside the authorized boundary.
 - Branch: `codex/post-v013-technical-wave`, created without disturbing the

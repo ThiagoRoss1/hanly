@@ -1,7 +1,7 @@
 # Hanly cross-platform updater and distribution — execution report
 
 Running record for the wave specified by
-[the execution plan](../updater-cross-platform-distribution-plan-2026-09-15.md).
+[the execution plan](../plans/2026-09-15-updater-cross-platform-distribution.md).
 Phase A implementation only; Phase B deep review is not authorized here.
 
 ## Branch and base

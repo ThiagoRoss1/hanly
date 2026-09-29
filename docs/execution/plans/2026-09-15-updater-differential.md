@@ -1,11 +1,12 @@
 # Hanly updater: differential installation and visible progress
 
-> **Superseded — 2026-09-15.** The single current plan for the next updater
-> wave is [Cross-platform updater and distribution](updater-cross-platform-distribution-plan-2026-09-15.md).
+> **Superseded — 2026-09-15.** The later plan was
+> [Cross-platform updater and distribution](2026-09-15-updater-cross-platform-distribution.md);
+> current behavior is in `docs/CODE-MAP.md` and `packaging/README.md`.
 > This file preserves the Windows-only plan and its subsequent observations as
 > history; its execution instructions, platform recommendations and unchecked
 > checklist are not instructions for the new wave. The completed Windows
-> [review handoff](review-handoffs/updater-differential-2026-09-15.md) remains
+> [review handoff](../review-handoffs/updater-differential-2026-09-15.md) remains
 > historical implementation evidence and has not been rewritten.
 
 Date: 2026-09-15. Planner: Codex. Executor: Claude, directly in one session.
@@ -29,8 +30,8 @@ actually requires changing an approved invariant, present the specific change
 for human decision instead of rewriting the invariant.
 
 Read `CLAUDE.md`, `docs/CODE-MAP.md`, architecture `01`–`04`, execution `05`,
-the original [investigation](reports/updater-in-place-differential-2026-09-15.md),
-and the [HAN-42 handoff](review-handoffs/han-42-updater-reliability.md).
+the original [investigation](../reports/updater-in-place-differential-2026-09-15.md),
+and the [HAN-42 handoff](../review-handoffs/han-42-updater-reliability.md).
 Inspect current Linear context if available; associate existing relevant issues
 without inventing identifiers or expanding the human-authorized scope. Direct
 execution is the default; no extra planning or per-task review ceremony.

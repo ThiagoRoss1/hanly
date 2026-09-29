@@ -23,13 +23,8 @@ from .errors import ProviderError
 # rising, which is the wrong trade for a background desktop helper.
 _MAX_DEFAULT_CPU_THREADS = 4
 
-# CRAFT ignores a text box whose longest side is under ``min_size``, and needs
-# roughly 22 px of glyph height before it reports anything at all. A single
-# Hangul syllable standing alone at a normal UI size fails both tests, while
-# the same syllable with a particle attached passes because the box is twice
-# as wide. Upscaling and lowering the box floor together recover it; neither
-# does so alone. The pair costs about 2.7x the latency, so it belongs on a
-# retry rather than on every lookup.
+# CRAFT needs both a larger glyph and a lower box floor to recover isolated
+# syllables. Together they cost ~2.7x latency, so reserve them for a retry.
 _DEFAULT_SENSITIVE_OPTIONS: Mapping[str, Any] = {"mag_ratio": 2.0, "min_size": 4}
 
 

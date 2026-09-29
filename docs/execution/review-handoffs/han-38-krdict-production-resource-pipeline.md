@@ -5,7 +5,7 @@ Implementation status: **complete and technically ready for human review; no rel
 
 1. **Linear issue:** HAN-38 — KRDICT Production Database & Resource Pipeline.
 
-2. **Implementation plan:** `docs/execution/HAN-38-krdict-production-database-resource-pipeline-plan.md`. It records the full-source discovery that raw KRDICT `LexicalEntry` IDs are reused and the approved correction.
+2. **Implementation plan:** `docs/execution/plans/han-38-krdict-resource-pipeline.md`. It records the full-source discovery that raw KRDICT `LexicalEntry` IDs are reused and the approved correction.
 
 3. **Files changed/moved:** Added `tools/krdict/` (`source.py`, `inspect.py`, `schema.sql`, `build_seed.py`, `validate_seed.py`, `package_resource.py`), `packages/hanly/src/hanly/krdict_schema.py`, `.github/workflows/build-krdict-resource.yml`, `data/README.md`, shared normalized fixtures, and focused `tests/krdict/` coverage. Relocated inspector coverage from `tests/test_inspect_krdict.py` to `tests/krdict/test_inspect.py`, then removed the obsolete `tools/inspect_krdict.py` entry point. Updated KRDICT provider/build/resource manager, app update/bootstrap/coordinator/application seams, release workflow/producer manifest wiring, developer resources/docs, Zstandard dependencies, and affected tests/configuration.
 

@@ -359,7 +359,7 @@ Both are developer-benchmark tests that assume a POSIX host. Portable runs only
 on Ubuntu in CI. Neither touches `packages/` or the release path.
 
 1. `benchmarks/dev/tests/test_corpus.py::test_a_committed_manifest_cannot_carry_a_machine_specific_path`
-   - On Windows, `/Users/someone/...` has no drive, so `Path.is_absolute()` is
+   - On Windows, `/Users/<user>/...` has no drive, so `Path.is_absolute()` is
      false. `_require_portable_path` also checks only `PureWindowsPath`, which
      says the same.
    - The path is **still refused**, by `_require_inside` ("resolves outside the

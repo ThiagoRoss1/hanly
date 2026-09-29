@@ -232,10 +232,8 @@ def spawn_child(
         child_end.close()
         raise
     finally:
-        # The parent holding a copy of the child's end would keep EOF from ever
-        # arriving when the child exits. Closed directly rather than through a
-        # Transport: the child shares this file description, and a transport
-        # close shuts the connection down for both of them.
+    # Close the parent's copy of the child end so EOF can arrive, but not
+    # through Transport: that would also close the child's shared handle.
         child_end.close()
     return process, Transport(parent_end, max_bytes=max_bytes)
 

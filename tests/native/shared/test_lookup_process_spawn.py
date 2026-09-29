@@ -210,10 +210,8 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     child = subprocess.run(
         [sys.executable, str(program), str(dictionary), str(models), str(fixture)],
         capture_output=True,
-        # The report carries Korean headwords. Without this the child writes
-        # them in the console codepage, which on a Windows shell cannot encode
-        # them at all, and the test fails for the encoding rather than the
-        # lookup.
+    # The report carries Korean headwords; use UTF-8 so a Windows console
+    # codepage cannot turn an encoding failure into a lookup failure.
         encoding="utf-8",
         errors="replace",
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},

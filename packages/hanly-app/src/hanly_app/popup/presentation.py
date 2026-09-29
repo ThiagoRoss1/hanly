@@ -139,11 +139,8 @@ class LookupStopper(Protocol):
     def stop(self, *, wait: bool) -> None: ...
 
 
-#: A popup appears for a Korean word that was read and looked up, and for a
-#: genuine fault. Everything else is silence by design: an empty crop, a
-#: picture, English text, or a word the dictionary does not carry are all
-#: "nothing to hover", and a card for each of those turns ordinary pointer
-#: movement into a stream of dismissable noise.
+#: Show a Korean dictionary result or a genuine fault. Ordinary non-matches
+#: stay silent so pointer movement does not create a stream of empty cards.
 _PRESENTED_STATUSES = frozenset({LookupStatus.SUCCESS, LookupStatus.ERROR})
 
 

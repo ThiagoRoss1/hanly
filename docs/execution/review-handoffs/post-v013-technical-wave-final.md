@@ -228,7 +228,7 @@ the step `tee`s its report to the log.
 
 **Fixed: the Windows handoff tests could not compile.** Four tests failed
 before reaching PowerShell because the harness passed paths straight into C
-string macros — `-DLOG="C:\Users\runneradmin\..."` is a string of escape
+string macros — `-DLOG="C:\Users\<user>\..."` is a string of escape
 sequences and `\U` is not a valid one. The harness now escapes into real C
 string literals, passes the log as `as_posix()`, surfaces the compiler's stderr
 instead of a bare `CalledProcessError`, and keeps the probe's own two files on

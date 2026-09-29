@@ -33,10 +33,8 @@ APPLICATION_WORKFLOW = ".github/workflows/build.yml"
 #: draft without it is not this workflow's draft, whatever its tag says.
 COMMIT_MARKER = "Hanly-Release-Commit:"
 
-#: What a finished Hanly release always holds, beside its one KRDICT resource.
-#: macOS publishes two products from one build: the ZIP the updater installs,
-#: and the disk image a person downloads. Windows is the only platform that
-#: installs differentially, so it is the only one with update metadata.
+#: Besides KRDICT, macOS publishes ZIP and DMG products; only Windows needs
+#: differential-update metadata.
 FIXED_RELEASE_ASSETS = frozenset(
     {
         "hanly-desktop-windows.zip",
@@ -65,10 +63,8 @@ TREE_DELTA_ASSET = re.compile(
     r"-from-[0-9.]+-to-[0-9.]+\.delta\.zip$"
 )
 
-#: Which generation of the update protocol a published release belongs to.
-#: Releases published before this one existed are classified, not failed: a
-#: no-op validation of release history must not demand a package that could
-#: not have been produced at the time.
+#: Classify older release generations without requiring update packages
+#: that their protocol could not have produced.
 PROTOCOL_LEGACY = "legacy"
 PROTOCOL_PACKAGE = "package"
 

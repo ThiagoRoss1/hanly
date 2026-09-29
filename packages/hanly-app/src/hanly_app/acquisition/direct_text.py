@@ -212,10 +212,8 @@ class DirectTextCoordinator:
             return Acquisition(Outcome.NOT_CONTAINING, duration_ns=duration)
         if reading.cursor_index >= len(text):
             return Acquisition(Outcome.AMBIGUOUS, duration_ns=duration)
-        # A control hands back a whole line, while the engine answers one word.
-        # The pixel path narrows a recognized line with its resolver; here the
-        # equivalent is the run of Korean the pointer is inside, so a line that
-        # mixes scripts answers exactly as that word alone would.
+    # Controls return lines; select the Korean run under the pointer so
+    # mixed-script text follows the same word boundary as OCR.
         narrowed = _korean_run(text, reading.cursor_index)
         if narrowed is None:
             if _stands_in_for_content(text[reading.cursor_index]):
@@ -443,10 +441,8 @@ class DirectTextService:
         self._active: _Job | None = None
         self._generation = 0
         self._closed = False
-        # Daemon threads: a composition that is built and dropped without a
-        # shutdown must not keep the interpreter alive, and a native call that
-        # cannot be interrupted must not delay exit either. An orderly
-        # :meth:`close` still joins them.
+        # Daemon threads cannot strand interpreter exit on an uninterruptible
+        # native call; orderly close still joins them.
         self._worker = Thread(
             target=self._work, name="hanly-text-acquisition", daemon=True
         )
@@ -584,10 +580,8 @@ class DirectTextService:
         try:
             job.deliver(outcome)
         except Exception:
-            # The caller's delivery is not this service's business, and a
-            # failure in it must not take the worker down: nothing would
-            # consume later jobs, so a hover would wait for an outcome that
-            # never came and never fall back to capture either.
+            # A failing callback must not kill the worker and strand future
+            # hovers without either direct text or capture.
             pass
 
     def _superseded(self, job: _Job) -> bool:

@@ -1393,10 +1393,8 @@ def create_qt_manual_lookup(
                 controller,
                 manual.capture_service,
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
-                # Debounce on the Qt UI thread that already dispatches movement
-                # rather than spawning a timer thread per cursor event. The
-                # crossing to the popup gets its own timer: one QTimer cannot
-                # hold both, and sharing it is what stopped exits dismissing.
+        # Debounce on Qt's thread, with a separate timer for popup crossing;
+        # sharing one QTimer previously suppressed exit dismissal.
                 scheduler=hover_scheduler or QtHoverScheduler(),
                 exit_scheduler=QtHoverScheduler(),
                 dispatcher=dispatcher,

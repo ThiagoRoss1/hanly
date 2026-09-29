@@ -1,7 +1,7 @@
 # Updater investigation: the 0.5.0 → 0.5.1 failure, and the case for in-place differential updates
 
 *2026-09-15. Diagnostic report, not an approved plan. Written from a real failed
-update on `C:\Users\Thiago\Downloads\hanly050`.*
+update on `C:\Users\<user>\Downloads\hanly050`.*
 
 ## Summary
 

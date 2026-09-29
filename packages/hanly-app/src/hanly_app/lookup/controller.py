@@ -459,11 +459,8 @@ class LookupController:
             if isinstance(request, LookupRequest):
                 request_id = request.request_id
             else:
-                # A worker-factory failure can happen before an executor has
-                # an item to associate with it. Associate it with the current
-                # item only when one still exists; otherwise there is nothing
-                # safe to present. A concrete executor should pass the request
-                # whenever it can.
+# A factory can fail before an executor has an item. Attribute the error
+# only if the request is still current; otherwise nothing is safe to show.
                 current_request_id = self._current_request_id
                 if current_request_id is None:
                     return

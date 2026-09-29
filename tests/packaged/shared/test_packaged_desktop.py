@@ -161,10 +161,8 @@ def test_the_frozen_worker_becomes_ready_on_an_isolated_profile(tmp_path: Path) 
         "dictionary",
     }
 
-    # The same run says which source produced it. A stale bundle passes every
-    # functional check it ever passed, so working is not evidence of being
-    # this tree's build: one tested artifact reported 0.1.3 beside a 0.5.0
-    # checkout and nothing in the run said so.
+    # A stale bundle can pass functional checks; require its build identity
+    # to match the source tree under test.
     identity = verify_frozen_identity(report, product_version())
     assert identity["ok"], identity["problems"]
 

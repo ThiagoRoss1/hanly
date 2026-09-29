@@ -288,9 +288,7 @@ def _label(value: str) -> str:
     return cleaned[:64] or "application"
 
 
-# --------------------------------------------------------------------------
-# Schema 2: reading an installation as a tree
-# --------------------------------------------------------------------------
+# Schema 2: read an installation as a tree.
 
 #: Metadata a manifest cannot describe, and therefore cannot reproduce. Found
 #: on a build, it fails the producer; found on an installation, it is what

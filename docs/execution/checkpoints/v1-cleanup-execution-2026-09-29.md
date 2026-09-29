@@ -1,6 +1,7 @@
 # V1 cleanup execution checkpoint
 
-Status: Phase A, Part 1 committed as `139032d`; Part 2 locally validated.
+Status: Phase A, Parts 1 and 2 committed as `139032d` and `e367d81`;
+Part 3 validated and awaiting its separate commit.
 Base: `clean/arch-optimization` at `5c510e5`; clean worktree at entry.
 
 ## Boundaries
@@ -64,6 +65,24 @@ Before moving, inventory relative imports, dynamic import strings, lazy root exp
 `capture_recovery.py` is imported by its own test but has no located production caller. Recheck exports and dynamic references before removing it and its orphaned tests. Other removals require equivalent evidence; a passing static linter alone is insufficient.
 
 Part 2 check: the module is referenced only by `tests/test_capture_recovery.py` among active code, and its one-shot recovery was rolled back in September. Removed that orphaned module and test; the historical checkpoint retains the measurements and rationale. The previous cleanup already removed the other verified app-internal dead definitions from the audit. Kept the staged OCR replay and metrics helpers as intentional developer interfaces, not live production code. The Windows prompt-shutdown failures are reproducible only in the supplied Windows CI log; both cases pass with macOS Qt offscreen and abort under this sandbox's native GUI. No speculative selector change is justified on Mac. Focused capture/microscope tests: 103 passed; Ruff clean; mypy clean on 305 files.
+
+## Part 3 outcome
+
+Reviewed multi-line Python comments across source and tests. All authored
+comment-only blocks are at most three lines; the apparent seven-line exception
+is C preprocessor syntax inside a test fixture string. Twelve completed plans
+and reports moved from the execution root into `plans/` or `reports/`, with
+relative links repaired. Kept current `05`, `CONTEXT`, and first-release
+runbook in place. Removed a 7,540-line embedded Git diff and one obsolete patch
+without removing their review findings; Git retains the exact diffs. Redacted
+16 user-home prefixes in tracked Markdown. Link scan: 68 relative links outside
+code fences, zero unresolved. Current Markdown privacy scan: zero remaining
+user-home, email, or credential-marker matches. Git history was not rewritten.
+
+Final portable suite: 2,356 passed, 4 failed, 3 skipped. The eight fewer
+passes are the removed orphan-module tests; the four failures and three skips
+are the same baseline cases. Ruff clean; mypy clean on 305 files; Python 3.10
+syntax compilation passes. Native GUI and DMG remain host-limited as above.
 
 ## Part 3 document policy
 

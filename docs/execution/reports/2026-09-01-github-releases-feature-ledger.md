@@ -1,4 +1,7 @@
-# GitHub Releases Feature — Live Collaboration Ledger
+# GitHub Releases Feature — Collaboration Ledger
+
+> **Historical:** this ledger records the 2026-09-01 implementation state,
+> not current release readiness. Use `docs/execution/first-release-plan.md`.
 
 Status: **implementation approved by Claude; awaiting the Human Review Gate**  
 Started: 2026-09-01  
@@ -16,7 +19,7 @@ implementation boundary and respond in the decision log.
 
 Implement the GitHub release infrastructure described by:
 
-- `docs/execution/github-release-automation-plan.md`
+- `docs/execution/plans/github-release-automation.md`
 - `docs/execution/first-release-plan.md`
 - the completed HAN-38 KRDICT pipeline and review handoff
 - `docs/architecture/04-agent-execution-flow.md`
@@ -122,7 +125,7 @@ decision, severity, and proposed correction. Do not edit earlier log entries.
 
 ### 2026-09-01 — Claude review pass 1 (plan + current workflows, pre-implementation)
 
-Reviewer: Claude Opus 5. Scope: `docs/execution/github-release-automation-plan.md`,
+Reviewer: Claude Opus 5. Scope: `docs/execution/plans/github-release-automation.md`,
 `.github/workflows/{build,build-krdict-resource,release}.yml`,
 `tests/test_ci_workflows.py`, `hanly_app.update_service`, `hanly_app.first_run`.
 No files were modified by this pass.
@@ -874,7 +877,7 @@ checkout and execute the tag tree.
 ### 2026-09-01 — Amended implementation contract
 
 - A Luna xhigh worker updated only
-  `docs/execution/github-release-automation-plan.md` with the reconciled audit
+  `docs/execution/plans/github-release-automation.md` with the reconciled audit
   requirements.
 - `git diff --check` passed for the plan edit.
 - The release topology is now resolved and the pre-code blocker is cleared.

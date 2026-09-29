@@ -85,11 +85,8 @@ _ENDPOINT_END = 1
 
 _VT_BOOL = 11
 
-#: UI Automation rejects anything below fifty milliseconds for either call
-#: timeout, which is already wider than the caller's whole budget, so this is
-#: not the deadline -- the caller's is. It is set because the default
-#: transaction timeout is twenty seconds, and a provider wedged for that long
-#: would hold the one worker thread away from every later hover.
+#: UIA's 50 ms minimum exceeds the caller's deadline, but still bounds a
+#: wedged provider far below the default 20-second transaction timeout.
 _NATIVE_TIMEOUT_MS = 50
 
 #: The "line" a browser reports can be an entire paragraph. Past this the text

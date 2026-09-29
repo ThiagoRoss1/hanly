@@ -24,10 +24,8 @@ DiagnosticReporter = Callable[[str], None]
 #: The OCR runtime imported before Qt.
 OCR_RUNTIME_MODULE = "easyocr"
 
-#: Third-party notices Hanly cannot act on, matched narrowly so a warning that
-#: does concern Hanly still reaches the terminal. Torch emits the first when
-#: EasyOCR builds its quantized recognition network, and the second on every
-#: inference because its data loader asks for pinned memory on a CPU-only host.
+#: Suppress only known Torch notices from EasyOCR setup and CPU-only inference;
+#: other warnings still reach the terminal.
 _SUPPRESSED_RUNTIME_WARNINGS = (
     "torch.quantize_per_tensor",
     "'pin_memory' argument is set as true",
@@ -82,10 +80,8 @@ def preload_ocr_runtime(
         # the process DLL search path is still the one Python started with.
         importlib.import_module(OCR_RUNTIME_MODULE)
     except Exception as error:
-        # Deliberately broad. This boundary fails in library-specific ways -
-        # ImportError, OSError/WinError from the native loader, and assorted
-        # RuntimeErrors raised during the library's own import - and none of
-        # them should stop the desktop from starting with a reported diagnostic.
+        # Third-party imports fail through several exception types; report
+        # their failure without preventing desktop startup.
         message = f"OCR runtime preload skipped for {OCR_RUNTIME_MODULE}: {error}"
         _timing = _measure(started, "unavailable")
         if on_diagnostic is not None:

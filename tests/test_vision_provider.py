@@ -177,12 +177,8 @@ def test_the_runtime_sends_its_backend_to_the_child(tmp_path) -> None:
     )
 
 
-# --- Model input scale (Wave 3) ---------------------------------------------
-#
-# Vision silently omitted whole proportional lines -- Korean and Latin alike --
-# at the sizes Hanly captures, while reading the same pixels correctly once
-# enlarged. Only the encoded payload grows; the ROI and its coordinate space do
-# not, which is the part worth guarding.
+# Vision can omit proportional text at capture size; enlarge only its model
+# payload, never the ROI geometry returned to the resolver.
 
 
 def test_the_recognizer_is_given_a_doubled_image_by_default() -> None:

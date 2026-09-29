@@ -2,7 +2,7 @@
 
 ## Bundle
 
-- Member issues: HAN-42 (Phase 1 of `docs/execution/post-v013-technical-wave.md`)
+- Member issues: HAN-42 (Phase 1 of `docs/execution/plans/2026-09-09-post-v013-technical-wave.md`)
 - Implementation ecosystem: Claude Opus, directly, under the human's
   **SIMPLIFICATION OVERRIDE** for this wave
 - Date: 2026-09-09

@@ -574,10 +574,8 @@ class _DesktopSession:
         self.bridge.attach_runtime(runtime, manual.capture_service, self._updates)
         self.desktop.attach_updates(self._updates)
 
-        # The session comes up with its shortcuts registered and its lookup
-        # path built. Whether the providers load now is the preload policy's
-        # decision, and nothing observes the screen unless the user asked for
-        # hover to be on from launch.
+        # Preload controls provider residency; startup alone never starts
+        # screen observation unless the user enabled hover on launch.
         manual.prepare()
         self._watch_readiness(manual)
         self._start_if_always_active()
@@ -913,10 +911,8 @@ class _DesktopSession:
 
         def choose() -> None:
             if self._choosing_area:
-                # The Control Center stays clickable while the prompt is open,
-                # and a second choice nested inside the first left its overlay
-                # under the first prompt, unable to take input. The open one is
-                # brought forward instead, and this request changes nothing.
+        # A second prompt could trap its overlay beneath the first. Bring
+        # the existing prompt forward instead of nesting another choice.
                 _raise_open_choice()
                 return
             self._choosing_area = True

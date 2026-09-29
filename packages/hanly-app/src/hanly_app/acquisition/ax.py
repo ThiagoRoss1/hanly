@@ -34,10 +34,8 @@ _AX_VALUE_CFRANGE = 4
 #: ``kCFNumberLongType``.
 _CF_NUMBER_LONG = 10
 
-#: The native deadline has to be strictly inside the caller's own budget. A
-#: call that reaches its messaging timeout still has to return, be classified,
-#: and fall back to OCR; if the two deadlines were equal, every such call would
-#: instead be reported as too late to use.
+#: Keep the native deadline inside the caller's budget so a timed-out call
+#: can still be classified and fall back to OCR.
 _NATIVE_DEADLINE_SHARE = 0.5
 
 #: Secure text is normally a subrole; retain the role check for custom controls.
@@ -177,10 +175,8 @@ class _AccessibilityBridge:
         if not system:
             return None
         try:
-            # These calls are synchronous and cross into the target
-            # application, so a deadline has to be given to the API itself.
-            # Measuring elapsed time afterwards discards a late answer but does
-            # nothing about an unresponsive application holding the caller.
+    # These synchronous calls cross into the target app. The API needs its
+    # own deadline; measuring elapsed time afterward cannot unblock a hang.
             self._services.AXUIElementSetMessagingTimeout(
                 system, ctypes.c_float(timeout_seconds)
             )
@@ -399,10 +395,7 @@ class AccessibilityTextProvider:
         text = self._string_for_range(bridge, element, start, length)
         if text is None:
             return None
-        # Everything above counts in UTF-16 code units, which is what the
-        # accessibility API speaks. Everything below counts code points, which
-        # is what Python and the engine contracts speak. This is the boundary,
-        # so the conversion happens here and nowhere else.
+    # Convert AX's UTF-16 offset to Python code points at this boundary.
         cursor_index = _code_point_index(text, index - start)
         if cursor_index is None:
             return None

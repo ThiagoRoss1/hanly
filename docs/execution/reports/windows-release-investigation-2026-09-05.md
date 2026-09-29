@@ -7,7 +7,7 @@ Authorized scope: investigate, prepare and review the plan for the user. No prod
 - GitHub API source: [Hanly Desktop v0.1.0](https://github.com/ThiagoRoss1/hanly/releases/tag/v0.1.0), published at `2026-09-05T03:00:41Z`.
 - Release commit: `2c4f39c1c00866faa19277e1da2a958a7fa656be`. Investigated checkout: `75c188e`. `git diff v0.1.0 HEAD -- packages packaging` was empty.
 - Windows ZIP: 482,533,400 bytes; SHA-256 `99cdcdd177c0054a5a1af33ef9749afbdbca560fa5c76a8611a15df273e79fdf`.
-- `C:\Users\Thiago\Downloads\hanly\hanly-desktop-windows.zip` matches that checksum. The executable in the extracted directory was inspected with `PyInstaller.archive.readers.CArchiveReader`.
+- `C:\Users\<user>\Downloads\hanly\hanly-desktop-windows.zip` matches that checksum. The executable in the extracted directory was inspected with `PyInstaller.archive.readers.CArchiveReader`.
 - The release also contains the resource manifest, compressed KRDICT, checksums, and macOS/Linux archives. Asset presence alone does not prove successful clean-profile provisioning.
 - Local reproduction: Python 3.13, PyQt6 6.10.2, WebEngine 6.10.0, pywebview 6.2.1. CI builds with Python 3.10; Windows recorded Qt6Core 6.11.2 in the published executable. A corrected native bundle still requires validation.
 

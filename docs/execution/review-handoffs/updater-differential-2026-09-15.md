@@ -2,7 +2,7 @@
 
 ## Bundle
 
-- Plan: `docs/execution/updater-differential-execution-plan-2026-09-15.md`
+- Plan: `docs/execution/plans/2026-09-15-updater-differential.md`
   (Gate-tier, Phase A only), from
   `docs/execution/reports/updater-in-place-differential-2026-09-15.md`
 - Implementation ecosystem: Claude Opus 5, directly, one session
@@ -341,7 +341,7 @@ ordinary differential one. The first manifest-aware release publishes no delta
 (there is no published predecessor with a manifest); the one after it does.
 
 The evidence from the reported failure —
-`C:\Users\Thiago\Downloads\hanly050\.hanly-update-efqyhaae`, a complete verified
+`C:\Users\<user>\Downloads\hanly050\.hanly-update-efqyhaae`, a complete verified
 0.5.1 build — was **not** touched by this work.
 
 ---
