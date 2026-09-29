@@ -353,7 +353,9 @@ def _metadata(spec: SampleSpec, font: ResolvedFont, image_module: Any) -> dict[s
         "font_name": font.spec.name,
         "font_licence": font.spec.licence,
         "font_redistributable": font.redistributable,
-        "font_path": str(font.path),
+        # The file name and hash identify the face; a full path would carry a
+        # home directory into any manifest built from this sample.
+        "font_file": font.path.name,
         "font_sha256": font.sha256,
         "font_index": font.spec.index,
         "font_size": spec.font_size,

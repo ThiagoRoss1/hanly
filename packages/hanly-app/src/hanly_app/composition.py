@@ -935,10 +935,6 @@ class _TracingOCRProvider:
             ),
             **character_counts,
         }
-        if getattr(self._sink, "retain_text", False) is True:
-            trace_fields["ocr_text"] = "\n".join(
-                item.text for item in result if isinstance(item, OCRResult)
-            )
         if getattr(self._sink, "retain_geometry", False) is True:
             trace_fields["ocr_boxes"] = _encoded_boxes(result)
         if _wants_evidence(self._sink) and isinstance(result, Sequence):
@@ -961,8 +957,8 @@ def _encoded_boxes(results: Sequence[object]) -> str:
     """Encode region boxes in provider reading order as ``l,t,r,b`` groups.
 
     Geometry carries no recognized characters, but it still describes where
-    text sits on someone's screen, so it travels under its own opt-in beside
-    ``retain_text`` rather than on every event.
+    text sits on someone's screen, so it travels under its own opt-in rather
+    than on every event.
     """
 
     return ";".join(

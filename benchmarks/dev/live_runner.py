@@ -29,6 +29,7 @@ from .live_telemetry import (
 )
 from .metadata import build_metadata
 from .microscope import (
+    ARTIFACT_ROOT,
     MicroscopeCaptureObserver,
     MicroscopeSink,
     build_ring,
@@ -640,8 +641,10 @@ def run_live_hover(args: Any) -> int:
 
         def export_lookup() -> None:
             report(
+                # Private screen content is held to the fixed gitignored root,
+                # whatever --output-root says about the rest of the run.
                 _export_message(
-                    frozen_holder, run_dir, args.output_root, evidence_counts
+                    frozen_holder, run_dir, ARTIFACT_ROOT, evidence_counts
                 )
             )
 

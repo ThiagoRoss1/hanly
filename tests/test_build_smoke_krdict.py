@@ -13,6 +13,7 @@ from hanly_app.self_check import DICTIONARY_PROBE
 from tools.build_smoke_krdict import (
     PROBE_LEMMAS,
     SMOKE_RESOURCE_VERSION,
+    DestinationOccupied,
     build_smoke_krdict,
     main,
 )
@@ -67,3 +68,33 @@ def test_the_command_writes_where_it_was_told_and_says_so(
     assert main([str(destination)]) == 0
     assert capsys.readouterr().out.strip() == str(destination.resolve())
     assert destination.is_file()
+
+
+def test_an_existing_non_smoke_file_is_refused_and_left_intact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real dictionary at the developer path must survive a copied CI step."""
+
+    destination = tmp_path / "krdict.sqlite3"
+    destination.write_bytes(b"a real dictionary")
+
+    with pytest.raises(DestinationOccupied):
+        build_smoke_krdict(destination)
+    assert main([str(destination)]) == 2
+    assert "--replace" in capsys.readouterr().err
+    assert destination.read_bytes() == b"a real dictionary"
+
+
+def test_an_earlier_smoke_build_is_rebuilt_in_place(database: Path) -> None:
+    before = database.read_bytes()
+
+    assert build_smoke_krdict(database) == database
+    assert database.read_bytes() == before
+
+
+def test_replace_overwrites_a_file_on_explicit_request(tmp_path: Path) -> None:
+    destination = tmp_path / "krdict.sqlite3"
+    destination.write_bytes(b"stale")
+
+    assert main([str(destination), "--replace"]) == 0
+    assert destination.read_bytes() != b"stale"

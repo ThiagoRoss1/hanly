@@ -58,6 +58,8 @@ class _FailingSink:
 
 
 class _RetainingSink(_Sink):
+    """Asks for text the way a removed developer option once did."""
+
     retain_text = True
 
 
@@ -243,7 +245,9 @@ def test_lookup_worker_records_private_safe_stage_timings_with_request_correlati
     assert morphology_event["hangul_token_count"] == 1
 
 
-def test_lookup_worker_emits_raw_ocr_only_for_explicit_retaining_sink() -> None:
+def test_no_trace_sink_can_opt_into_recognized_text() -> None:
+    """Recognized text reaches disk through an explicit export or not at all."""
+
     sink = _RetainingSink()
     worker = LookupWorker(
         lambda: _OCRProvider(),
@@ -257,7 +261,8 @@ def test_lookup_worker_emits_raw_ocr_only_for_explicit_retaining_sink() -> None:
     worker.close()
 
     ocr_event = next(event for event in sink.events if event.get("stage") == "ocr")
-    assert ocr_event["ocr_text"] == "읽습니다."
+    assert "ocr_text" not in ocr_event
+    assert all("읽습니다" not in json.dumps(event) for event in sink.events)
 
 
 def test_lookup_controller_trace_maps_submit_and_suppresses_stale_delivery() -> None:

@@ -10,6 +10,7 @@ the words the packaged self-check probes.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 import zipfile
 from collections.abc import Sequence
@@ -70,10 +71,25 @@ SMOKE_WORDS = (
 PROBE_LEMMAS = tuple(word.lemma for word in SMOKE_WORDS)
 
 
-def build_smoke_krdict(destination: str | Path) -> Path:
-    """Build the smoke database at ``destination`` and return its path."""
+class DestinationOccupied(RuntimeError):
+    """The destination holds something other than an earlier smoke build."""
+
+
+def build_smoke_krdict(destination: str | Path, *, replace: bool = False) -> Path:
+    """Build the smoke database at ``destination`` and return its path.
+
+    An earlier smoke build is rebuilt in place. Any other file there -- a real
+    dictionary at the developer path, typically -- is refused unless
+    ``replace`` is true, because this three-word database would silently
+    stand in for it.
+    """
 
     database = Path(destination).expanduser().resolve()
+    if database.exists() and not replace and not _is_smoke_database(database):
+        raise DestinationOccupied(
+            f"{database} exists and is not a smoke database; pass --replace "
+            "to overwrite it"
+        )
     with TemporaryDirectory(prefix="hanly-smoke-krdict-") as scratch:
         source = Path(scratch) / "krdict-smoke-source.zip"
         with zipfile.ZipFile(source, "w") as archive:
@@ -86,6 +102,22 @@ def build_smoke_krdict(destination: str | Path) -> Path:
             build_date=SMOKE_BUILD_DATE,
         )
     return database
+
+
+def _is_smoke_database(path: Path) -> bool:
+    try:
+        connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        row = connection.execute(
+            "SELECT value FROM resource_metadata WHERE key = 'resource_version'"
+        ).fetchone()
+    except sqlite3.Error:
+        return False
+    finally:
+        connection.close()
+    return row is not None and row[0] == SMOKE_RESOURCE_VERSION
 
 
 def _source_document(words: Sequence[_Word]) -> bytes:
@@ -138,9 +170,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help="where to write krdict.sqlite3 (a temporary location, never the bundle)",
     )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite an existing file that is not a smoke database",
+    )
     arguments = parser.parse_args(None if argv is None else list(argv))
 
-    print(build_smoke_krdict(arguments.destination))
+    try:
+        database = build_smoke_krdict(arguments.destination, replace=arguments.replace)
+    except DestinationOccupied as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    print(database)
     return 0
 
 
@@ -154,6 +196,7 @@ __all__ = [
     "SMOKE_RESOURCE_VERSION",
     "SMOKE_SOURCE_DATE",
     "SMOKE_WORDS",
+    "DestinationOccupied",
     "build_smoke_krdict",
     "main",
 ]
