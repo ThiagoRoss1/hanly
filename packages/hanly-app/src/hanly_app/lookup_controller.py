@@ -97,6 +97,11 @@ class LookupController:
     worker factory. Production composition should use the provider-factory
     worker from :mod:`hanly_app.composition`, keeping provider construction on
     the executor thread.
+
+    Submission and invalidation expect one serialized caller -- the desktop
+    routes hotkey, hover and result callbacks through one dispatcher. Request
+    numbers are allocated under a lock, but dispatch is not, so two threads
+    submitting at once could hand the executor an older request last.
     """
 
     def __init__(

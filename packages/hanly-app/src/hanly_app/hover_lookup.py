@@ -26,7 +26,7 @@ from .hover_target import (
     distance_to,
     in_transfer_corridor,
 )
-from .lookup_controller import LookupController
+from .lookup_controller import LookupController, LookupRequest
 from .mouse_observer import MouseListenerFactory, MouseObserver
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 from .text_acquisition import Acquisition, DirectTextService, Outcome
@@ -319,7 +319,6 @@ class HoverLookupRuntime:
                 return
             self._running = False
             self._readiness_generation += 1
-            self._readiness_waiting = False
             self._startup_point = None
             self._accepting = True
 
@@ -381,7 +380,6 @@ class HoverLookupRuntime:
             self._closed = True
             self._running = False
             self._readiness_generation += 1
-            self._readiness_waiting = False
             self._startup_point = None
 
         self._mouse.stop()
@@ -642,10 +640,12 @@ class HoverLookupRuntime:
                 return
             self._readiness_generation += 1
             generation = self._readiness_generation
+            if self._readiness_waiting:
+                # One waiter serves every pause/resume cycle; it finishes
+                # against whichever generation is current when it wakes.
+                return
             if self._controller.worker_ready:
                 ready_now = True
-            elif self._readiness_waiting:
-                return
             else:
                 ready_now = False
                 self._readiness_waiting = True
@@ -659,9 +659,7 @@ class HoverLookupRuntime:
         def wait_for_worker() -> None:
             ready = self._controller.wait_until_ready()
             try:
-                self._dispatcher(
-                    lambda: self._finish_readiness(generation, ready)
-                )
+                self._dispatcher(lambda: self._finish_waiting(ready))
             except BaseException as error:
                 self._fail(error)
 
@@ -671,11 +669,16 @@ class HoverLookupRuntime:
             daemon=True,
         ).start()
 
+    def _finish_waiting(self, ready: bool) -> None:
+        with self._lock:
+            self._readiness_waiting = False
+            generation = self._readiness_generation
+        self._finish_readiness(generation, ready)
+
     def _finish_readiness(self, generation: int, ready: bool) -> None:
         with self._lock:
             if generation != self._readiness_generation:
                 return
-            self._readiness_waiting = False
             if self._closed or not self._running:
                 return
             startup_point = self._startup_point
@@ -798,6 +801,17 @@ class HoverLookupRuntime:
                 self._report_error("hover submission", error)
             return
 
+        self._track_submission(request, lookup_request)
+
+    def _track_submission(
+        self, request: HoverRequest, lookup_request: LookupRequest
+    ) -> None:
+        """Make a submitted lookup the one the next movement invalidates.
+
+        Both the capture and the direct-text routes go through here, so a
+        movement supersedes a submission whichever route produced it.
+        """
+
         with self._lock:
             if self._closed or not self._running or not self._hover.is_current(request):
                 stale = True
@@ -847,7 +861,6 @@ class HoverLookupRuntime:
             self._failed = True
             self._running = False
             self._readiness_generation += 1
-            self._readiness_waiting = False
             self._startup_point = None
 
         self._mouse.stop()
@@ -974,6 +987,7 @@ class HoverLookupRuntime:
                     height=acquired.bounds.bottom - acquired.bounds.top,
                 ),
             )
+        self._track_submission(request, lookup_request)
         return True
 
     def _report_error(self, stage: str, error: BaseException) -> None:

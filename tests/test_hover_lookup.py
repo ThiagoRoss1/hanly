@@ -221,6 +221,7 @@ def _runtime(
     on_invalidate: Callable[[], None] | None = None,
     capture_observer: Any | None = None,
     sticky: bool = True,
+    acquisition: Any | None = None,
 ) -> tuple[
     HoverLookupRuntime,
     _Scheduler,
@@ -251,6 +252,7 @@ def _runtime(
         on_invalidate=on_invalidate,
         capture_observer=capture_observer,
         sticky=sticky,
+        acquisition=acquisition,
     )
     return runtime, scheduler, listeners, dispatcher, actual_capture, actual_worker, results
 
@@ -396,6 +398,100 @@ def test_mouse_move_supersedes_hover_and_stale_result_is_not_presented() -> None
         dispatcher.drain_one()
 
     assert results == []
+    runtime.shutdown()
+
+
+class _DirectText:
+    """A native reader that answers with a selection when told to."""
+
+    def __init__(self) -> None:
+        self.deliver: Callable[[Any], None] | None = None
+
+    def submit(self, point: Point, deliver: Callable[[Any], None]) -> int:
+        self.deliver = deliver
+        return 1
+
+    def answer(self) -> None:
+        from hanly import TextSelection
+        from hanly_app.text_acquisition import Acquisition, Outcome
+
+        assert self.deliver is not None
+        self.deliver(
+            Acquisition(
+                Outcome.DIRECT,
+                selection=TextSelection(text="책", cursor_index=0),
+            )
+        )
+
+    def close(self) -> None:
+        pass
+
+
+def test_mouse_move_supersedes_a_direct_text_lookup_like_a_captured_one() -> None:
+    """A direct selection is invalidated by movement exactly as a capture is."""
+
+    reader = _DirectText()
+    runtime, scheduler, listeners, dispatcher, capture, worker, results = _runtime(
+        acquisition=reader
+    )
+    runtime.start()
+    _await_hover_ready(runtime, dispatcher)
+
+    listeners.listeners[0].emit(100, 100)
+    dispatcher.drain_one()
+    scheduler.fire()
+    assert dispatcher.drain_until(lambda: reader.deliver is not None)
+    reader.answer()
+    assert dispatcher.drain_until(worker.started.is_set)
+    assert worker.calls[0][0].selection is not None
+
+    listeners.listeners[0].emit(200, 200)
+    dispatcher.drain_one()
+    worker.release.set()
+    dispatcher.drain_until(lambda: bool(results), timeout=0.3)
+
+    assert capture.cursors == []
+    assert results == []
+    runtime.shutdown()
+
+
+def test_repeated_pause_and_resume_during_startup_keeps_one_readiness_waiter() -> None:
+    release_factory = Event()
+    factory_entered = Event()
+    dispatcher = _QueueDispatcher()
+    worker = _Worker()
+
+    def factory() -> _Worker:
+        factory_entered.set()
+        assert release_factory.wait(timeout=2)
+        return worker
+
+    runtime = HoverLookupRuntime(
+        LookupController(factory, lambda _result: None),
+        _Capture(),
+        scheduler=_Scheduler(),
+        dispatcher=dispatcher,
+        listener_factory=_ListenerFactory(),
+    )
+
+    def waiters() -> int:
+        return sum(
+            thread.name == "hanly-hover-readiness" for thread in threading.enumerate()
+        )
+
+    runtime.start()
+    assert factory_entered.wait(timeout=2)
+    for _ in range(6):
+        runtime.pause()
+        runtime.resume()
+    assert waiters() == 1
+
+    release_factory.set()
+    assert dispatcher.drain_until(lambda: runtime.hover_controller.running)
+    runtime.pause()
+    runtime.resume()
+    assert runtime.hover_controller.running
+    assert waiters() == 0
     runtime.shutdown()
 
 
