@@ -83,6 +83,10 @@ class LanguagePipeline:
             )
         )
         text = selection.text.strip()
+        # The cursor counts characters of the selection as given, so it moves
+        # with the text when leading whitespace is stripped away.
+        leading = len(selection.text) - len(selection.text.lstrip())
+        cursor_index = max(0, selection.cursor_index - leading)
         if not text:
             return LookupResult(
                 status=LookupStatus.UNUSABLE,
@@ -112,7 +116,7 @@ class LanguagePipeline:
         abort_if_cancelled(cancelled)
         try:
             analyses = analysis.tokens
-            selected = _select_candidate(analysis, selection.cursor_index)
+            selected = _select_candidate(analysis, cursor_index)
         except Exception as exc:
             return error_result("morphology processing", exc, context)
 
@@ -133,7 +137,7 @@ class LanguagePipeline:
             selected, entries = self._resolve_entries(probes, analysis, selected, text)
             listed_whole = bool(entries) and selected.lemma == text
             components = _components(
-                probes, analysis, text, selection.cursor_index, listed_whole
+                probes, analysis, text, cursor_index, listed_whole
             )
         except Exception as exc:
             return error_result("dictionary", exc, attempted)

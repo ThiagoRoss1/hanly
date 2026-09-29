@@ -269,7 +269,8 @@ class TextSelection:
     ``cursor_index`` is an offset into ``text``, counted in characters. It
     selects which lexical unit of a compound the answer is about -- Korean
     writes them without spaces, so ``초대받았어요`` is one surface word holding
-    more than one addressable unit.
+    more than one addressable unit. Surrounding whitespace is ignored, and the
+    cursor keeps pointing at the same character when it is.
 
     ``source`` is a free-form label naming what produced the selection, for
     diagnostics only. The pipeline never reads it, so no behaviour can come to
