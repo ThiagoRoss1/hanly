@@ -15,8 +15,8 @@ from dataclasses import MISSING, fields
 from pathlib import Path
 
 import pytest
-from hanly_app.app_build_identity import BuildIdentityError
-from hanly_app.app_inventory import (
+from hanly_app.updates.build_identity import BuildIdentityError
+from hanly_app.updates.inventory import (
     InventoryError,
     build_manifest,
     compare_tree,
@@ -25,7 +25,7 @@ from hanly_app.app_inventory import (
     read_installed_manifest,
     read_tree,
 )
-from hanly_app.app_manifest import (
+from hanly_app.updates.manifest import (
     INSTALLED_MANIFEST_NAME,
     KIND_DIRECTORY,
     KIND_FILE,

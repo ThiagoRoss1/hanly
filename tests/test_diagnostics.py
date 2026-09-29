@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from hanly_app import ocr_preload
 from hanly_app.diagnostics import (
     LOG_FILE_NAME,
     MAX_RECORD_CHARS,
@@ -17,6 +16,7 @@ from hanly_app.diagnostics import (
     open_diagnostics,
     runtime_versions,
 )
+from hanly_app.lookup import preload as ocr_preload
 
 
 def test_a_report_shows_one_line_and_files_the_whole_chain(tmp_path: Path) -> None:

@@ -17,23 +17,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
-from hanly_app.app_inventory import file_digest, write_installed_manifest
-from hanly_app.app_manifest import (
-    BuildIdentity,
-    FileEntry,
-    InstallManifest,
-    content_fingerprint,
-)
-from hanly_app.app_update_helper import (
+from hanly_app.updates.helper import (
     EXIT_WAIT_SECONDS,
     HELPER_SCRIPT_NAME,
     READY_WAIT_SECONDS,
     render_helper_script,
 )
-from hanly_app.app_update_journal import (
+from hanly_app.updates.inventory import file_digest, write_installed_manifest
+from hanly_app.updates.journal import (
     JournalOperation,
     TransactionPlan,
     UpdateJournal,
+)
+from hanly_app.updates.manifest import (
+    BuildIdentity,
+    FileEntry,
+    InstallManifest,
+    content_fingerprint,
 )
 
 from .update_handoff import PROGRAM_SUFFIX, _compile, c_string  # noqa: F401

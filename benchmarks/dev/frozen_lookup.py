@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hanly import ROIImage
-from hanly_app.capture import CapturePlan, CaptureResult, ScreenRect
-from hanly_app.lookup_evidence import decode_evidence
+from hanly_app.acquisition.capture import CapturePlan, CaptureResult, ScreenRect
+from hanly_app.lookup.evidence import decode_evidence
 
 #: How many recent lookups stay inspectable. Each one holds one ROI (about
 #: 60 KB at the production size) plus its events, so this is a few megabytes.

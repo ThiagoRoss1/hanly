@@ -15,7 +15,23 @@ from typing import Any, Protocol, TypeAlias, cast
 
 from hanly import BoundingBox, HanlyError, LookupResult, LookupStatus, Point
 
-from .capture import CaptureResult, ConfiguredCaptureService, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ConfiguredCaptureService, ScreenRect
+from hanly_app.acquisition.direct_text import default_text_acquisition
+from hanly_app.hover.controller import Cancellable, HoverScheduler
+from hanly_app.hover.lookup import CaptureObserver, HoverErrorHandler, HoverLookupRuntime
+from hanly_app.hover.mouse_observer import MouseListenerFactory
+from hanly_app.hover.target import (
+    SCREEN_SCALE,
+    TRANSFER_CORRIDOR_PIXELS,
+    WORD_MARGIN_PIXELS,
+    CaptureOrigins,
+    RetainedTarget,
+    expanded,
+    screen_rect,
+)
+from hanly_app.lookup.controller import LookupController, ResultDispatcher, ResultHandler
+from hanly_app.popup.presentation import PopupController, should_present
+
 from .config import (
     DEFAULT_CAPTURE_HOTKEY,
     DEFAULT_HOVER_HOTKEY,
@@ -33,22 +49,7 @@ from .hotkeys import (
     HotkeyHandler,
     HotkeyService,
 )
-from .hover_controller import Cancellable, HoverScheduler
-from .hover_lookup import CaptureObserver, HoverErrorHandler, HoverLookupRuntime
-from .hover_target import (
-    SCREEN_SCALE,
-    TRANSFER_CORRIDOR_PIXELS,
-    WORD_MARGIN_PIXELS,
-    CaptureOrigins,
-    RetainedTarget,
-    expanded,
-    screen_rect,
-)
-from .lookup_controller import LookupController, ResultDispatcher, ResultHandler
-from .mouse_observer import MouseListenerFactory
-from .popup import PopupController, should_present
 from .runtime_trace import RuntimeTraceSink, emit_trace
-from .text_acquisition import default_text_acquisition
 
 
 class RuntimeComposition(Protocol):
@@ -1288,8 +1289,8 @@ def create_qt_manual_lookup(
 
     from PyQt6.QtGui import QCursor
 
-    from .qt_hover_scheduler import QtHoverScheduler
-    from .qt_popup import QtPopupTrigger, QtPopupView, QtResultDispatcher
+    from hanly_app.hover.qt_scheduler import QtHoverScheduler
+    from hanly_app.popup.qt import QtPopupTrigger, QtPopupView, QtResultDispatcher
 
     dispatcher = QtResultDispatcher()
     view = QtPopupView(config=app_config)

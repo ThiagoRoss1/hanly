@@ -31,14 +31,15 @@ from hanly import (
 from hanly.errors import LookupCancelled
 from hanly.word_resolver import ResolutionEvidence, TargetResolver, WordResolver
 
-from .diagnostics import StartupTimeline
-from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
-from .lookup_evidence import (
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.evidence import (
     encode_dictionary_evidence,
     encode_morphology_evidence,
     encode_ocr_evidence,
     encode_resolution_evidence,
 )
+
+from .diagnostics import StartupTimeline
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 
 _LOOKUP_CACHE_SIZE = 32
@@ -61,7 +62,7 @@ _OCRCacheKey = tuple[int, int, str, bytes]  # dimensions, format, ROI digest
 
 
 class Worker(Protocol):
-    """Worker shape consumed by :class:`hanly_app.job_executor.JobExecutor`."""
+    """Worker shape consumed by :class:`hanly_app.lookup.executor.JobExecutor`."""
 
     def __call__(self, item: LookupRequest) -> object:
         ...
@@ -742,7 +743,7 @@ class _CachingOCRProvider:
     """Reuse a previous OCR result for a byte-identical ROI.
 
     OCR is ~99% of a lookup's cost, and capture snaps ROI origins to a grid
-    (see :data:`~hanly_app.capture.DEFAULT_ROI_GRID`) precisely so that nearby
+    (see :data:`~hanly_app.acquisition.capture.DEFAULT_ROI_GRID`) precisely so that nearby
     cursor positions produce the same pixels. Caching here rather than around
     the whole lookup means a cursor moving to a different word inside an
     already-recognized ROI skips OCR while target resolution, morphology, and

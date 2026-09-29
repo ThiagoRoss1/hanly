@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
-from hanly_app.app_update_helper import (
+from hanly_app.updates.helper import (
     CLAIM_WAIT_SECONDS,
     EXIT_WAIT_SECONDS,
     HELPER_SCRIPT_NAME,
@@ -29,7 +29,7 @@ from hanly_app.app_update_helper import (
     render_helper_script,
     write_helper,
 )
-from hanly_app.app_update_journal import UpdateJournal
+from hanly_app.updates.journal import UpdateJournal
 
 
 def _journal(tmp_path: Path) -> UpdateJournal:

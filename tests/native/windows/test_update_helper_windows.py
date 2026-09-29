@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from hanly_app.app_update_journal import COMMITTED, RESTORED
+from hanly_app.updates.journal import COMMITTED, RESTORED
 
 from tests.hanly_fixtures.update_handoff import COMPILER
 from tests.hanly_fixtures.update_transaction import (

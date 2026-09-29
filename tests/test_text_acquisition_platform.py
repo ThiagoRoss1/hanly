@@ -12,14 +12,14 @@ import sys
 from pathlib import Path
 
 import pytest
-from hanly_app import text_acquisition
-from hanly_app.text_acquisition import DirectTextService, default_text_acquisition
-from hanly_app.text_acquisition_ax import AccessibilityTextProvider
-from hanly_app.text_acquisition_uia import UIAutomationTextProvider
+from hanly_app.acquisition import direct_text as text_acquisition
+from hanly_app.acquisition.ax import AccessibilityTextProvider
+from hanly_app.acquisition.direct_text import DirectTextService, default_text_acquisition
+from hanly_app.acquisition.uia import UIAutomationTextProvider
 
 _ROOT = Path(__file__).parents[1]
 _ENGINE = _ROOT / "packages" / "hanly" / "src" / "hanly"
-_ADAPTER = _ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "text_acquisition_uia.py"
+_ADAPTER = _ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "acquisition" / "uia.py"
 
 #: Modules that only exist to talk to one operating system.
 _PLATFORM_MODULES = ("ctypes", "winreg", "msvcrt", "PyQt6", "pynput", "mss")
@@ -87,7 +87,7 @@ def test_selecting_a_reader_imports_only_that_host_s_adapter(
         loaded.append(name)
         return real_import(name, *rest, **kwargs)  # type: ignore[arg-type]
 
-    for module in ("hanly_app.text_acquisition_uia", "hanly_app.text_acquisition_ax"):
+    for module in ("hanly_app.acquisition.uia", "hanly_app.acquisition.ax"):
         sys.modules.pop(module, None)
     monkeypatch.setattr("builtins.__import__", record)
 

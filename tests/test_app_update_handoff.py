@@ -18,8 +18,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from hanly_app.app_update import APPLICATION_STEM
-from hanly_app.app_update_handoff import (
+from hanly_app.updates.desktop_update import APPLICATION_STEM
+from hanly_app.updates.handoff import (
     DESCRIPTOR_MAGIC,
     EXIT_WAIT_SECONDS,
     LAUNCH_EXEC,

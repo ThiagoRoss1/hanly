@@ -8,13 +8,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-import hanly_app.capture_selector as capture_selector
+import hanly_app.acquisition.selector as capture_selector
 import pytest
-from hanly_app.capture import ScreenRect
-from hanly_app.capture_selector import CaptureSelection, CaptureSelectorError
+from hanly_app.acquisition.capture import ScreenRect
+from hanly_app.acquisition.selector import CaptureSelection, CaptureSelectorError
 from hanly_app.cli import build_parser, parse_roi_size, run_hanly
 from hanly_app.config import CaptureMode
-from hanly_app.control_center import ControlCenterUnavailable
+from hanly_app.control_center.bridge import ControlCenterUnavailable
 from hanly_app.first_run import FirstRunError
 from hanly_app.runtime import RuntimeConfigError
 

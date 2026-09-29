@@ -12,10 +12,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from hanly_app.app_build_identity import ReceiptStore, receipt_for
-from hanly_app.app_inventory import read_tree
-from hanly_app.app_update_handoff import read_descriptor, record_native_pending
-from hanly_app.app_update_install import (
+from hanly_app.updates.build_identity import ReceiptStore, receipt_for
+from hanly_app.updates.handoff import read_descriptor, record_native_pending
+from hanly_app.updates.installer import (
     DifferentialUpdateError,
     PosixTreeStaging,
     StagedPosixTransaction,
@@ -26,15 +25,16 @@ from hanly_app.app_update_install import (
     WindowsFileStaging,
     snapshot_release,
 )
-from hanly_app.app_update_journal import acknowledgement_matches, write_acknowledgement
-from hanly_app.app_update_plan import (
+from hanly_app.updates.inventory import read_tree
+from hanly_app.updates.journal import acknowledgement_matches, write_acknowledgement
+from hanly_app.updates.plan import (
     FROM_DELTA,
     FROM_FULL,
     OWNERSHIP_BOOTSTRAP,
     OWNERSHIP_RECEIPT,
     OwnershipUnknown,
 )
-from hanly_app.app_update_runner import TreeUpdateRunner, settle_native_update
+from hanly_app.updates.runner import TreeUpdateRunner, settle_native_update
 
 from tests.hanly_fixtures.update_release import PublishedRelease, ReleaseChannel
 from tests.hanly_fixtures.update_tree import (
@@ -316,7 +316,7 @@ def test_an_update_the_volume_cannot_hold_stops_before_it_downloads(
     installer = _installer(tmp_path, base, channel, install=install, store=store)
     prepared = installer.prepare("0.5.3")
     monkeypatch.setattr(
-        "hanly_app.app_update_install.shutil.disk_usage",
+        "hanly_app.updates.installer.shutil.disk_usage",
         lambda _path: type("Usage", (), {"free": 1})(),
     )
 
@@ -565,10 +565,10 @@ def test_the_build_a_live_posix_helper_launched_does_not_start_a_recovery_helper
     started: list[object] = []
 
     monkeypatch.setattr(
-        "hanly_app.app_update_runner.native_helper_is_running", lambda _path: True
+        "hanly_app.updates.runner.native_helper_is_running", lambda _path: True
     )
     monkeypatch.setattr(
-        "hanly_app.app_update_runner.start_native_helper",
+        "hanly_app.updates.runner.start_native_helper",
         lambda *args, **kwargs: started.append((args, kwargs)),
     )
 

@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 import pytest
-from hanly_app.owned_cleanup import (
+from hanly_app.updates.cleanup import (
     MARKER_NAME,
     MIN_AGE_SECONDS,
     RECOVERY_REQUIRED,
@@ -70,7 +70,7 @@ def test_two_operations_opened_together_never_share_a_directory(tmp_path: Path) 
 def test_this_process_is_alive_and_an_unused_id_is_not() -> None:
     """The liveness check itself, on the platform actually running the tests."""
 
-    from hanly_app.owned_cleanup import _process_alive
+    from hanly_app.updates.cleanup import _process_alive
 
     assert _process_alive(os.getpid())
     assert not _process_alive(999_999)
@@ -180,7 +180,7 @@ def test_a_symlink_into_the_root_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_path_outside_the_root_cannot_be_completed(tmp_path: Path) -> None:
-    from hanly_app.owned_cleanup import OwnedDirectory
+    from hanly_app.updates.cleanup import OwnedDirectory
 
     clock = _Clock()
     workspace = _workspace(tmp_path, clock)
@@ -350,7 +350,7 @@ def test_an_empty_temporary_directory_with_the_prefix_is_not_hanlys(
 def test_a_directory_still_in_use_is_left_for_a_later_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from hanly_app import owned_cleanup
+    from hanly_app.updates import cleanup as owned_cleanup
 
     clock = _Clock()
     staging = tmp_path / "hanly-update.abc"
@@ -378,7 +378,7 @@ def test_a_held_directory_in_hanlys_own_root_is_reported_not_raised(
     """Windows answers a held directory with Access is denied, a PermissionError;
     startup cleanup must report it, as it always did, rather than raise."""
 
-    from hanly_app import owned_cleanup
+    from hanly_app.updates import cleanup as owned_cleanup
 
     clock = _Clock()
     workspace = OwnedWorkspace(tmp_path / "work", clock=clock)
@@ -415,7 +415,7 @@ def test_a_directory_bearing_the_scripts_name_is_not_the_script(tmp_path: Path) 
 
 @requires_symlinks
 def test_the_read_only_retry_never_follows_a_link_out_of_the_tree(tmp_path: Path) -> None:
-    from hanly_app.owned_cleanup import _retry_writable
+    from hanly_app.updates.cleanup import _retry_writable
 
     outside = tmp_path / "outside.txt"
     outside.write_text("not Hanly's", encoding="utf-8")

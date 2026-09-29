@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from hanly import LookupContext, LookupResult, PixelFormat, Point, ROIImage
-from hanly_app.lookup_controller import LookupController
+from hanly_app.lookup.controller import LookupController
 
 
 class DevLookupError(RuntimeError):

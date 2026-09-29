@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from hanly import Point
-from hanly_app.text_acquisition_ax import AccessibilityTextProvider, _code_point_index
+from hanly_app.acquisition.ax import AccessibilityTextProvider, _code_point_index
 
 
 class _Bridge:
@@ -148,21 +148,21 @@ def test_a_character_span_converts_back_into_accessibility_units(
 ) -> None:
     """Asking about a span means expressing it in the platform's own units."""
 
-    from hanly_app.text_acquisition_ax import _utf16_offset
+    from hanly_app.acquisition.ax import _utf16_offset
 
     assert _utf16_offset(text, code_point_index) == expected
 
 
 @pytest.mark.parametrize(("text", "index"), [("초대", 3), ("초대", -1), ("", 1)])
 def test_a_span_outside_the_text_cannot_be_asked_about(text: str, index: int) -> None:
-    from hanly_app.text_acquisition_ax import _utf16_offset
+    from hanly_app.acquisition.ax import _utf16_offset
 
     assert _utf16_offset(text, index) is None
 
 
 @pytest.mark.parametrize("text", ["초대받았어요", "🙂🙂초대받았어요", "Hello 초대받았어요"])
 def test_the_two_offset_conversions_are_inverses(text: str) -> None:
-    from hanly_app.text_acquisition_ax import _utf16_offset
+    from hanly_app.acquisition.ax import _utf16_offset
 
     for index in range(len(text) + 1):
         units = _utf16_offset(text, index)

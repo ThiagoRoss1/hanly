@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hanly_app.app_update_macos import (
+from hanly_app.updates.macos import (
     CODESIGN,
     DITTO,
     FIND,
@@ -251,6 +251,6 @@ def test_a_tree_carrying_an_access_control_list_fails_the_producer(
 
 
 def test_the_bundle_identifier_a_release_publishes_is_the_one_checked() -> None:
-    from hanly_app.app_update_macos import BUNDLE_IDENTIFIER as CHECKED
+    from hanly_app.updates.macos import BUNDLE_IDENTIFIER as CHECKED
 
     assert CHECKED == BUNDLE_IDENTIFIER

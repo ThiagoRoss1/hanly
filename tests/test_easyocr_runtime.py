@@ -21,8 +21,8 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly.easyocr_provider import EasyOCRConfig
-from hanly_app.lookup_controller import LookupRequest
-from hanly_app.lookup_process import create_lookup_engine
+from hanly_app.lookup.controller import LookupRequest
+from hanly_app.lookup.process import create_lookup_engine
 from hanly_app.runtime import (
     RuntimeConfigError,
     load_runtime,

@@ -26,7 +26,7 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly_app.composition import LookupWorker
-from hanly_app.lookup_controller import LookupRequest
+from hanly_app.lookup.controller import LookupRequest
 
 _IMAGE = ROIImage(40, 20, PixelFormat.RGB_888, bytes(40 * 20 * 3))
 _TARGET = Point(20, 10)
@@ -201,7 +201,7 @@ def test_a_request_without_pixels_or_a_selection_is_rejected() -> None:
 
 
 def test_a_selection_request_survives_the_process_transport() -> None:
-    from hanly_app.lookup_process import _lookup_message, _request_from
+    from hanly_app.lookup.process import _lookup_message, _request_from
 
     restored = _request_from(_lookup_message(_selection_request()))
 
@@ -212,7 +212,7 @@ def test_a_selection_request_survives_the_process_transport() -> None:
 
 
 def test_a_captured_request_still_survives_the_process_transport() -> None:
-    from hanly_app.lookup_process import _lookup_message, _request_from
+    from hanly_app.lookup.process import _lookup_message, _request_from
 
     restored = _request_from(_lookup_message(LookupRequest(3, _IMAGE, _TARGET)))
 
@@ -221,7 +221,7 @@ def test_a_captured_request_still_survives_the_process_transport() -> None:
 
 
 def test_a_selection_message_carries_no_pixel_fields() -> None:
-    from hanly_app.lookup_process import _lookup_message
+    from hanly_app.lookup.process import _lookup_message
 
     message = _lookup_message(_selection_request())
 
@@ -238,7 +238,7 @@ class _Capture:
         self.calls = 0
 
     def capture_at_cursor(self, cursor: Point) -> Any:
-        from hanly_app.capture import CaptureResult, ScreenRect
+        from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 
         self.calls += 1
         return CaptureResult(
@@ -271,8 +271,8 @@ class _Service:
 
 
 def _hover_runtime(service: Any) -> tuple[Any, _Capture, list[Any], Any]:
-    from hanly_app.hover_lookup import HoverLookupRuntime
-    from hanly_app.lookup_controller import LookupController
+    from hanly_app.hover.lookup import HoverLookupRuntime
+    from hanly_app.lookup.controller import LookupController
 
     submitted: list[Any] = []
 
@@ -303,7 +303,7 @@ def _hover_runtime(service: Any) -> tuple[Any, _Capture, list[Any], Any]:
 
 
 def _hover_request() -> Any:
-    from hanly_app.hover_lookup import HoverRequest
+    from hanly_app.hover.lookup import HoverRequest
 
     return HoverRequest(request_id=1, point=Point(20, 10))
 
@@ -311,7 +311,7 @@ def _hover_request() -> Any:
 def test_the_ui_thread_only_schedules_and_never_performs_the_read() -> None:
     """Scheduling must return before the native call has produced anything."""
 
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.UNSUPPORTED))
     runtime, capture, _submitted, controller = _hover_runtime(service)
@@ -335,7 +335,7 @@ def test_the_ui_thread_only_schedules_and_never_performs_the_read() -> None:
 def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
     """A refusal is never a failure: it is the ordinary OCR lookup."""
 
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome(outcome)))
     runtime, capture, submitted, controller = _hover_runtime(service)
@@ -353,7 +353,7 @@ def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
 def test_verified_non_korean_text_ends_the_hover_without_a_capture() -> None:
     """OCR could only misread the pixels the control already read as Latin."""
 
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.NOT_KOREAN))
     runtime, capture, submitted, controller = _hover_runtime(service)
@@ -373,8 +373,8 @@ def test_an_unverifiable_windows_cursor_is_captured_exactly_once(
 ) -> None:
     """A provider answering with a shorter prefix never names the wrong syllable."""
 
-    from hanly_app import text_acquisition_uia as uia
-    from hanly_app.text_acquisition import DirectTextCoordinator
+    from hanly_app.acquisition import uia as uia
+    from hanly_app.acquisition.direct_text import DirectTextCoordinator
 
     from tests.hanly_fixtures.uia import FakeBridge, FakeControl, point_at
 
@@ -406,7 +406,7 @@ def test_an_unverifiable_windows_cursor_is_captured_exactly_once(
 
 
 def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(
         Acquisition(
@@ -431,7 +431,7 @@ def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
 
 
 def test_an_outcome_arriving_after_the_hover_moved_on_is_discarded() -> None:
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(
         Acquisition(
@@ -533,7 +533,7 @@ class _Rejecting:
 def test_a_rejected_outcome_is_traced_by_its_class_alone() -> None:
     """The native worker can neither capture nor touch Qt; it can only record."""
 
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.UNSUPPORTED))
     runtime, capture, submitted, controller = _hover_runtime(service)
@@ -557,7 +557,7 @@ def test_a_rejected_outcome_is_traced_by_its_class_alone() -> None:
 
 
 def test_an_outcome_after_shutdown_is_suppressed_without_a_failure() -> None:
-    from hanly_app.text_acquisition import Acquisition, Outcome
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.UNSUPPORTED))
     runtime, capture, submitted, controller = _hover_runtime(service)
@@ -580,7 +580,7 @@ def test_a_rejecting_dispatcher_does_not_stop_the_real_worker() -> None:
 
     from threading import Event
 
-    from hanly_app.text_acquisition import (
+    from hanly_app.acquisition.direct_text import (
         DirectText,
         DirectTextCoordinator,
         DirectTextService,

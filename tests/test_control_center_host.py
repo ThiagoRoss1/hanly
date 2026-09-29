@@ -7,9 +7,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from hanly_app import control_center_host
-from hanly_app.control_center import ControlCenterUnavailable
-from hanly_app.control_center_host import (
+from hanly_app.control_center import host as control_center_host
+from hanly_app.control_center.bridge import ControlCenterUnavailable
+from hanly_app.control_center.host import (
     MINIMUM_INITIAL_SIZE,
     QT_BACKEND_MODULE,
     ControlCenterHost,

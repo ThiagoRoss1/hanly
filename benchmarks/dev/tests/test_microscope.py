@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 from hanly import PixelFormat, Point, ROIImage
-from hanly_app.capture import CapturePlan, CaptureResult, ScreenRect
-from hanly_app.lookup_evidence import (
+from hanly_app.acquisition.capture import CapturePlan, CaptureResult, ScreenRect
+from hanly_app.lookup.evidence import (
     encode_dictionary_evidence,
     encode_morphology_evidence,
     encode_ocr_evidence,

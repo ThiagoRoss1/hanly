@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hanly_app.control_center import load_control_center_assets
+from hanly_app.control_center.bridge import load_control_center_assets
 
 _HARNESS = Path(__file__).parent / "hanly_fixtures" / "assets" / "control_center_harness.js"
 _NODE = shutil.which("node")

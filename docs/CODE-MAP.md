@@ -72,7 +72,7 @@ hanly (the shell)                 Qt Widgets, tray, hotkeys, capture, hover,
          manual session; a lookup wakes a sleeping engine on demand)
 ```
 
-`process_transport.py` is the one way they talk: an inherited duplex `Pipe`,
+`lookup/transport.py` is the one way they talk: an inherited duplex `Pipe`,
 explicitly pickled messages with a checked size, serialized sends, and one
 reader per direction. There is no listening port, no dispatch by name from the
 wire, and no shell command line.
@@ -91,7 +91,7 @@ libraries on the way out is what a quit used to hang or fail fast on. See
 
 ## 3. Startup, in order
 
-1. **`hanly_app/ocr_preload.py`** — imports EasyOCR before anything else *in the
+1. **`hanly_app/lookup/preload.py`** — imports EasyOCR before anything else *in the
    lookup child*. On Windows Qt changes native-library resolution once it
    initializes, and the child loads the OCR stack before it does anything else.
    The shell never imports it at all. A failure here is a reported diagnostic,
@@ -132,14 +132,14 @@ launch pays for is `config.LookupPreload`.
 
 ```
 hover (while the push chord is held, or for the whole session)
-  → is the cursor still on the last answer?   hover_target.py     (if so, stop here)
-  → debounce + cursor-validity check          hover_controller.py
-  → read the word without pixels, if the app  text_acquisition.py (+ _ax / _uia)
+  → is the cursor still on the last answer?   hover/target.py     (if so, stop here)
+  → debounce + cursor-validity check          hover/controller.py
+  → read the word without pixels, if the app  acquisition/direct_text.py (+ _ax / _uia)
     exposes it (then skip capture and OCR)
-  → otherwise, small ROI capture              capture.py
-  → submit, bounded / latest-wins             lookup_controller.py
-  → executor thread                           job_executor.py
-  → across the pipe into the lookup child     lookup_process.py
+  → otherwise, small ROI capture              acquisition/capture.py
+  → submit, bounded / latest-wins             lookup/controller.py
+  → executor thread                           lookup/executor.py
+  → across the pipe into the lookup child     lookup/process.py
       → OCR                                   vision_provider.py / easyocr_provider.py
       → pick the word under the cursor        word_resolver.py
       → TextSelection (text + cursor index)   lookup_pipeline.py
@@ -147,8 +147,8 @@ hover (while the push chord is held, or for the whole session)
       → morphology (lemma)                    kiwi_provider.py
       → dictionary, at most five queries       krdict_provider.py
         (exact surface, whole form, components)
-  → final request-currency check              lookup_controller.py
-  → popup, and the word it came from retained qt_popup.py / hover_target.py
+  → final request-currency check              lookup/controller.py
+  → popup, and the word it came from retained popup/qt.py / hover/target.py
 ```
 
 `LookupPipeline` (`packages/hanly/src/hanly/lookup_pipeline.py`) is the only
@@ -231,7 +231,7 @@ query per lookup, joining `lemmas`/`word_forms` → `entries` → `senses` →
 
 ### Deliver
 
-`hanly_app/update_service.py` downloads, verifies the checksum **before**
+`hanly_app/updates/resource_service.py` downloads, verifies the checksum **before**
 decompressing, validates the schema, activates atomically, and keeps the
 previous copy as a rollback. `hanly_app/first_run.py` reuses that exact path to
 install an already-built local database, so a developer install and a real
@@ -251,23 +251,23 @@ the plan afterwards differs.
 
 ```
 Control Center "Update now"
-  → update_coordinator.py          one operation at a time, off the UI thread
-  → app_update_runner.py           TreeUpdateRunner takes the installation's lock
-  → app_update_install.py  prepare()
+  → updates/coordinator.py          one operation at a time, off the UI thread
+  → updates/runner.py           TreeUpdateRunner takes the installation's lock
+  → updates/installer.py  prepare()
         pin the release                              ReleaseSnapshot
-        SHA256SUMS → Hanly-vX.Y.Z.hup                app_hup.py (metadata only)
-        this machine's entry                         stamp: app_build_identity.py
+        SHA256SUMS → Hanly-vX.Y.Z.hup                updates/package.py (metadata only)
+        this machine's entry                         stamp: updates/build_identity.py
         read the installation as a tree              app_inventory.read_tree
         establish ownership: receipt, or bootstrap against the installed tag
-        decide what changes                          app_update_plan.plan_tree_update
+        decide what changes                          updates.plan.plan_tree_update
     ↳ the delta cannot be used here → show the real size, ask again
-  → app_update_install.py  stage()
+  → updates/installer.py  stage()
         download the payload the plan named, verify it
         → WindowsFileStaging   stage only the changed files      (journal)
         → PosixTreeStaging     build a whole candidate and prove it
   → hand off, then Hanly quits
-        → app_update_helper.py    detached PowerShell, file by file
-        → app_update_handoff.py   the native helper, two renames
+        → updates/helper.py    detached PowerShell, file by file
+        → updates/handoff.py   the native helper, two renames
 ```
 
 ### Windows: change the files that differ, in place
@@ -275,17 +275,17 @@ Control Center "Update now"
 The installation path never changes and no second copy is made. Everything
 lives under `<installation>/.hanly-update/<transaction>/`: the staged files,
 the originals moved aside, the journal, and the answer the new build has to
-produce. `app_update_helper.py` renders the PowerShell that applies it.
+produce. `updates/helper.py` renders the PowerShell that applies it.
 
 ### macOS and Linux: build the whole thing, then swap
 
-`app_update_tree.py` reconstructs the published build in a private directory
+`updates/tree.py` reconstructs the published build in a private directory
 beside the installation - mostly out of bytes the installation already holds -
-and `verify_candidate` proves it entry by entry. `app_update_macos.py` adds
+and `verify_candidate` proves it entry by entry. `updates/macos.py` adds
 what only macOS needs: a disk image attached read-only at a private mount
 point, `ditto`, and `codesign --verify --deep --strict` on the result. Nothing
 is re-signed locally; the published signature material travels as file content
-and extended attributes (`app_xattr_darwin.py` binds the four libc calls
+and extended attributes (`updates/xattr_macos.py` binds the four libc calls
 CPython does not expose).
 
 The swap itself belongs to `packaging/updater/hanly-update-posix.c`, a small
@@ -358,15 +358,15 @@ the migration routes.
 | `cli.py` | The one entry point: parser, dispatch, `--self-check`, process exit |
 | `qt_bootstrap.py` | The one `QApplication` per process, with a program name. Nothing heavy |
 | `startup.py` | Prepares the runtime off the UI thread, behind the open window |
-| `ocr_preload.py` | Imports EasyOCR first, in the lookup child |
+| `lookup/preload.py` | Imports EasyOCR first, in the lookup child |
 | `first_run.py` | Writes the default config, provisions missing resources |
 | `runtime.py` | JSON config → validated `HanlyRuntime` with provider factories |
 | `composition.py` | Builds the worker: caching, text-presence gate, tracing wrappers |
 | `config.py` | Per-user preferences, including the capture target and region |
 | `paths.py` | Per-user settings, runtime-config, and log locations |
 | `diagnostics.py` | Rotating session log, the filterable record tail, and the sanitized export |
-| `owned_cleanup.py` | What an interrupted session left behind, and what must never be removed |
-| `process_transport.py` | The one way the shell and its children talk |
+| `updates/cleanup.py` | What an interrupted session left behind, and what must never be removed |
+| `lookup/transport.py` | The one way the shell and its children talk |
 | `runtime_status.py` | Readiness, separate from the capture lifecycle and from engine residency |
 | `self_check.py` | `--self-check`: the frozen bundle proving its own runtime and window |
 
@@ -374,18 +374,18 @@ the migration routes.
 
 | File | What it does |
 |---|---|
-| `mouse_observer.py` | Observes the cursor. Only observes |
-| `hover_controller.py` | Decides when a hover is worth acting on |
-| `qt_hover_scheduler.py` | Hover timing on the Qt thread |
-| `capture.py` | Screen ROI capture |
-| `capture_selector.py` | The "which area?" overlay, reached from settings |
+| `hover/mouse_observer.py` | Observes the cursor. Only observes |
+| `hover/controller.py` | Decides when a hover is worth acting on |
+| `hover/qt_scheduler.py` | Hover timing on the Qt thread |
+| `acquisition/capture.py` | Screen ROI capture |
+| `acquisition/selector.py` | The "which area?" overlay, reached from settings |
 | `capture_recovery.py` | Whether an answer came from a crop that cut its word. Tested helpers only; not wired (see its docstring) |
-| `text_acquisition.py` | Whether the word under the pointer can be read without pixels, and the fallback to capture when it cannot |
-| `text_acquisition_ax.py` | The macOS reader, through the Accessibility API |
-| `text_acquisition_uia.py` | The Windows reader, through UI Automation |
+| `acquisition/direct_text.py` | Whether the word under the pointer can be read without pixels, and the fallback to capture when it cannot |
+| `acquisition/ax.py` | The macOS reader, through the Accessibility API |
+| `acquisition/uia.py` | The Windows reader, through UI Automation |
 | `hotkeys.py` | Global hotkeys, both edges of a chord, and the backend per platform |
 | `hotkeys_darwin.py` | The macOS backend: Carbon `RegisterEventHotKey`, pressed and released |
-| `popup_darwin.py` | Keeps the macOS popup panel on screen while Hanly is inactive |
+| `popup/macos.py` | Keeps the macOS popup panel on screen while Hanly is inactive |
 | `app_identity_darwin.py` | What macOS thinks a Hanly process is, so only one is an application |
 | `app_reopen_darwin.py` | Routes a macOS reactivation (Dock click) back to the Control Center |
 | `permissions.py` | Which grant each feature needs, and how it is reported |
@@ -395,28 +395,28 @@ the migration routes.
 
 | File | What it does |
 |---|---|
-| `lookup_controller.py` | Request IDs, stale handling, bounded / latest-wins submission |
-| `job_executor.py` | The executor thread: one job running, one latest pending |
-| `lookup_process.py` | The lookup child, its transport, and the engine that owns provider residency |
-| `hover_lookup.py` | The hover-driven lookup runtime, and the answer the cursor may rest on |
-| `hover_target.py` | Where a result came from on screen, what protects it, and the crossing to the popup |
+| `lookup/controller.py` | Request IDs, stale handling, bounded / latest-wins submission |
+| `lookup/executor.py` | The executor thread: one job running, one latest pending |
+| `lookup/process.py` | The lookup child, its transport, and the engine that owns provider residency |
+| `hover/lookup.py` | The hover-driven lookup runtime, and the answer the cursor may rest on |
+| `hover/target.py` | Where a result came from on screen, what protects it, and the crossing to the popup |
 | `manual_lookup.py` | The shortcut-driven runtime, the preload policy, and the Qt composition |
 | `runtime_trace.py` | Structured per-stage trace events, forwarded from the child |
-| `lookup_evidence.py` | Encodes the private diagnostic structures only an evidence-retaining developer sink asks for |
+| `lookup/evidence.py` | Encodes the private diagnostic structures only an evidence-retaining developer sink asks for |
 
 **Presentation and shell**
 
 | File | What it does |
 |---|---|
-| `popup.py` / `qt_popup.py` | The dictionary popup |
+| `popup/presentation.py` / `popup/qt.py` | The dictionary popup |
 | `qt_theme.py` | The Qt palette every shell-drawn window shares |
 | `hanly_dialog.py` | Hanly's own small dialogs, styled like the popup |
 | `app_icon.py` | The icon set, at the sizes it was drawn for |
 | `window_frame_win32.py` | The Windows title bar in Hanly's colours (imported on every platform, acts only on Windows) |
 | `tray.py` | System tray |
-| `control_center.py` | The bridge behind the window (`assets/control_center/`), which stays in the shell |
-| `control_center_process.py` | The window's own process, its operation allowlist, and the proxy the page calls |
-| `control_center_host.py` | One pywebview window and the loop it runs in |
+| `control_center/bridge.py` | The bridge behind the window (`assets/control_center/`), which stays in the shell |
+| `control_center/process.py` | The window's own process, its operation allowlist, and the proxy the page calls |
+| `control_center/host.py` | One pywebview window and the loop it runs in |
 | `desktop_controller.py` | Start / pause / resume state |
 | `signal_bridge.py` | Ctrl+C → clean Qt shutdown |
 
@@ -424,22 +424,22 @@ the migration routes.
 
 | File | What it does |
 |---|---|
-| `update_service.py` | Obtains remote *resources*: download, verify, decompress, validate, activate, roll back |
-| `update_coordinator.py` | Runs updates off the UI thread and reports progress; one operation owns it at a time |
-| `app_update.py` | The *application* half: which release is newer, and the whole-bundle download → verify → extract → stage macOS and Linux still use |
-| `app_update_handoff.py` | The whole-bundle swap: the native script that waits for this process to exit, replaces the installation, relaunches it, and waits to be told the new build started |
-| `app_manifest.py` | What a build is made of and what a release offers: the manifest, the update metadata, the delta descriptor, and every path rule |
-| `app_inventory.py` | Hashing a tree into that inventory — the producer's build, and the client's own installation |
-| `app_update_plan.py` | Diffing the target against what is installed: add, replace, delete, collisions, and which payload can supply it |
-| `app_update_install.py` | The Windows differential path: metadata, plan, download, selective extraction, disk preflight |
-| `app_update_journal.py` | The durable record of one in-place update, the paths it owns, and the per-installation lock |
-| `app_update_helper.py` | The Windows PowerShell program that applies and undoes it, depending on nothing inside the installation |
-| `app_update_runner.py` | The desktop's seam: hold the lock, wait for the helper to take over, settle whatever the last run left |
-| `app_hup.py` | Reads the one update package (`.hup`) a release publishes for every platform |
-| `app_build_identity.py` | Which build is running, from its stamp, and what the last update left about it |
-| `app_update_tree.py` | The macOS/Linux candidate: rebuild the published tree beside the installation and verify it |
-| `app_update_macos.py` | What only macOS needs: the private read-only disk-image mount, `ditto`, `codesign --verify` |
-| `app_xattr_darwin.py` | The four libc extended-attribute calls CPython does not expose |
+| `updates/resource_service.py` | Obtains remote *resources*: download, verify, decompress, validate, activate, roll back |
+| `updates/coordinator.py` | Runs updates off the UI thread and reports progress; one operation owns it at a time |
+| `updates/desktop_update.py` | The *application* half: which release is newer, and the whole-bundle download → verify → extract → stage macOS and Linux still use |
+| `updates/handoff.py` | The whole-bundle swap: the native script that waits for this process to exit, replaces the installation, relaunches it, and waits to be told the new build started |
+| `updates/manifest.py` | What a build is made of and what a release offers: the manifest, the update metadata, the delta descriptor, and every path rule |
+| `updates/inventory.py` | Hashing a tree into that inventory — the producer's build, and the client's own installation |
+| `updates/plan.py` | Diffing the target against what is installed: add, replace, delete, collisions, and which payload can supply it |
+| `updates/installer.py` | The Windows differential path: metadata, plan, download, selective extraction, disk preflight |
+| `updates/journal.py` | The durable record of one in-place update, the paths it owns, and the per-installation lock |
+| `updates/helper.py` | The Windows PowerShell program that applies and undoes it, depending on nothing inside the installation |
+| `updates/runner.py` | The desktop's seam: hold the lock, wait for the helper to take over, settle whatever the last run left |
+| `updates/package.py` | Reads the one update package (`.hup`) a release publishes for every platform |
+| `updates/build_identity.py` | Which build is running, from its stamp, and what the last update left about it |
+| `updates/tree.py` | The macOS/Linux candidate: rebuild the published tree beside the installation and verify it |
+| `updates/macos.py` | What only macOS needs: the private read-only disk-image mount, `ditto`, `codesign --verify` |
+| `updates/xattr_macos.py` | The four libc extended-attribute calls CPython does not expose |
 
 ### Outside the packages
 

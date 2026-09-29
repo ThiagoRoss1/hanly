@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hanly import Point
-from hanly_app.hover_controller import HoverController
+from hanly_app.hover.controller import HoverController
 
 
 @dataclass

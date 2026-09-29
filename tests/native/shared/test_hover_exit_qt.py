@@ -17,11 +17,11 @@ from tests.hanly_fixtures.capabilities import require_modules
 
 require_modules("PyQt6.QtWidgets", module_level=True)
 
-from hanly_app.capture import CaptureResult, ScreenRect  # noqa: E402
-from hanly_app.hover_lookup import HoverLookupRuntime  # noqa: E402
-from hanly_app.hover_target import POPUP_TRANSFER_MS, RetainedTarget  # noqa: E402
-from hanly_app.lookup_controller import LookupController, LookupRequest  # noqa: E402
-from hanly_app.qt_hover_scheduler import QtHoverScheduler  # noqa: E402
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect  # noqa: E402
+from hanly_app.hover.lookup import HoverLookupRuntime  # noqa: E402
+from hanly_app.hover.qt_scheduler import QtHoverScheduler  # noqa: E402
+from hanly_app.hover.target import POPUP_TRANSFER_MS, RetainedTarget  # noqa: E402
+from hanly_app.lookup.controller import LookupController, LookupRequest  # noqa: E402
 from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 

@@ -650,7 +650,7 @@ def run_hover_rate(args: argparse.Namespace) -> int:
 
 
 def run_desktop_capture(args: argparse.Namespace) -> int:
-    from hanly_app.capture import CaptureService
+    from hanly_app.acquisition.capture import CaptureService
     from PyQt6.QtGui import QCursor
 
     cursor = QCursor.pos()
@@ -749,13 +749,13 @@ def run_real_hover(args: argparse.Namespace) -> int:
 
     # OCR runs in this process here, unlike the desktop, so its native runtime
     # is prepared before Qt exactly as the lookup child prepares its own.
-    from hanly_app.ocr_preload import preload_ocr_runtime
+    from hanly_app.lookup.preload import preload_ocr_runtime
 
     preload_ocr_runtime()
-    from hanly_app.hover_controller import HoverController
-    from hanly_app.lookup_controller import LookupController
-    from hanly_app.popup import PopupPosition
-    from hanly_app.qt_popup import QtPopupView
+    from hanly_app.hover.controller import HoverController
+    from hanly_app.lookup.controller import LookupController
+    from hanly_app.popup.presentation import PopupPosition
+    from hanly_app.popup.qt import QtPopupView
     from PyQt6.QtWidgets import QApplication
 
     application = QApplication.instance() or QApplication([])

@@ -9,6 +9,6 @@ Filtering third-party warnings is a process-wide decision and costs nothing,
 so it is the one thing that stays.
 """
 
-from hanly_app.ocr_preload import silence_runtime_warnings
+from hanly_app.lookup.preload import silence_runtime_warnings
 
 silence_runtime_warnings()

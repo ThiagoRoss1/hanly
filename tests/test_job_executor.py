@@ -4,7 +4,7 @@ import threading
 from threading import Event
 
 import pytest
-from hanly_app.job_executor import JobExecutor
+from hanly_app.lookup.executor import JobExecutor
 
 
 class RecordingWorker:

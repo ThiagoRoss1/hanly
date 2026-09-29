@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from hanly import Point
-from hanly_app.mouse_observer import MouseObserver
+from hanly_app.hover.mouse_observer import MouseObserver
 
 
 class _Listener:

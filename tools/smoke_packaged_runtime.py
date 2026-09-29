@@ -678,8 +678,8 @@ def compare_to_manifest(application: Path, manifest_path: Path) -> dict[str, obj
     way through its own format.
     """
 
-    from hanly_app.app_inventory import compare_tree, read_tree
-    from hanly_app.app_manifest import TreeManifest
+    from hanly_app.updates.inventory import compare_tree, read_tree
+    from hanly_app.updates.manifest import TreeManifest
 
     manifest = TreeManifest.from_json(Path(manifest_path).read_text(encoding="utf-8"))
     inventory = read_tree(Path(application), manifest.platform)

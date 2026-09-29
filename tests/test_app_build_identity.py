@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from hanly_app.app_build_identity import (
+from hanly_app.updates.build_identity import (
     BUILD_STAMP_NAME,
     BuildIdentityError,
     BuildStamp,

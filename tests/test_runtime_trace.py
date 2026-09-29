@@ -20,11 +20,11 @@ from hanly import (
     ROIImage,
     TokenAnalysis,
 )
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.composition import LookupWorker
-from hanly_app.hover_controller import HoverScheduler
-from hanly_app.hover_lookup import HoverLookupRuntime
-from hanly_app.lookup_controller import LookupController, LookupRequest
+from hanly_app.hover.controller import HoverScheduler
+from hanly_app.hover.lookup import HoverLookupRuntime
+from hanly_app.lookup.controller import LookupController, LookupRequest
 from hanly_app.runtime_trace import JSONPrimitive, emit_trace
 
 _IMAGE = ROIImage(

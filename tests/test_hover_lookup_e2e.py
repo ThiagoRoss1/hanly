@@ -21,7 +21,7 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly.word_resolver import WordResolver
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.composition import create_lookup_controller
 from hanly_app.config import AppConfig, HoverActivation
 from hanly_app.hotkeys import HotkeyAction

@@ -34,14 +34,14 @@ def _report_qt_messages():
 
 
 def main(mode):
-    from hanly_app.ocr_preload import preload_ocr_runtime
+    from hanly_app.lookup.preload import preload_ocr_runtime
 
     # Production ordering: the OCR runtime loads its native libraries before
     # Qt rewrites the process library search path.
     preload_ocr_runtime()
 
-    from hanly_app.capture_selector import _shared_application
-    from hanly_app.control_center import prepare_control_center_qt
+    from hanly_app.acquisition.selector import _shared_application
+    from hanly_app.control_center.bridge import prepare_control_center_qt
 
     prepare_control_center_qt()
     _report_qt_messages()

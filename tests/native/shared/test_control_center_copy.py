@@ -19,8 +19,8 @@ import json
 import threading
 import time
 
-from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_host import ControlCenterHost
+from hanly_app.control_center.bridge import ControlCenterBridge
+from hanly_app.control_center.host import ControlCenterHost
 
 REPORT_PREFIX = "COPY_REPORT "
 host = ControlCenterHost(ControlCenterBridge(), width=1080, height=760)

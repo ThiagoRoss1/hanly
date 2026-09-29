@@ -39,8 +39,8 @@ import json
 import sys
 import time
 
-from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_host import ControlCenterHost
+from hanly_app.control_center.bridge import ControlCenterBridge
+from hanly_app.control_center.host import ControlCenterHost
 
 REPORT_PREFIX = "LAYOUT_REPORT "
 WIDTHS = json.loads(sys.argv[1])

@@ -21,8 +21,9 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from hanly_app.control_center.bridge import ControlCenterUnavailable
+
 from .app_icon import APPLICATION_NAME, qt_icon
-from .control_center import ControlCenterUnavailable
 from .diagnostics import DiagnosticLog, install_qt_message_handler
 
 QT_PROGRAM_ARGUMENTS: tuple[str, ...] = ("hanly",)

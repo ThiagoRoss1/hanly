@@ -130,7 +130,7 @@ def test_the_lookup_child_builds_the_recognizer_it_was_told_to(tmp_path) -> None
 
     from hanly.easyocr_provider import EasyOCRConfig
     from hanly_app.config import OCRBackend
-    from hanly_app.lookup_process import LookupSettings, _ocr_provider_factory
+    from hanly_app.lookup.process import LookupSettings, _ocr_provider_factory
 
     def settings(backend: OCRBackend) -> LookupSettings:
         return LookupSettings(

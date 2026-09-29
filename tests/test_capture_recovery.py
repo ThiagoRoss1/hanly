@@ -12,7 +12,7 @@ from hanly import (
     Quad,
     ROIImage,
 )
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.capture_recovery import (
     EDGE_TOLERANCE_PIXELS,
     ClippedEdges,

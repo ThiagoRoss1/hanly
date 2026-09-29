@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
-from hanly_app.app_inventory import write_xattr
-from hanly_app.app_manifest import MATERIAL_XATTR_PREFIXES
+from hanly_app.updates.inventory import write_xattr
+from hanly_app.updates.manifest import MATERIAL_XATTR_PREFIXES
 
 #: Set by the CI jobs that exist to run the native suites, and by the build
 #: job that exists to run the packaged suite.

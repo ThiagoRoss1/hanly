@@ -17,10 +17,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from hanly_app.app_build_identity import BuildStamp
-from hanly_app.app_hup import package_asset_name
-from hanly_app.app_manifest import TreeManifest
-from hanly_app.update_service import DownloadProgress, ProgressCallback, RemoteResource
+from hanly_app.updates.build_identity import BuildStamp
+from hanly_app.updates.manifest import TreeManifest
+from hanly_app.updates.package import package_asset_name
+from hanly_app.updates.resource_service import DownloadProgress, ProgressCallback, RemoteResource
 
 from tests.hanly_fixtures.capabilities import MATERIAL_XATTRS
 from tests.hanly_fixtures.update_tree import (
@@ -257,7 +257,7 @@ def stamp_for(release: PublishedRelease) -> BuildStamp:
 
 
 def _difference(base: TreeManifest, target: TreeManifest) -> tuple[tuple[str, ...], ...]:
-    from hanly_app.app_manifest import tree_difference
+    from hanly_app.updates.manifest import tree_difference
 
     computed = tree_difference(base, target)
     return computed.changed_paths, computed.deleted_paths

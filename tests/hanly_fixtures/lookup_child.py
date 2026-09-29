@@ -17,8 +17,8 @@ from typing import Any
 
 from hanly import DictionaryEntry, OCRResult, PixelFormat, Point, Quad, ROIImage, TokenAnalysis
 from hanly.easyocr_provider import EasyOCRConfig
-from hanly_app.lookup_process import LookupSettings, _LookupChild
-from hanly_app.process_transport import Transport
+from hanly_app.lookup.process import LookupSettings, _LookupChild
+from hanly_app.lookup.transport import Transport
 
 #: A one-pixel ROI is enough: the fake OCR provider ignores the pixels.
 PIXEL = ROIImage(width=1, height=1, pixel_format=PixelFormat.RGB_888, data=b"\x00\x00\x00")

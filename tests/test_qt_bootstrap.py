@@ -9,7 +9,7 @@ from typing import Any
 
 import hanly_app.qt_bootstrap as qt_bootstrap
 import pytest
-from hanly_app.control_center import ControlCenterUnavailable
+from hanly_app.control_center.bridge import ControlCenterUnavailable
 from hanly_app.diagnostics import DiagnosticLog
 
 

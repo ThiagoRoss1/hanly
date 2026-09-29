@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 import zstandard
-from hanly_app.update_service import RemoteManifest
+from hanly_app.updates.resource_service import RemoteManifest
 
 from tests.hanly_fixtures.krdict import build_fixture_krdict
 from tools.krdict.package_resource import PackageError, package_database

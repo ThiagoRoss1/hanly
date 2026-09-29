@@ -416,7 +416,7 @@ def evaluate_ocr(
     """
 
     from hanly import PixelFormat, Point, ROIImage
-    from hanly_app.capture import _centered_region
+    from hanly_app.acquisition.capture import _centered_region
 
     width, height = ROI_SIZE
     outcomes = []
@@ -686,8 +686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             book, render_raster(book), _pixel_pipeline(args.database, args.backend)
         )
     if "direct" in paths:
-        from hanly_app.text_acquisition import DirectTextCoordinator
-        from hanly_app.text_acquisition_ax import AccessibilityTextProvider
+        from hanly_app.acquisition.ax import AccessibilityTextProvider
+        from hanly_app.acquisition.direct_text import DirectTextCoordinator
 
         coordinator = DirectTextCoordinator(AccessibilityTextProvider(), timeout_ms=200)
         outcomes += evaluate_direct(book, textedit_points(book), coordinator, language)

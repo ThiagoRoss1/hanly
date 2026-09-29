@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 import pytest
-from hanly_app.capture_selector import CaptureSelection, select_capture_area
+from hanly_app.acquisition.selector import CaptureSelection, select_capture_area
 from hanly_app.config import Theme
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication, QPushButton

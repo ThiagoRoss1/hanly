@@ -25,8 +25,8 @@ from hanly import (
 )
 from hanly.word_resolver import WordResolver
 from hanly_app.composition import LookupWorker
-from hanly_app.lookup_controller import LookupRequest
-from hanly_app.lookup_evidence import (
+from hanly_app.lookup.controller import LookupRequest
+from hanly_app.lookup.evidence import (
     EVIDENCE_SCHEMA_VERSION,
     decode_evidence,
     encode_morphology_evidence,

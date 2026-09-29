@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation
 from hanly_app.hotkeys import (
     HotkeyAction,
@@ -15,8 +15,8 @@ from hanly_app.hotkeys import (
     HotkeyEdgeHandler,
     HotkeyService,
 )
-from hanly_app.hover_lookup import HoverLookupRuntime
-from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.hover.lookup import HoverLookupRuntime
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
@@ -413,7 +413,7 @@ class _DirectText:
 
     def answer(self) -> None:
         from hanly import TextSelection
-        from hanly_app.text_acquisition import Acquisition, Outcome
+        from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
         assert self.deliver is not None
         self.deliver(

@@ -7,9 +7,8 @@ from typing import Any, cast
 
 import pytest
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
-from hanly_app import control_center
-from hanly_app.capture import ScreenRect
-from hanly_app.capture_selector import CaptureSelection
+from hanly_app.acquisition.capture import ScreenRect
+from hanly_app.acquisition.selector import CaptureSelection
 from hanly_app.config import (
     HOVER_DELAY_MAX_MS,
     HOVER_DELAY_MIN_MS,
@@ -19,7 +18,8 @@ from hanly_app.config import (
     ConfigManager,
     OCRBackend,
 )
-from hanly_app.control_center import (
+from hanly_app.control_center import bridge as control_center
+from hanly_app.control_center.bridge import (
     ControlCenterBridge,
     ControlCenterUnavailable,
     load_control_center_assets,
@@ -347,7 +347,7 @@ def test_the_delay_slider_is_given_the_bounds_python_actually_enforces(
 def test_the_installed_version_reaches_the_page_or_nothing_does() -> None:
     """The sidebar shows the running build, and shows nothing if it cannot."""
 
-    from hanly_app import control_center
+    from hanly_app.control_center import bridge as control_center
 
     version = control_center.ControlCenterBridge().get_state()["runtime"]["app_version"]
     assert version is None or isinstance(version, str)
@@ -1080,7 +1080,7 @@ def test_the_export_writes_a_shareable_report_beside_the_log(tmp_path: Path) -> 
 def test_two_exports_in_the_same_second_keep_both_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from hanly_app import control_center
+    from hanly_app.control_center import bridge as control_center
 
     monkeypatch.setattr(control_center, "_export_stamp", lambda: "20260928T000000Z")
     bridge, log, _log_path = _log_bridge(tmp_path)
@@ -1163,7 +1163,7 @@ def test_the_activity_tail_is_bounded_rather_than_appended_to() -> None:
     """The snapshot crosses a pipe on every poll, so an ever-growing log would
     make a long update slower the longer it ran."""
 
-    from hanly_app.update_coordinator import ACTIVITY_LIMIT
+    from hanly_app.updates.coordinator import ACTIVITY_LIMIT
 
     assert ACTIVITY_LIMIT <= 200
     javascript = load_control_center_assets().javascript

@@ -24,10 +24,32 @@ from typing import Any, Protocol, cast
 
 from hanly.resource_manager import ResourceManager
 
-from .app_build_identity import BuildStamp, ReceiptStore, read_build_stamp, receipt_store
-from .app_icon import tray_image
-from .app_manifest import PLATFORM_WINDOWS
-from .app_update import (
+from hanly_app.acquisition.capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
+from hanly_app.acquisition.selector import CaptureSelection, select_capture_area
+from hanly_app.control_center.bridge import (
+    RUNTIME_NOT_READY,
+    ControlCenterBridge,
+    ControlCenterUnavailable,
+)
+from hanly_app.control_center.process import (
+    ControlCenterProcess,
+    bridge_operations,
+)
+from hanly_app.lookup.controller import ResultDispatcher
+from hanly_app.updates.build_identity import (
+    BuildStamp,
+    ReceiptStore,
+    read_build_stamp,
+    receipt_store,
+)
+from hanly_app.updates.cleanup import (
+    CleanupReport,
+    OwnedWorkspace,
+    sweep_staging,
+    update_staging_locations,
+)
+from hanly_app.updates.coordinator import ApplicationInstall, UpdateCoordinator
+from hanly_app.updates.desktop_update import (
     APPLICATION_STEM,
     ApplicationInstaller,
     ApplicationUpdate,
@@ -37,22 +59,24 @@ from .app_update import (
     confirm_started_v2,
     installation_root,
 )
-from .app_update_install import (
+from hanly_app.updates.installer import (
     DifferentialUpdateError,
     PosixTreeStaging,
     TreeUpdateInstaller,
     WindowsFileStaging,
 )
-from .app_update_journal import AcknowledgementError
-from .app_update_runner import (
+from hanly_app.updates.journal import AcknowledgementError
+from hanly_app.updates.manifest import PLATFORM_WINDOWS
+from hanly_app.updates.resource_service import GitHubReleaseFetcher, ProgressCallback, UpdateService
+from hanly_app.updates.runner import (
     SettledUpdate,
     TreeUpdateRunner,
     describe_outcome,
     settle_native_update,
     settle_previous_update,
 )
-from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
-from .capture_selector import CaptureSelection, select_capture_area
+
+from .app_icon import tray_image
 from .config import (
     AppConfig,
     CaptureMode,
@@ -61,29 +85,13 @@ from .config import (
     HoverActivation,
     LookupPreload,
 )
-from .control_center import (
-    RUNTIME_NOT_READY,
-    ControlCenterBridge,
-    ControlCenterUnavailable,
-)
-from .control_center_process import (
-    ControlCenterProcess,
-    bridge_operations,
-)
 from .desktop_controller import DesktopController, DesktopState
 from .diagnostics import DiagnosticLog, StartupTimeline
 from .first_run import (
     persist_installed_resource,
     provision_runtime_config,
 )
-from .lookup_controller import ResultDispatcher
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
-from .owned_cleanup import (
-    CleanupReport,
-    OwnedWorkspace,
-    sweep_staging,
-    update_staging_locations,
-)
 from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
@@ -118,8 +126,6 @@ from .runtime_trace import RuntimeTraceSink
 from .signal_bridge import QtSignalBridge
 from .startup import StartupCoordinator
 from .tray import TrayService
-from .update_coordinator import ApplicationInstall, UpdateCoordinator
-from .update_service import GitHubReleaseFetcher, ProgressCallback, UpdateService
 
 #: How long a bridge-initiated capture selection may wait for the user.
 _SELECTION_TIMEOUT_SECONDS = 600.0
@@ -1151,7 +1157,7 @@ def run_desktop(
         with timeline.phase("qt bootstrap"):
             application = cast(QtApplication, ensure_qt_application(diagnostics=diagnostics))
 
-            from .qt_popup import QtResultDispatcher
+            from hanly_app.popup.qt import QtResultDispatcher
     except (ImportError, ControlCenterUnavailable) as error:
         raise DesktopApplicationError(
             "Hanly Desktop requires the hanly-app runtime extra with Qt6"

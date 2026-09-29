@@ -905,8 +905,8 @@ def test_a_weight_is_never_fetched_over_plain_http(
 def test_every_producer_and_consumer_names_the_same_release_products() -> None:
     """The builder, the release contract, and the updater must not drift apart."""
 
-    from hanly_app import app_update
-    from hanly_app.app_manifest import (
+    from hanly_app.updates import desktop_update as app_update
+    from hanly_app.updates.manifest import (
         MANIFEST_ASSET,
         UPDATE_METADATA_ASSET,
         delta_asset_name,
@@ -1084,8 +1084,8 @@ def test_neither_child_process_does_the_shell_s_work() -> None:
         "hotkeys.register",
     )
     children = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center_process.py",
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup_process.py",
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center" / "process.py",
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup" / "process.py",
     )
     for path in children:
         source = path.read_text(encoding="utf-8")

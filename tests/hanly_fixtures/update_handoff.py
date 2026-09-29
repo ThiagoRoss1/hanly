@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
-from hanly_app.app_update import APPLICATION_STEM, BUNDLE_NAME
-from hanly_app.app_update_handoff import (
+from hanly_app.updates.desktop_update import APPLICATION_STEM, BUNDLE_NAME
+from hanly_app.updates.handoff import (
     EXIT_WAIT_SECONDS,
     READY_WAIT_SECONDS,
     UpdateTransaction,

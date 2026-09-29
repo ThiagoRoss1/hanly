@@ -28,8 +28,8 @@ from hanly_app.config import (  # noqa: E402
     TechnicalDetailLevel,
     Theme,
 )
-from hanly_app.popup import PopupPosition  # noqa: E402
-from hanly_app.qt_popup import QtPopupView  # noqa: E402
+from hanly_app.popup.presentation import PopupPosition  # noqa: E402
+from hanly_app.popup.qt import QtPopupView  # noqa: E402
 from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QPixmap  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402

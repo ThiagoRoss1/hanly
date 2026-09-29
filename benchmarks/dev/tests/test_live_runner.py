@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from hanly import PixelFormat, Point, ROIImage
-from hanly_app.capture import (
+from hanly_app.acquisition.capture import (
     BackendCapture,
     BackendMonitor,
     CaptureResult,

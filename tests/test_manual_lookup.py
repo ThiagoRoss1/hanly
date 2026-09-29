@@ -15,14 +15,14 @@ from hanly import (
     Point,
     ROIImage,
 )
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.hotkeys import (
     HotkeyAction,
     HotkeyEdge,
     HotkeyEdgeHandler,
     HotkeyService,
 )
-from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import (
     ManualLookupRuntime,
     create_manual_lookup,
@@ -480,7 +480,7 @@ def test_qt_composition_shares_one_dispatcher_between_hotkeys_and_results(
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PyQt6.QtWidgets")
-    from hanly_app.qt_popup import QtResultDispatcher
+    from hanly_app.popup.qt import QtResultDispatcher
     from PyQt6.QtWidgets import QApplication
 
     application = QApplication.instance() or QApplication([])

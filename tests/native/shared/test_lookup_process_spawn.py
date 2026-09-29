@@ -39,8 +39,8 @@ from PIL import Image
 
 from hanly import PixelFormat, Point, ROIImage
 from hanly.easyocr_provider import EasyOCRConfig
-from hanly_app.lookup_controller import LookupRequest
-from hanly_app.lookup_process import LookupEngine, LookupSettings
+from hanly_app.lookup.controller import LookupRequest
+from hanly_app.lookup.process import LookupEngine, LookupSettings
 
 REPORT_PREFIX = "SPAWN_REPORT "
 HEAVY_MODULES = ("easyocr", "torch", "kiwipiepy")

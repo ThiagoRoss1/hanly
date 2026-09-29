@@ -38,24 +38,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hanly_app.app_build_identity import BUILD_STAMP_NAME, BuildStamp
-from hanly_app.app_hup import (
-    DELTA_FORMAT,
-    BundleDescriptor,
-    HupError,
-    HupIndex,
-    ManifestMember,
-    PlatformEntry,
-    ReleaseAsset,
-    ReleaseIdentity,
-    delta_payload_name,
-    manifest_member_name,
-    read_package,
-    write_package,
-)
-from hanly_app.app_hup import DeltaDescriptor as HupDelta
-from hanly_app.app_inventory import build_manifest, read_tree, write_installed_manifest
-from hanly_app.app_manifest import (
+from hanly_app.updates.build_identity import BUILD_STAMP_NAME, BuildStamp
+from hanly_app.updates.desktop_update import BUNDLE_IDENTIFIER
+from hanly_app.updates.inventory import build_manifest, read_tree, write_installed_manifest
+from hanly_app.updates.manifest import (
     MANIFEST_ASSET,
     PLATFORM_MACOS,
     PLATFORM_WINDOWS,
@@ -73,8 +59,22 @@ from hanly_app.app_manifest import (
     delta_asset_name,
     tree_difference,
 )
-from hanly_app.app_update import BUNDLE_IDENTIFIER
-from hanly_app.app_update_plan import delta_contents
+from hanly_app.updates.package import (
+    DELTA_FORMAT,
+    BundleDescriptor,
+    HupError,
+    HupIndex,
+    ManifestMember,
+    PlatformEntry,
+    ReleaseAsset,
+    ReleaseIdentity,
+    delta_payload_name,
+    manifest_member_name,
+    read_package,
+    write_package,
+)
+from hanly_app.updates.package import DeltaDescriptor as HupDelta
+from hanly_app.updates.plan import delta_contents
 
 PRODUCT = "hanly-desktop"
 PLATFORM = PLATFORM_WINDOWS

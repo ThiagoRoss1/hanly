@@ -30,8 +30,8 @@ from hanly_app.composition import (
     create_lookup_worker_factory,
 )
 from hanly_app.diagnostics import DiagnosticLog, StartupTimeline
-from hanly_app.job_executor import JobExecutor
-from hanly_app.lookup_controller import LookupRequest
+from hanly_app.lookup.controller import LookupRequest
+from hanly_app.lookup.executor import JobExecutor
 
 from tests.hanly_fixtures.krdict import build_fixture_krdict
 

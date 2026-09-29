@@ -1,0 +1,241 @@
+"""Session-scoped whole-monitor or drag-region selection for ``hanly run``."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from hanly_app.acquisition.capture import ScreenRect
+from hanly_app.config import CaptureMode, Theme
+
+
+class CaptureSelectorError(RuntimeError):
+    """Raised when the interactive capture selector cannot be shown."""
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureSelection:
+    """One launch-time capture choice; cancellation is represented by ``None``."""
+
+    capture_mode: CaptureMode
+    region: ScreenRect | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.capture_mode, CaptureMode):
+            raise TypeError("capture_mode must be a CaptureMode")
+        if self.capture_mode is CaptureMode.REGION:
+            if not isinstance(self.region, ScreenRect):
+                raise ValueError("region mode requires a screen region")
+        elif self.region is not None:
+            raise ValueError("whole-monitor mode cannot carry a region")
+
+    @classmethod
+    def whole_monitor(cls) -> CaptureSelection:
+        return cls(CaptureMode.FULL_MONITOR)
+
+    @classmethod
+    def for_region(cls, region: ScreenRect) -> CaptureSelection:
+        return cls(CaptureMode.REGION, region)
+
+
+def select_capture_area(theme: Theme = Theme.SYSTEM) -> CaptureSelection | None:
+    """Ask for a whole monitor or a snipping-style region.
+
+    The shared bootstrap owns the OCR-before-Qt ordering and the one
+    application object, so this works both before the desktop starts and from
+    the Qt thread of a running one.
+    """
+
+    QApplication, Prompt = _import_qt_widgets()
+    application = _shared_application(QApplication)
+    # Restored below: leaving this off would let the desktop keep running with
+    # no window after the main one is closed, which is the unreachable
+    # background process the tray fallback exists to prevent.
+    quit_on_last_window = application.quitOnLastWindowClosed()
+    application.setQuitOnLastWindowClosed(False)
+    try:
+        return _choose(application, Prompt, theme)
+    finally:
+        application.setQuitOnLastWindowClosed(quit_on_last_window)
+
+
+def _choose(
+    application: Any, Prompt: Any, theme: Theme = Theme.SYSTEM
+) -> CaptureSelection | None:
+    """Ask for a monitor or a region, and read back what was picked."""
+
+    prompt = Prompt(theme=theme)
+    prompt.setWindowTitle("Where should Hanly read?")
+    prompt.setText("Choose the area Hanly should watch. This is saved as a setting.")
+    whole_button = prompt.addButton(
+        "Whole monitor", Prompt.ButtonRole.AcceptRole
+    )
+    region_button = prompt.addButton(
+        "Select an area", Prompt.ButtonRole.ActionRole
+    )
+    cancel_button = prompt.addButton("Cancel", Prompt.ButtonRole.RejectRole)
+    prompt.exec()
+    clicked = prompt.clickedButton()
+    if clicked is cancel_button or clicked is None:
+        return None
+    if clicked is whole_button:
+        return CaptureSelection.whole_monitor()
+    if clicked is not region_button:
+        return None
+
+    region = _select_region(application)
+    return None if region is None else CaptureSelection.for_region(region)
+
+
+def _import_qt_widgets() -> tuple[Any, Any]:
+    """Import the Qt widgets this module needs, as a seam tests can fail.
+
+    Qt is an optional runtime extra, so its absence is a normal startup
+    condition rather than a crash. Isolating the import keeps that path
+    reachable from a test instead of only from a machine without Qt.
+    """
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+
+        from hanly_app.hanly_dialog import HanlyPrompt
+    except ImportError as error:
+        raise CaptureSelectorError("capture selection requires the Qt runtime") from error
+    return QApplication, HanlyPrompt
+
+
+def _shared_application(application_type: Any) -> Any:
+    """Return the one QApplication for this process, creating it if needed.
+
+    A genuinely missing Qt runtime is a normal startup condition here, so it
+    surfaces as Hanly's own error rather than as the bootstrap's.
+    """
+
+    from hanly_app.control_center.bridge import ControlCenterUnavailable
+    from hanly_app.qt_bootstrap import ensure_qt_application
+
+    try:
+        application = ensure_qt_application()
+    except ControlCenterUnavailable as error:
+        raise CaptureSelectorError("capture selection requires the Qt runtime") from error
+    if not isinstance(application, application_type):
+        raise CaptureSelectorError("capture selection requires the Qt runtime")
+    return application
+
+
+def _select_region(application: object) -> ScreenRect | None:
+    """Run the lazy Qt overlay and return global virtual-desktop coordinates."""
+
+    from PyQt6.QtCore import QPoint, QRect, Qt
+    from PyQt6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    from hanly_app.hanly_dialog import bring_to_front
+
+    if not isinstance(application, QApplication):
+        raise TypeError("application must be a QApplication")
+    screens = application.screens()
+    if not screens:
+        raise CaptureSelectorError("no screen is available for capture selection")
+    geometries = [screen.geometry() for screen in screens]
+    left = min(geometry.left() for geometry in geometries)
+    top = min(geometry.top() for geometry in geometries)
+    right = max(geometry.right() for geometry in geometries)
+    bottom = max(geometry.bottom() for geometry in geometries)
+
+    class RegionOverlay(QDialog):
+        def __init__(self) -> None:
+            flags = (
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.Tool
+                | Qt.WindowType.WindowStaysOnTopHint
+            )
+            super().__init__(None, flags)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            self.setGeometry(left, top, right - left + 1, bottom - top + 1)
+            self.origin: QPoint | None = None
+            self.selection: QRect | None = None
+            self.result_region: ScreenRect | None = None
+
+        def mousePressEvent(self, event: QMouseEvent | None) -> None:
+            if event is None:
+                return
+            if event.button() is Qt.MouseButton.RightButton:
+                self.reject()
+                return
+            if event.button() is Qt.MouseButton.LeftButton:
+                self.origin = event.position().toPoint()
+                self.selection = QRect(self.origin, self.origin)
+                self.update()
+
+        def mouseMoveEvent(self, event: QMouseEvent | None) -> None:
+            if event is None or self.origin is None:
+                return
+            self.selection = QRect(self.origin, event.position().toPoint()).normalized()
+            self.update()
+
+        def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:
+            if (
+                event is None
+                or event.button() is not Qt.MouseButton.LeftButton
+                or self.origin is None
+            ):
+                return
+            rectangle = QRect(self.origin, event.position().toPoint()).normalized()
+            if rectangle.width() < 2 or rectangle.height() < 2:
+                self.origin = None
+                self.selection = None
+                self.update()
+                return
+            global_rectangle = QRect(
+                self.x() + rectangle.x(),
+                self.y() + rectangle.y(),
+                rectangle.width(),
+                rectangle.height(),
+            )
+            if not any(geometry.contains(global_rectangle) for geometry in geometries):
+                self.origin = None
+                self.selection = None
+                self.update()
+                return
+            self.result_region = ScreenRect(
+                global_rectangle.x(),
+                global_rectangle.y(),
+                rectangle.width(),
+                rectangle.height(),
+            )
+            self.accept()
+
+        def keyPressEvent(self, event: QKeyEvent | None) -> None:
+            if event is None:
+                return
+            if event.key() == Qt.Key.Key_Escape:
+                self.reject()
+                return
+            super().keyPressEvent(event)
+
+        def paintEvent(self, _event: QPaintEvent | None) -> None:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor(10, 14, 18, 150))
+            if self.selection is not None:
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+                painter.fillRect(self.selection, Qt.GlobalColor.transparent)
+                painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+                painter.setPen(QPen(QColor(84, 208, 255), 2))
+                painter.drawRect(self.selection)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(
+                self.rect().adjusted(24, 24, -24, -24),
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter,
+                "Drag inside one monitor · Esc or right-click to cancel",
+            )
+
+    overlay = RegionOverlay()
+    overlay.show()
+    bring_to_front(overlay)
+    overlay.exec()
+    return overlay.result_region
+
+
+__all__ = ["CaptureSelection", "CaptureSelectorError", "select_capture_area"]

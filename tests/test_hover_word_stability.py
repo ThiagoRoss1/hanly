@@ -24,9 +24,9 @@ from hanly import (
     TextSelection,
 )
 from hanly_app import manual_lookup
-from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.acquisition.direct_text import Acquisition, Outcome
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import create_manual_lookup
-from hanly_app.text_acquisition import Acquisition, Outcome
 
 from tests.test_hover_lookup import (
     _ALWAYS_ACTIVE,

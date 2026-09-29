@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from hanly import ROIImage
-from hanly_app.capture import CaptureResult
-from hanly_app.lookup_evidence import EVIDENCE_FIELDS
+from hanly_app.acquisition.capture import CaptureResult
+from hanly_app.lookup.evidence import EVIDENCE_FIELDS
 
 from .easyocr_stages import COMPARISON_REPLAY, StagedRun, run_staged_easyocr
 from .frozen_lookup import DEFAULT_RING_SIZE, FreezeReport, FrozenLookup, LookupRing

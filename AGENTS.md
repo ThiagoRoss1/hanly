@@ -79,9 +79,9 @@ launch writes the per-user `runtime.json` and provisions `krdict` from
 - **Three processes:** the persistent shell (Qt Widgets, tray, hotkeys,
   capture, hover, popup, settings, updates, session log, the one event loop)
   imports neither Qt WebEngine nor the OCR runtime. `control_center_process.py`
-  spawns the window and `lookup_process.py` spawns the providers, both with
-  `multiprocessing.get_context("spawn")`; `process_transport.py` is the only
-  channel. `ocr_preload` runs inside the lookup child, never in the shell.
+  spawns the window and `lookup/process.py` spawns the providers, both with
+  `multiprocessing.get_context("spawn")`; `lookup/transport.py` is the only
+  channel. `lookup/preload.py` runs inside the lookup child, never in the shell.
 - **Readiness is not residency:** `RuntimeStatus` says whether a lookup can
   happen; `LookupEngine.state` says whether providers are loaded;
   `config.LookupPreload` decides which a launch pays for.

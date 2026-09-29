@@ -474,7 +474,7 @@ def production_capture_service(backend: Any | None = None) -> Any:
     measures a runtime the product does not ship.
     """
 
-    from hanly_app.capture import DEFAULT_ROI_GRID, CaptureService
+    from hanly_app.acquisition.capture import DEFAULT_ROI_GRID, CaptureService
 
     if backend is None:
         return CaptureService(roi_grid=DEFAULT_ROI_GRID)

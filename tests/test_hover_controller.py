@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 from hanly import Point
-from hanly_app.hover_controller import HoverController, HoverRequest
+from hanly_app.hover.controller import HoverController, HoverRequest
 
 
 class _Handle:

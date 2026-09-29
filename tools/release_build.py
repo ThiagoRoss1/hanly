@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from hanly_app.app_hup import HupError, read_package
+from hanly_app.updates.package import HupError, read_package
 
 API_ROOT = "https://api.github.com"
 APPLICATION_WORKFLOW = ".github/workflows/build.yml"

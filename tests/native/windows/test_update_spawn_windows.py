@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from time import monotonic, sleep
 
-from hanly_app.app_update_handoff import spawn_detached
+from hanly_app.updates.handoff import spawn_detached
 
 
 def _await(path: Path, timeout: float = 30.0) -> bool:
@@ -60,7 +60,7 @@ def test_a_spawned_helper_outlives_the_process_that_started_it(tmp_path: Path) -
             (
                 "import sys",
                 "from pathlib import Path",
-                "from hanly_app.app_update_handoff import spawn_detached",
+                "from hanly_app.updates.handoff import spawn_detached",
                 "marker = sys.argv[1]",
                 "spawn_detached(",
                 "    [",

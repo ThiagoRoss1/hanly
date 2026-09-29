@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from hanly_app.qt_popup import QtPopupView
+    from hanly_app.popup.qt import QtPopupView
     from PyQt6.QtWidgets import QApplication
 
 #: The directory whose adapters this host actually has.
@@ -63,7 +63,7 @@ def qt_application() -> QApplication:
 
 @pytest.fixture
 def popup_view(qt_application: QApplication) -> Iterator[QtPopupView]:
-    from hanly_app.qt_popup import QtPopupView
+    from hanly_app.popup.qt import QtPopupView
 
     popup = QtPopupView()
     yield popup

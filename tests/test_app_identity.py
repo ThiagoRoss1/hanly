@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 from hanly_app import app_icon
-from hanly_app.control_center import control_center_document
-from hanly_app.control_center_host import ControlCenterHost
+from hanly_app.control_center.bridge import control_center_document
+from hanly_app.control_center.host import ControlCenterHost
 from hanly_app.window_frame_win32 import FRAME_COLOURS, colorref
 
 ROOT = Path(__file__).parents[1]

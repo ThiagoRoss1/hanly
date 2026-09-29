@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from hanly import LookupResult, Point
 
-from .capture import ScreenRect
+from hanly_app.acquisition.capture import ScreenRect
 
 #: How close to the ROI edge a detected region must come to count as touching
 #: it, in ROI pixels.

@@ -33,22 +33,23 @@ from hanly.resource_manager import (
 )
 from hanly.vision_provider import VisionConfig, VisionProvider
 
-from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
-from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
-from .composition import create_lookup_controller as _create_in_process_controller
-from .config import OCRBackend
-from .diagnostics import StartupTimeline
-from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
-from .lookup_process import (
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.process import (
     DiagnosticReporter,
     LookupEngine,
     LookupSettings,
     StateReporter,
 )
-from .lookup_process import create_lookup_engine as _create_lookup_engine
-from .lookup_process import (
+from hanly_app.lookup.process import create_lookup_engine as _create_lookup_engine
+from hanly_app.lookup.process import (
     create_process_lookup_controller as _create_process_controller,
 )
+
+from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
+from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
+from .composition import create_lookup_controller as _create_in_process_controller
+from .config import OCRBackend
+from .diagnostics import StartupTimeline
 from .runtime_trace import RuntimeTraceSink
 
 

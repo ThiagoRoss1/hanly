@@ -31,12 +31,7 @@ from typing import Any
 from hanly.krdict_schema import KRDICTSchemaError, validate_krdict_connection
 from hanly.resource_manager import ResourceManager, ResourceMetadata, ResourceStatus
 
-from .runtime import (
-    KRDICT_RESOURCE_ID,
-    RuntimeConfigError,
-    load_resource_manager,
-)
-from .update_service import (
+from hanly_app.updates.resource_service import (
     DownloadProgress,
     GitHubReleaseFetcher,
     ProgressCallback,
@@ -45,6 +40,12 @@ from .update_service import (
     ResourceFetcher,
     UpdateService,
     UpdateServiceError,
+)
+
+from .runtime import (
+    KRDICT_RESOURCE_ID,
+    RuntimeConfigError,
+    load_resource_manager,
 )
 
 PUBLIC_REPOSITORY_OWNER = "ThiagoRoss1"

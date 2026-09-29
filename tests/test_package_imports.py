@@ -37,7 +37,7 @@ def test_importing_one_submodule_does_not_execute_the_desktop() -> None:
     import sys
 
     probe = (
-        "import sys, hanly_app.ocr_preload\n"
+        "import sys, hanly_app.lookup.preload\n"
         "loaded = sorted(m for m in sys.modules if m.startswith('hanly_app.'))\n"
         "print(','.join(loaded))\n"
     )
@@ -45,11 +45,12 @@ def test_importing_one_submodule_does_not_execute_the_desktop() -> None:
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     ).stdout.strip().split(",")
 
-    assert loaded == ["hanly_app.ocr_preload"]
+    assert loaded == ["hanly_app.lookup", "hanly_app.lookup.preload"]
 
 
 def test_a_submodule_is_still_importable_by_name_from_the_package() -> None:
-    from hanly_app import capture, composition
+    from hanly_app import composition
+    from hanly_app.acquisition import capture
 
-    assert capture.__name__ == "hanly_app.capture"
+    assert capture.__name__ == "hanly_app.acquisition.capture"
     assert composition.__name__ == "hanly_app.composition"

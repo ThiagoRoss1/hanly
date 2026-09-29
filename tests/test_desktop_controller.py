@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hanly_app.capture import ScreenRect
+from hanly_app.acquisition.capture import ScreenRect
 from hanly_app.config import AppConfig, CaptureMode
 from hanly_app.desktop_controller import DesktopController, DesktopState
 

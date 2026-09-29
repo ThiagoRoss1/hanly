@@ -13,7 +13,7 @@ from hanly import (
     Point,
     ROIImage,
 )
-from hanly_app.lookup_controller import LookupController, LookupRequest
+from hanly_app.lookup.controller import LookupController, LookupRequest
 
 _IMAGE = ROIImage(1, 1, PixelFormat.GRAYSCALE_8, b"\x00")
 _TARGET = Point(2, 3)

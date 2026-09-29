@@ -25,8 +25,8 @@ if __package__ in (None, ""):
     # is not on the path and ``tools.update_artifacts`` cannot be imported.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from hanly_app.app_build_identity import BuildStamp
-from hanly_app.app_manifest import TreeLayout, TreeManifest
+from hanly_app.updates.build_identity import BuildStamp
+from hanly_app.updates.manifest import TreeLayout, TreeManifest
 
 from tools.update_artifacts import (
     ArtifactError,

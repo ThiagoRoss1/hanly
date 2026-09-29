@@ -26,7 +26,7 @@ from hanly_app.application import (
     load_update_service,
 )
 from hanly_app.config import AppConfig, ConfigManager, HoverActivation
-from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailable
+from hanly_app.control_center.bridge import ControlCenterBridge, ControlCenterUnavailable
 from hanly_app.desktop_controller import DesktopState
 from hanly_app.hotkeys import HotkeyAction
 from hanly_app.permissions import (
@@ -1267,7 +1267,7 @@ def test_a_second_area_request_while_choosing_changes_nothing(
 ) -> None:
     """The Control Center can be clicked again while the prompt is open."""
 
-    from hanly_app.capture_selector import CaptureSelection
+    from hanly_app.acquisition.selector import CaptureSelection
 
     pending: queue.Queue[Callable[[], None]] = queue.Queue()
     session, _ = _session(tmp_path, pending)

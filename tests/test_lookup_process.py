@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 from hanly import LookupStatus, PixelFormat, Point, ROIImage
 from hanly.errors import LookupCancelled
-from hanly_app.lookup_controller import LookupRequest
-from hanly_app.lookup_process import (
+from hanly_app.lookup.controller import LookupRequest
+from hanly_app.lookup.process import (
     LookupEngine,
     LookupProcessError,
     LookupSettings,
