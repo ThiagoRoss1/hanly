@@ -81,3 +81,86 @@ mechanical path repairs in Part 1.
 
 Stop here for human review authorization. No Phase B review, push, merge, or
 release is implied by this handoff.
+
+## Post-Bundle Review Outcome — Phase B Part 1
+
+Reviewer: Codex, authorized by the human on 2026-09-29. Scope: general
+codebase and macOS only. Status: **conditionally accepted for Part 1**. No
+confirmed executable regression was found in the three Phase A commits. This
+is not a Windows verdict or a release approval.
+
+### Fixed now
+
+- `971a183` corrects the current `AGENTS.md` and `CLAUDE.md` spawn-module path
+  to `control_center/process.py`. A package-walker regression test now checks
+  that the relocated Control Center, lookup, transport, and updater modules are
+  discoverable by name. The six package-import tests pass.
+
+### Deferred considerations and revisit triggers
+
+- **Windows Part 2:** The latest Windows CI run, as supplied by the human, had
+  one failure: the prompt case in `test_capture_prompt_shutdown.py` took
+  **3.344 s** against a **3 s** limit. An earlier run failed differently. Diagnose
+  on a Windows PC before changing a selector, timeout, or shutdown path. No
+  Windows fix or native validation was attempted here.
+- **macOS GUI:** Native WebEngine cases fail with sandbox-denied Chromium Mach
+  port registration, and the reconstructed frozen UI self-check aborts while
+  creating `QWebEngineProfile`. The user's 16:42 crash report is the frozen
+  test's `hanly-desktop` PID 35165, parented by Python, with `SIGABRT` on the
+  Qt WebEngine/AppKit stack. Revisit on an unrestricted visible macOS session
+  before claiming the Control Center works from this build.
+- **macOS disk image:** The fresh build produced a ZIP, but `hdiutil create`
+  returned “device not configured.” Revisit DMG creation and reconstruction on
+  a host where disk-image devices are available. Do not treat the ZIP check as
+  DMG validation.
+
+### Dismissed with evidence
+
+- The four portable failures are present at `5c510e5` as well as the reviewed
+  branch: two `ps` probes receive sandbox `Operation not permitted`, and two
+  Vision image fixtures return no regions. They are not Phase A regressions.
+  The macOS handoff test's empty launch list also reproduces at `5c510e5`.
+- The root package exports the same 109 names as `5c510e5`; every export
+  resolves to its defining relocated module. The single CLI entry point still
+  runs `multiprocessing.freeze_support()` first. Source searches found no
+  executable references to removed module names or `capture_recovery`; the
+  latter had no production caller and its removed tests covered only itself.
+  Both child managers still use `lookup/transport.py` and `spawn`.
+- Comment changes in the third commit have the same non-comment Python syntax
+  trees. The three generated updater script constants differ only in comment
+  lines; their non-comment lines are byte-identical. No executable behavior
+  change was found there.
+- A scan of 134 tracked Markdown files found 73 relative links outside code
+  fences and no missing targets. Two privacy-pattern hits are illustrative
+  `C:\\Users\\John Smith` and `C:\\Users\\First Last` paths in a historical
+  PowerShell finding, not personal home paths. Historical reports retain old
+  source filenames as dated evidence.
+
+### Validation performed
+
+| Check | Result |
+| --- | --- |
+| Focused imports, packaging, CI, capture, application, process tests | 365 passed |
+| Package-import tests after the review test | 6 passed |
+| Ruff; mypy | Clean; mypy checked 305 source files |
+| Portable suite after the review test | 2,357 passed, 4 failed, 3 skipped in 93.36 s; all four failures reproduced directly from `5c510e5` |
+| Native suite with Qt offscreen | Interrupted after 249.45 s: 43 passed, 6 failed, 2 skipped. Five failures involve denied `ps` or Qt WebEngine startup; the macOS handoff failure reproduces at `5c510e5` (69.35 s). The next native test did not complete. |
+| Focused native capture-prompt shutdown and lookup spawn | 2 passed, 1 skipped |
+| Fresh macOS freeze from `28dfd89` | PyInstaller bundle and 529 MiB ZIP built; embedded source stamp `28dfd890a360597ec9a892c2295246dc297fff41`. Initial attempt hit the sandboxed default cache; retry used `PYINSTALLER_CONFIG_DIR` under `/private/tmp`. DMG failed as above. The later review commit changes only docs and a test. |
+| ZIP reconstruction; frozen inventory; signature; frozen CLI help | Passed on the reconstructed app |
+| Packaged suite on reconstructed ZIP | Inventory, source identity, and isolated worker checks: 3 passed. Control Center UI check: 1 failed with `SIGABRT` in this sandbox. |
+
+### Windows Part 2 checklist
+
+1. On the Windows PC, inspect this branch and the prior Windows CI logs. Keep
+   the 3.344 s prompt case and the earlier, different failure separate.
+2. Run the portable, focused shutdown, and full native Windows suites; observe
+   the prompt's elapsed time and quit callback under a real window server.
+3. Verify relocated imports and spawn targets in a fresh frozen Windows build;
+   run inventory, worker, Control Center UI, and packaged tests against that
+   build. Check the release workflow's `updates.resource_service` import.
+4. Classify any reproducible Windows defect, add a regression test, and make a
+   Windows-only correction in Part 2. Do not infer a fix from macOS offscreen
+   results.
+
+Part 1 stops at this handoff. Nothing was pushed, merged, tagged, or released.
