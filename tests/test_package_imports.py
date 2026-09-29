@@ -1,6 +1,7 @@
 """Smoke tests for the two independently installable distributions."""
 
 import importlib
+import pkgutil
 
 
 def test_hanly_imports() -> None:
@@ -54,3 +55,19 @@ def test_a_submodule_is_still_importable_by_name_from_the_package() -> None:
 
     assert capture.__name__ == "hanly_app.acquisition.capture"
     assert composition.__name__ == "hanly_app.composition"
+
+
+def test_relocated_process_modules_are_discoverable_for_packaging() -> None:
+    import hanly_app
+
+    discovered = {
+        module.name for module in pkgutil.walk_packages(hanly_app.__path__, "hanly_app.")
+    }
+
+    assert {
+        "hanly_app.control_center.process",
+        "hanly_app.lookup.preload",
+        "hanly_app.lookup.process",
+        "hanly_app.lookup.transport",
+        "hanly_app.updates.installer",
+    } <= discovered
