@@ -189,11 +189,17 @@ was pushed, merged, tagged, published or dispatched.
   5. `656dae3` fix: measure the stages and processes each benchmark mode claims
   6. `c8a29ea` refactor: remove dead code, load package exports lazily, declare
      pyobjc
-  7. docs: reconcile documentation with the V1 product and record the cleanup
-     wave. This handoff, the audit report and the brief are in it; its hash is
-     recorded by the next commit.
-  8. docs: record the cleanup wave's commit identities (this section's final
-     state).
+  7. `b8df026` docs: reconcile documentation with the V1 product and record the
+     cleanup wave (includes this handoff, the audit report and the brief)
+  8. docs: record the cleanup wave's branch, commits and final validation (the
+     commit that adds this list; `git log -1 clean/arch-optimization`)
+- Worktree after commit 8: clean.
+- Gates re-run on `b8df026`, the branch head before this record, in the
+  repository `.venv` (Python 3.13.11):
+  - ruff: clean;
+  - mypy: no issues in 301 files;
+  - portable: 2,369 passed, 2 skipped;
+  - native: 123 passed.
 - Staging:
   - Files mixing two concerns (`composition.py`, `live_runner.py` and
     parts of `probes.py`/`cli.py`/`test_probes.py`) were staged by hunk, so
