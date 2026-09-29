@@ -545,6 +545,22 @@ def test_an_ordinary_trace_sink_leaves_evidence_off_in_the_child(
 
     assert spawned.trace is True
     assert spawned.trace_evidence is False
+    assert spawned.trace_geometry is False
+
+
+def test_a_sink_that_draws_region_boxes_says_so_to_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The HUD schematic draws boxes the child's OCR wrapper must encode."""
+
+    class _GeometrySink(_PlainSink):
+        retain_geometry = True
+
+    RecordingProviders().install(monkeypatch)
+    spawned = _spawned_settings(_GeometrySink())
+
+    assert spawned.trace_geometry is True
+    assert spawned.trace_evidence is False
 
 
 def test_tracing_disabled_carries_neither_flag(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -553,6 +569,7 @@ def test_tracing_disabled_carries_neither_flag(monkeypatch: pytest.MonkeyPatch) 
 
     assert spawned.trace is False
     assert spawned.trace_evidence is False
+    assert spawned.trace_geometry is False
 
 
 def test_a_slow_load_is_observable_as_preparing_then_ready(

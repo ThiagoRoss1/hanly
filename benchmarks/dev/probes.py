@@ -336,6 +336,7 @@ class ProcessSampler:
         process: Any | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Any] = time.sleep,
+        append: bool = False,
     ) -> None:
         if interval_seconds < 0:
             raise ValueError("interval_seconds must be non-negative")
@@ -347,6 +348,9 @@ class ProcessSampler:
         self.process = process
         self.clock = clock
         self.sleep = sleep
+        #: A later window continues an existing file rather than replacing the
+        #: samples an earlier window in the same run already wrote.
+        self.append = append
 
     def _resolve_process(self) -> Any | None:
         if self.process is not None:
@@ -378,10 +382,15 @@ class ProcessSampler:
         except Exception:
             return None, None
 
-    def _open_output(self) -> tuple[TextIO, bool]:
+    def _open_output(self) -> tuple[TextIO, bool, bool]:
+        """Return the stream, whether to close it, and whether to write a header."""
+
         if hasattr(self.output, "write"):
-            return cast(TextIO, self.output), False
-        return Path(self.output).open("w", encoding="utf-8", newline=""), True
+            return cast(TextIO, self.output), False, True
+        path = Path(self.output)
+        continuing = self.append and path.exists() and path.stat().st_size > 0
+        stream = path.open("a" if continuing else "w", encoding="utf-8", newline="")
+        return stream, True, not continuing
 
     def run(self, duration_seconds: float) -> int:
         """Sample immediately and continue no longer than the configured cap."""
@@ -389,10 +398,11 @@ class ProcessSampler:
             raise ValueError("duration_seconds must be non-negative")
 
         duration = min(float(duration_seconds), self.max_window_seconds)
-        stream, close_stream = self._open_output()
+        stream, close_stream, header = self._open_output()
         writer = csv.writer(stream, lineterminator="\n")
-        writer.writerow(("timestamp", "cpu_percent", "rss_bytes"))
-        stream.flush()
+        if header:
+            writer.writerow(("timestamp", "cpu_percent", "rss_bytes"))
+            stream.flush()
 
         process = self._resolve_process()
         deadline = self.clock() + duration

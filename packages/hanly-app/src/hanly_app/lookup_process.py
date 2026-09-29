@@ -116,6 +116,9 @@ class LookupSettings:
     #: the child builds its own tracing wrappers and cannot see what kind of
     #: sink the parent attached.
     trace_evidence: bool = False
+    #: Whether the OCR report carries region boxes: coordinates only, never
+    #: text or pixels, for the developer HUD's schematic.
+    trace_geometry: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.krdict_path, Path):
@@ -709,6 +712,8 @@ def create_lookup_engine(
             trace=replay is not None,
             trace_evidence=replay is not None
             and getattr(trace_sink, "retain_evidence", False) is True,
+            trace_geometry=replay is not None
+            and getattr(trace_sink, "retain_geometry", False) is True,
         ),
         preload=preload,
         spawn=spawn,
@@ -944,7 +949,9 @@ class _LookupChild:
                 ocr_backend=settings.ocr_backend.value,
                 trace_sink=(
                     _ChildTraceSink(
-                        self._transport, retain_evidence=settings.trace_evidence
+                        self._transport,
+                        retain_evidence=settings.trace_evidence,
+                        retain_geometry=settings.trace_geometry,
                     )
                     if settings.trace
                     else None
@@ -996,14 +1003,21 @@ class _LookupChild:
 class _ChildTraceSink:
     """Forward the child's stage events to the developer sink in the parent.
 
-    ``retain_evidence`` is the parent's answer, carried across the spawn: the
-    tracing wrappers this child builds read it to decide whether to encode the
-    private diagnostic structures at all.
+    ``retain_evidence`` and ``retain_geometry`` are the parent sink's answers,
+    carried across the spawn: the tracing wrappers this child builds read them
+    to decide what to encode at all.
     """
 
-    def __init__(self, transport: Transport, *, retain_evidence: bool = False) -> None:
+    def __init__(
+        self,
+        transport: Transport,
+        *,
+        retain_evidence: bool = False,
+        retain_geometry: bool = False,
+    ) -> None:
         self._transport = transport
         self.retain_evidence = retain_evidence
+        self.retain_geometry = retain_geometry
 
     def emit(self, event: Mapping[str, JSONPrimitive]) -> object:
         try:

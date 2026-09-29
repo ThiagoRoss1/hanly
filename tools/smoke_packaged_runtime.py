@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -215,7 +216,7 @@ def inspect_bundle(application_directory: str | Path) -> BundleInventory:
     if root.suffix == ".app":
         # An application without one is not installable by Hanly's own updater,
         # and PyInstaller only warns when it could not sign the bundle.
-        signature = root / "Contents" / "_CodeSignature" / "CodeResources"
+        signature = root / BUNDLE_SIGNATURE
         (present if signature.is_file() else missing).append(BUNDLE_SIGNATURE)
 
     return BundleInventory(root, tuple(present), tuple(missing))
@@ -258,7 +259,14 @@ def run_packaged_self_check(
         timed_out = False
         with output.open("w", encoding="utf-8") as out, errors.open("w", encoding="utf-8") as err:
             child = subprocess.Popen(
-                command, stdout=out, stderr=err, env=environment, cwd=working_directory
+                command,
+                stdout=out,
+                stderr=err,
+                env=environment,
+                cwd=working_directory,
+                # Its own process group, so a timeout can reach every process
+                # the bundle started and not only the one launched here.
+                start_new_session=sys.platform != "win32",
             )
             try:
                 status = child.wait(timeout=timeout)
@@ -304,7 +312,10 @@ def _terminate_tree(child: subprocess.Popen[bytes]) -> None:
         except (OSError, subprocess.TimeoutExpired):
             child.kill()
     else:
-        child.kill()
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except OSError:
+            child.kill()
 
     try:
         child.wait(timeout=TREE_KILL_SECONDS)
@@ -642,30 +653,15 @@ def reconstruct_from_disk_image(
         shutil.rmtree(target)
     target.mkdir(parents=True)
 
-    with tempfile.TemporaryDirectory(prefix="hanly-dmg-") as scratch:
-        mountpoint = Path(scratch) / "mount"
-        mountpoint.mkdir()
+    with _mounted_disk_image(source, runner) as mountpoint:
+        application = mountpoint / payload_name
+        if not application.is_dir():
+            raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
         _run_native(
             runner,
-            [HDIUTIL, "attach", str(source), "-readonly", "-nobrowse", "-mountpoint",
-             str(mountpoint)],
-            f"could not mount {source.name}",
+            [DITTO, str(application), str(target / payload_name)],
+            f"could not copy {payload_name} out of {source.name}",
         )
-        try:
-            application = mountpoint / payload_name
-            if not application.is_dir():
-                raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
-            _run_native(
-                runner,
-                [DITTO, str(application), str(target / payload_name)],
-                f"could not copy {payload_name} out of {source.name}",
-            )
-        finally:
-            _run_native(
-                runner,
-                [HDIUTIL, "detach", str(mountpoint), "-force"],
-                f"could not unmount {source.name}",
-            )
 
     copied = target / payload_name
     if not copied.joinpath(*_BUNDLE_PROGRAM_PARTS).is_file():
@@ -712,38 +708,44 @@ def verify_disk_image(
     """
 
     source = Path(image).resolve()
+    with _mounted_disk_image(source, runner) as mountpoint:
+        program = (mountpoint / payload_name).joinpath(*_BUNDLE_PROGRAM_PARTS)
+        return {
+            "image": source.name,
+            "application": payload_name,
+            "ok": program.is_file(),
+            "contents": sorted(item.name for item in mountpoint.iterdir()),
+        }
+
+
+@contextmanager
+def _mounted_disk_image(source: Path, runner: CommandRunner) -> Iterator[Path]:
+    """Attach ``source`` read-only at a private mount point, always detaching it.
+
+    A detach failure while another error is already on its way out is reported
+    on stderr instead of replacing that error, which is the one that explains
+    the run.
+    """
+
     with tempfile.TemporaryDirectory(prefix="hanly-dmg-") as scratch:
         mountpoint = Path(scratch) / "mount"
         mountpoint.mkdir()
         _run_native(
             runner,
-            [
-                HDIUTIL,
-                "attach",
-                str(source),
-                "-readonly",
-                "-nobrowse",
-                "-mountpoint",
-                str(mountpoint),
-            ],
+            [HDIUTIL, "attach", str(source), "-readonly", "-nobrowse", "-mountpoint",
+             str(mountpoint)],
             f"could not mount {source.name}",
         )
+        detach = [HDIUTIL, "detach", str(mountpoint), "-force"]
         try:
-            application = mountpoint / payload_name
-            program = application.joinpath(*_BUNDLE_PROGRAM_PARTS)
-            report = {
-                "image": source.name,
-                "application": payload_name,
-                "ok": program.is_file(),
-                "contents": sorted(item.name for item in mountpoint.iterdir()),
-            }
-        finally:
-            _run_native(
-                runner,
-                [HDIUTIL, "detach", str(mountpoint), "-force"],
-                f"could not unmount {source.name}",
-            )
-    return report
+            yield mountpoint
+        except BaseException:
+            try:
+                _run_native(runner, detach, f"could not unmount {source.name}")
+            except RuntimeError as detach_failure:
+                print(f"warning: {detach_failure}", file=sys.stderr)
+            raise
+        _run_native(runner, detach, f"could not unmount {source.name}")
 
 
 def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None:

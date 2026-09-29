@@ -96,6 +96,19 @@ def test_process_sampler_writes_flushed_csv_with_a_bounded_window() -> None:
     assert output.getvalue().endswith("\n")
 
 
+def test_a_later_window_continues_the_file_instead_of_replacing_it(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "process.csv"
+
+    first = ProcessSampler(output).run(0)
+    second = ProcessSampler(output, append=True).run(0)
+
+    rows = list(csv.DictReader(output.open(encoding="utf-8")))
+    assert len(rows) == first + second == 2
+    assert output.read_text(encoding="utf-8").count("timestamp") == 1
+
+
 def test_package_analyzer_reports_exact_family_and_large_component_sizes(tmp_path: Path) -> None:
     files = {
         "easyocr/payload.bin": b"1234",

@@ -10,20 +10,23 @@ is to accidentally pay for a stage the mode claims not to run.
 Four modes, and each reports honestly on the stages its provider does not
 expose. Apple Vision has no separately addressable detector, so asking it for
 detection-only geometry gets `unavailable` rather than a fabricated box.
+`detection-only` never calls the recognizer. `recognition-only` still has to
+detect to find its crops, but detection is timed apart and excluded from its
+total, so each mode's total is the stage it names.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from hanly import OCRProvider, OCRResult, PixelFormat, Point, ROIImage
+from hanly import OCRProvider, OCRResult, PixelFormat, Point, Quad, ROIImage
 
 from .corpus import Corpus, CorpusCase, validate_case_geometry
-from .easyocr_stages import COMPARISON_REPLAY, STAGED_DIAGNOSTIC, run_staged_easyocr
+from .easyocr_stages import STAGED_DIAGNOSTIC, run_staged_easyocr
 from .ocr_metrics import Metric, Region, aggregate, score_case
 
 #: What a run can be asked to do.
@@ -234,6 +237,7 @@ def run_campaign(
     initialized = current_rss()
     reader = reader_factory() if reader_factory is not None else None
 
+    steady = None
     try:
         for case in corpus.cases:
             image = load_case_image(case)
@@ -254,6 +258,8 @@ def run_campaign(
                 )
                 repeats.append(result.text)
                 report.results.append(result)
+        # Sampled while the provider is still resident: that is what steady means.
+        steady = current_rss()
     finally:
         _close(provider)
         _close(reader)
@@ -261,7 +267,7 @@ def run_campaign(
     report.memory = MemoryEvidence(
         baseline_rss=baseline,
         initialized_rss=initialized,
-        steady_rss=current_rss(),
+        steady_rss=steady,
         peak_rss=peak_rss(),
         baseline_peak_rss=baseline_peak,
     )
@@ -351,35 +357,50 @@ def _recognize(
     """Run whichever stages the requested mode actually covers."""
 
     if mode in (OCR_ONLY, FROZEN_REPLAY):
+        # The provider is one call, so neither stage has a time of its own.
         regions = tuple(provider.recognize(image))
         return (
             regions,
             StageTimings(total_ns=time.perf_counter_ns() - started),
-            ("detection_stage", "recognition_stage") if mode == OCR_ONLY else (),
+            ("detection_stage", "recognition_stage"),
         )
 
     if reader is None:
         raise OCRBenchmarkError(f"{mode} needs an EasyOCR reader")
-    staged = run_staged_easyocr(
-        reader,
-        image,
-        evidence_class=STAGED_DIAGNOSTIC if mode != FROZEN_REPLAY else COMPARISON_REPLAY,
-    )
+    if mode == DETECTION_ONLY:
+        # Geometry only: the recognizer never runs, so no transcription score
+        # can be read off a mode that did not claim to measure one.
+        detected = run_staged_easyocr(
+            reader, image, evidence_class=STAGED_DIAGNOSTIC, recognize=False
+        )
+        regions = tuple(
+            OCRResult(text="", confidence=0.0, quad=quad)
+            for quad in (_detected_quad(region.quad) for region in detected.regions)
+            if quad is not None
+        )
+        return (
+            regions,
+            StageTimings(total_ns=detected.total_ns, detection_ns=detected.detection_ns),
+            ("transcription", "recognition_stage"),
+        )
+
+    staged = run_staged_easyocr(reader, image, evidence_class=STAGED_DIAGNOSTIC)
     timings = StageTimings(
-        total_ns=staged.total_ns,
+        total_ns=staged.recognition_ns + staged.normalization_ns,
         detection_ns=staged.detection_ns,
         recognition_ns=staged.recognition_ns,
         normalization_ns=staged.normalization_ns,
     )
-    if mode == DETECTION_ONLY:
-        # Geometry only: the text is deliberately dropped so no transcription
-        # score can be read off a mode that did not claim to measure one.
-        regions = tuple(
-            OCRResult(text="", confidence=0.0, quad=result.quad)
-            for result in staged.normalized
-        )
-        return regions, timings, ("transcription",)
     return tuple(staged.normalized), timings, ()
+
+
+def _detected_quad(points: Sequence[tuple[float, float]]) -> Quad | None:
+    """The detector's corners as a contract quad; a degenerate box has none."""
+
+    try:
+        return Quad(*(Point(x, y) for x, y in points))
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolved_surface(case: CorpusCase, regions: Sequence[OCRResult]) -> str | None:
@@ -464,13 +485,6 @@ def _close(candidate: Any) -> None:
             pass
 
 
-def iter_case_images(corpus: Corpus) -> Iterable[tuple[CorpusCase, ROIImage]]:
-    """Decode every case once, for a caller that wants them all in hand."""
-
-    for case in corpus.cases:
-        yield case, load_case_image(case)
-
-
 __all__ = [
     "BACKENDS",
     "DETECTION_ONLY",
@@ -486,7 +500,6 @@ __all__ = [
     "OCRBenchmarkError",
     "StageTimings",
     "current_rss",
-    "iter_case_images",
     "peak_rss",
     "load_case_image",
     "run_campaign",

@@ -839,6 +839,9 @@ def _resource_summary(samples: Sequence[Mapping[str, Any]], phase: str) -> dict[
         return result
 
     return {
+        # The sampler reads its own process. The lookup child, where the OCR
+        # models live, is a separate process and is not in these numbers.
+        "scope": "benchmark_shell_process_only",
         "sample_count": len(selected),
         "cpu_percent": numeric_summary(values("cpu_percent")),
         "rss_bytes": numeric_summary(values("rss_bytes")),

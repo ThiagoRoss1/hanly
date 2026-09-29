@@ -391,7 +391,9 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                     report(
                         f"observing resident-provider idle state for {args.idle_seconds:g}s"
                     )
-                    ProcessSampler(run_dir / "process.csv").run(args.idle_seconds)
+                    ProcessSampler(run_dir / "process.csv", append=True).run(
+                        args.idle_seconds
+                    )
                 results = run_lookup_campaign(
                     pipeline,
                     image,
@@ -745,8 +747,8 @@ def run_real_hover(args: argparse.Namespace) -> int:
     latest_result: list[Any] = []
     current: dict[str, Any] = {}
 
-    # Match production startup ordering: prepare the OCR native runtime before
-    # importing Qt, then use the real popup widget and process its paint event.
+    # OCR runs in this process here, unlike the desktop, so its native runtime
+    # is prepared before Qt exactly as the lookup child prepares its own.
     from hanly_app.ocr_preload import preload_ocr_runtime
 
     preload_ocr_runtime()

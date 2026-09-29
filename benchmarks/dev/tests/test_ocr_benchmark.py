@@ -91,8 +91,14 @@ class _Provider:
 # --- No mode wakes the rest of the pipeline ---------------------------------
 
 
-def test_no_mode_constructs_kiwi_or_krdict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A morphology or dictionary provider would be paid for and never used."""
+def test_an_ocr_campaign_constructs_neither_kiwi_nor_krdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A morphology or dictionary provider would be paid for and never used.
+
+    Run through OCR_ONLY; the staged modes are pinned separately to the stages
+    they run, and no mode has a route to either provider.
+    """
 
     constructed: list[str] = []
 
@@ -188,6 +194,93 @@ def test_a_staged_mode_needs_a_reader(tmp_path: Path) -> None:
     )
 
     assert all("needs an EasyOCR reader" in (result.error or "") for result in report.results)
+
+
+class _StagedReader:
+    """EasyOCR's call shape, counting how often each stage runs."""
+
+    def __init__(self) -> None:
+        self.detections = 0
+        self.recognitions = 0
+
+    def detect(self, _image: Any, **_kwargs: Any) -> tuple[list[Any], list[Any]]:
+        self.detections += 1
+        return [[[4, 76, 6, 20]]], [[]]
+
+    def recognize(self, _grey: Any, horizontal_list: Any = None, **_kwargs: Any) -> Any:
+        self.recognitions += 1
+        left, right, top, bottom = horizontal_list[0]
+        corners = [[left, top], [right, top], [right, bottom], [left, bottom]]
+        return [(corners, "책을", 0.9)]
+
+
+def test_detection_only_runs_no_recognition_and_scores_no_transcription(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("easyocr.utils", reason="the staged runner needs EasyOCR")
+    reader = _StagedReader()
+
+    report = run_campaign(
+        _corpus(tmp_path),
+        mode=DETECTION_ONLY,
+        backend=EASYOCR,
+        provider_factory=_Provider,
+        reader_factory=lambda: reader,
+        warmup=0,
+        samples=2,
+    )
+
+    assert reader.detections == 3
+    assert reader.recognitions == 0
+    assert all(result.error is None for result in report.results)
+    assert all(result.timings.recognition_ns is None for result in report.results)
+    assert all("transcription" in result.unavailable for result in report.results)
+
+
+def test_recognition_only_excludes_detection_from_its_total(tmp_path: Path) -> None:
+    pytest.importorskip("easyocr.utils", reason="the staged runner needs EasyOCR")
+
+    report = run_campaign(
+        _corpus(tmp_path),
+        mode=RECOGNITION_ONLY,
+        backend=EASYOCR,
+        provider_factory=_Provider,
+        reader_factory=_StagedReader,
+        warmup=0,
+        samples=1,
+    )
+
+    for result in report.results:
+        timings = result.timings
+        assert timings.recognition_ns is not None and timings.normalization_ns is not None
+        assert timings.total_ns == timings.recognition_ns + timings.normalization_ns
+
+
+def test_steady_memory_is_sampled_while_the_provider_is_still_resident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.dev import ocr_benchmark
+
+    provider = _Provider()
+    samples: list[bool] = []
+
+    def sample() -> int:
+        samples.append(provider.closed)
+        return 1
+
+    monkeypatch.setattr(ocr_benchmark, "current_rss", sample)
+
+    run_campaign(
+        _corpus(tmp_path),
+        mode=OCR_ONLY,
+        backend=VISION,
+        provider_factory=lambda: provider,
+        warmup=0,
+        samples=1,
+    )
+
+    # Baseline, initialized, then steady: none of them after the close.
+    assert samples == [False, False, False]
 
 
 # --- Conditions and timings -------------------------------------------------

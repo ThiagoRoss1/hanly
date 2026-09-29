@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from time import perf_counter_ns
 from typing import Any
@@ -14,6 +14,7 @@ from hanly import (
     OCRResult,
     Point,
     ROIImage,
+    TargetResolution,
     TokenAnalysis,
 )
 from hanly.providers import DictionaryProvider, MorphologyProvider, OCRProvider
@@ -140,6 +141,17 @@ class _ObservedResolver:
     def __init__(self, resolver: TargetResolver, owner: ObservedLookupPipeline) -> None:
         self._resolver = resolver
         self._owner = owner
+        # The pipeline prefers the detailed API when a resolver has one, and
+        # only it carries the pointer's offset into the word. Mirroring exactly
+        # what the wrapped resolver offers keeps the lemma production would pick.
+        detailed = getattr(resolver, "resolve_target_detail", None)
+        self.resolve_target_detail: Callable[..., TargetResolution | None] | None = (
+            None
+            if not callable(detailed)
+            else lambda results, target: owner.observe(
+                "token_selection", detailed, results, target
+            )
+        )
 
     def resolve_target(
         self, results: Sequence[OCRResult] | None, target: Point | None

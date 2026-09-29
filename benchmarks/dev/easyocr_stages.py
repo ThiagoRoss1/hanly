@@ -163,11 +163,14 @@ def run_staged_easyocr(
     evidence_class: str = STAGED_DIAGNOSTIC,
     detector_options: dict[str, Any] | None = None,
     recognizer_options: dict[str, Any] | None = None,
+    recognize: bool = True,
 ) -> StagedRun:
     """Reproduce ``readtext`` stage by stage, retaining every image in memory.
 
     Nothing is written to disk. The caller decides whether these internals
-    belong to a diagnostic invocation or to a replay of an earlier one.
+    belong to a diagnostic invocation or to a replay of an earlier one. With
+    ``recognize`` false the recognizer is never called: regions carry only the
+    detector's geometry, and nothing is normalized.
     """
 
     if evidence_class not in (STAGED_DIAGNOSTIC, COMPARISON_REPLAY):
@@ -189,9 +192,12 @@ def run_staged_easyocr(
     # ``detect`` returns a list per input image; ``readtext`` takes the first.
     horizontal, free = _first_of_each(horizontal_list, free_list)
 
-    regions, recognition_ns = _staged_regions(
-        reader, grayscale, horizontal, free, recognize_kwargs
-    )
+    if recognize:
+        regions, recognition_ns = _staged_regions(
+            reader, grayscale, horizontal, free, recognize_kwargs
+        )
+    else:
+        regions, recognition_ns = _detected_regions(horizontal, free), 0
 
     normalize_started = time.perf_counter_ns()
     normalized = normalize_easyocr_results(
@@ -306,6 +312,22 @@ def _staged_regions(
             )
         )
     return tuple(regions), recognition_ns
+
+
+def _detected_regions(
+    horizontal: list[Any], free: list[Any]
+) -> tuple[StagedRegion, ...]:
+    boxes = [("horizontal", box) for box in horizontal] + [("free", box) for box in free]
+    return tuple(
+        StagedRegion(
+            index=index,
+            kind=kind,
+            raw_box=_raw_box(box),
+            quad=_quad_from_box(kind, box),
+            unavailable_reason="recognition_not_run",
+        )
+        for index, (kind, box) in enumerate(boxes)
+    )
 
 
 def _crop_for(

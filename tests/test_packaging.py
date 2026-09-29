@@ -1246,6 +1246,60 @@ def test_a_timed_out_run_takes_the_processes_it_started_with_it(tmp_path: Path) 
     (profile / "work" / "self-check.err").unlink()
 
 
+_SPAWNING_PROGRAM = """
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+grandchild = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+Path(sys.argv[-1]).write_text(str(grandchild.pid), encoding="utf-8")
+time.sleep(120)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="taskkill /T covers Windows")
+def test_a_timed_out_run_kills_the_grandchildren_it_left_behind(tmp_path: Path) -> None:
+    import os
+    import time
+
+    record = tmp_path / "grandchild.pid"
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _SPAWNING_PROGRAM),
+        mode=str(record),
+        timeout=5,
+    )
+
+    assert report["exit_timeout"] is True
+    pid = int(record.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 5
+    # Not this process's child, so only a signal probe can see it; its orphan
+    # is reaped by init once killed.
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(pid, 9)
+        pytest.fail("the grandchild outlived the timed-out run")
+
+
+def test_a_detach_failure_does_not_hide_the_error_that_caused_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"disk image")
+
+    def refuse_detach(command: list[str], **_options: object) -> object:
+        return SimpleNamespace(returncode=int(command[1] == "detach"), stderr=b"busy")
+
+    with pytest.raises(FileNotFoundError, match=SMOKE_BUNDLE_NAME):
+        reconstruct_from_disk_image(image, tmp_path / "out", runner=refuse_detach)
+    assert "could not unmount" in capsys.readouterr().err
+
+
 def test_a_crash_before_any_marker_stays_explicitly_unknown() -> None:
     """Naming the last stage that passed would invent a diagnosis."""
 

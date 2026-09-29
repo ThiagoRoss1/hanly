@@ -596,10 +596,8 @@ def run_live_hover(args: Any) -> int:
         report(f"Live benchmark run {metadata['run_id']}")
         report("Preparing the real resident hover composition; do not move yet.")
 
-        # Match production startup ordering: native OCR preload precedes Qt.
-        from hanly_app.ocr_preload import preload_ocr_runtime
-
-        preload_ocr_runtime()
+        # OCR runs in the spawned lookup child, as in production, so the shell
+        # never imports it and the resource samples below describe that shell.
         from hanly_app.manual_lookup import (
             create_qt_manual_lookup,
         )
