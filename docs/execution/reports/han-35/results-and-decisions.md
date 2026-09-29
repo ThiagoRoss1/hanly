@@ -1,5 +1,7 @@
 # HAN-35 Benchmark Results and Decisions
 
+> **Historical (labelled 2026-09-28):** PaddleOCR-era measurements (v0.1.0); several options it names no longer exist. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Date: 2026-08-23  
 Revision under test: `24ed285bd8cc33390875917d602a3a8526e77128` plus
 the uncommitted HAN-35 harness and CLI workflow  

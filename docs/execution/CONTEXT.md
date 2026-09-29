@@ -34,14 +34,15 @@ Otherwise the constraints below are sufficient.
 - **RF-INV-02** Capture happens before OCR.
 - **RF-INV-03** Morphology and dictionary lookup happen before popup presentation.
 - **RF-INV-04** The popup receives an already processed, UI-independent `LookupResult`.
-- **RF-INV-05** EasyOCR, Kiwi, KRDICT are adapters behind provider interfaces, never direct `LookupPipeline` dependencies.
+- **RF-INV-05** The OCR, Kiwi and KRDICT adapters sit behind provider interfaces, never direct `LookupPipeline` dependencies.
 - **RF-INV-06** Heavy processing does not run on the UI thread.
 - **RF-INV-07** Superseded request results may be discarded after cursor movement.
 - **RF-INV-08** Hanly does not visually modify the target app except via popup and region-selection overlays.
 - **RF-INV-09** Full-monitor mode is not continuous full-screen OCR; hover prefers a cursor ROI.
-- **RF-INV-10** `EasyOCRProvider` is the only V1 implementation; `LookupPipeline` couples only to `OCRProvider`, the one provider seam.
+- **RF-INV-10** The V1 OCR implementations are `VisionProvider` (preferred on supported macOS) and `EasyOCRProvider` (cross-platform and fallback); `LookupPipeline` couples only to `OCRProvider`.
 - **RF-INV-11** Desktop lookup is bounded / latest-wins; final request-currency validation is mandatory.
 - **RF-INV-12** `LookupResult` models success, normal non-success, and error without exceptions for non-success.
+- **RF-INV-13** Surface text plus a cursor index is the whole input to the language stage; pixel OCR and direct-text acquisition both reach that one stage.
 
 ## Component invariants (`02-component-architecture.md`)
 
@@ -60,6 +61,7 @@ Otherwise the constraints below are sufficient.
 - **CA-INV-13** Composition wiring injects validated resource paths into providers; providers and `LookupPipeline` never depend on `ResourceManager`.
 - **CA-INV-14** Desktop lookup is bounded / latest-wins with final currency validation.
 - **CA-INV-15** `LookupResult` models success, normal non-success, and error outcomes.
+- **CA-INV-16** The language stage is acquisition-neutral: it takes a `TextSelection`, never an image, screen geometry or desktop object.
 
 ## DAG invariants that constrain execution (`03-implementation-dag.md`)
 
@@ -68,6 +70,7 @@ Otherwise the constraints below are sufficient.
 - **DAG-INV-06** Basic Control Center exists before final hover integration.
 - **DAG-INV-08** `UpdateService` / `ResourceFetcher` never depends on UI.
 - **DAG-INV-11** Nodes are capabilities, not files or exhaustive task lists.
+- **DAG-INV-13** `OCRProvider` stays abstract; `VisionProvider` (preferred on macOS) and `EasyOCRProvider` (cross-platform and fallback) are the V1 implementations.
 - **DAG-INV-16** Korean fixtures are small deterministic test inputs, not the HanlyOCR benchmark.
 - **DAG-INV-17** The lifecycle and packaging spikes are non-blocking risk discovery.
 - **DAG-INV-18** HAN-15 owns the official ResourceManager-backed EasyOCR + Kiwi + KRDICT runtime composition before desktop interaction capabilities consume it; update/distribution remains later.
@@ -100,6 +103,9 @@ Dismissed — never silently dropped.
 
 ```bash
 python -m pytest
-python -m ruff check packages tests tools
-python -m mypy packages tests tools
+python -m ruff check packages packaging tests tools benchmarks
+python -m mypy packages packaging tests tools benchmarks
 ```
+
+`tests/test_architecture_invariants.py` checks this sheet's RF and CA lists,
+and the DAG entries it cites, against the architecture documents.

@@ -1,5 +1,7 @@
 # Hanly test-suite audit — Claude execution handoff
 
+> **Historical (labelled 2026-09-28):** executed 2026-09-04. Its EasyOCR-only constraint and CI job names predate Apple Vision and the current `ci.yml`. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Date: 2026-09-04
 
 ## Objective

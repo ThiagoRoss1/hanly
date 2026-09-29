@@ -6,9 +6,9 @@ Execute the three parts below in one Claude session and one branch, in the liste
 
 ## Scope and evidence
 
-- [HAN-44 — Improve packaging smoke diagnostics and failure visibility](https://linear.app/hmx-gen-projects/issue/HAN-44/improve-packaging-smoke-diagnostics-and-failure-visibility): four required diagnostic improvements; High priority.
-- [HAN-43 — Restructure platform-specific smoke/build tests](https://linear.app/hmx-gen-projects/issue/HAN-43/restructure-platform-specific-smokebuild-tests): portable/native/build separation; Medium priority.
-- [superqa.md](../../superqa.md): existing investigation and six findings. Follow its evidence and bounded follow-up order; do not repeat the broad QA audit.
+- HAN-44 — Improve packaging smoke diagnostics and failure visibility: four required diagnostic improvements; High priority.
+- HAN-43 — Restructure platform-specific smoke/build tests: portable/native/build separation; Medium priority.
+- [superqa.md](../superqa.md): existing investigation and six findings. Follow its evidence and bounded follow-up order; do not repeat the broad QA audit.
 
 Both Linear issues were Backlog, related to each other, with no blocking relationships or comments when read. The human explicitly selected both for this bundle, superseding their earlier separate scheduling. Recheck for newly introduced real blockers before implementation.
 

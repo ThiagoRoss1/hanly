@@ -1,5 +1,7 @@
 # Purple Icon Identity Review Handoff
 
+> **Historical (labelled 2026-09-28):** its "not merge-ready" verdict was superseded by the 0.9.0 merge. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Phase B outcome and the Windows continuation are appended below. The Phase A
 sections retain their original measurements and chronology.
 

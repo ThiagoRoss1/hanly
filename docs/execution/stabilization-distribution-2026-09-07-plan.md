@@ -1,5 +1,7 @@
 # Hanly stabilization/distribution — approved implementation plan
 
+> **Historical (labelled 2026-09-28):** executed plan. Its asset counts and its note about `05-execution-plan.md` describe 2026-09-07, not the current release flow (`packaging/README.md`). Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Status: approved for bounded implementation on 2026-09-07. This materializes the
 revised plan and final user adjustments; it does not authorize release or deep review.
 

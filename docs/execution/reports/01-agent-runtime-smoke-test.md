@@ -1,5 +1,7 @@
 # Agent Runtime Smoke Test
 
+> **Historical (labelled 2026-09-28):** 2026-08-19 agent-topology smoke test, moved from the root `reports/` on 2026-09-28. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 - **Requested topology:** Sol → Terra → two Luna workers, with both Luna workers requested at `xhigh` reasoning.
 - **Actual topology:** `/root` → `/root/terra_smoke_lead` → `/root/terra_smoke_lead/luna_a` and `/root/terra_smoke_lead/luna_b`. Both workers returned their required unique tokens: `LUNA-A-OK` and `LUNA-B-OK`. Actual runtime model/reasoning metadata was not exposed.
 - **Two distinct Luna workers created:** Yes.

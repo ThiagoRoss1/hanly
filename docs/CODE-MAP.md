@@ -67,7 +67,7 @@ hanly (the shell)                 Qt Widgets, tray, hotkeys, capture, hover,
   │                               popup, settings, updates, the session log
   ├── hanly-control-center        pywebview + Qt WebEngine + the page
   │     (spawned on open, gone on close; opening again is a new process)
-  └── hanly-lookup                EasyOCR + Kiwi + KRDICT + the pipeline
+  └── hanly-lookup                Vision or EasyOCR + Kiwi + KRDICT + the pipeline
         (spawned by the preload policy; retired on Stop, or after an idle
          manual session; a lookup wakes a sleeping engine on demand)
 ```
@@ -134,11 +134,13 @@ launch pays for is `config.LookupPreload`.
 hover (while the push chord is held, or for the whole session)
   → is the cursor still on the last answer?   hover_target.py     (if so, stop here)
   → debounce + cursor-validity check          hover_controller.py
-  → small ROI capture                         capture.py
+  → read the word without pixels, if the app  text_acquisition.py (+ _ax / _uia)
+    exposes it (then skip capture and OCR)
+  → otherwise, small ROI capture              capture.py
   → submit, bounded / latest-wins             lookup_controller.py
   → executor thread                           job_executor.py
   → across the pipe into the lookup child     lookup_process.py
-      → OCR                                   easyocr_provider.py
+      → OCR                                   vision_provider.py / easyocr_provider.py
       → pick the word under the cursor        word_resolver.py
       → TextSelection (text + cursor index)   lookup_pipeline.py
       → Hangul-only gate                      language_pipeline.py
@@ -338,6 +340,7 @@ the migration routes.
 | `lookup_pipeline.py` | The pixel facade: ROI → `TextSelection` → `LookupResult` |
 | `language_pipeline.py` | `TextSelection` → `LookupResult`; owns the Hangul-only gate, candidate selection, and the dictionary query. Knows nothing about pixels |
 | `word_resolver.py` | Which word is under the cursor, including inside one line-level quad |
+| `vision_provider.py` | Apple Vision adapter, the preferred recognizer on macOS |
 | `easyocr_provider.py` | EasyOCR adapter, plus the sensitive-retry options |
 | `kiwi_provider.py` | Kiwi adapter (surface form → lemma) |
 | `krdict_provider.py` | Read-only SQLite dictionary lookup |
@@ -376,10 +379,15 @@ the migration routes.
 | `qt_hover_scheduler.py` | Hover timing on the Qt thread |
 | `capture.py` | Screen ROI capture |
 | `capture_selector.py` | The "which area?" overlay, reached from settings |
+| `capture_recovery.py` | Whether an answer came from a crop that cut its word. Tested helpers only; not wired (see its docstring) |
+| `text_acquisition.py` | Whether the word under the pointer can be read without pixels, and the fallback to capture when it cannot |
+| `text_acquisition_ax.py` | The macOS reader, through the Accessibility API |
+| `text_acquisition_uia.py` | The Windows reader, through UI Automation |
 | `hotkeys.py` | Global hotkeys, both edges of a chord, and the backend per platform |
 | `hotkeys_darwin.py` | The macOS backend: Carbon `RegisterEventHotKey`, pressed and released |
 | `popup_darwin.py` | Keeps the macOS popup panel on screen while Hanly is inactive |
 | `app_identity_darwin.py` | What macOS thinks a Hanly process is, so only one is an application |
+| `app_reopen_darwin.py` | Routes a macOS reactivation (Dock click) back to the Control Center |
 | `permissions.py` | Which grant each feature needs, and how it is reported |
 | `permissions_darwin.py` | The macOS status and grant flows, through ctypes |
 
@@ -394,12 +402,17 @@ the migration routes.
 | `hover_target.py` | Where a result came from on screen, what protects it, and the crossing to the popup |
 | `manual_lookup.py` | The shortcut-driven runtime, the preload policy, and the Qt composition |
 | `runtime_trace.py` | Structured per-stage trace events, forwarded from the child |
+| `lookup_evidence.py` | Encodes the private diagnostic structures only an evidence-retaining developer sink asks for |
 
 **Presentation and shell**
 
 | File | What it does |
 |---|---|
 | `popup.py` / `qt_popup.py` | The dictionary popup |
+| `qt_theme.py` | The Qt palette every shell-drawn window shares |
+| `hanly_dialog.py` | Hanly's own small dialogs, styled like the popup |
+| `app_icon.py` | The icon set, at the sizes it was drawn for |
+| `window_frame_win32.py` | The Windows title bar in Hanly's colours (imported on every platform, acts only on Windows) |
 | `tray.py` | System tray |
 | `control_center.py` | The bridge behind the window (`assets/control_center/`), which stays in the shell |
 | `control_center_process.py` | The window's own process, its operation allowlist, and the proxy the page calls |
@@ -422,6 +435,11 @@ the migration routes.
 | `app_update_journal.py` | The durable record of one in-place update, the paths it owns, and the per-installation lock |
 | `app_update_helper.py` | The Windows PowerShell program that applies and undoes it, depending on nothing inside the installation |
 | `app_update_runner.py` | The desktop's seam: hold the lock, wait for the helper to take over, settle whatever the last run left |
+| `app_hup.py` | Reads the one update package (`.hup`) a release publishes for every platform |
+| `app_build_identity.py` | Which build is running, from its stamp, and what the last update left about it |
+| `app_update_tree.py` | The macOS/Linux candidate: rebuild the published tree beside the installation and verify it |
+| `app_update_macos.py` | What only macOS needs: the private read-only disk-image mount, `ditto`, `codesign --verify` |
+| `app_xattr_darwin.py` | The four libc extended-attribute calls CPython does not expose |
 
 ### Outside the packages
 
@@ -434,7 +452,7 @@ the migration routes.
 | `tools/build_package.py`, `tools/release_version.py` | Release tooling: freeze the bundle, prove a tag matches the packages |
 | `tools/release_build.py`, `tools/tagged_metadata.py` | The release lane's decisions — peel the tag, verify its build, classify an existing release, read the tagged identity |
 | `packaging/` | PyInstaller spec, runtime hook, frozen entry point |
-| `benchmarks/dev/` | Developer-only measurement harness — code, its own `tests/`, and the unwired hover `hud/`. Nothing in `packages/` imports it |
+| `benchmarks/dev/` | Developer-only measurement harness — code, its own `tests/`, and the hover `hud/` that `python -m benchmarks.dev dev-hud` runs. Nothing in `packages/` imports it |
 | `data/` | Local KRDICT source and build outputs. Gitignored except the README |
 | `resources/dev/` | Machine-local benchmark configuration. Gitignored |
 | `tests/` | Product tests for both packages, in three selectable suites: portable by default, `tests/native/` for real Qt and OS adapters, `tests/packaged/` for the frozen product |
@@ -461,8 +479,9 @@ export HANLY_KRDICT_DB=/path/to/krdict.sqlite3    # Windows: set HANLY_KRDICT_DB
 ```
 
 A clone that already has `data/generated/krdict.sqlite3` is found without the
-variable. EasyOCR downloads its own recognition models on the first lookup, so
-that launch needs network access.
+variable. Where EasyOCR is the recognizer, a source install downloads its models
+on the first lookup, so that launch needs network access; packaged builds bundle
+them, and Apple Vision needs none.
 
 ## 8a. How a release is made
 
@@ -480,7 +499,10 @@ workflow downloads a source archive or builds the resource.
    `hanly-resources.json` to the draft, by hand, when the dictionary changed.
 3. `finalize` waits on the `hanly-release` environment. After approval it
    re-resolves the tag and its build, revalidates the manifest and every
-   checksum, writes `SHA256SUMS` last, and publishes exactly seven assets.
+   checksum, writes `SHA256SUMS` last, and publishes exactly the asset set
+   `tools/release_build.py assets` derives from the update package: ten on a
+   release without deltas, plus one delta per platform with a verified
+   predecessor.
 
 `docs/execution/first-release-plan.md` is the operator runbook.
 

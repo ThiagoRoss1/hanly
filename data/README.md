@@ -95,11 +95,11 @@ each one deliberately:
   misspelling, because matching the correct spelling silently drops every
   subject category.
 
-## Producing the release asset in CI
+## Producing the release asset
 
-The `Build KRDICT resource` workflow never reads or uploads a source archive
-from this repository. Dispatch it with the official HTTPS download URL and that
-archive's exact SHA-256; the runner downloads it, verifies the digest before
-parsing, and uploads only the compressed resource, the producer manifest, and
-the validation report. Keep any local copy under the ignored `source/`
-directory for inspection only.
+No workflow builds the resource or reads a source archive; the former
+`Build KRDICT resource` workflow was removed. Build it locally with
+`tools/krdict/build_release_asset.py`, then attach the resulting
+`krdict-<version>.sqlite3.zst` and `hanly-resources.json` to the staged release
+draft, as `docs/execution/first-release-plan.md` describes. Keep the official
+archive under the ignored `source/` directory.

@@ -1,5 +1,7 @@
 # Hanly V1 / Beta — Status Report
 
+> **Historical (labelled 2026-09-28):** v0.1.0-era snapshot of an uncommitted worktree (PaddleOCR era); it cites tooling that no longer exists. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Snapshot of the **uncommitted worktree** on top of `c0ece45`, written at the end
 of the V1 closing review passes (updated after the second pass). Nothing has
 been committed, pushed, merged, tagged, dispatched, or published.

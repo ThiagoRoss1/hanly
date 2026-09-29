@@ -1,5 +1,7 @@
 # HAN-43, HAN-44 and Super QA — implementation review report
 
+> **Historical (labelled 2026-09-28):** sections 1–7 are the review; section 8 embeds the `git diff` of eight commits that are all in history (`git diff 5f7eb2a..ba87cce`). Committed despite its own note that it would stay untracked. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 **Prepared:** 2026-09-13
 **Branch:** `codex/han-43-44-superqa`, eight commits on top of `main` at `5f7eb2a`
 **Executor:** Claude Opus 5, directly (Phase A only)
@@ -811,8 +813,8 @@ index 0000000..e57e2ef
 +
 +## Scope and evidence
 +
-+- [HAN-44 — Improve packaging smoke diagnostics and failure visibility](https://linear.app/hmx-gen-projects/issue/HAN-44/improve-packaging-smoke-diagnostics-and-failure-visibility): four required diagnostic improvements; High priority.
-+- [HAN-43 — Restructure platform-specific smoke/build tests](https://linear.app/hmx-gen-projects/issue/HAN-43/restructure-platform-specific-smokebuild-tests): portable/native/build separation; Medium priority.
++- HAN-44 — Improve packaging smoke diagnostics and failure visibility: four required diagnostic improvements; High priority.
++- HAN-43 — Restructure platform-specific smoke/build tests: portable/native/build separation; Medium priority.
 +- [superqa.md](../../superqa.md): existing investigation and six findings. Follow its evidence and bounded follow-up order; do not repeat the broad QA audit.
 +
 +Both Linear issues were Backlog, related to each other, with no blocking relationships or comments when read. The human explicitly selected both for this bundle, superseding their earlier separate scheduling. Recheck for newly introduced real blockers before implementation.

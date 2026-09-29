@@ -1,5 +1,7 @@
 # MVP runtime / performance wave
 
+> **Historical (labelled 2026-09-28):** executed plan (see its checkpoint and handoff). Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 ## Authority and outcome
 
 One branch, `perf/mvp-runtime-lifecycle`, based on integrated `main` at

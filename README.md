@@ -4,11 +4,14 @@
 text anywhere on screen and a dictionary popup tells you what the word under
 the cursor means.
 
-It reads a small region around the cursor, recognizes the text with EasyOCR,
-resolves the word you are pointing at, lemmatizes it with Kiwi, and looks the
-lemma up in a 56,555-entry KRDICT database. There is no continuous full-screen
-scanning, and captured pixels are never written to disk or sent anywhere —
-recognition and lookup both run locally.
+Where an application exposes its text through the platform's accessibility
+interface, Hanly reads the word directly. Otherwise it captures a small region
+around the cursor and recognizes it — with Apple Vision on macOS, and EasyOCR
+on Windows, Linux, or wherever Vision is unavailable. Either way it resolves
+the word you are pointing at, lemmatizes it with Kiwi, and looks the lemma up
+in a 56,555-entry KRDICT database. There is no continuous full-screen scanning,
+and captured pixels are never written to disk or sent anywhere — recognition
+and lookup both run locally.
 
 Windows, macOS, and Linux. Python 3.10 or newer. CPU only.
 
@@ -20,8 +23,9 @@ Windows, macOS, and Linux. Python 3.10 or newer. CPU only.
 - **A KRDICT database.** Hanly cannot start without it. It is a ~92 MB SQLite
   file built from the licensed official KRDICT source, and it is not part of
   this repository — `data/README.md` has the commands that build one.
-- **Network access on first lookup**, once, so EasyOCR can fetch its Korean
-  recognition models. After that Hanly runs offline.
+- **Network access on the first EasyOCR lookup** of a source install, once, so
+  EasyOCR can fetch its Korean recognition models. Packaged builds bundle them,
+  and Apple Vision is part of macOS. After that Hanly runs offline.
 
 ## Install
 
@@ -104,14 +108,23 @@ Three global shortcuts, and each one does exactly one thing:
   let go of; in Push to Hover the chord is already the switch.
 
 Every shortcut can be changed under **Settings → Shortcuts**, and the Control
-Center says so when the operating system refused one.
+Center says so when the operating system refused one. On a Mac keyboard the
+top row sends brightness and media keys by default, so the two function-key
+chords arrive only while you hold **Fn**, or with *Use F1, F2, etc. keys as
+standard function keys* turned on — or pick different shortcuts.
+
+The popup is operated with the pointer. Its buttons deliberately take no
+keyboard focus, because focusing them would pull Hanly in front of the
+application you are reading.
 
 - The **tray icon** starts, stops, opens the Control Center, and quits.
   Opening it is also the icon's default action, for desktops whose tray has no
   menu at all.
 - The **Control Center** is the main window: capture controls, the capture
-  area, live settings, resource state, runtime readiness, diagnostics, and
-  **Quit Hanly**, which is the one way out that every desktop has.
+  area, live settings (including the text recognizer: Automatic, Apple Vision
+  where macOS provides it, or EasyOCR), resource state, runtime readiness,
+  diagnostics, and **Quit Hanly**, which is the one way out that every desktop
+  has.
 - Closing the window hides it while the tray can bring it back. Without a tray
   that can, it stays open instead, so Hanly is never running out of reach.
 
@@ -159,7 +172,7 @@ install does. `packaging/README.md` covers the build and release flow.
 | `tools/` | Builds the dictionary; developer rigs. Ships in neither package |
 | `benchmarks/dev/` | Measurement harness. Ships in neither package |
 | `packaging/` | PyInstaller spec and the frozen entry point |
-| `docs/` | Architecture, and `CODE-MAP.md` |
+| `docs/` | Architecture, `CODE-MAP.md`, and execution history; `docs/README.md` is the index |
 
 **[`docs/CODE-MAP.md`](docs/CODE-MAP.md) is where to start reading the code**:
 what runs when, the startup sequence, the lookup pipeline mapped onto real
@@ -169,9 +182,13 @@ files, the provider seams, and where the dictionary comes from.
 
 ```bash
 python -m pytest
-python -m ruff check packages packaging tests tools benchmarks spikes
-python -m mypy packages packaging tests tools benchmarks spikes
+python -m ruff check packages packaging tests tools benchmarks
+python -m mypy packages packaging tests tools benchmarks
 ```
+
+`python -m pytest --suite portable` runs only what needs no Qt, Torch or
+display; `--suite native` and `--suite packaged` select the rest
+(`packaging/README.md` has the details).
 
 `tools/dev_lookup.py` runs one real `image → EasyOCR → Kiwi → KRDICT` lookup
 and prints the result as JSON, without starting the desktop. `tools/README.md`

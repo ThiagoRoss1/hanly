@@ -1,5 +1,7 @@
 # Post-runtime product fixes
 
+> **Historical (labelled 2026-09-28):** executed; section 19 records the execution. The READY FOR EXECUTION status below is its state when written. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 **Status: FINAL / READY FOR EXECUTION — Windows investigation complete; native macOS
 investigation completed 2026-09-11 (section 4.2); P1 and P2 resolved by the human
 (section 7). Frozen-bundle Dock confirmation is a final packaging-validation item,

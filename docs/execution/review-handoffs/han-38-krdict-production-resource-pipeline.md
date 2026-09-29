@@ -707,7 +707,7 @@ Every external URL referenced anywhere in the tree was enumerated. All of them
 are either `api.github.com` (the public release channel), `example.test`
 fixtures, or one real link:
 
-- **`https://linear.app/hmx-gen-projects/issue/HAN-38/...`** exposed a private
+- **`https://linear.app/<workspace>/issue/HAN-38/...`** exposed a private
   workspace slug. It is not a credential and the page requires authentication,
   but it is internal-only information in a repository that may become public.
   Replaced with the bare issue key, which identifies the work just as well

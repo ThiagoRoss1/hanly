@@ -1,5 +1,7 @@
 # Hanly V1 Architecture & Execution Review
 
+> **Historical (labelled 2026-09-28):** 2026-08-19 review, moved from the root `reports/` on 2026-09-28. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Review date: 2026-08-19. Review-only; no reviewed file, Linear issue, or code was modified.
 
 ## Overall result

@@ -1,5 +1,7 @@
 # Final Correction Bundle Review Handoff
 
+> **Historical (labelled 2026-09-28):** its merge-readiness verdict was superseded by Wave 6 and the 0.9.0 merge. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 ## Bundle
 
 - Member scope: the corrections required by the independent review of the

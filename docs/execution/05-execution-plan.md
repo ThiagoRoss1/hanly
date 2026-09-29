@@ -203,7 +203,7 @@ Do not create a mandatory validation bundle after every implementation bundle, a
 
 ## Artifact budget
 
-Durable execution state lives in: Linear; one ledger per bundle under `checkpoints/` when pause/resume needs it; and one handoff per bundle under `review-handoffs/`.
+Durable execution state lives in: Linear; one ledger per bundle under `checkpoints/` when pause/resume needs it; and one handoff per bundle under `review-handoffs/`. A human-authored plan or brief that defines a bundle lives under `plans/`; once executed it is history, and says so in a status line.
 
 Do not create per-worker reports, per-issue task or implementation reports, review or re-review reports, or duplicated diff descriptions. Do not commit `.diff` or patch files anywhere in the repository; Git already holds every diff, and a committed copy is a second, stale source of truth. Do not restate in an artifact what a Linear comment already records.
 

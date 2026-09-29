@@ -1,7 +1,21 @@
 # Developer tools
 
-Rigs used to exercise Hanly by hand. **Nothing here ships.** Neither `hanly` nor
-`hanly-app` imports this directory, and it is not part of either package.
+Developer rigs, and the build, CI and release tooling the workflows run.
+**Nothing here ships.** Neither `hanly` nor `hanly-app` imports this directory,
+and it is not part of either package.
+
+| Script | Used by | What it does |
+|---|---|---|
+| `krdict/` | developer, release operator | Builds, validates and packages the dictionary (below) |
+| `dev_lookup.py` | developer | One real engine lookup from an image, printed as JSON (below) |
+| `build_smoke_krdict.py` | CI, build | The three-word dictionary native tests and the packaged smoke install; refuses to overwrite anything that is not an earlier smoke build without `--replace` |
+| `prepare_easyocr_models.py` | CI, build | Fetches the two EasyOCR weights a packaged Hanly carries |
+| `build_package.py` | build | Freezes the desktop and writes the platform products |
+| `smoke_packaged_runtime.py` | build | Proves a frozen bundle's inventory, lookup and window with only what it ships |
+| `native_host_fingerprint.py` | build | Records what a packaging host actually is |
+| `update_artifacts.py` | build | The manifest, delta and update package a release publishes |
+| `release_version.py`, `tagged_metadata.py` | build, release | The product/tag version contract, read from the tag commit |
+| `release_build.py` | release | Resolves and classifies the GitHub state a release depends on, and derives its asset set |
 
 ## Running the desktop
 
@@ -81,10 +95,11 @@ process working directory.
 `release_version.py` checks the product/tag version contract, and
 `krdict/package_resource.py` writes the producer manifest consumed by the
 release workflow.
-`packaging/README.md` documents the full release flow. There are two lanes but
-one public release envelope: the KRDICT producer is manual and non-publishing;
-the successful application tag build publishes the app archives together with
-the manifest, exact referenced KRDICT bytes, and `SHA256SUMS`.
+`packaging/README.md` documents the full release flow. KRDICT is built locally
+by the operator and attached to the staged draft by hand only when it changed;
+no workflow builds or downloads it. The approved release publishes the
+application products, update package and compatibility files together with the
+resource manifest, the exact KRDICT bytes it names, and `SHA256SUMS`.
 
 ### `release_version.py`
 
@@ -108,7 +123,5 @@ python tools/release_version.py --tag vMAJOR.MINOR.PATCH `
 ```
 
 The privileged publisher runs this proof with Python 3.13 and trusted
-default-branch tooling. A tag push never rebuilds KRDICT; dispatch the producer
-only for a new independent resource identity. Its successful candidate is
-retained for 90 days, subject to repository limits, while published resource
-bytes are copied from the previous public release for later app-only tags.
+default-branch tooling. A tag push never rebuilds KRDICT; a later app-only
+release carries the previous public release's resource bytes into its draft.

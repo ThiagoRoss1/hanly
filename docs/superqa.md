@@ -1,5 +1,7 @@
 # Hanly Super QA Report
 
+> **Historical (labelled 2026-09-28):** QA of v0.5.0; its findings were executed under HAN-43/44 (see `docs/execution/review-handoffs/han-43-44-superqa.md`). Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 **Run date:** 2026-09-13  
 **Repository:** `/Users/thiago/Projects/hanly`  
 **Commit tested:** `900dba1` (`v0.5.0`, `main`, clean at test start)  

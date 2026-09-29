@@ -1,5 +1,7 @@
 # Wave 6 Windows execution prompt
 
+> **Historical (labelled 2026-09-28):** executed 2026-09-22 (see `review-handoffs/wave-6-windows-2026-09-22.md`). It is not a live authorization; the branch it names no longer exists. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Execute this file as the complete authorization and instruction set for Wave 6.
 This is a Phase A implementation run on a real Windows machine. Stop at the
 Wave 6 Review Handoff. Do not begin Phase B, push, merge, or redesign the plan.

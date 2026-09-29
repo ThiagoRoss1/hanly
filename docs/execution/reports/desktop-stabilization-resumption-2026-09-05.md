@@ -1,5 +1,7 @@
 # Desktop stabilization — resumption assessment
 
+> **Historical (labelled 2026-09-28):** the resumption packet below was acted on; it is not a live authorization. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Date: 2026-09-05. Scope: inspect current implementation, reconcile the stale checkpoint with later evidence, identify remaining completion work, and prepare a Claude resumption packet. This was a targeted status/plan-coverage assessment, not a full Phase B review. No product code was changed.
 
 ## Executive assessment

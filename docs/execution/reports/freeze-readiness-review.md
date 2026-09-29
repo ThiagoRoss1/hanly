@@ -1,5 +1,7 @@
 # Hanly V1 Freeze Readiness Review
 
+> **Historical (labelled 2026-09-28):** 2026-08-20 review, moved from the root `reports/` on 2026-09-28. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Review date: 2026-08-20. Review-only; no reviewed source, no Linear issue, and no code was modified.
 
 ## Overall result

@@ -1,5 +1,7 @@
 # Post-v0.1.3 Technical Wave
 
+> **Historical (labelled 2026-09-28):** executed plan (see `review-handoffs/post-v013-technical-wave-final.md`); its asset counts predate the update package. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Status: **investigation complete; implementation proposed for human review**. This document authorizes no production changes, commits, pushes, publication, or Linear mutations. Investigation date: 2026-09-09. Repository inspected: `02feae412fe3de95907e83b16f19e1a643386b9d`; working tree was clean before this document.
 
 Executor: Claude Opus, directly, using this as the single implementation plan. Follow `AGENTS.md`, architecture `01`–`04`, and `docs/execution/05-execution-plan.md`. Do not introduce a second task decomposition, generic execution-skill chain, or mandatory per-block reviewer. This wave has three independently reviewable implementation phases: **HAN-42 → HAN-40 → HAN-41**. Each phase runs its gate, leaves a Review Handoff, and stops for human review before the next phase begins. Deep review is separately human-authorized. A failed gate blocks progression. Approval does not imply commit or release authority.
@@ -8,7 +10,7 @@ Executor: Claude Opus, directly, using this as the single implementation plan. F
 
 ### Scope and evidence
 
-Read the live descriptions, relations, and comments of [HAN-42](https://linear.app/hmx-gen-projects/issue/HAN-42/make-application-self-update-reliable-and-in-place), [HAN-40](https://linear.app/hmx-gen-projects/issue/HAN-40/reduce-packaged-desktop-size-and-dependency-bloat), and [HAN-41](https://linear.app/hmx-gen-projects/issue/HAN-41/minimize-idle-resource-usage-and-hover-lookup-latency). All were Backlog, with no blocking predecessors; HAN-42 blocks HAN-30. Their relationship to one another is related work, not a native dependency chain. The requested execution order is a technical/review constraint; do not rewrite Linear relations to manufacture it.
+Read the live descriptions, relations, and comments of HAN-42, HAN-40, and HAN-41. All were Backlog, with no blocking predecessors; HAN-42 blocks HAN-30. Their relationship to one another is related work, not a native dependency chain. The requested execution order is a technical/review constraint; do not rewrite Linear relations to manufacture it.
 
 Evidence classes used below:
 

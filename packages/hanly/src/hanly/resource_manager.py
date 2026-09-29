@@ -41,6 +41,10 @@ class SchemaSpec:
 
     The contract itself is not described here. Each supported schema owns its
     own validator module, so a spec only has to say which one applies.
+
+    ``version`` is descriptive: validation is selected by ``name``, and that
+    validator enforces the one version it implements. A different version
+    declared here is not compared against the database.
     """
 
     name: str
@@ -157,6 +161,11 @@ class ResourceManager:
     scan and returns a resource-id keyed copy of normalized metadata.  Paths
     and configuration are exposed only through accessors that require
     ``ResourceStatus.VALID``.
+
+    The canonical accessors are :meth:`validated_path`, :meth:`configuration`,
+    :meth:`metadata` and :meth:`validated_resource`. ``get_validated_path``,
+    ``get_configuration`` and ``get_metadata`` are equivalent aliases kept for
+    callers of the published API.
     """
 
     def __init__(
