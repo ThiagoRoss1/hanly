@@ -364,8 +364,11 @@ def test_every_native_build_opens_the_frozen_window_it_is_about_to_ship() -> Non
 # them: a red run produced a single line of evidence. Each step below states
 # the product it actually needs, and the scenarios prove what survives.
 
-#: The step conditions these workflows use, evaluated the way Actions does.
+#: The step conditions these workflows use, evaluated the way Actions does for
+#: a run nobody cancelled on a branch ref: cancellation and tag refs are not
+#: modelled, and a scenario that needs them must extend this first.
 _STATUS_TERMS = {"always()": True, "!cancelled()": True, "cancelled()": False}
+_STATUS_FUNCTIONS = ("always()", "success()", "failure()", "cancelled()")
 
 _STEP_OUTCOME = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outcome\s*==\s*'(\w+)'")
 _MATRIX_PLATFORM = re.compile(r"matrix\.platform\s*==\s*'(\w+)'")
@@ -415,6 +418,10 @@ def _condition_holds(
     needs: Mapping[str, str],
 ) -> bool:
     expression = condition.strip().removeprefix("${{").removesuffix("}}").strip()
+    # Actions prefixes an implicit success() to a condition naming no status
+    # function, so such a step is skipped after any failure.
+    if not any(function in expression for function in _STATUS_FUNCTIONS) and failed:
+        return False
     return all(
         _term_holds(term.strip(), outcomes, platform, failed, needs)
         for term in expression.split("&&")
@@ -1287,3 +1294,11 @@ def test_each_artifact_records_the_build_an_update_will_be_offered_against() -> 
     for field in ("build_id", "architecture", "manifest_sha256", "delta_omitted_reason"):
         assert field in code, field
     assert "release" in code and "descriptor.json" in code
+
+
+def test_a_condition_without_a_status_function_implies_success() -> None:
+    """Actions skips such a step after any failure; the replay must too."""
+
+    assert _run_plan("build", platform="linux", failing=["Install packages"])["base"] == (
+        "skipped"
+    )

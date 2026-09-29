@@ -35,8 +35,6 @@ __all__ = [
     "LanguagePipeline",
     "LexicalCandidate",
     "LexicalComponent",
-    "MorphologyAnalysis",
-    "TargetResolution",
     "LookupContext",
     "LookupPipeline",
     "LookupResult",

@@ -315,10 +315,13 @@ def test_text_presence_gate_accepts_ordinary_and_low_contrast_text() -> None:
                 pixels[row * 200 + column] = ink
         return ROIImage(200, 100, PixelFormat.GRAYSCALE_8, bytes(pixels))
 
-    assert composition_module._has_text_like_structure(rendered(255, 0))
-    assert composition_module._has_text_like_structure(rendered(0, 255))
-    assert composition_module._has_text_like_structure(rendered(120, 170))
-    assert not composition_module._has_text_like_structure(
+    def passes(image: ROIImage) -> bool:
+        return composition_module._measure_text_presence(image).passed
+
+    assert passes(rendered(255, 0))
+    assert passes(rendered(0, 255))
+    assert passes(rendered(120, 170))
+    assert not passes(
         ROIImage(200, 100, PixelFormat.GRAYSCALE_8, bytes([200] * (200 * 100)))
     )
 

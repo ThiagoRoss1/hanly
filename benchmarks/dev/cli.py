@@ -948,11 +948,6 @@ def _parser() -> argparse.ArgumentParser:
     real.add_argument("--warmup", type=int, default=2)
     real.add_argument("--samples", type=int, default=30)
     real.add_argument("--idle-seconds", type=float, default=0.0)
-    real.add_argument(
-        "--enable-mkldnn",
-        choices=("configured", "true", "false"),
-        default="configured",
-    )
     real.add_argument("--cpu-threads", type=_parse_cpu_threads)
     real.add_argument("--expected-status", default="SUCCESS")
     real.add_argument("--expected-text", default="읽습니다.")

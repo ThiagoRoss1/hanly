@@ -85,10 +85,6 @@ HotkeyListenerFactory: TypeAlias = Callable[
 ]
 HotkeyBindings: TypeAlias = Mapping[HotkeyAction | str, str]
 
-#: The actions that follow a physical hold rather than a tap.
-HELD_ACTIONS: frozenset[HotkeyAction] = frozenset({HotkeyAction.PUSH_TO_HOVER})
-
-
 DEFAULT_HOTKEYS: Mapping[HotkeyAction | str, str] = MappingProxyType(
     {
         # Every action in this map has to be registrable alongside every other,
@@ -674,7 +670,6 @@ class HotkeyService:
 
 __all__ = [
     "DEFAULT_HOTKEYS",
-    "HELD_ACTIONS",
     "DuplicateHotkeyError",
     "HotkeyAction",
     "HotkeyEdge",

@@ -342,7 +342,7 @@ def test_closing_from_a_delivered_callback_does_not_fail() -> None:
     def close_from_callback(_acquired: Acquisition) -> None:
         try:
             service.close()
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             failure.append(error)
         finally:
             done.set()

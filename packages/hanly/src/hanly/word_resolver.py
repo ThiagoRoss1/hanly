@@ -68,9 +68,10 @@ class WordResolver:
         """Return the whitespace-delimited OCR word at ``target``.
 
         Empty/whitespace-only text, malformed sequence members, degenerate
-        quads, a missing target, and zero or multiple geometric hits are all
-        normal no-result outcomes. OCR confidence is intentionally not
-        thresholded here; confidence policy belongs to the later pipeline.
+        quads, a missing target, and no geometric hit are all normal no-result
+        outcomes. When several regions contain the target, the one it sits
+        deepest inside is used. OCR confidence is intentionally not thresholded
+        here; confidence policy belongs to the later pipeline.
         """
 
         resolution = WordResolver.resolve_target(ocr_results, target)
@@ -435,39 +436,6 @@ def _contains(quad: Quad, target: Point) -> bool:
         if target.x < intersection_x:
             inside = not inside
     return inside
-
-
-def _locate_word_at_target(
-    text: str, quad: Quad, target: Point
-) -> tuple[str, int, int] | None:
-    """Map a target's local horizontal position to one OCR word and its offset.
-
-    The axis derived by :func:`_text_axis` is stable for the tilted
-    quadrilaterals emitted by an OCR adapter. The OCR contract exposes only the
-    line quad, so character positions are estimated from per-script advance
-    weights rather than measured. Treating every character as equally wide is
-    what this deliberately avoids: a space is roughly a third the width of a
-    Hangul syllable, so a uniform mapping gives whitespace an oversized hit
-    region and shifts every character after it, which reads to a user as a dead
-    zone over a real glyph.
-    """
-
-    if not text:
-        return None
-
-    fraction = _horizontal_fraction(quad, target)
-    if fraction is None:
-        return None
-
-    index = _character_index(text, fraction)
-    if text[index].isspace():
-        return None
-
-    start, end = _word_span(text, index)
-    word = text[start:end].strip()
-    if not word:
-        return None
-    return word, index - start, start
 
 
 def _word_span(text: str, index: int) -> tuple[int, int]:

@@ -266,7 +266,7 @@ def test_shutdown_during_an_active_install_does_not_wait_for_a_dead_qt_loop() ->
     def worker() -> None:
         try:
             _dispatch_sync(dead_dispatcher, lambda: None, cancel=closing, timeout=30.0)
-        except BaseException as error:  # noqa: BLE001 - recorded for the assertion
+        except BaseException as error:
             outcome.append(error)
 
     thread = Thread(target=worker, daemon=True)

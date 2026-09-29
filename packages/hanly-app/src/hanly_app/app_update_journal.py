@@ -566,11 +566,6 @@ _NONCE = re.compile(r"^[0-9a-f]{32,128}$")
 #: Both documents are one small record; a larger file is not one of ours.
 MAX_CHALLENGE_BYTES = 64 * 1024
 
-#: Written beside the receipt before a candidate is launched, so a rollback can
-#: put back what the installation was known to be.
-RECEIPT_BACKUP_SUFFIX = ".previous"
-
-
 class AcknowledgementError(JournalError):
     """Raised when a startup acknowledgement is absent, stale, or not ours."""
 
@@ -799,7 +794,6 @@ __all__ = [
     "PREPARED",
     "PROGRESS_NAME",
     "READY_NAME",
-    "RECEIPT_BACKUP_SUFFIX",
     "RECORD_POSIX_TREE",
     "RECORD_WINDOWS_FILES",
     "RECOVERY_REQUIRED",

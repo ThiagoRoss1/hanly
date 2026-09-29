@@ -33,13 +33,11 @@ from PyQt6.QtWidgets import (
 
 from .config import AppConfig, PopupDefaultSize, TechnicalDetailLevel, Theme
 from .popup import (
-    LookupStopper,
     PopupComponent,
     PopupContent,
     PopupController,
     PopupEntryContent,
     PopupPosition,
-    PopupRuntime,
     PopupSize,
     ScreenGeometry,
     format_lookup_result,
@@ -773,29 +771,7 @@ class QtPopupTrigger:
         return position
 
 
-class QtPopupRuntime:
-    def __init__(
-        self,
-        lookup_controller: LookupStopper,
-        *,
-        trace_sink: RuntimeTraceSink | None = None,
-        config: AppConfig | None = None,
-    ) -> None:
-        self.dispatcher = QtResultDispatcher()
-        self.view = QtPopupView(config=config)
-        self.popup = PopupController(self.view, popup_size=self.view.popup_size)
-        self.trigger = QtPopupTrigger(self.popup, trace_sink=trace_sink)
-        self._runtime = PopupRuntime(self.popup, lookup_controller)
-
-    def open(self, result: LookupResult) -> PopupPosition:
-        return self.trigger.open(result)
-
-    def shutdown(self) -> None:
-        self._runtime.shutdown()
-
-
 __all__ = [
-    "QtPopupRuntime",
     "QtPopupTrigger",
     "QtPopupView",
     "QtResultDispatcher",

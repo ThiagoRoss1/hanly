@@ -729,12 +729,6 @@ def render_annotated_png(
     return path
 
 
-# Short aliases keep the public surface convenient for benchmark scripts.
-serialize_snapshot = serialize_diagnostic
-deserialize_snapshot = deserialize_diagnostic
-write_diagnostic = write_diagnostic_json
-
-
 __all__ = [
     "DiagnosticSnapshot",
     "DictionaryDiagnostic",
@@ -750,11 +744,8 @@ __all__ = [
     "StageTiming",
     "TargetDiagnostic",
     "deserialize_diagnostic",
-    "deserialize_snapshot",
     "render_annotated_png",
     "render_diagnostic_html",
     "serialize_diagnostic",
-    "serialize_snapshot",
-    "write_diagnostic",
     "write_diagnostic_json",
 ]

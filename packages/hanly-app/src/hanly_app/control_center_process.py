@@ -810,7 +810,7 @@ class _ControlCenterChild:
                 self._receive_one(self._transport.receive())
         except TransportClosed:
             pass
-        except BaseException as error:  # noqa: BLE001 - told to the parent, then out
+        except BaseException as error:
             # Losing this thread strands every page call for the whole call
             # timeout, so a fault becomes a terminal child failure instead.
             self._notify_parent(
@@ -895,7 +895,7 @@ def control_center_child(connection: PipeEnd, options: ControlCenterOptions) -> 
     transport = Transport(connection, max_bytes=MAX_CONTROL_MESSAGE_BYTES)
     try:
         _ControlCenterChild(transport, options).run()
-    except BaseException as error:  # noqa: BLE001 - reported to the parent, then out
+    except BaseException as error:
         try:
             transport.send({"kind": "failed", "message": f"{type(error).__name__}: {error}"})
         except TransportClosed:

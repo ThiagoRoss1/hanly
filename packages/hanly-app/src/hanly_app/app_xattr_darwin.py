@@ -115,12 +115,6 @@ def write_value(path: Path, name: str, value: bytes) -> None:
     _attributes().write(_encode(path), name.encode("utf-8"), value)
 
 
-def remove_value(path: Path, name: str) -> None:
-    """Drop one attribute, if it is there."""
-
-    _attributes().remove(_encode(path), name.encode("utf-8"))
-
-
 def _attributes() -> _ExtendedAttributes:
     global _library
 
@@ -151,6 +145,5 @@ __all__ = [
     "XATTR_NOFOLLOW",
     "list_names",
     "read_value",
-    "remove_value",
     "write_value",
 ]

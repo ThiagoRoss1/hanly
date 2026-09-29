@@ -49,13 +49,10 @@ from .app_update_helper import (
     start_helper,
 )
 from .app_update_install import (
-    DifferentialInstaller,
     DifferentialUpdateError,
     PreparedTreeUpdate,
-    PreparedUpdate,
     StagedPosixTransaction,
     StagedTreeUpdate,
-    StagedUpdate,
     TreeUpdateInstaller,
     UpdateCancelled,
 )
@@ -70,7 +67,6 @@ from .app_update_journal import (
     unsettled_journals,
     working_root,
 )
-from .app_update_plan import FROM_DELTA
 from .update_service import ProgressCallback
 
 CancelHook = Callable[[], bool]
@@ -88,86 +84,6 @@ class SettledUpdate:
     @property
     def needs_attention(self) -> bool:
         return self.outcome == RECOVERY_REQUIRED
-
-
-class InPlaceUpdateRunner:
-    """One installation's differential updater, for the length of a session."""
-
-    def __init__(self, installer: DifferentialInstaller, *, recovery_root: Path) -> None:
-        self._installer = installer
-        self._recovery_root = Path(recovery_root)
-        self._lock = InstallLock(installer.install_root)
-        self._staged: StagedUpdate | None = None
-
-    @property
-    def install_root(self) -> Path:
-        return self._installer.install_root
-
-    def prepare(
-        self,
-        version: str,
-        *,
-        on_progress: ProgressCallback | None = None,
-        should_cancel: CancelHook | None = None,
-    ) -> PreparedUpdate:
-        """Decide the update, holding the installation for the whole operation."""
-
-        self._acquire()
-        try:
-            return self._installer.prepare(
-                version, on_progress=on_progress, should_cancel=should_cancel
-            )
-        except BaseException:
-            self._release()
-            raise
-
-    def install(
-        self,
-        prepared: PreparedUpdate,
-        *,
-        on_progress: ProgressCallback | None = None,
-        should_cancel: CancelHook | None = None,
-    ) -> None:
-        """Stage the payload and hand the transaction to the native helper.
-
-        On return the helper owns the installation and is waiting for this
-        process to exit. Nothing has been changed yet, and nothing will be
-        until Hanly stops.
-        """
-
-        try:
-            staged = self._installer.stage(
-                prepared, on_progress=on_progress, should_cancel=should_cancel
-            )
-            self._staged = staged
-            start_helper(staged.journal, self._recovery_root)
-            await_claim(staged.journal)
-        except (DifferentialUpdateError, HelperError, JournalError):
-            self.abandon()
-            raise
-
-    def abandon(self) -> None:
-        """Drop a transaction nothing has acted on, and release the lock.
-
-        Only ever called before the helper has started changing files: what it
-        removes is downloaded payload and an unused journal, never a backup.
-        """
-
-        staged = self._staged
-        self._staged = None
-        if staged is not None and staged.journal.is_settled():
-            _remove(staged.journal.directory)
-        clear_recovery_copy(self._recovery_root)
-        self._release()
-
-    def _acquire(self) -> None:
-        try:
-            self._lock.acquire()
-        except JournalError as error:
-            raise DifferentialUpdateError(str(error)) from error
-
-    def _release(self) -> None:
-        self._lock.release()
 
 
 def settle_previous_update(
@@ -262,12 +178,6 @@ def describe_outcome(settled: SettledUpdate) -> str:
     if settled.outcome == RESTORED:
         return settled.detail or "The update was undone and the previous version is back."
     return settled.detail or "An update did not finish and needs attention."
-
-
-def source_label(prepared: PreparedUpdate) -> str:
-    """Whether this update is the small one or the whole application."""
-
-    return "differential" if prepared.plan.source == FROM_DELTA else "full"
 
 
 def _version_of(journal: UpdateJournal) -> str | None:
@@ -494,7 +404,6 @@ def _discard_transaction(transaction: Any) -> None:
 
 __all__ = [
     "CancelHook",
-    "InPlaceUpdateRunner",
     "Reporter",
     "SettledUpdate",
     "TreeUpdateRunner",
@@ -502,5 +411,4 @@ __all__ = [
     "describe_outcome",
     "settle_native_update",
     "settle_previous_update",
-    "source_label",
 ]

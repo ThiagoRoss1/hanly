@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from hanly_app.runtime_trace import JSONPrimitive, RuntimeTraceSink
+from hanly_app.runtime_trace import RuntimeTraceSink
 
 
 class _Broadcast:
@@ -114,4 +114,4 @@ def _virtual_desktop(application: Any) -> Any:
     return QRect(left, top, right - left + 1, bottom - top + 1)
 
 
-__all__ = ["JSONPrimitive", "run_hud_session"]
+__all__ = ["run_hud_session"]

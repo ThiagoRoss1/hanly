@@ -9,17 +9,20 @@ past the crop.
 This recovers *clipping*, not misrecognition. A word that was fully visible and
 read wrongly looks identical to a word read correctly, and guessing at it is
 what turns a wrong answer into a confident wrong answer.
+
+Not wired into hover or manual lookup: the one-shot recapture that used these
+helpers was rolled back on 2026-09-20 (see the vision-hover stabilization
+checkpoint) and removed in the 2026-09-28 cleanup. The measured helpers stay
+as the tested basis for revisiting it.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from collections.abc import Callable
 from dataclasses import dataclass
 
-from hanly import LookupResult, Point, ROIImage
+from hanly import LookupResult, Point
 
-from .capture import CaptureResult, ScreenRect
+from .capture import ScreenRect
 
 #: How close to the ROI edge a detected region must come to count as touching
 #: it, in ROI pixels.
@@ -118,103 +121,7 @@ def recovery_target(
 _RECOVERY_LEDGER_LIMIT = 64
 
 
-class ClippingRecovery:
-    """One extra capture when the answer came from text touching the ROI edge.
-
-    This is the only retry in the lookup path, and it is deliberately narrow:
-    it recovers a *clipped* reading, never a wrong one. A fully visible word
-    that was misrecognized looks identical to one read correctly, so retrying
-    on confidence, a dictionary miss, or text shape would turn an honest
-    non-success into a confident wrong answer.
-    """
-
-    def __init__(
-        self,
-        *,
-        capture: Callable[..., CaptureResult],
-        submit: Callable[[ROIImage, Point], object],
-        origin_for: Callable[[int | None], ScreenRect | None],
-        monitor_for: Callable[[ScreenRect], ScreenRect],
-        is_current: Callable[[int], bool],
-        trace: Callable[[str, int, str], None] | None = None,
-    ) -> None:
-        self._capture = capture
-        self._submit = submit
-        self._origin_for = origin_for
-        self._monitor_for = monitor_for
-        self._is_current = is_current
-        self._trace = trace
-        self._spent: OrderedDict[int, bool] = OrderedDict()
-
-    def intercept(self, result: LookupResult, request_id: int | None) -> bool:
-        """Recover instead of presenting, when the evidence says text was cut.
-
-        Returns whether a recovery was submitted. ``True`` means the caller
-        must not present this result: a newer request is now current and
-        presenting the old one would put a stale answer on screen.
-        """
-
-        if request_id is None or self._spent.get(request_id) is not None:
-            return False
-
-        origin = self._origin_for(request_id)
-        if origin is None or not self._is_current(request_id):
-            return False
-
-        edges = clipped_edges(result, origin.width)
-        if not edges:
-            return False
-
-        capture = self._recapture(origin, edges, request_id)
-        if capture is None:
-            return False
-
-        # Currency is rechecked after the capture, which is the slow part: the
-        # pointer may have moved on to a different word while it ran.
-        if not self._is_current(request_id):
-            return False
-
-        self._remember(request_id)
-        self._submit(capture.image, capture.target)
-        self._report("clipping_recovery_submitted", request_id, "edge_contact")
-        return True
-
-    def spend(self, request_id: int | None) -> None:
-        """Mark a request as ineligible, so a recovery cannot recover itself."""
-
-        if request_id is not None:
-            self._remember(request_id)
-
-    def _recapture(
-        self, origin: ScreenRect, edges: ClippedEdges, request_id: int
-    ) -> CaptureResult | None:
-        widened = widened_region(origin, edges, self._monitor_for(origin))
-        if widened is None:
-            self._report("clipping_recovery_skipped", request_id, "no_room")
-            return None
-        try:
-            return self._capture(
-                Point(widened.left + widened.width / 2, widened.top + widened.height / 2),
-                anchor=widened,
-            )
-        except Exception:
-            self._report("clipping_recovery_failed", request_id, "capture_error")
-            return None
-
-    def _remember(self, request_id: int) -> None:
-        self._spent[request_id] = True
-        while len(self._spent) > _RECOVERY_LEDGER_LIMIT:
-            self._spent.popitem(last=False)
-
-    def _report(self, kind: str, request_id: int, reason: str) -> None:
-        if self._trace is not None:
-            self._trace(kind, request_id, reason)
-
-
-
-
 __all__ = [
-    "ClippingRecovery",
     "EDGE_TOLERANCE_PIXELS",
     "RECOVERY_MARGIN_PIXELS",
     "ClippedEdges",

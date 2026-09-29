@@ -14,22 +14,14 @@ import pytest
 
 from benchmarks.dev import probes
 from benchmarks.dev.package_composition import analyze_package
-from benchmarks.dev.probes import (
-    ProcessSampler,
-    probe_capture,
-    probe_dictionary,
-    probe_morphology,
-    probe_ocr,
-    probe_result_dispatch,
-    probe_stage,
-)
+from benchmarks.dev.probes import ProcessSampler, observe_stage
 
 
 def test_stage_probe_records_duration_and_preserves_return_identity() -> None:
     records: list[dict[str, Any]] = []
     result = object()
 
-    observed = probe_capture(lambda: result, records, run_id="r1", iteration=2)
+    observed = observe_stage("capture", lambda: result, records, run_id="r1", iteration=2)
 
     assert observed is result
     assert records[0]["stage"] == "capture"
@@ -38,26 +30,10 @@ def test_stage_probe_records_duration_and_preserves_return_identity() -> None:
     json.dumps(records[0])
 
 
-def test_each_named_stage_wrapper_records_its_stage() -> None:
-    records: list[dict[str, Any]] = []
-
-    assert probe_ocr(lambda: "ocr", records) == "ocr"
-    assert probe_morphology(lambda: ("token",), records) == ("token",)
-    assert probe_dictionary(lambda: {"status": "found"}, records)["status"] == "found"
-    assert probe_result_dispatch(lambda: None, records) is None
-
-    assert [record["stage"] for record in records] == [
-        "ocr",
-        "morphology",
-        "dictionary",
-        "result_dispatch",
-    ]
-
-
 def test_generic_probe_accepts_campaign_stage_names_and_measured_evidence() -> None:
     records: list[dict[str, Any]] = []
 
-    assert probe_stage(
+    assert observe_stage(
         "token_selection",
         lambda: "읽습니다",
         records,
@@ -76,7 +52,7 @@ def test_stage_probe_reraises_the_original_exception_and_records_failure() -> No
         raise error
 
     with pytest.raises(ValueError) as raised:
-        probe_dictionary(operation, records)
+        observe_stage("dictionary", operation, records)
 
     assert raised.value is error
     assert records[0]["correctness_status"] == "error"

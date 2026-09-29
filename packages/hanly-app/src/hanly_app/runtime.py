@@ -60,10 +60,6 @@ class RuntimeConfigError(ValueError):
 #: What the interface calls each recognizer.
 EASYOCR_DISPLAY_NAME = "EasyOCR"
 VISION_DISPLAY_NAME = "Apple Vision"
-#: Retained for callers that predate the recognizer choice.
-OCR_DISPLAY_NAME = EASYOCR_DISPLAY_NAME
-
-
 def ocr_display_name(backend: OCRBackend | None) -> str:
     """Name the recognizer a launch with this preference actually constructs.
 
@@ -743,7 +739,6 @@ def _mapping_field(value: object, field_name: str, resource_id: str) -> Mapping[
 __all__ = [
     "KRDICT_RESOURCE_ID",
     "EASYOCR_DISPLAY_NAME",
-    "OCR_DISPLAY_NAME",
     "VISION_DISPLAY_NAME",
     "ocr_display_name",
     "PACKAGED_MODEL_DIRECTORY",

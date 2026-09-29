@@ -166,20 +166,9 @@ def yield_activation_to(pid: int) -> bool:
     return bridge.yield_to(bridge.application(), pid)
 
 
-def activation_policy() -> int | None:
-    """Report the current policy, for tests and diagnostics."""
-
-    try:
-        bridge = _objective_c()
-    except RuntimeError:
-        return None
-    return bridge.policy(bridge.application())
-
-
 __all__ = [
     "ACCESSORY_POLICY",
     "activate_application",
-    "activation_policy",
     "run_as_accessory_application",
     "yield_activation_to",
 ]

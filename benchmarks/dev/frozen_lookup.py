@@ -134,7 +134,6 @@ class LookupRing:
         self._records: list[_Record] = []
         self._by_hover: dict[int, _Record] = {}
         self._by_lookup: dict[int, _Record] = {}
-        self.dropped_captures = 0
 
     def observe_capture(
         self,
@@ -148,7 +147,6 @@ class LookupRing:
         """Retain one ROI by reference, keyed to the request it belongs to."""
 
         if hover_request_id is None and lookup_request_id is None:
-            self.dropped_captures += 1
             return
         evidence = CaptureEvidence(
             observed_ns=observed_ns,

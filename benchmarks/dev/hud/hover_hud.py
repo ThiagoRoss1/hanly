@@ -19,8 +19,6 @@ from PyQt6.QtCore import QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import QWidget
 
-from .capture_exclusion import exclude_from_capture
-
 # Stage order is the order work actually happens in, which is also the order
 # the timeline bar is drawn in.
 _STAGES: Final[tuple[tuple[str, str], ...]] = (
@@ -36,7 +34,6 @@ _HISTORY = 20
 _REFRESH_MS = 50
 _WIDTH = 430
 _HEIGHT = 344
-_MARGIN = 16
 # Floor for the timeline scale, so one very fast hover cannot magnify
 # sub-millisecond stages into a full-width bar.
 _MIN_TIMELINE_MS = 40.0
@@ -126,17 +123,6 @@ class HoverHUD(QWidget):
         with self._lock:
             self._pending.append(dict(event))
         return None
-
-    def place_top_right(self, screen_width: int, screen_height: int) -> None:
-        """Park the overlay clear of the cursor's usual working area."""
-
-        del screen_height
-        self.move(max(0, screen_width - _WIDTH - _MARGIN), _MARGIN)
-
-    def hide_from_capture(self) -> bool:
-        """Ask the compositor to keep this window out of screen captures."""
-
-        return exclude_from_capture(int(self.winId()))
 
     def _drain(self) -> None:
         with self._lock:

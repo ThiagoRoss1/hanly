@@ -27,7 +27,7 @@ def _probe() -> dict[str, Any]:
     """Load the inventory the way the smoke children do: as source, not import."""
 
     namespace: dict[str, Any] = {}
-    exec(PROCESS_ROWS_PROGRAM, namespace)  # noqa: S102 - this is the fixture's contract
+    exec(PROCESS_ROWS_PROGRAM, namespace)
     return namespace
 
 

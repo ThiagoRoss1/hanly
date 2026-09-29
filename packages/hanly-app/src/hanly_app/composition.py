@@ -738,12 +738,6 @@ def _measure_text_presence(image: ROIImage) -> _GateMeasurement:
     return measured(transitions, sampled_rows, sampled_columns, False)
 
 
-def _has_text_like_structure(image: ROIImage) -> bool:
-    """Return whether a sampled grid shows enough sharp luminance transitions."""
-
-    return _measure_text_presence(image).passed
-
-
 class _CachingOCRProvider:
     """Reuse a previous OCR result for a byte-identical ROI.
 
