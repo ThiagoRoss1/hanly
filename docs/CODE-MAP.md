@@ -379,7 +379,6 @@ the migration routes.
 | `hover/qt_scheduler.py` | Hover timing on the Qt thread |
 | `acquisition/capture.py` | Screen ROI capture |
 | `acquisition/selector.py` | The "which area?" overlay, reached from settings |
-| `capture_recovery.py` | Whether an answer came from a crop that cut its word. Tested helpers only; not wired (see its docstring) |
 | `acquisition/direct_text.py` | Whether the word under the pointer can be read without pixels, and the fallback to capture when it cannot |
 | `acquisition/ax.py` | The macOS reader, through the Accessibility API |
 | `acquisition/uia.py` | The Windows reader, through UI Automation |
