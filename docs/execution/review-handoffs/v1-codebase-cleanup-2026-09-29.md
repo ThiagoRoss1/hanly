@@ -234,3 +234,158 @@ The restricted shell still cannot validate `hdiutil` or Chromium directly.
 The normal-access checks above resolve those macOS gaps. Windows shutdown
 diagnosis and validation remain exclusively for Part 2. Nothing was pushed,
 merged, tagged, or released.
+
+## Phase B Part 2 — Windows review (2026-09-30)
+
+Reviewer: Codex. Scope: Windows and `clean/arch-optimization` only. **Verdict:
+Windows source validation passed, but the release-package boundary remains
+unverified; this branch is not ready for merge.** The worktree
+started clean at `8b69d3d51d221041014f63bdde69f5a91edcaac2`, matching
+`origin/clean/arch-optimization`. The sole executable-adjacent correction is
+`79e2239` (`test: drive capture shutdown from visible windows`), authored by
+the configured human Git identity. It changes only a native test. No product
+module, architecture, or prior commit was changed. This commit has not been
+pushed; a fresh CI run for it remains a human decision.
+
+### Fixed
+
+- **Shutdown test scheduling:** The old test started 250/700 ms action/Quit
+  timers and a 3-second wall clock before the prompt existed. Its uncancelled
+  5-second fallback timer also survived into the next parametrized case in the
+  shared `QApplication`. A slow import, window activation, or scheduled Qt
+  callback could therefore fail the clock assertion or let the prior case
+  close the next case's window. The test now reacts to each window's `Show`
+  event, queues the region action or Quit only after that event, and stops its
+  owned timers and removes its event filter after the loop. It asserts that
+  Quit reached the intended visible window, selection returned `None`, no
+  window remained, the quit policy was restored, and the watchdog did not fire.
+  This is a test assumption correction; no product shutdown defect was
+  demonstrated. Both old cases passed in ten local Windows runs; both revised
+  cases passed in ten further runs. The pre-cleanup `5c510e5` selector and
+  test differ from the moved versions only in import paths and comments. The
+  earlier pre-move Windows CI failures (9.843-second prompt and missing region
+  Quit record) and later 3.344-second prompt failure are consistent with the
+  scheduling and timer-lifetime defects, but their exact runtime sequence is
+  unavailable without the original event trace.
+
+### Dismissed with evidence
+
+- **Windows module moves and spawn seams:** `tests/test_package_imports.py`,
+  `tests/test_packaging.py`, the real lookup-child native test, and the real
+  Control Center lifecycle/native page checks pass with normal host access.
+  `packaging/entrypoint.py` still calls only `hanly_app.cli:main`; the release
+  workflow imports `hanly_app.updates.resource_service`. The production spec
+  uses `collect_submodules("hanly_app")`, and the moved packages have package
+  initializers. A frozen-product verdict is recorded separately below.
+- **Restricted-host native failures:** The restricted full native run had 110
+  passed, 35 skipped, 7 failed: five Control Center page cases, a lookup-child
+  process-inventory case denied by `Get-CimInstance`, and WebEngine startup.
+  Those affected files passed with normal Windows access (9 passed, 1 skipped),
+  then the full required native gate passed (119 passed, 33 platform skips).
+  This directly reproduces the access distinction for this checkout.
+- **Portable process cleanup and OCR import order:** The restricted
+  process-tree test could not unlink a child-held stderr file; its isolated
+  normal-access rerun passed. In the default full portable run, 15 developer
+  benchmark cases failed importing Torch `c10.dll` after Qt had been imported.
+  Fresh-process `import torch` and the isolated benchmark case passed;
+  `from PyQt6.QtWidgets import QApplication; import easyocr` reproduced
+  `WinError 1114`. The Windows lookup child deliberately imports OCR before
+  Qt, and the moved preload module has no changed executable statements. A
+  full run with that order passed (2,260 passed, 104 skips). No OCR redesign
+  or benchmark change is justified by this review.
+
+### Deferred with trigger
+
+- **Fresh Windows CI:** The supplied handoff records the latest 3.344-second
+  prompt failure and earlier pre-move 9.843-second/missing-callback failures.
+  `gh` is unavailable here, direct GitHub API access was denied, and the
+  connector returned no runs for the inspected commits, so original job logs
+  were not independently retrieved. After the human pushes `79e2239` and the
+  handoff, inspect the new `native (windows)` job. Reopen shutdown diagnosis
+  if the revised test fails or product Quit fails under a real user session.
+- **Host-platform mypy:** `mypy` on Windows reports 22 POSIX-only API typing
+  errors in seven files; the same host limitation is recorded before this
+  cleanup. The CI-target `--platform linux` command passes all 305 files.
+  Revisit only if Windows mypy becomes a required gate or a new error appears.
+- **Frozen Control Center:** The fresh local bundle's inventory, source commit
+  identity, and frozen lookup worker pass, but its UI self-check fails importing
+  `PyQt6.QtWebEngineWidgets` with Windows exception `0xc0000139` (missing
+  procedure entry point); the application wraps that `ImportError` as
+  `ControlCenterUnavailable`. This local environment has `PyQt6-Qt6` and
+  `PyQt6-WebEngine-Qt6` 6.10.2; the release constraint requires
+  `PyQt6-Qt6==6.11.2`; local hooks-contrib is 2026.6 versus the constrained
+  2026.7. All named Qt DLLs are present in the bundle, and removing
+  MSYS from PATH did not change the failure. The version mismatch is a plausible
+  cause, **not a proven diagnosis**. Rebuild with
+  `packaging/release-constraints.txt` applied, run the four packaged checks
+  against the new build (preferably reconstructed from its ZIP), and compare
+  against `5c510e5` in the same environment if UI still fails. Do not merge or
+  declare Windows packaging complete until the frozen UI check passes or a
+  proven, narrow correction is reviewed.
+
+### Windows commands and results
+
+Host: Windows 10 19045; Python 3.13.11; pytest 9.1.1; PyQt6/Qt 6.10.2,
+WebEngine 6.10.0; Torch 2.13.0+cpu; EasyOCR 1.7.2; PyInstaller 6.22.2;
+Ruff 0.16.3; mypy 2.3.1. `.venv\Scripts\python.exe` was used throughout.
+Normal-access tests used temporary test profiles. The native fixture's first
+`cc.exe` on PATH (`C:\msys64\mingw64\bin`) displayed a missing-entry-point
+error during collection; `C:\mingw64\bin\gcc.exe` compiled a probe. The
+native command removed `msys64` only from that Python process's PATH and
+collected 152 cases in 0.53 seconds.
+
+| Command or check | Result |
+| --- | --- |
+| `python -m pytest -q -p no:cacheprovider tests/native/shared/test_capture_prompt_shutdown.py` (ten repetitions before and after the edit) | 20/20 cases passed in each series |
+| Focused normal-access rerun of the six affected native files | 9 passed, 1 platform skip in 71.40 s |
+| `python -c "import os,pytest; os.environ['PATH']=';'.join(p for p in os.environ['PATH'].split(';') if 'msys64' not in p.lower()); os.environ['HANLY_REQUIRE_NATIVE']='1'; raise SystemExit(pytest.main(['--suite','native','-q','--tb=short','-p','no:cacheprovider']))"` with normal host access | 119 passed, 33 skipped in 244.20 s |
+| `python -m pytest --suite portable -q --tb=short -p no:cacheprovider` with normal host access | 2,245 passed, 15 failed (`c10.dll` after Qt), 104 skipped in 196.08 s |
+| `python -c "import easyocr,pytest; raise SystemExit(pytest.main(['--suite','portable','-q','--tb=short','-p','no:cacheprovider']))"` with normal host access | 2,260 passed, 104 skipped in 180.46 s |
+| `python -m ruff check packages packaging tests tools benchmarks` | Passed |
+| `python -m mypy packages packaging tests tools benchmarks` | 22 POSIX API typing errors on Windows; no error in the revised test |
+| `python -m mypy --platform linux packages packaging tests tools benchmarks` | Passed; 305 source files |
+
+### Frozen package and stop boundary
+
+The build stamp targets `79e2239afb107d81951acb015116bdb026bd9258`
+(version `0.9.0`, Windows x86_64, build ID
+`08ccd61b-cc42-4746-b7ba-051f5169c84a`).
+The first `python tools/build_package.py` attempt completed analysis but the
+restricted shell could not read the local `craft_mlt_25k.pth` during COLLECT.
+A direct 16-byte read succeeded with normal access. The retry command is
+`$env:PYINSTALLER_CONFIG_DIR='C:\Hanly\dist\.pyinstaller-cache'; python
+tools/build_package.py --no-clean` with normal host access. It completed the
+onedir tree and wrote `dist/hanly-desktop-windows.zip`,
+`dist/release/windows/{manifest,descriptor}.json`, and the two Windows
+compatibility files. The ZIP has 6,838 entries, is 664,256,251 bytes, and has
+SHA-256 `52ec2d4a2c6e2731f25cd8fa6230ebb8056e2f838442b1a5b88257f7a5d8d9f9`.
+`python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop
+--inventory-only` passed. With `HANLY_EXPECTED_SOURCE_COMMIT` set to the full
+commit above and `HANLY_REQUIRE_PACKAGED=1`, `python -m pytest --suite
+packaged -q --tb=short -p no:cacheprovider` returned **3 passed, 1 failed in
+15.54 s**. The failing UI stage is described above; its `window host` stage
+passed, while `main window` failed before document/controls/bridge. A separate
+`--window-only` run reproduced it, including after MSYS was removed from PATH.
+The ZIP was not reconstructed or exercised, and the local build did not use
+the release-constrained Qt wheel; both are explicit remaining checks. A
+successful source native suite does not close this packaged UI gap.
+
+**Resume Windows packaging:** Use an isolated Python 3.10 environment matching
+`.github/workflows/build.yml`. Install the dev group and desktop runtime with
+`-c packaging/release-constraints.txt`, prepare the two EasyOCR weights, then
+run `python tools/build_package.py` with a workspace-local
+`PYINSTALLER_CONFIG_DIR`. Verify the build stamp names the then-current commit;
+run `HANLY_REQUIRE_PACKAGED=1` and `HANLY_EXPECTED_SOURCE_COMMIT=<that full
+commit>` with `python -m pytest --suite packaged`. Reconstruct the produced
+Windows ZIP into a new directory and run the same four checks with
+`HANLY_PACKAGED_APP` pointing there, plus compare its tree with
+`dist/release/windows/manifest.json`. If the constrained frozen UI still fails,
+capture the underlying WebEngine import/DLL loader error and reproduce on
+`5c510e5` with identical dependencies before classifying it as a cleanup
+regression or changing packaging. Preserve the existing release ZIP as this
+session's evidence until that comparison is complete.
+
+This handoff is the stop point. The human can decide whether to push the test
+commit to obtain fresh CI evidence; the branch is **not ready for a merge
+decision** until a constrained Windows packaged Control Center passes. No
+push, merge, tag, release, or further cleanup wave was performed.
