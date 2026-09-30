@@ -237,7 +237,8 @@ merged, tagged, or released.
 
 ## Phase B Part 2 — Windows review (2026-09-30)
 
-Reviewer: Codex. Scope: Windows and `clean/arch-optimization` only. **Verdict:
+Reviewer: Codex. Scope: Windows and `clean/arch-optimization` only. **Initial
+pause verdict (superseded by the resumption below):
 Windows source validation passed, but the release-package boundary remains
 unverified; this branch is not ready for merge.** The worktree
 started clean at `8b69d3d51d221041014f63bdde69f5a91edcaac2`, matching
@@ -389,3 +390,194 @@ This handoff is the stop point. The human can decide whether to push the test
 commit to obtain fresh CI evidence; the branch is **not ready for a merge
 decision** until a constrained Windows packaged Control Center passes. No
 push, merge, tag, release, or further cleanup wave was performed.
+
+### Windows Part 2 resumption — 2026-09-30
+
+The human authorized resumption of the remaining package boundary. The
+worktree was clean at `cbdebc59500e4f520880c33dbdd1da52c85b840f`, matching
+`origin/clean/arch-optimization`: the human had pushed the shutdown-test and
+initial handoff commits. General and macOS review were not repeated. No
+production code or architecture was changed during this resumption.
+
+#### Finding classifications
+
+- **Fixed — capture shutdown test assumptions:** `79e2239` remains the only
+  test correction. Original GitHub logs were now independently retrieved:
+  baseline run `36509183388`, Windows job `109217318228`, records the
+  9.843-second assertion and missing region callback; cleanup run
+  `36536192582`, job `109300688493`, records 3.344 seconds. Current-HEAD run
+  `36699193317`, job `109834338640`, passes both revised cases. The nested
+  choice shutdown path also passes the complete local native suite with the
+  constrained runtime. The evidence supports correction of the timer and
+  readiness assumptions, without an executable shutdown fix. Original CI
+  event-loop timing cannot be reconstructed from its pytest traceback.
+- **Dismissed with causal evidence — frozen module/import regression:** the
+  first release-constrained build still returned 3 packaged passes and one
+  Control Center failure in 16.41 seconds. PE inspection found that its
+  `Qt6Core.dll` imported 20 unsuffixed ICU symbols absent from the collected
+  `_internal/icuuc.dll`. `Analysis-00.toc` identifies that DLL's source as
+  `C:\Users\Thiago\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\poppler\Library\bin\icuuc.dll`,
+  an unrelated directory injected into this host's PATH. The System32 ICU
+  exports all 20 symbols. Replacing only that DLL in the constrained bundle
+  changed the UI self-check from failure to all five stages passing, with
+  exit code 0 and no exit timeout; the original DLL was restored afterward.
+  Explicitly preloading the same incompatible ICU in the same constrained
+  environment reproduced `DLL load failed while importing QtCore` and
+  `ControlCenterUnavailable` on baseline `5c510e5`'s
+  `hanly_app/control_center.py:81`. This is a controlled native-loader baseline
+  comparison, not a full frozen baseline build. Replacing only Qt's five MSVC
+  DLLs had not fixed the error. The earlier Qt-version explanation was
+  therefore insufficient: the demonstrated UI failure was host DLL discovery.
+  The final production build excludes only the unrelated Poppler PATH entry
+  inside its Python process and applies the existing release constraints.
+- **Dismissed with reproduced baseline — host mypy:** checking the archived
+  `5c510e5` source with the same mypy 2.3.1 and baseline source paths produced
+  the same 22 POSIX API errors in the same seven logical files (301 baseline
+  files, versus 305 after cleanup). The constrained current checkout passes
+  the CI `--platform linux` check. No new typing regression was found.
+- **Dismissed for the constrained review environment — portable OCR import
+  failure:** the default full portable suite now passes without an OCR-first
+  wrapper. This environment uses Qt 6.11.2 and Torch 2.14.1; the old environment
+  used Qt 6.10.2 and Torch 2.13.0. Both changed, so this result does not isolate
+  one wheel as the cause of the old `c10.dll` failure. It validates the current
+  release-constrained dependency set without an OCR or benchmark code change.
+- **Deferred with a trigger — current Windows CI process inventory:** current
+  run `36699193317` has 118 native passes, 33 skips, and one failure in
+  `test_the_window_opens_closes_and_reopens_without_touching_the_shell`:
+  `powershell.exe did not answer in time`. The fixture calls
+  `Get-CimInstance Win32_Process` with a 15-second subprocess bound and fails
+  explicitly when required inspection is unavailable. This is an observation
+  failure, not evidence of leaked Control Center processes. The probe is
+  byte-for-byte unchanged from `5c510e5`; the lifecycle test changes only moved
+  imports. Nevertheless, the exact CI timeout was not reproduced locally and
+  is **not dismissed as pre-existing or a flake**. The same constrained runtime
+  passes the baseline lifecycle file (2 passed, 1 platform skip in 9.80 seconds)
+  and the current full native suite. Trigger: the human reruns the Windows
+  native job; if the inventory timeout recurs, capture probe start/finish and
+  CIM/provider timing on that runner before any change to its bound or
+  implementation. A successful inventory is still required for a green CI
+  retirement check. No threshold, sleep, or skip was added.
+
+#### Reproducible environment and commands
+
+All successful desktop and packaged runs used normal host access and temporary
+test profiles. Only Python 3.13 was registered locally; the Python launcher
+alias was inaccessible. The base installation's `ensurepip` bundled wheel was
+missing, so venv creation left a usable interpreter without pip. Bootstrapping
+it with the existing pip's `--python` option succeeded. The ordinary `.venv`
+and the user's application profile were not modified.
+
+PowerShell variables below abbreviate actual executable paths:
+
+```powershell
+$reviewPython = 'C:\Hanly\dist\review-windows-env\Scripts\python.exe'
+$originalPython = 'C:\Hanly\.venv\Scripts\python.exe'
+& $originalPython -m venv C:\Hanly\dist\review-windows-env
+# The preceding ensurepip step failed; bootstrap its interpreter with working pip.
+& $originalPython -m pip --python $reviewPython install --upgrade pip
+& $reviewPython -m pip install --group dev -c packaging/release-constraints.txt -e packages/hanly -e 'packages/hanly-app[runtime]' pyinstaller
+& $reviewPython -m pip check
+& $reviewPython -m pip freeze > dist/review-windows-freeze.txt
+& $reviewPython tools/prepare_easyocr_models.py
+```
+
+Python 3.13.11; pip 26.2.1; pytest 9.1.1; PyQt6 and PyQt6-WebEngine 6.11.0;
+PyQt6-Qt6 and PyQt6-WebEngine-Qt6 6.11.2; EasyOCR 1.7.2; Torch 2.14.1;
+torchvision 0.29.1; kiwipiepy 0.23.2; pywebview 6.2.1; PyInstaller 6.22.2;
+hooks-contrib 2026.7; Ruff 0.16.9; mypy 2.3.1. `pip check` reports no broken
+requirements. Full installed versions are retained in the ignored freeze file.
+CI's Windows native job uses Python 3.10.11 and Torch 2.14.0. The local frozen
+build uses Python 3.13.11; a Python 3.10 frozen build was not performed here.
+
+| Actual command/check | Result |
+| --- | --- |
+| `& $reviewPython -m pytest --suite portable -q --tb=short -p no:cacheprovider` | 2,260 passed, 104 skipped in 209.98 s; default import order |
+| `& $reviewPython -c "import os,pytest; os.environ['PATH']=';'.join(p for p in os.environ['PATH'].split(';') if 'msys64' not in p.lower()); os.environ['HANLY_REQUIRE_NATIVE']='1'; raise SystemExit(pytest.main(['--suite','native','-q','--tb=short','-p','no:cacheprovider']))"` | 119 passed, 33 platform skips in 209.27 s |
+| `& $reviewPython -m ruff check packages packaging tests tools benchmarks` | Passed |
+| `& $reviewPython -m mypy --platform linux packages packaging tests tools benchmarks` | Passed; 305 source files |
+| Archived baseline source, original venv mypy `--no-incremental packages packaging tests tools benchmarks`, `MYPYPATH` pointing at both baseline package sources | 22 POSIX API errors in 7 files, 301 checked; matches current Windows-host errors |
+| Baseline lifecycle file under the constrained interpreter, `HANLY_REQUIRE_NATIVE=1`, baseline root and both source packages first in `sys.path`/`PYTHONPATH` | 2 passed, 1 platform skip in 9.80 s |
+
+Portable skips are the platform/capability exclusions already represented by
+that suite; native skips are macOS/POSIX-only cases and the non-Windows SIGINT
+case. Packaged skips are not accepted as a pass: both require variables are
+set for its gates.
+
+#### Package reconstruction and final stop boundary
+
+**Final verdict: the Windows local review is complete, with no demonstrated
+executable cleanup regression. The branch is ready for the human's push and CI
+decision. Merge remains conditional on a successful Windows native CI run;
+the latest run is still red on the process-inventory timeout above.**
+
+The final build is from
+`cbdebc59500e4f520880c33dbdd1da52c85b840f`, version `0.9.0`, Windows x86_64,
+build ID `63149ac0-8a48-4737-b0ab-0dfc618f8e69`, stamped
+`2026-09-30T19:29:51+00:00`. It uses the unchanged production spec, CLI entry
+point, relocated lookup and Control Center targets, and release constraints.
+The only subsequent tracked edit is this handoff. The final clean-PATH analysis
+does not collect Poppler's ICU; Qt resolves the host's compatible Windows ICU.
+The source-parent frozen-child harness explicitly models frozen Windows spawn
+arguments and disables its venv-only executable substitution. It runs the
+actual bundle executable and bundled target, but is not a second fully frozen
+parent application. Both child generations reach the canonical parent bridge
+and exit with code 0, and the source parent imports no WebEngine, Torch,
+EasyOCR, or Kiwi.
+
+The completed ZIP is 621,573,710 bytes with 6,264 entries under
+`hanly-desktop/`. SHA-256:
+`c220f76cad15cb342f122d817ada3ad2f2fdd43c93e9fe65147382ce9307d51e`.
+The release manifest is 1,111,079 bytes, SHA-256
+`b64971ceaca50624fe3151b91cb6ffe5bf3ef2b01c9f62847c0eae4de4a51cef`.
+Archive and manifest size/hash match `dist/release/windows/descriptor.json`.
+The legacy compatibility manifest has a different schema and derived build ID;
+its file path/size/hash mapping matches the corresponding release-manifest
+files, excluding the legacy manifest's own file. No previous published package
+was supplied, so the descriptor explicitly omits a delta. Delta generation,
+publishing, signing policy, installation, and an update against a previously
+published release were not added to this cleanup review.
+
+```powershell
+# This retained script performs the following inside Python, before invoking
+# the unchanged production build tool (PowerShell PATH edits did not propagate
+# reliably through this host's Python launcher):
+# os.environ['PATH'] = ';'.join(p for p in os.environ['PATH'].split(';') if 'poppler' not in p.lower())
+# os.environ['PYINSTALLER_CONFIG_DIR'] = r'C:\Hanly\dist\.pyinstaller-cache-release'
+# sys.argv = ['tools/build_package.py']
+# runpy.run_path('tools/build_package.py', run_name='__main__')
+& $reviewPython dist/review_clean_build.py
+& $reviewPython -c "import os,pytest; os.environ['HANLY_EXPECTED_SOURCE_COMMIT']='cbdebc59500e4f520880c33dbdd1da52c85b840f'; os.environ['HANLY_REQUIRE_PACKAGED']='1'; raise SystemExit(pytest.main(['--suite','packaged','-q','--tb=short','-p','no:cacheprovider']))"
+& $reviewPython dist/review_frozen_control_child.py C:\Hanly\dist\windows\hanly-desktop\hanly-desktop.exe
+& $reviewPython dist/review_reconstruct_zip.py
+& $reviewPython tools/smoke_packaged_runtime.py C:\Hanly\dist\review-windows-cbdebc5-reconstructed\hanly-desktop --against-manifest C:\Hanly\dist\release\windows\manifest.json --inventory-only
+& $reviewPython -c "import os,pytest; os.environ['HANLY_EXPECTED_SOURCE_COMMIT']='cbdebc59500e4f520880c33dbdd1da52c85b840f'; os.environ['HANLY_REQUIRE_PACKAGED']='1'; os.environ['HANLY_PACKAGED_APP']=r'C:\Hanly\dist\review-windows-cbdebc5-reconstructed\hanly-desktop'; raise SystemExit(pytest.main(['--suite','packaged','-q','--tb=short','-p','no:cacheprovider']))"
+```
+
+| Final package check | Result |
+| --- | --- |
+| Built onedir inventory, exact source identity, real frozen lookup worker, Control Center UI | **4 passed, 0 skips in 16.10 s** |
+| Separate real frozen Control Center spawn-target harness | Two generations opened and reached the parent bridge; both exited 0; no heavy imports in parent |
+| ZIP extraction into a new directory, archive/descriptor hashes and compatibility file mapping | Passed |
+| Extracted tree against the release manifest | 6,263 entries; no missing, differing, or unexpected entries; inventory passed |
+| Extracted ZIP inventory, exact source identity, worker, Control Center UI | **4 passed, 0 skips in 14.84 s** |
+
+The old unconstrained ZIP and reports remain under
+`dist/review-windows-79e2239/`; the constrained but Poppler-contaminated ZIP,
+descriptor, ICU DLL, and analysis remain under
+`dist/review-windows-cbdebc5-polluted/`. Reconstructed final product:
+`dist/review-windows-cbdebc5-reconstructed/hanly-desktop/`. Diagnostic scripts,
+dependency freeze, and all resume logs are under ignored `dist/`; they contain
+synthetic fixture results and loader/process metadata, not private screen
+captures or recognized user text. The ordinary profile and venv are intact.
+One temporary PE diagnostic held a DLL open during an earlier COLLECT attempt;
+that diagnostic was terminated and the collection retried. Harness setup
+errors were corrected before counting any of the successful checks above.
+
+**Remaining human gate:** inspect or rerun
+[Windows native job 109834338640](https://github.com/ThiagoRoss1/hanly/actions/runs/36699193317/job/109834338640).
+Its shutdown, lookup, WebEngine, and other Windows cases passed; its process
+inventory did not complete. Do not infer a green CI retirement check from the
+local passes. If that timeout repeats, use the timing trigger above. A local
+Python 3.10 frozen build remains unverified; the exercised release-constrained
+Windows artifact uses Python 3.13.11. This resumption stops at this handoff.
+No push, merge, tag, release, or additional cleanup wave was performed.
