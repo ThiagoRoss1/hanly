@@ -5,8 +5,8 @@ This file provides guidance to Codex when working with code in this repository.
 ## Project state
 
 Hanly is a Korean popup-dictionary desktop app: hover over Korean text anywhere
-on screen and a dictionary popup explains the word. Version 0.9.0 is the V1
-release candidate — two independently installable packages (`hanly`, the
+on screen and a dictionary popup explains the word. Version 1.0.0 is Hanly V1 —
+two independently installable packages (`hanly`, the
 engine; `hanly-app`, the desktop), frozen builds for Windows, macOS and Linux,
 an in-place updater, and CI.
 

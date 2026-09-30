@@ -22,7 +22,7 @@ runtime is what an unsigned bundle cannot survive: library validation refuses to
 map the bundle's own ad-hoc signed libraries into a hardened process, and the
 app dies on `libpython3.13.dylib ... different Team IDs` before Python starts.
 Naming no identity keeps the ad-hoc signature and drops the restriction, so the
-0.x bundle needs no entitlements and carries none. It signs as
+V1 bundle needs no entitlements and carries none. It signs as
 `flags=0x2(adhoc)` and passes `codesign --verify --deep --strict`.
 
 ### What Developer ID and notarization will need
@@ -666,7 +666,7 @@ data with trusted default-branch tooling):
 
 ```powershell
 python tools/release_version.py                # print installed product version
-python tools/release_version.py --tag v0.1.0   # check the local package/tag match
+python tools/release_version.py --tag v1.0.0   # check the local package/tag match
 ```
 
 ## Runtime configuration
