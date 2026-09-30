@@ -164,3 +164,73 @@ is not a Windows verdict or a release approval.
    results.
 
 Part 1 stops at this handoff. Nothing was pushed, merged, tagged, or released.
+
+## Phase B Part 1 continuation — final macOS validation (2026-09-30)
+
+**Verdict: macOS validation complete for this branch head.** The packaged
+application reconstructed independently from the ZIP and DMG passed the
+inventory, source-identity, worker, and Control Center UI gates. Both artifacts
+match the published manifest and retain valid bundle signatures. This verdict
+does not cover Windows, notarization, or a future release build.
+
+The worktree was clean at `e461fcd3ca9cd4046c54f640e67c7c4b5f5d7267`
+before this investigation. The fresh build's embedded source stamp names that
+exact commit (version `0.9.0`, macOS arm64). No product, packaging, or test
+defect was confirmed, so no code fix or regression-test commit was made.
+
+### The two failures
+
+- **DMG creation — environment restriction.** The production `hdiutil create`
+  command failed with “device not configured” under the restricted shell. The
+  same command on a one-file source folder succeeded with normal macOS disk
+  access. Running `tools/build_package.py` with that access then created the
+  full 631,715,759-byte DMG. The normal release check mounted it read-only,
+  found `Hanly.app`, detached it, and reconstructed the app. Both reconstructed
+  trees match all 7,339 manifest entries. This rules out the build's DMG
+  contents or `hdiutil` arguments as the cause of the earlier failure.
+- **Control Center abort — environment restriction.** The supplied 16:42 crash
+  report names PID 35165, the frozen UI test process. Its main thread aborted
+  while Qt WebEngine created `QWebEngineProfile` through AppKit's application
+  registration. A minimal source WebEngine native test in the restricted shell
+  failed with `bootstrap_check_in ... MachPortRendezvousServer: Permission
+  denied (1100)`; with normal GUI access it passed 2/2. The *same prior frozen
+  app* that aborted in the restricted shell passed its Control Center UI test
+  with normal access. The newly built ZIP and DMG apps each passed the full
+  packaged gate, including document, controls, and bridge stages. Source tests
+  alone would not establish this result; the frozen product was exercised.
+
+### Commands and results
+
+All commands below used `.venv/bin/python` on macOS 26.6.2 arm64. The build,
+DMG mounting, native GUI tests, and packaged tests ran with normal host access;
+PyInstaller used `PYINSTALLER_CONFIG_DIR=/private/tmp/hanly-pyinstaller-final`.
+The two `HANLY_PACKAGED_APP` values are shown with `$PWD` so the commands
+resolve to the same absolute paths without recording a personal home directory.
+
+| Command or check | Result |
+| --- | --- |
+| `PYINSTALLER_CONFIG_DIR=/private/tmp/hanly-pyinstaller-final .venv/bin/python tools/build_package.py` | Exit 0; ZIP, DMG, release manifest and descriptor produced from `e461fcd` |
+| `.venv/bin/python tools/smoke_packaged_runtime.py --from-archive dist/hanly-desktop-macos.zip --reconstruct-into dist/final-macos-zip --reconstruct-only` | Passed |
+| `.venv/bin/python tools/smoke_packaged_runtime.py --disk-image dist/hanly-desktop-macos.dmg` | Passed; image contains `Hanly.app` |
+| `.venv/bin/python tools/smoke_packaged_runtime.py --from-disk-image dist/hanly-desktop-macos.dmg --reconstruct-into dist/final-macos-dmg --reconstruct-only` | Passed |
+| `.venv/bin/python tools/smoke_packaged_runtime.py dist/final-macos-zip/Hanly.app --against-manifest dist/release/macos/manifest.json --inventory-only` | Passed; 7,339 entries, no missing, differing, or unexpected entries |
+| `.venv/bin/python tools/smoke_packaged_runtime.py dist/final-macos-dmg/Hanly.app --against-manifest dist/release/macos/manifest.json --inventory-only` | Same result; all required runtime inputs present in both |
+| `codesign --verify --deep --strict` (each reconstructed app) | Both passed |
+| `HANLY_PACKAGED_APP="$PWD/dist/final-macos-zip/Hanly.app" HANLY_EXPECTED_SOURCE_COMMIT=e461fcd3ca9cd4046c54f640e67c7c4b5f5d7267 HANLY_REQUIRE_PACKAGED=1 .venv/bin/python -m pytest --suite packaged -q --tb=short` | 4 passed in 30.36 s: inventory, source identity, isolated worker, Control Center UI |
+| Same packaged command with `HANLY_PACKAGED_APP="$PWD/dist/final-macos-dmg/Hanly.app"` | 4 passed in 28.44 s |
+| `.venv/bin/python -m pytest -q --tb=short tests/native/macos/test_control_center_identity.py tests/native/macos/test_update_handoff_darwin.py tests/native/shared/test_control_center_lifecycle.py tests/native/shared/test_webengine_startup.py tests/native/shared/test_capture_prompt_shutdown.py` | 9 passed in 55.57 s |
+| `.venv/bin/python -m pytest --suite portable -q --tb=short` with normal host access | 2,362 passed, 2 skipped in 120.20 s. In the restricted shell it was 2,357 passed, 4 failed, 3 skipped; the four failures all passed when rerun with normal access. |
+| `.venv/bin/python -m ruff check packages packaging tests tools benchmarks` | Passed |
+| `.venv/bin/python -m mypy packages packaging tests tools benchmarks` | Passed; 305 source files checked |
+
+The ZIP is 554,966,156 bytes (SHA-256
+`f3bf511eef2a4978efce18d43f363490c6fda4d3ad9de8758129d8f0eaa65bd0`);
+the DMG is 631,715,759 bytes (SHA-256
+`bfac7f60802d8224b6426e73a0ea5ab4ec681f7a8b240a5b69827e23374225d5`,
+matching the release descriptor). Build ID:
+`385ce93f-3009-4c45-940f-1a6ac7a04640`.
+
+The restricted shell still cannot validate `hdiutil` or Chromium directly.
+The normal-access checks above resolve those macOS gaps. Windows shutdown
+diagnosis and validation remain exclusively for Part 2. Nothing was pushed,
+merged, tagged, or released.
