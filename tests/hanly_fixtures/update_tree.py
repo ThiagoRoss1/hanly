@@ -15,8 +15,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from hanly_app.app_build_identity import BuildStamp
-from hanly_app.app_hup import (
+from hanly_app.updates.build_identity import BuildStamp
+from hanly_app.updates.inventory import read_tree, write_xattr
+from hanly_app.updates.manifest import BuildIdentity, TreeEntry, TreeLayout, TreeManifest
+from hanly_app.updates.package import (
     DELTA_FORMAT,
     BundleDescriptor,
     DeltaDescriptor,
@@ -28,8 +30,6 @@ from hanly_app.app_hup import (
     manifest_member_name,
     write_package,
 )
-from hanly_app.app_inventory import read_tree, write_xattr
-from hanly_app.app_manifest import BuildIdentity, TreeEntry, TreeLayout, TreeManifest
 
 from tests.hanly_fixtures.capabilities import require_posix_tree
 

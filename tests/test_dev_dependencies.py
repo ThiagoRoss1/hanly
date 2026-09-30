@@ -1,13 +1,8 @@
-"""Each suite must run in the environment its own CI job actually builds.
+"""Check suite dependency declarations against imports and capability skips.
 
-The portable job installs the root ``dev`` dependency group and the two
-packages without extras, while a developer machine carries the whole desktop
-runtime. A portable test that reaches a library present only locally passes
-here and fails there, so every third-party module it touches is either declared
-in that group or acquired through a ``pytest.importorskip`` that precedes it.
-
-The native and packaged jobs install the ``runtime`` extra on purpose, so their
-cases may reach it -- and nothing beyond it.
+Portable runs use root dev dependencies and packages without extras: every third
+party must be declared or preceded by importorskip. Native/packaged suites may
+add their runtime extra, but nothing beyond it.
 """
 
 from __future__ import annotations
@@ -48,10 +43,8 @@ _FIRST_PARTY = frozenset({"benchmarks", "hanly", "hanly_app", "tests", "tools"})
 #: Locates ``dev = [...]`` for the runtimes without ``tomllib``, currently 3.10.
 _DEV_GROUP = re.compile(r"^dev\s*=\s*(\[.*?^\])", re.DOTALL | re.MULTILINE)
 
-#: Top-level standard-library modules newer than the supported floor. This guard
-#: runs on whichever interpreter is at hand, so a module that is stdlib there but
-#: not on 3.10 would pass locally and fail the oldest CI lane -- which is how
-#: ``tomllib`` earned its place here.
+#: This guard may run on newer Python, so list stdlib modules absent from
+#: the supported 3.10 floor (including ``tomllib``).
 _NEWER_THAN_THE_SUPPORTED_FLOOR = frozenset({"tomllib"})
 
 

@@ -28,8 +28,8 @@ from hanly_app.config import (  # noqa: E402
     TechnicalDetailLevel,
     Theme,
 )
-from hanly_app.popup import PopupPosition  # noqa: E402
-from hanly_app.qt_popup import QtPopupView  # noqa: E402
+from hanly_app.popup.presentation import PopupPosition  # noqa: E402
+from hanly_app.popup.qt import QtPopupView  # noqa: E402
 from PyQt6.QtCore import Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QPixmap  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
@@ -65,6 +65,22 @@ def test_the_popup_never_takes_focus_or_activates_the_application(
     assert popup_view.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating) is True
 
 
+def test_the_popup_actions_are_pointer_only_by_design(
+    popup_view: QtPopupView,
+) -> None:
+    """Keyboard focus on Expand or Close would activate Hanly over the app the
+    user is reading, so the actions deliberately take none (A-32, 2026-09-28)."""
+
+    popup_view.show_result(_result(), PopupPosition(10, 10))
+    buttons = popup_view.findChildren(QPushButton)
+
+    assert buttons
+    assert all(
+        button.focusPolicy() is Qt.FocusPolicy.NoFocus for button in buttons
+    )
+    popup_view.hide()
+
+
 def test_the_popup_stays_a_frameless_always_on_top_tool_window(
     popup_view: QtPopupView,
 ) -> None:
@@ -79,15 +95,10 @@ def test_showing_and_updating_still_renders_and_repositions(
     qt_application: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Record the placement asked for, which is the part Hanly decides.
+    """Check rendering and requested repositioning on both show and update.
 
-    Where a top-level window finally lands is the window system's answer, and
-    it differs by platform, work area, and frame; the view's contract is that
-    both showing and updating render the result and request its position.
-
-    The recorder replaces the bound method rather than overriding it in a
-    subclass: ``QWidget.move`` is overloaded, and a narrower override is only
-    valid where the Qt stubs are absent.
+    Assert requested coordinates rather than OS placement. Replace the method instead
+    of overriding a narrowed QWidget.move overload, preserving Qt stub compatibility.
     """
 
     view = QtPopupView()

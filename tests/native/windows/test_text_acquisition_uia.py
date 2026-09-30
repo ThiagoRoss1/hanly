@@ -1,12 +1,7 @@
-"""What the Windows adapter reads, and everything it refuses to read.
+"""Check UIA safety, range isolation, geometry, and interface release.
 
-The UI Automation calls themselves are stood in for by a fake control, because
-what has to be pinned down is the adapter's own judgement: which properties are
-consulted before any text is touched, how a span is isolated when two real
-providers disagree about what a character is, which rectangle answers for a
-pointer, and that every interface it opens is released again. One group at the
-end uses the real COM plumbing, since an apartment entered on a background
-thread is not something a double can prove.
+Doubles cover pre-text safeguards and code-point/UTF-16 differences; real COM
+cases separately exercise the background apartment, which doubles cannot prove.
 """
 
 from __future__ import annotations
@@ -17,9 +12,9 @@ from typing import Any
 
 import pytest
 from hanly import BoundingBox, Point
-from hanly_app import text_acquisition_uia as uia
-from hanly_app.text_acquisition import DirectTextCoordinator, Outcome
-from hanly_app.text_acquisition_uia import UIAutomationTextProvider
+from hanly_app.acquisition import uia as uia
+from hanly_app.acquisition.direct_text import DirectTextCoordinator, Outcome
+from hanly_app.acquisition.uia import UIAutomationTextProvider
 
 from tests.hanly_fixtures.uia import (
     CHARACTER_WIDTH,

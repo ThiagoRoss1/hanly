@@ -151,7 +151,13 @@ def test_the_sample_records_the_exact_font_bytes_it_used() -> None:
     rendered = render_sample(_sample(font=face))
 
     assert rendered.metadata["font_sha256"] == resolved.sha256
-    assert rendered.metadata["font_path"] == str(resolved.path)
+    assert rendered.metadata["font_file"] == resolved.path.name
+    assert "font_path" not in rendered.metadata
+    assert all(
+        "/" not in str(value) and "\\" not in str(value)
+        for key, value in rendered.metadata.items()
+        if key.startswith("font")
+    )
     assert rendered.metadata["font_redistributable"] is False
     assert rendered.metadata["pillow_version"]
 

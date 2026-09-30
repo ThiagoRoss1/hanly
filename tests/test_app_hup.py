@@ -13,7 +13,8 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from hanly_app.app_hup import (
+from hanly_app.updates.manifest import BuildIdentity, TreeManifest
+from hanly_app.updates.package import (
     DELTA_FORMAT,
     HUP_VERSION,
     MAX_MEMBERS,
@@ -28,7 +29,6 @@ from hanly_app.app_hup import (
     read_package,
     write_package,
 )
-from hanly_app.app_manifest import BuildIdentity, TreeManifest
 
 from tests.hanly_fixtures.update_tree import (
     LINUX,
@@ -261,7 +261,7 @@ def test_reading_refuses_a_package_larger_than_this_build_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     package, _manifests = _release(tmp_path, WINDOWS)
-    monkeypatch.setattr("hanly_app.app_hup.MAX_PACKAGE_BYTES", 16)
+    monkeypatch.setattr("hanly_app.updates.package.MAX_PACKAGE_BYTES", 16)
 
     with pytest.raises(HupError, match="larger than this build reads"):
         read_package(package)

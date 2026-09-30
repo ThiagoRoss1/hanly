@@ -56,15 +56,18 @@ def test_kiwi_provider_normalizes_fake_tokens_without_leaking_them() -> None:
 
 
 def test_kiwi_provider_uses_surface_and_base_form_fallbacks() -> None:
-    analyzer = _FakeAnalyzer(())
-    provider = KiwiProvider(
-        analyzer=lambda text: [{"form": "먹", "tag": "VV", "base_form": "먹다"}]
-    )
+    inputs: list[str] = []
+
+    def analyzer(text: str) -> list[dict[str, str]]:
+        inputs.append(text)
+        return [{"form": "먹", "tag": "VV", "base_form": "먹다"}]
+
+    provider = KiwiProvider(analyzer=analyzer)
 
     analyses = provider.analyze("먹")
 
     assert tuple(analyses) == (TokenAnalysis(token="먹", lemma="먹다", part_of_speech="VV"),)
-    assert analyzer.inputs == []
+    assert inputs == ["먹"]
 
 
 def test_kiwi_provider_preserves_a_multi_token_conjugation() -> None:

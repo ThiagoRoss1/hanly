@@ -1,5 +1,7 @@
 # Test Suite Audit Review Handoff
 
+> **Historical (labelled 2026-09-28):** EasyOCR-only and CI-job statements predate Apple Vision (2026-09-20) and the current `ci.yml`. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 ## Bundle
 
 - Member issues: none — execution of `hanly-test-suite-audit-handoff-2026-09-04.md`

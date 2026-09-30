@@ -7,9 +7,9 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from hanly_app import control_center_host
-from hanly_app.control_center import ControlCenterUnavailable
-from hanly_app.control_center_host import (
+from hanly_app.control_center import host as control_center_host
+from hanly_app.control_center.bridge import ControlCenterUnavailable
+from hanly_app.control_center.host import (
     MINIMUM_INITIAL_SIZE,
     QT_BACKEND_MODULE,
     ControlCenterHost,
@@ -39,16 +39,10 @@ class _Events:
 
 
 class _Window:
-    """The pywebview window surface, modelled on pywebview 6.2.1.
+    """Model pywebview 6.2.1 without treating its inert constructor flag as OS state.
 
-    ``minimized`` is deliberately inert. In the real library it is the
-    constructor's option, assigned once and never updated; the Qt backend
-    signals minimize and restore through events instead. A fake that flipped it
-    on minimize would let a guard branch on state that does not exist, which is
-    precisely how the restore defect survived its own test.
-
-    ``native_minimized`` is what the window system would actually show, so a
-    test can assert the user-visible outcome rather than the flag.
+    Minimize events update ``native_minimized`` for assertions; flipping the fake's
+    constructor flag alone cannot prove the window was minimized.
     """
 
     def __init__(self, *, minimized: bool = False) -> None:

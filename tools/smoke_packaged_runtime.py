@@ -1,16 +1,8 @@
-"""Prove a frozen Hanly bundle can look a word up with only what it ships.
+"""Check frozen inventory, then execute the bundle's real provider self-check.
 
-Two checks, in order. The inventory says whether the required runtime
-dependencies were collected at all; the self-check runs the bundle's own
-executable and makes it construct the real providers. Inventory alone is not
-evidence -- a present file that cannot be imported still leaves the desktop
-unable to become ready.
-
-Nothing here may fall back to the repository, the developer virtual
-environment, or developer model caches: the run uses a temporary profile and a
-working directory outside the checkout. What the run may be given is named on
-the command line -- a dictionary to install, a model directory to seed -- so
-determinism is always an explicit argument rather than an inherited accident.
+Collected files alone cannot prove imports work. Use an isolated profile and
+working directory outside the checkout, without repo/venv/cache fallback. Any
+dictionary or model seed must be supplied explicitly on the command line.
 """
 
 from __future__ import annotations
@@ -24,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -83,18 +76,12 @@ HDIUTIL = "/usr/bin/hdiutil"
 
 CommandRunner = Callable[..., Any]
 
-#: A cold frozen start imports torch and warms two models. The work itself was
-#: measured at roughly 45 s; the rest of this is the platform reading a freshly
-#: frozen bundle's tens of thousands of new files for the first time, which has
-#: been observed to outlast 300 s on its own. It is the deadlock guard, not a
-#: budget: a self-check that fails now reports and exits rather than waiting.
+#: A cold frozen bundle can spend minutes reading files before its ~45-second
+#: model warmup; this is a deadlock guard, not a performance budget.
 DEFAULT_TIMEOUT_SECONDS = 1200
 
-#: Opening the window imports Qt WebEngine and starts Chromium; it constructs
-#: no provider, so it is bounded far more tightly than the worker. It is not
-#: bounded tightly: the first launch of a freshly frozen bundle waits on the
-#: platform reading tens of thousands of new files, which cost two 300 s
-#: timeouts here before the same check ran in under a second warm.
+#: The window builds no provider, but first-launch file reads can still take
+#: minutes before its warm path falls below a second.
 UI_TIMEOUT_SECONDS = 600
 
 #: How long the timed-out process tree is given to actually die. Reaping has
@@ -113,11 +100,8 @@ EASYOCR_MODEL_SUBDIRECTORY = "model"
 #: Redirected so nothing resolves ``~`` back to the developer's account.
 HOME_VARIABLES = ("HOME", "USERPROFILE", "XDG_CACHE_HOME")
 
-#: Qt aborts rather than raises when it cannot load a platform plugin, and a
-#: hosted Linux runner advertises a display it cannot actually serve. A check
-#: that opens no window therefore names the one platform that always loads
-#: instead of trusting the session, which is why this is set rather than
-#: defaulted. The window check is not headless and keeps its real display.
+#: Hosted Linux may advertise an unusable display. Inventory-only checks use
+#: a known platform plugin; window checks retain the real display.
 QT_PLATFORM_VARIABLE = "QT_QPA_PLATFORM"
 HEADLESS_QT_PLATFORM = "offscreen"
 
@@ -128,10 +112,8 @@ HEADLESS_SELF_CHECK_MODES = ("worker",)
 #: handler traceback is why this is measured in lines rather than in one.
 OUTPUT_TAIL_LINES = 20
 
-#: Fatal Windows exceptions, which arrive as the raw NTSTATUS a process died
-#: on rather than as a signal. Reported by name because the bare number says
-#: nothing: 3221225501 is an illegal instruction, which is a native library
-#: meeting a CPU that does not implement what it was compiled to use.
+#: Windows reports fatal native exceptions as raw NTSTATUS values, not signals;
+#: name them so an illegal instruction is recognizable from the report.
 WINDOWS_FATAL_STATUS = {
     0xC0000005: "ACCESS_VIOLATION",
     0xC000001D: "ILLEGAL_INSTRUCTION",
@@ -150,16 +132,12 @@ WINDOWS_FATAL_STATUS = {
 #: and must not depend on the source package it is checking.
 LOCAL_KRDICT_VARIABLE = "HANLY_KRDICT_DB"
 
-#: The packages a frozen bundle has to be able to name itself by. A build that
-#: works and cannot say which source produced it is not release evidence: one
-#: tested bundle reported 0.1.3 while the tree it was compared against was
-#: 0.5.0, and nothing in the run said so.
+#: A working frozen build must identify its own versions; otherwise a stale
+#: bundle can pass checks against the wrong source tree.
 IDENTITY_PACKAGES = ("hanly", "hanly-app")
 
-#: The self-check writes one flushed JSON line per stage boundary on stderr.
-#: Named here for the same reason as the variable above. A process killed by a
-#: native fault prints no report, and these lines are the only account of how
-#: far it got.
+#: Flushed stage events on stderr locate native crashes that prevent the
+#: self-check from writing its final report.
 STAGE_MARKER_PREFIX = "hanly-self-check:"
 STAGE_STARTED = "stage_started"
 STAGE_COMPLETED = "stage_completed"
@@ -215,7 +193,7 @@ def inspect_bundle(application_directory: str | Path) -> BundleInventory:
     if root.suffix == ".app":
         # An application without one is not installable by Hanly's own updater,
         # and PyInstaller only warns when it could not sign the bundle.
-        signature = root / "Contents" / "_CodeSignature" / "CodeResources"
+        signature = root / BUNDLE_SIGNATURE
         (present if signature.is_file() else missing).append(BUNDLE_SIGNATURE)
 
     return BundleInventory(root, tuple(present), tuple(missing))
@@ -258,15 +236,20 @@ def run_packaged_self_check(
         timed_out = False
         with output.open("w", encoding="utf-8") as out, errors.open("w", encoding="utf-8") as err:
             child = subprocess.Popen(
-                command, stdout=out, stderr=err, env=environment, cwd=working_directory
+                command,
+                stdout=out,
+                stderr=err,
+                env=environment,
+                cwd=working_directory,
+                # Its own process group, so a timeout can reach every process
+                # the bundle started and not only the one launched here.
+                start_new_session=sys.platform != "win32",
             )
             try:
                 status = child.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                # The report is written before the process winds Qt down, so a
-                # run that stops exiting still says whether the check itself
-                # passed. Reporting both keeps "the window is broken" separate
-                # from "the window worked and the process did not leave".
+    # Write the report before Qt shutdown to distinguish a failed window
+    # check from a successful check whose process cannot exit.
                 timed_out = True
                 _terminate_tree(child)
         stdout = output.read_text(encoding="utf-8", errors="replace")
@@ -304,7 +287,10 @@ def _terminate_tree(child: subprocess.Popen[bytes]) -> None:
         except (OSError, subprocess.TimeoutExpired):
             child.kill()
     else:
-        child.kill()
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except OSError:
+            child.kill()
 
     try:
         child.wait(timeout=TREE_KILL_SECONDS)
@@ -498,26 +484,12 @@ def _is_extension(path: Path) -> bool:
 
 
 class _ProfileContext:
-    """A per-user profile and working directory outside the repository.
+    """Isolate settings, home, work, and every model location outside the repository.
 
-    Settings, home, the working directory, and every EasyOCR model location are
-    redirected together. Redirecting only the settings root would still let a
-    frozen bundle read the developer's ``~/.EasyOCR`` cache and pass a check
-    the released artifact would fail on a user's machine.
-
-    A packaged build carries its own EasyOCR weights and cannot download, so a
-    clean profile has to succeed on what the bundle ships. ``model_cache``
-    seeds the isolated model directory for a build that still resolves models
-    through the environment; a current frozen bundle ignores it.
-
-    ``headless`` belongs to a check that opens no window: it names a Qt
-    platform that always loads rather than letting Qt abort on a display the
-    session advertises but cannot serve.
-
-    ``krdict`` names an already-built dictionary for the bundle to install.
-    The database is licensed and ships in neither the bundle nor the
-    repository, so without one a first run reaches the public release channel
-    -- a network dependency this check has no business carrying.
+    Current frozen builds use shipped weights without downloads; ``model_cache``
+    only seeds legacy builds that resolve models through the environment. ``headless``
+    selects a loadable non-window Qt platform. An explicit ``krdict`` supplies the
+    licensed, unbundled database, avoiding first-run release-network dependency.
     """
 
     def __init__(
@@ -642,30 +614,15 @@ def reconstruct_from_disk_image(
         shutil.rmtree(target)
     target.mkdir(parents=True)
 
-    with tempfile.TemporaryDirectory(prefix="hanly-dmg-") as scratch:
-        mountpoint = Path(scratch) / "mount"
-        mountpoint.mkdir()
+    with _mounted_disk_image(source, runner) as mountpoint:
+        application = mountpoint / payload_name
+        if not application.is_dir():
+            raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
         _run_native(
             runner,
-            [HDIUTIL, "attach", str(source), "-readonly", "-nobrowse", "-mountpoint",
-             str(mountpoint)],
-            f"could not mount {source.name}",
+            [DITTO, str(application), str(target / payload_name)],
+            f"could not copy {payload_name} out of {source.name}",
         )
-        try:
-            application = mountpoint / payload_name
-            if not application.is_dir():
-                raise FileNotFoundError(f"{source.name} does not contain {payload_name}")
-            _run_native(
-                runner,
-                [DITTO, str(application), str(target / payload_name)],
-                f"could not copy {payload_name} out of {source.name}",
-            )
-        finally:
-            _run_native(
-                runner,
-                [HDIUTIL, "detach", str(mountpoint), "-force"],
-                f"could not unmount {source.name}",
-            )
 
     copied = target / payload_name
     if not copied.joinpath(*_BUNDLE_PROGRAM_PARTS).is_file():
@@ -682,8 +639,8 @@ def compare_to_manifest(application: Path, manifest_path: Path) -> dict[str, obj
     way through its own format.
     """
 
-    from hanly_app.app_inventory import compare_tree, read_tree
-    from hanly_app.app_manifest import TreeManifest
+    from hanly_app.updates.inventory import compare_tree, read_tree
+    from hanly_app.updates.manifest import TreeManifest
 
     manifest = TreeManifest.from_json(Path(manifest_path).read_text(encoding="utf-8"))
     inventory = read_tree(Path(application), manifest.platform)
@@ -712,38 +669,44 @@ def verify_disk_image(
     """
 
     source = Path(image).resolve()
+    with _mounted_disk_image(source, runner) as mountpoint:
+        program = (mountpoint / payload_name).joinpath(*_BUNDLE_PROGRAM_PARTS)
+        return {
+            "image": source.name,
+            "application": payload_name,
+            "ok": program.is_file(),
+            "contents": sorted(item.name for item in mountpoint.iterdir()),
+        }
+
+
+@contextmanager
+def _mounted_disk_image(source: Path, runner: CommandRunner) -> Iterator[Path]:
+    """Attach ``source`` read-only at a private mount point, always detaching it.
+
+    A detach failure while another error is already on its way out is reported
+    on stderr instead of replacing that error, which is the one that explains
+    the run.
+    """
+
     with tempfile.TemporaryDirectory(prefix="hanly-dmg-") as scratch:
         mountpoint = Path(scratch) / "mount"
         mountpoint.mkdir()
         _run_native(
             runner,
-            [
-                HDIUTIL,
-                "attach",
-                str(source),
-                "-readonly",
-                "-nobrowse",
-                "-mountpoint",
-                str(mountpoint),
-            ],
+            [HDIUTIL, "attach", str(source), "-readonly", "-nobrowse", "-mountpoint",
+             str(mountpoint)],
             f"could not mount {source.name}",
         )
+        detach = [HDIUTIL, "detach", str(mountpoint), "-force"]
         try:
-            application = mountpoint / payload_name
-            program = application.joinpath(*_BUNDLE_PROGRAM_PARTS)
-            report = {
-                "image": source.name,
-                "application": payload_name,
-                "ok": program.is_file(),
-                "contents": sorted(item.name for item in mountpoint.iterdir()),
-            }
-        finally:
-            _run_native(
-                runner,
-                [HDIUTIL, "detach", str(mountpoint), "-force"],
-                f"could not unmount {source.name}",
-            )
-    return report
+            yield mountpoint
+        except BaseException:
+            try:
+                _run_native(runner, detach, f"could not unmount {source.name}")
+            except RuntimeError as detach_failure:
+                print(f"warning: {detach_failure}", file=sys.stderr)
+            raise
+        _run_native(runner, detach, f"could not unmount {source.name}")
 
 
 def _run_native(runner: CommandRunner, command: list[str], failure: str) -> None:

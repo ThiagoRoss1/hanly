@@ -639,7 +639,7 @@ jobs:
           import re
           import sys
 
-          from hanly_app.update_service import RemoteManifest, RemoteManifestError
+          from hanly_app.updates.resource_service import RemoteManifest, RemoteManifestError
 
           asset_name = sys.argv[1]
           manifest_path = pathlib.Path(sys.argv[2])

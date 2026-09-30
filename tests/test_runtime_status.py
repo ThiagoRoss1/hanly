@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from hanly import LookupResult, PixelFormat, Point, ROIImage
-from hanly_app.lookup_controller import LookupController
+from hanly_app.lookup.controller import LookupController
 from hanly_app.runtime_status import (
     RuntimeStatus,
     RuntimeStatusPublisher,

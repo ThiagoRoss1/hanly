@@ -13,8 +13,8 @@ from tests.hanly_fixtures.capabilities import require_modules, unavailable
 
 require_modules("PyQt6.QtWidgets", module_level=True)
 
-from hanly_app.popup import PopupPosition  # noqa: E402
-from hanly_app.qt_popup import QtPopupView  # noqa: E402
+from hanly_app.popup.presentation import PopupPosition  # noqa: E402
+from hanly_app.popup.qt import QtPopupView  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 
@@ -43,7 +43,7 @@ def test_the_popup_is_not_withdrawn_when_hanly_loses_focus(
     if qt_application.platformName() != "cocoa":
         unavailable("winId() is an NSView only under the cocoa platform plugin")
 
-    from hanly_app.popup_darwin import hides_when_inactive
+    from hanly_app.popup.macos import hides_when_inactive
 
     assert hides_when_inactive(int(popup_view.winId())) is False
 

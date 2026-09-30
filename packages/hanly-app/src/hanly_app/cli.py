@@ -15,13 +15,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NoReturn
 
+from hanly_app.control_center.bridge import ControlCenterUnavailable
+
 from .application import (
     DesktopApplicationError,
     report_startup_error,
     resolve_runtime_config,
     run_desktop,
 )
-from .control_center import ControlCenterUnavailable
 from .diagnostics import DiagnosticLog, open_diagnostics
 from .first_run import FirstRunError
 from .runtime import RuntimeConfigError

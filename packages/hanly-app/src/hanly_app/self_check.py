@@ -24,7 +24,7 @@ from .diagnostics import runtime_versions
 from .runtime import HanlyRuntime, load_runtime
 
 if TYPE_CHECKING:
-    from .control_center_host import ControlCenterHost
+    from hanly_app.control_center.host import ControlCenterHost
 
 #: What ``--self-check`` accepts. ``worker`` proves the lookup runtime and
 #: ``ui`` proves the main window: a frozen build can fail at either one alone.
@@ -198,8 +198,8 @@ def _run_ui_check() -> SelfCheckReport:
 def _create_window_host() -> ControlCenterHost:
     """Import the window's own stack and build the host that will run it."""
 
-    from .control_center import ControlCenterBridge
-    from .control_center_host import ControlCenterHost
+    from hanly_app.control_center.bridge import ControlCenterBridge
+    from hanly_app.control_center.host import ControlCenterHost
 
     return ControlCenterHost(ControlCenterBridge())
 

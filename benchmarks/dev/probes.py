@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import dataclasses
-import functools
 import json
 import math
 import os
@@ -207,117 +206,6 @@ def observe_stage(
     )
 
 
-probe_stage = observe_stage
-
-
-def _stage_wrapper(
-    stage: str,
-    operation: Callable[..., T],
-    sink: Sink,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    metadata: dict[str, Any],
-) -> T:
-    return _observe_stage(stage, operation, sink, args, kwargs, **metadata)
-
-
-_METADATA_KEYS = {
-    "run_id",
-    "scenario",
-    "iteration",
-    "condition",
-    "evidence_class",
-    "correctness",
-    "correctness_facts",
-}
-
-
-def _split_metadata(kwargs: dict[str, Any]) -> dict[str, Any]:
-    metadata = {key: kwargs.pop(key) for key in tuple(kwargs) if key in _METADATA_KEYS}
-    return metadata
-
-
-def probe_capture(operation: Callable[..., T], sink: Sink, *args: Any, **kwargs: Any) -> T:
-    """Observe a capture callable without changing its result or errors."""
-    return _stage_wrapper("capture", operation, sink, args, kwargs, _split_metadata(kwargs))
-
-
-def probe_ocr(operation: Callable[..., T], sink: Sink, *args: Any, **kwargs: Any) -> T:
-    """Observe an OCR callable without changing its result or errors."""
-    return _stage_wrapper("ocr", operation, sink, args, kwargs, _split_metadata(kwargs))
-
-
-def probe_morphology(operation: Callable[..., T], sink: Sink, *args: Any, **kwargs: Any) -> T:
-    """Observe a morphology callable without changing its result or errors."""
-    return _stage_wrapper("morphology", operation, sink, args, kwargs, _split_metadata(kwargs))
-
-
-def probe_dictionary(operation: Callable[..., T], sink: Sink, *args: Any, **kwargs: Any) -> T:
-    """Observe a dictionary callable without changing its result or errors."""
-    return _stage_wrapper("dictionary", operation, sink, args, kwargs, _split_metadata(kwargs))
-
-
-def probe_result_dispatch(operation: Callable[..., T], sink: Sink, *args: Any, **kwargs: Any) -> T:
-    """Observe the result-dispatch callable without changing its result or errors."""
-    return _stage_wrapper("result_dispatch", operation, sink, args, kwargs, _split_metadata(kwargs))
-
-
-capture_probe = probe_capture
-ocr_probe = probe_ocr
-morphology_probe = probe_morphology
-dictionary_probe = probe_dictionary
-result_dispatch_probe = probe_result_dispatch
-
-
-class StageProbe:
-    """Reusable stage wrapper carrying common measurement metadata."""
-
-    def __init__(
-        self,
-        stage: str,
-        sink: Sink,
-        *,
-        run_id: str | None = None,
-        scenario: str | None = None,
-        condition: str = "warm",
-        evidence_class: str = "measured",
-    ) -> None:
-        self.stage = stage
-        self.sink = sink
-        self.run_id = run_id
-        self.scenario = scenario
-        self.condition = condition
-        self.evidence_class = evidence_class
-        self._iteration = 0
-
-    def __call__(self, operation: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        result = observe_stage(
-            self.stage,
-            operation,
-            self.sink,
-            *args,
-            run_id=self.run_id,
-            scenario=self.scenario,
-            iteration=self._iteration,
-            condition=self.condition,
-            evidence_class=self.evidence_class,
-            **kwargs,
-        )
-        self._iteration += 1
-        return result
-
-    def wrap(self, operation: Callable[..., T]) -> Callable[..., T]:
-        """Return a callable that measures each invocation of ``operation``."""
-        @functools.wraps(operation)
-        def wrapped(*args: Any, **kwargs: Any) -> T:
-            return self(operation, *args, **kwargs)
-
-        return wrapped
-
-    measure = __call__
-    run = __call__
-
-
 #: ``getrusage`` does not agree with itself across platforms: Linux reports
 #: ``ru_maxrss`` in KiB and the BSDs, macOS included, report it in bytes.
 #: Assuming KiB everywhere read 39 MiB of resident memory as 39 GiB.
@@ -336,6 +224,7 @@ class ProcessSampler:
         process: Any | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Any] = time.sleep,
+        append: bool = False,
     ) -> None:
         if interval_seconds < 0:
             raise ValueError("interval_seconds must be non-negative")
@@ -347,6 +236,9 @@ class ProcessSampler:
         self.process = process
         self.clock = clock
         self.sleep = sleep
+        #: A later window continues an existing file rather than replacing the
+        #: samples an earlier window in the same run already wrote.
+        self.append = append
 
     def _resolve_process(self) -> Any | None:
         if self.process is not None:
@@ -378,10 +270,15 @@ class ProcessSampler:
         except Exception:
             return None, None
 
-    def _open_output(self) -> tuple[TextIO, bool]:
+    def _open_output(self) -> tuple[TextIO, bool, bool]:
+        """Return the stream, whether to close it, and whether to write a header."""
+
         if hasattr(self.output, "write"):
-            return cast(TextIO, self.output), False
-        return Path(self.output).open("w", encoding="utf-8", newline=""), True
+            return cast(TextIO, self.output), False, True
+        path = Path(self.output)
+        continuing = self.append and path.exists() and path.stat().st_size > 0
+        stream = path.open("a" if continuing else "w", encoding="utf-8", newline="")
+        return stream, True, not continuing
 
     def run(self, duration_seconds: float) -> int:
         """Sample immediately and continue no longer than the configured cap."""
@@ -389,10 +286,11 @@ class ProcessSampler:
             raise ValueError("duration_seconds must be non-negative")
 
         duration = min(float(duration_seconds), self.max_window_seconds)
-        stream, close_stream = self._open_output()
+        stream, close_stream, header = self._open_output()
         writer = csv.writer(stream, lineterminator="\n")
-        writer.writerow(("timestamp", "cpu_percent", "rss_bytes"))
-        stream.flush()
+        if header:
+            writer.writerow(("timestamp", "cpu_percent", "rss_bytes"))
+            stream.flush()
 
         process = self._resolve_process()
         deadline = self.clock() + duration
@@ -434,29 +332,7 @@ def _integer_or_none(value: Any) -> int | None:
         return None
 
 
-def sample_process(
-    output: str | os.PathLike[str] | TextIO,
-    duration_seconds: float,
-    **kwargs: Any,
-) -> int:
-    """Convenience function for one bounded process-observation window."""
-    return ProcessSampler(output, **kwargs).run(duration_seconds)
-
-
 __all__ = [
     "ProcessSampler",
-    "StageProbe",
-    "capture_probe",
-    "dictionary_probe",
-    "morphology_probe",
     "observe_stage",
-    "ocr_probe",
-    "probe_capture",
-    "probe_dictionary",
-    "probe_morphology",
-    "probe_ocr",
-    "probe_result_dispatch",
-    "probe_stage",
-    "result_dispatch_probe",
-    "sample_process",
 ]

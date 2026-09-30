@@ -9,8 +9,8 @@ from typing import Any, cast
 
 import pytest
 from hanly import Point
-from hanly_app import text_acquisition_uia as uia
-from hanly_app.text_acquisition import DirectTextCoordinator, Outcome
+from hanly_app.acquisition import uia as uia
+from hanly_app.acquisition.direct_text import DirectTextCoordinator, Outcome
 
 from tests.hanly_fixtures.uia import FakeBridge, FakeControl, point_at
 

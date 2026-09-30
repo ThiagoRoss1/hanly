@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 from hanly import BoundingBox, Point
-from hanly_app import text_acquisition_ax as ax
-from hanly_app.text_acquisition import DirectTextCoordinator, Outcome
+from hanly_app.acquisition import ax as ax
+from hanly_app.acquisition.direct_text import DirectTextCoordinator, Outcome
 
 
 @pytest.mark.parametrize("refine", [False, True])

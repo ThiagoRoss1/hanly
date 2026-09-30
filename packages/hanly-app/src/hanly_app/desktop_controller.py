@@ -5,7 +5,8 @@ from __future__ import annotations
 from enum import Enum, auto
 from typing import Protocol
 
-from .capture import ScreenRect
+from hanly_app.acquisition.capture import ScreenRect
+
 from .config import AppConfig, CaptureMode
 
 

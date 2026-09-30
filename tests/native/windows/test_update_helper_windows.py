@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from hanly_app.app_update_journal import COMMITTED, RESTORED
+from hanly_app.updates.journal import COMMITTED, RESTORED
 
 from tests.hanly_fixtures.update_handoff import COMPILER
 from tests.hanly_fixtures.update_transaction import (
@@ -115,18 +115,11 @@ def test_the_helper_needs_nothing_out_of_the_tree_it_is_changing(tmp_path: Path)
 def test_every_file_move_survives_spaces_and_hangul_in_the_install_path(
     tmp_path: Path,
 ) -> None:
-    """Every path reaching the helper is an argument or a journal field, never
-    text rendered into a command, and every move goes through an
-    extended-length path. A person's own Downloads folder is where this breaks
-    if either of those is wrong.
+    """Exercise add/replace/delete/restore through spaces and Hangul install paths.
 
-    The outcome here is a rollback rather than a commit, and that is the
-    fixture's limit rather than the helper's: the replacement is a C program
-    receiving ``--update-ready`` through an ANSI ``argv``, so a Hangul path
-    reaches it as ``?? ????`` and it cannot write the readiness file. What the
-    case proves is the part that is in doubt — every add, replace, delete, and
-    then every restore, over a path like this. Startup acknowledgement is
-    proved by the cases above, and the shipped build reads a wide ``argv``.
+    Helper arguments and journals carry paths as data, using extended-length paths.
+    This fixture's ANSI argv cannot write the Hangul ready marker, so rollback is
+    expected; other cases check readiness with the shipped wide-argv entry point.
     """
 
     installation = build_installation(tmp_path / "한국어 프로그램 (beta)", tmp_path / "probe")

@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation, LookupPreload
 from hanly_app.hotkeys import (
     HotkeyAction,
@@ -21,7 +21,7 @@ from hanly_app.hotkeys import (
     HotkeyEdgeHandler,
     HotkeyService,
 )
-from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")

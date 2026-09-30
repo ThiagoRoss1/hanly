@@ -8,7 +8,7 @@ This view defines how the Hanly V1 desktop application starts and how an automat
 
 It does not define package ownership, implementation sequencing, browser or mobile behavior, DOM integration, subtitle processing, or HanlyOCR research.
 
-> **Current OCR decision (2026-09-22):** V1 has two OCR implementations behind `OCRProvider`. `VisionProvider` (Apple Vision) is preferred on supported macOS; `EasyOCRProvider` is the cross-platform implementation and the fallback where Vision is unavailable. The internal `ocr_backend` setting selects `auto` (the default), `vision`, or `easyocr`; there is no user-facing provider selection. First launch provisions only `krdict`: Vision is part of macOS and EasyOCR owns its model storage. PaddleOCR stays removed. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 EasyOCR-only decision and the 2026-08-24 decision are historical.
+> **Current OCR decision (2026-09-22):** V1 has two OCR implementations behind `OCRProvider`. `VisionProvider` (Apple Vision) is preferred on supported macOS; `EasyOCRProvider` is the cross-platform implementation and the fallback where Vision is unavailable. The `ocr_backend` setting selects `auto` (the default), `vision`, or `easyocr`, and the Control Center offers it as the "Text recognizer" setting (amended 2026-09-28). First launch provisions only `krdict`: Vision is part of macOS and EasyOCR owns its model storage. PaddleOCR stays removed. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 EasyOCR-only decision and the 2026-08-24 decision are historical.
 
 ## Startup flow
 

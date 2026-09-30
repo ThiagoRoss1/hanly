@@ -16,8 +16,8 @@ import certifi
 import pytest
 import zstandard
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
-from hanly_app import update_service
-from hanly_app.update_service import (
+from hanly_app.updates import resource_service as update_service
+from hanly_app.updates.resource_service import (
     DownloadProgress,
     GitHubReleaseFetcher,
     RemoteManifest,
@@ -632,7 +632,7 @@ def test_a_redirect_cannot_downgrade_the_https_transport() -> None:
     """urllib blocks a redirect to file: but still follows http: and ftp:, so
     the policy has to be re-applied on every hop, not just the first URL."""
 
-    from hanly_app.update_service import _HTTPSOnlyRedirectHandler
+    from hanly_app.updates.resource_service import _HTTPSOnlyRedirectHandler
 
     handler = _HTTPSOnlyRedirectHandler()
     request = urllib.request.Request("https://example.test/asset")
@@ -668,7 +668,7 @@ def test_checksum_verification_streams_multi_chunk_artifacts(tmp_path: Path) -> 
     it is pinned against a payload larger than one read chunk rather than a
     stdlib helper that only exists from Python 3.11 onward."""
 
-    from hanly_app.update_service import verify_checksum
+    from hanly_app.updates.resource_service import verify_checksum
 
     artifact = tmp_path / "artifact.bin"
     payload = b"\xa1\x9c" * (1024 * 1024)
@@ -683,7 +683,7 @@ def test_checksum_verification_streams_multi_chunk_artifacts(tmp_path: Path) -> 
 
 
 def test_checksum_verification_reports_unusable_algorithms_and_paths(tmp_path: Path) -> None:
-    from hanly_app.update_service import verify_checksum
+    from hanly_app.updates.resource_service import verify_checksum
 
     artifact = tmp_path / "artifact.bin"
     artifact.write_bytes(b"payload")
@@ -844,7 +844,7 @@ def test_a_directory_activation_survives_a_failed_cleanup_of_the_displaced_copy(
     """Once the new tree is live, leftover data that will not delete is litter
     on disk, not a failed activation the caller should roll back."""
 
-    from hanly_app import update_service as module
+    from hanly_app.updates import resource_service as module
 
     destination = tmp_path / "models"
     destination.mkdir()
@@ -875,7 +875,7 @@ def test_a_directory_activation_survives_a_failed_cleanup_of_the_displaced_copy(
 def test_a_failed_directory_swap_puts_the_previous_tree_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from hanly_app import update_service as module
+    from hanly_app.updates import resource_service as module
 
     destination = tmp_path / "models"
     destination.mkdir()

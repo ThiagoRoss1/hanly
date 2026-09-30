@@ -208,6 +208,7 @@ def test_live_summary_correlates_latency_and_counts_idle_resources() -> None:
     assert summary["non_hangul_results"] == 1
     assert summary["dictionary_hits"] == 1
     assert summary["idle_resource_use"]["cpu_percent"]["p50"] == 2.0
+    assert summary["idle_resource_use"]["scope"] == "benchmark_shell_process_only"
 
 
 def test_live_summary_understands_production_trace_vocabulary() -> None:

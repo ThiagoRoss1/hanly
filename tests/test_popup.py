@@ -21,8 +21,8 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly_app.config import TechnicalDetailLevel
-from hanly_app.lookup_controller import LookupController
-from hanly_app.popup import (
+from hanly_app.lookup.controller import LookupController
+from hanly_app.popup.presentation import (
     PopupController,
     PopupPosition,
     PopupSize,
@@ -286,7 +286,7 @@ def test_popup_requires_normalized_lookup_result() -> None:
 
 
 def test_ui_shutdown_uses_non_waiting_lookup_stop_against_queued_dispatch() -> None:
-    from hanly_app.popup import PopupRuntime
+    from hanly_app.popup.presentation import PopupRuntime
 
     dispatch_entered = Event()
     release_dispatch = Event()
@@ -340,7 +340,7 @@ def test_ui_shutdown_uses_non_waiting_lookup_stop_against_queued_dispatch() -> N
 
 def test_qt_import_and_dispatch_are_optional() -> None:
     qt = pytest.importorskip("PyQt6.QtCore")
-    from hanly_app.qt_popup import QtResultDispatcher
+    from hanly_app.popup.qt import QtResultDispatcher
 
     app = qt.QCoreApplication.instance() or qt.QCoreApplication([])
     dispatcher = QtResultDispatcher()
@@ -376,7 +376,7 @@ def test_a_widget_with_no_native_window_is_reported_rather_than_crashing() -> No
     a caller that ran before the native window existed gets a value, not an
     Objective-C message to nothing."""
 
-    from hanly_app.popup_darwin import hides_when_inactive, keep_visible_when_inactive
+    from hanly_app.popup.macos import hides_when_inactive, keep_visible_when_inactive
 
     assert keep_visible_when_inactive(0) is False
     assert hides_when_inactive(0) is None

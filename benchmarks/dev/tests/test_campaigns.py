@@ -134,3 +134,31 @@ def test_campaign_records_correctness_failure_without_dropping_latency(tmp_path:
     assert [sample["correctness_status"] for sample in total] == ["failed", "failed"]
     assert all(sample["duration_ns"] >= 0 for sample in total)
 
+
+
+def test_the_observed_resolver_keeps_the_pointer_offset_production_uses(
+    tmp_path: Path,
+) -> None:
+    """A multi-part word's lemma depends on where in it the pointer sits."""
+
+    from hanly.word_resolver import WordResolver
+
+    region = OCRResult(
+        text="초대받았어요",
+        confidence=0.95,
+        quad=Quad.from_bounding_box(BoundingBox(0, 0, 60, 10)),
+    )
+    pointer = Point(45, 5)
+    metadata = build_metadata(run_id="campaign-3", commit="abc", scenario={"name": "fixture"})
+
+    with RunStore(tmp_path / "run", metadata, fsync=False) as store:
+        pipeline = ObservedLookupPipeline(_OCR(), _Morphology(), _Dictionary(), store=store)
+        observed = pipeline._pipeline._word_resolver.resolve_target_detail(  # type: ignore[attr-defined]
+            [region], pointer
+        )
+        stages = [sample["stage"] for sample in store.read_samples()]
+
+    production = WordResolver().resolve_target_detail([region], pointer)
+    assert production is not None and production.cursor_index > 0
+    assert observed == production
+    assert stages == ["token_selection"]

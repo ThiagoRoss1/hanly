@@ -1,17 +1,7 @@
-"""Score OCR output, and say plainly when there is nothing to score against.
+"""Score OCR text, geometry, and reading order against available ground truth.
 
-Two rules run through everything here.
-
-**A missing ground truth is not a zero.** An unannotated case would otherwise
-be indistinguishable from a case the recognizer got completely wrong, and the
-corpus is mostly unannotated by design. Every metric returns
-``not_applicable`` instead.
-
-**Reading the right word matters separately from reading the right string.**
-A recognizer that transcribes a line perfectly but whose geometry puts it
-somewhere else has not helped: the pointer still selects the wrong word. Region
-order and geometry are therefore kept, and a correct string in the wrong place
-never becomes a target-word success.
+Missing ground truth is ``not_applicable``, not a zero score. A correct string
+at the wrong location does not count as a successful target lookup.
 """
 
 from __future__ import annotations

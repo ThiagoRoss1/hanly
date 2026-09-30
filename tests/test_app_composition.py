@@ -30,8 +30,8 @@ from hanly_app.composition import (
     create_lookup_worker_factory,
 )
 from hanly_app.diagnostics import DiagnosticLog, StartupTimeline
-from hanly_app.job_executor import JobExecutor
-from hanly_app.lookup_controller import LookupRequest
+from hanly_app.lookup.controller import LookupRequest
+from hanly_app.lookup.executor import JobExecutor
 
 from tests.hanly_fixtures.krdict import build_fixture_krdict
 
@@ -315,10 +315,13 @@ def test_text_presence_gate_accepts_ordinary_and_low_contrast_text() -> None:
                 pixels[row * 200 + column] = ink
         return ROIImage(200, 100, PixelFormat.GRAYSCALE_8, bytes(pixels))
 
-    assert composition_module._has_text_like_structure(rendered(255, 0))
-    assert composition_module._has_text_like_structure(rendered(0, 255))
-    assert composition_module._has_text_like_structure(rendered(120, 170))
-    assert not composition_module._has_text_like_structure(
+    def passes(image: ROIImage) -> bool:
+        return composition_module._measure_text_presence(image).passed
+
+    assert passes(rendered(255, 0))
+    assert passes(rendered(0, 255))
+    assert passes(rendered(120, 170))
+    assert not passes(
         ROIImage(200, 100, PixelFormat.GRAYSCALE_8, bytes([200] * (200 * 100)))
     )
 
@@ -480,13 +483,8 @@ def test_worker_construction_reports_what_each_provider_cost() -> None:
     )
 
 
-# --- Traced/untraced parity -------------------------------------------------
-#
-# ``LookupPipeline`` probes the resolver for ``resolve_target_detail`` and falls
-# back to the pair contract with ``cursor_index=0``. A tracing wrapper that does
-# not forward the richer method therefore moves the pointer to the start of the
-# resolved word, and the lookup selects a different lexical candidate with
-# tracing on than with it off. These fixtures are the guard for that.
+# Tracing must forward resolve_target_detail; otherwise the cursor resets to
+# the word start and can select a different lexical candidate.
 
 _COMPOUND = OCRResult(
     text="책상",

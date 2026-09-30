@@ -1,7 +1,9 @@
 # Hanly Super QA Report
 
+> **Historical (labelled 2026-09-28):** QA of v0.5.0; its findings were executed under HAN-43/44 (see `docs/execution/review-handoffs/han-43-44-superqa.md`). Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 **Run date:** 2026-09-13  
-**Repository:** `/Users/thiago/Projects/hanly`  
+**Repository:** `/Users/<user>/Projects/hanly`
 **Commit tested:** `900dba1` (`v0.5.0`, `main`, clean at test start)  
 **Host:** macOS, arm64, Python 3.13.11 in `.venv`  
 **Packaged artifact:** `dist/macos/Hanly.app` (embedded Python 3.10.20, reported app version `0.1.3`)  

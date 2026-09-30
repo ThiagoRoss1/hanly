@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from hanly import BoundingBox, Point
-from hanly_app.text_acquisition import (
+from hanly_app.acquisition.direct_text import (
     Acquisition,
     DirectText,
     DirectTextCoordinator,
@@ -232,10 +232,8 @@ def test_the_submitting_thread_keeps_working_while_a_read_is_blocked() -> None:
     service = _service(reader, timeout_ms=5_000)
     try:
         service.submit(_POINT, lambda _a: None)
-        # Scheduling returned while the provider is still inside read_at, which
-        # is the whole claim: it handed the work over rather than performing it.
-        # Proved by ordering rather than by a clock, so a loaded host cannot
-        # turn this into a flake.
+    # Ordering proves scheduling returned before read_at completed, without
+    # a timing assertion that could flake on a loaded host.
         assert reader.entered.wait(timeout=5.0), "the read never started"
         assert not block.is_set(), "the reader was released before the check"
 
@@ -255,7 +253,7 @@ def test_a_native_deadline_shorter_than_the_budget_leaves_room_to_classify() -> 
     late to use instead of as an ordinary unsupported element.
     """
 
-    from hanly_app.text_acquisition_ax import _NATIVE_DEADLINE_SHARE
+    from hanly_app.acquisition.ax import _NATIVE_DEADLINE_SHARE
 
     assert 0 < _NATIVE_DEADLINE_SHARE < 1
 
@@ -342,7 +340,7 @@ def test_closing_from_a_delivered_callback_does_not_fail() -> None:
     def close_from_callback(_acquired: Acquisition) -> None:
         try:
             service.close()
-        except BaseException as error:  # noqa: BLE001
+        except BaseException as error:
             failure.append(error)
         finally:
             done.set()
@@ -455,7 +453,7 @@ def test_pending_deadline_is_answered_while_the_worker_remains_blocked() -> None
 def test_completion_checks_deadline_even_if_watcher_has_not_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from hanly_app.text_acquisition import _Job
+    from hanly_app.acquisition.direct_text import _Job
 
     service = _service(_Reader())
     collector = _collect()

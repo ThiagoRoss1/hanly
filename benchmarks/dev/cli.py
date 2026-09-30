@@ -391,7 +391,9 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                     report(
                         f"observing resident-provider idle state for {args.idle_seconds:g}s"
                     )
-                    ProcessSampler(run_dir / "process.csv").run(args.idle_seconds)
+                    ProcessSampler(run_dir / "process.csv", append=True).run(
+                        args.idle_seconds
+                    )
                 results = run_lookup_campaign(
                     pipeline,
                     image,
@@ -648,7 +650,7 @@ def run_hover_rate(args: argparse.Namespace) -> int:
 
 
 def run_desktop_capture(args: argparse.Namespace) -> int:
-    from hanly_app.capture import CaptureService
+    from hanly_app.acquisition.capture import CaptureService
     from PyQt6.QtGui import QCursor
 
     cursor = QCursor.pos()
@@ -745,15 +747,15 @@ def run_real_hover(args: argparse.Namespace) -> int:
     latest_result: list[Any] = []
     current: dict[str, Any] = {}
 
-    # Match production startup ordering: prepare the OCR native runtime before
-    # importing Qt, then use the real popup widget and process its paint event.
-    from hanly_app.ocr_preload import preload_ocr_runtime
+    # OCR runs in this process here, unlike the desktop, so its native runtime
+    # is prepared before Qt exactly as the lookup child prepares its own.
+    from hanly_app.lookup.preload import preload_ocr_runtime
 
     preload_ocr_runtime()
-    from hanly_app.hover_controller import HoverController
-    from hanly_app.lookup_controller import LookupController
-    from hanly_app.popup import PopupPosition
-    from hanly_app.qt_popup import QtPopupView
+    from hanly_app.hover.controller import HoverController
+    from hanly_app.lookup.controller import LookupController
+    from hanly_app.popup.presentation import PopupPosition
+    from hanly_app.popup.qt import QtPopupView
     from PyQt6.QtWidgets import QApplication
 
     application = QApplication.instance() or QApplication([])
@@ -946,11 +948,6 @@ def _parser() -> argparse.ArgumentParser:
     real.add_argument("--warmup", type=int, default=2)
     real.add_argument("--samples", type=int, default=30)
     real.add_argument("--idle-seconds", type=float, default=0.0)
-    real.add_argument(
-        "--enable-mkldnn",
-        choices=("configured", "true", "false"),
-        default="configured",
-    )
     real.add_argument("--cpu-threads", type=_parse_cpu_threads)
     real.add_argument("--expected-status", default="SUCCESS")
     real.add_argument("--expected-text", default="읽습니다.")

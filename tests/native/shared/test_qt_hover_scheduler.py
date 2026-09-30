@@ -9,7 +9,7 @@ from tests.hanly_fixtures.capabilities import require_modules
 
 require_modules("PyQt6.QtWidgets", module_level=True)
 
-from hanly_app.qt_hover_scheduler import QtHoverScheduler  # noqa: E402
+from hanly_app.hover.qt_scheduler import QtHoverScheduler  # noqa: E402
 from PyQt6.QtCore import QEventLoop, QTimer  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 

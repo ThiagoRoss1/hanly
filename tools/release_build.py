@@ -1,13 +1,7 @@
-"""Resolve and classify the GitHub state one Hanly release depends on.
+"""Classify release builds for draft/publish workflows without modifying GitHub.
 
-The release workflow asks these questions twice: once to stage a draft, and
-once behind a protected environment to publish it. Both halves need the same
-answers -- which commit the tag names, which successful build produced its
-artifacts, and whether an existing release is a draft this run may reuse -- so
-the decisions live here, where they can be exercised without a real release.
-
-Every answer is derived from the tag and the build that produced the artifacts.
-Nothing here creates, moves, or deletes anything.
+Share tag/commit checks, successful-artifact selection, and draft reuse logic;
+never create, move, or delete releases or tags here.
 """
 
 from __future__ import annotations
@@ -24,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from hanly_app.app_hup import HupError, read_package
+from hanly_app.updates.package import HupError, read_package
 
 API_ROOT = "https://api.github.com"
 APPLICATION_WORKFLOW = ".github/workflows/build.yml"
@@ -33,10 +27,8 @@ APPLICATION_WORKFLOW = ".github/workflows/build.yml"
 #: draft without it is not this workflow's draft, whatever its tag says.
 COMMIT_MARKER = "Hanly-Release-Commit:"
 
-#: What a finished Hanly release always holds, beside its one KRDICT resource.
-#: macOS publishes two products from one build: the ZIP the updater installs,
-#: and the disk image a person downloads. Windows is the only platform that
-#: installs differentially, so it is the only one with update metadata.
+#: Besides KRDICT, macOS publishes ZIP and DMG products; only Windows needs
+#: differential-update metadata.
 FIXED_RELEASE_ASSETS = frozenset(
     {
         "hanly-desktop-windows.zip",
@@ -65,10 +57,8 @@ TREE_DELTA_ASSET = re.compile(
     r"-from-[0-9.]+-to-[0-9.]+\.delta\.zip$"
 )
 
-#: Which generation of the update protocol a published release belongs to.
-#: Releases published before this one existed are classified, not failed: a
-#: no-op validation of release history must not demand a package that could
-#: not have been produced at the time.
+#: Classify older release generations without requiring update packages
+#: that their protocol could not have produced.
 PROTOCOL_LEGACY = "legacy"
 PROTOCOL_PACKAGE = "package"
 
@@ -318,16 +308,10 @@ def release_protocol(names: Sequence[str]) -> str:
 
 
 def verify_published_assets(names: Sequence[str], *, require_package: bool = False) -> str:
-    """Return the resource asset name, once ``names`` is exactly a release set.
+    """Return the resource asset name after verifying the exact release asset set.
 
-    A partial or foreign public release must not be mistaken for a finished
-    one, so the names are checked rather than counted - the more so because the
-    optional deltas make the count itself not fixed.
-
-    ``require_package`` is what a release being made passes. Without it an
-    already-published release from before update packages existed still
-    validates as what it is; with it, a new release cannot pass by looking like
-    one of those.
+    Check names rather than counts because deltas are optional. ``require_package``
+    requires .hup for new releases; False also accepts older releases predating it.
     """
 
     unique = set(names)

@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from hanly import PixelFormat, Point, ROIImage
-from hanly_app.capture import (
+from hanly_app.acquisition.capture import (
     BackendCapture,
     BackendMonitor,
     CaptureResult,
@@ -315,6 +315,38 @@ def test_exporting_a_pinned_lookup_writes_it_under_the_run_directory(
 
     assert message.startswith("export: ")
     assert (run_dir / "frozen-3" / "diagnostic.json").exists()
+
+
+def test_an_export_outside_the_artifact_root_is_refused_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """A custom --output-root cannot carry private screen content with it."""
+
+    from benchmarks.dev.microscope import ARTIFACT_ROOT
+
+    ring = build_ring()
+    ring.observe_event(
+        {"event_kind": "popup_visible", "lookup_request_id": 3, "result_status": "SUCCESS"},
+        1,
+    )
+    holder: list[object] = []
+    freeze_lookup_into(ring, holder)
+    run_dir = tmp_path / "run-1"
+
+    message = _export_message(holder, run_dir, ARTIFACT_ROOT)
+
+    assert message.startswith("export failed: ExportRefused")
+    assert not run_dir.exists()
+
+
+def test_the_live_session_exports_against_the_fixed_artifact_root() -> None:
+    import inspect
+
+    from benchmarks.dev import live_runner
+
+    source = inspect.getsource(live_runner)
+    assert "frozen_holder, run_dir, ARTIFACT_ROOT, evidence_counts" in source
+    assert "run_dir, args.output_root" not in source
 
 
 def test_the_live_adapter_never_persists_raw_text(tmp_path: Path) -> None:

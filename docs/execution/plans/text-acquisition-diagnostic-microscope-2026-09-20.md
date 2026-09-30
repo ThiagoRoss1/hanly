@@ -1,5 +1,7 @@
 # Text acquisition diagnostics and semantic fallback execution plan
 
+> **Historical (labelled 2026-09-28):** executed: Waves 1–4 were implemented under later authorizations (see the text-acquisition checkpoints and handoffs). Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 **Status:** implementation-ready plan only; no implementation is authorized by
 this document.
 **Date:** 2026-09-20

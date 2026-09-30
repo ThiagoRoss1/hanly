@@ -85,17 +85,10 @@ HotkeyListenerFactory: TypeAlias = Callable[
 ]
 HotkeyBindings: TypeAlias = Mapping[HotkeyAction | str, str]
 
-#: The actions that follow a physical hold rather than a tap.
-HELD_ACTIONS: frozenset[HotkeyAction] = frozenset({HotkeyAction.PUSH_TO_HOVER})
-
-
 DEFAULT_HOTKEYS: Mapping[HotkeyAction | str, str] = MappingProxyType(
     {
-        # Every action in this map has to be registrable alongside every other,
-        # so these avoid one another. What the desktop actually registers is
-        # the user's three preferences: the hold, the hover mute, and the
-        # capture session. The one-shot lookup is bindable but unregistered,
-        # because the combination it used to own is now the hold.
+# These bindings must coexist. One-shot lookup remains bindable but is not
+# registered: its former shortcut now belongs to the hold action.
         HotkeyAction.LOOKUP: "ctrl+alt+space",
         HotkeyAction.START_CAPTURE: "ctrl+shift+f9",
         HotkeyAction.PAUSE_CAPTURE: "ctrl+shift+f10",
@@ -195,11 +188,8 @@ def _canonical_key_part(part: str) -> str:
     if len(token) == 1:
         return token
 
-    # Pynput names non-character keys (function keys, media keys, and virtual
-    # key codes) in angle brackets. Keeping the conversion here also lets the
-    # existing human-friendly ``ctrl+shift+space`` setting remain valid. Only
-    # identifier-shaped names can be one, so punctuation is rejected instead of
-    # being wrapped into a binding pynput could never register.
+# Pynput wraps non-character key names in angle brackets. Accept only
+# identifiers there; punctuation cannot form a valid binding.
     if not token.replace("_", "").isalnum():
         raise HotkeyError(f"invalid hotkey key part: {part!r}")
     return f"<{token}>"
@@ -394,10 +384,8 @@ def _stop_listener(listener: HotkeyListener) -> None:
     try:
         listener.join(_STOP_JOIN_SECONDS)
     except RuntimeError:
-        # pynput's listener is itself a Thread and runs hotkey callbacks on it,
-        # so a handler that shuts the service down would be joining itself.
-        # Stopping is already requested; waiting here is neither possible nor
-        # needed.
+        # A hotkey callback runs on pynput's listener thread; shutdown must
+        # not join that same thread.
         pass
 
 
@@ -674,7 +662,6 @@ class HotkeyService:
 
 __all__ = [
     "DEFAULT_HOTKEYS",
-    "HELD_ACTIONS",
     "DuplicateHotkeyError",
     "HotkeyAction",
     "HotkeyEdge",

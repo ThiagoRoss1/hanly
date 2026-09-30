@@ -14,9 +14,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from hanly_app.app_inventory import read_tree, read_xattr
-from hanly_app.app_manifest import tree_difference
-from hanly_app.app_update_tree import (
+from hanly_app.updates.inventory import read_tree, read_xattr
+from hanly_app.updates.manifest import tree_difference
+from hanly_app.updates.tree import (
     CandidateCancelled,
     CandidateError,
     assemble_candidate,
@@ -194,7 +194,7 @@ def test_a_product_archive_carrying_more_than_a_build_does_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _base, target, _install = _pair(tmp_path)
-    monkeypatch.setattr("hanly_app.app_update_tree.MAX_PRODUCT_BYTES", 8)
+    monkeypatch.setattr("hanly_app.updates.tree.MAX_PRODUCT_BYTES", 8)
 
     with pytest.raises(CandidateError, match="expands past"):
         extract_full_product(tmp_path / "tx" / "candidate", target.full, target.manifest)

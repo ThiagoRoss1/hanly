@@ -1,12 +1,8 @@
-"""Production Hanly Desktop V1 composition and lifecycle root.
+"""Compose and run the persistent Hanly desktop shell.
 
-This is the persistent shell: Qt Widgets, the tray, global hotkeys, capture,
-hover state, the popup, settings, update orchestration, and the session log.
-It owns the one event loop, and it deliberately carries neither Qt WebEngine
-nor the OCR runtime -- those live in child processes it can retire.
-
-It composes existing engine, capture, lookup, popup, Control Center, update,
-tray, and shutdown seams; it does not construct providers itself.
+It owns Qt Widgets, tray, hotkeys, capture, hover, popup, settings, updates,
+diagnostics, and one event loop. WebEngine and OCR stay in retireable children;
+provider construction belongs to the lookup seam.
 """
 
 from __future__ import annotations
@@ -24,10 +20,32 @@ from typing import Any, Protocol, cast
 
 from hanly.resource_manager import ResourceManager
 
-from .app_build_identity import BuildStamp, ReceiptStore, read_build_stamp, receipt_store
-from .app_icon import tray_image
-from .app_manifest import PLATFORM_WINDOWS
-from .app_update import (
+from hanly_app.acquisition.capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
+from hanly_app.acquisition.selector import CaptureSelection, select_capture_area
+from hanly_app.control_center.bridge import (
+    RUNTIME_NOT_READY,
+    ControlCenterBridge,
+    ControlCenterUnavailable,
+)
+from hanly_app.control_center.process import (
+    ControlCenterProcess,
+    bridge_operations,
+)
+from hanly_app.lookup.controller import ResultDispatcher
+from hanly_app.updates.build_identity import (
+    BuildStamp,
+    ReceiptStore,
+    read_build_stamp,
+    receipt_store,
+)
+from hanly_app.updates.cleanup import (
+    CleanupReport,
+    OwnedWorkspace,
+    sweep_staging,
+    update_staging_locations,
+)
+from hanly_app.updates.coordinator import ApplicationInstall, UpdateCoordinator
+from hanly_app.updates.desktop_update import (
     APPLICATION_STEM,
     ApplicationInstaller,
     ApplicationUpdate,
@@ -37,22 +55,24 @@ from .app_update import (
     confirm_started_v2,
     installation_root,
 )
-from .app_update_install import (
+from hanly_app.updates.installer import (
     DifferentialUpdateError,
     PosixTreeStaging,
     TreeUpdateInstaller,
     WindowsFileStaging,
 )
-from .app_update_journal import AcknowledgementError
-from .app_update_runner import (
+from hanly_app.updates.journal import AcknowledgementError
+from hanly_app.updates.manifest import PLATFORM_WINDOWS
+from hanly_app.updates.resource_service import GitHubReleaseFetcher, ProgressCallback, UpdateService
+from hanly_app.updates.runner import (
     SettledUpdate,
     TreeUpdateRunner,
     describe_outcome,
     settle_native_update,
     settle_previous_update,
 )
-from .capture import DEFAULT_ROI_GRID, CaptureService, ScreenRect
-from .capture_selector import CaptureSelection, select_capture_area
+
+from .app_icon import tray_image
 from .config import (
     AppConfig,
     CaptureMode,
@@ -61,29 +81,13 @@ from .config import (
     HoverActivation,
     LookupPreload,
 )
-from .control_center import (
-    RUNTIME_NOT_READY,
-    ControlCenterBridge,
-    ControlCenterUnavailable,
-)
-from .control_center_process import (
-    ControlCenterProcess,
-    bridge_operations,
-)
 from .desktop_controller import DesktopController, DesktopState
 from .diagnostics import DiagnosticLog, StartupTimeline
 from .first_run import (
     persist_installed_resource,
     provision_runtime_config,
 )
-from .lookup_controller import ResultDispatcher
 from .manual_lookup import ManualLookupRuntime, RuntimeComposition, create_qt_manual_lookup
-from .owned_cleanup import (
-    CleanupReport,
-    OwnedWorkspace,
-    sweep_staging,
-    update_staging_locations,
-)
 from .paths import (
     RUNTIME_CONFIG_NAME,
     default_app_config_path,
@@ -118,8 +122,6 @@ from .runtime_trace import RuntimeTraceSink
 from .signal_bridge import QtSignalBridge
 from .startup import StartupCoordinator
 from .tray import TrayService
-from .update_coordinator import ApplicationInstall, UpdateCoordinator
-from .update_service import GitHubReleaseFetcher, ProgressCallback, UpdateService
 
 #: How long a bridge-initiated capture selection may wait for the user.
 _SELECTION_TIMEOUT_SECONDS = 600.0
@@ -446,16 +448,10 @@ class DesktopApplication:
 
 
 class _DesktopSession:
-    """The desktop shell, plus the services that need a prepared runtime.
+    """Own the visible shell and services that require a prepared runtime.
 
-    The shell, window, tray, settings, diagnostics, status, exists before
-    any resource work, so the interface is on screen while Hanly is still
-    downloading and validating. Everything that needs a validated runtime is
-    built in :meth:`activate`, on the Qt thread.
-
-    It is also the lifecycle the Control Center, tray, and application talk to:
-    before activation each control fails with a message that says Hanly is
-    still preparing, rather than with a missing attribute.
+    The interface exists during provisioning; ``activate`` builds runtime services
+    on Qt. Controls used before activation return a preparing message.
     """
 
     def __init__(
@@ -568,10 +564,8 @@ class _DesktopSession:
         self.bridge.attach_runtime(runtime, manual.capture_service, self._updates)
         self.desktop.attach_updates(self._updates)
 
-        # The session comes up with its shortcuts registered and its lookup
-        # path built. Whether the providers load now is the preload policy's
-        # decision, and nothing observes the screen unless the user asked for
-        # hover to be on from launch.
+        # Preload controls provider residency; startup alone never starts
+        # screen observation unless the user enabled hover on launch.
         manual.prepare()
         self._watch_readiness(manual)
         self._start_if_always_active()
@@ -748,20 +742,12 @@ class _DesktopSession:
         )
 
     def release(self) -> None:
-        """Drop a failed attempt's services so a retry starts from nothing.
+        """Release a failed attempt so retry can create a fresh, single-use JobExecutor.
 
-        A JobExecutor is single-use, so retrying means a new worker rather than
-        restarting the old one. The startup thread calls this, so only the
-        UI-owned half runs on Qt: waiting for worker-owned providers and
-        SQLite handles would otherwise freeze the window for the whole
-        shutdown timeout. Ownership is held until that wait returns, so a
-        replacement is never activated over a resource the old attempt still
-        has open, and the update worker is retired rather than orphaned.
-
-        Runtime status is left to the coordinator that asked for the release:
-        waiting out the previous providers takes seconds, and reporting a
-        settled phase for that long tells the interface no further news is
-        coming while the retry is still under way.
+        Called by the startup thread: UI cleanup runs on Qt, provider/SQLite waits run
+        off Qt. Keep ownership until waits finish to prevent overlapping resources, and
+        retire the update worker. The requesting coordinator retains runtime-status
+        ownership so release cannot announce a settled phase during retry.
         """
 
         released: list[DesktopController] = []
@@ -907,10 +893,8 @@ class _DesktopSession:
 
         def choose() -> None:
             if self._choosing_area:
-                # The Control Center stays clickable while the prompt is open,
-                # and a second choice nested inside the first left its overlay
-                # under the first prompt, unable to take input. The open one is
-                # brought forward instead, and this request changes nothing.
+        # A second prompt could trap its overlay beneath the first. Bring
+        # the existing prompt forward instead of nesting another choice.
                 _raise_open_choice()
                 return
             self._choosing_area = True
@@ -1114,23 +1098,13 @@ def run_desktop(
     update_ready: str | Path | None = None,
     update_challenge: str | Path | None = None,
 ) -> int:
-    """Open the Hanly interface, then prepare its runtime behind it.
+    """Show the interface, then prepare its runtime in the background.
 
-    ``runtime_config`` is the operator's explicit choice and skips automatic
-    provisioning; ``None`` means discover-or-provision in the background while
-    the window is already on screen.
-
-    ``trace_sink`` is the developer instrumentation seam: the benchmark harness
-    passes a sink that draws events on screen. ``None`` is the shipped path and
-    costs nothing, the tracing wrappers are not constructed at all.
-
-    ``diagnostics`` is the session log the entry point already opened. Passing
-    ``None`` keeps everything in memory, which is what a test wants.
-
-    ``update_ready`` and ``update_challenge`` are set only by an update handoff,
-    which keeps the previous installation until this launch answers. The first
-    reports a version, for a helper an older Hanly installed; the second proves
-    this build's own identity, which is what a schema-2 helper waits for.
+    An explicit ``runtime_config`` skips provisioning; ``None`` discovers/provisions.
+    ``trace_sink=None`` omits tracing wrappers; ``diagnostics=None`` keeps logs in
+    memory, otherwise using the entry point's opened session log. Update handoffs
+    retain the previous install until ``update_ready`` acknowledges its version
+    (legacy) or ``update_challenge`` proves this build's identity (schema 2).
     """
 
     diagnostics = diagnostics if diagnostics is not None else DiagnosticLog()
@@ -1151,7 +1125,7 @@ def run_desktop(
         with timeline.phase("qt bootstrap"):
             application = cast(QtApplication, ensure_qt_application(diagnostics=diagnostics))
 
-            from .qt_popup import QtResultDispatcher
+            from hanly_app.popup.qt import QtResultDispatcher
     except (ImportError, ControlCenterUnavailable) as error:
         raise DesktopApplicationError(
             "Hanly Desktop requires the hanly-app runtime extra with Qt6"
@@ -1441,17 +1415,11 @@ def _application_updates(
     ApplicationInstall | None,
     TreeUpdateRunner | None,
 ]:
-    """Return how this installation checks for, and installs, a new Hanly build.
+    """Configure build discovery and installation using the existing release fetcher.
 
-    The resource fetcher already reads the release payload and already knows how
-    to download an asset from it, so every half reuses it rather than opening a
-    second channel. An installation that is not a packaged bundle can still be
-    told a new build exists; it just has nothing for Hanly to replace.
-
-    One updater, three ways of applying it. A build carrying a schema-2 stamp
-    goes through the shared preparation core on every platform. A build from
-    before that existed carries no stamp, and keeps the whole-bundle swap it
-    was installed with - which is what lets it reach a build that does.
+    Unpackaged installs can discover updates but cannot replace themselves. Stamped
+    schema-2 builds share preparation across platforms; older unstamped builds retain
+    their whole-bundle swap path so they can upgrade to stamped builds.
     """
 
     fetcher = getattr(service, "fetcher", None)

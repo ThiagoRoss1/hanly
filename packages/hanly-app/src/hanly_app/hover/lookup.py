@@ -1,0 +1,1008 @@
+"""Automatic hover composition over the existing desktop lookup path.
+
+This module only joins the desktop seams that already own observation,
+stability, capture, and lookup execution.  It does not construct providers or
+an additional pipeline.  A caller may share the resulting runtime's
+``LookupController`` with the manual hotkey path; only hover-owned requests
+are invalidated when the cursor moves.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from threading import RLock, Thread
+from time import perf_counter_ns
+from typing import Protocol
+
+from hanly import Point
+
+from hanly_app.acquisition.capture import CapturePlan, CaptureResult, ScreenRect
+from hanly_app.acquisition.direct_text import Acquisition, DirectTextService, Outcome
+from hanly_app.hover.controller import Cancellable, HoverController, HoverRequest, HoverScheduler
+from hanly_app.hover.mouse_observer import MouseListenerFactory, MouseObserver
+from hanly_app.hover.target import (
+    POPUP_TRANSFER_MS,
+    WORD_MARGIN_PIXELS,
+    CaptureOrigins,
+    RetainedTarget,
+    distance_to,
+    in_transfer_corridor,
+)
+from hanly_app.lookup.controller import LookupController, LookupRequest
+from hanly_app.runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
+
+
+class CaptureSource(Protocol):
+    """Capture seam used by the automatic hover path."""
+
+    def capture_at_cursor(self, cursor: Point) -> CaptureResult:
+        """Capture a small cursor-centered ROI."""
+
+
+class CaptureObserver(Protocol):
+    """Developer-only seam that watches captures without participating in them.
+
+    Only the callback shape is defined here. Retention, digesting, and storage
+    belong to the benchmark tooling; an implementation must return promptly and
+    may not mutate the capture it is handed.
+    """
+
+    def observe(
+        self,
+        capture: CaptureResult,
+        *,
+        hover_request_id: int | None = None,
+        lookup_request_id: int | None = None,
+    ) -> object:
+        """Receive one completed capture and the request IDs it belongs to."""
+
+
+HoverErrorHandler = Callable[[str, BaseException], None]
+HoverDispatcher = Callable[[Callable[[], None]], None]
+
+
+def _inline_dispatch(callback: Callable[[], None]) -> None:
+    callback()
+
+
+def _centre(rect: ScreenRect) -> Point:
+    return Point(rect.left + rect.width / 2, rect.top + rect.height / 2)
+
+
+def _plan_trace_fields(plan: CapturePlan | None) -> dict[str, JSONPrimitive]:
+    """Summarize a capture plan as primitives a trace event can carry.
+
+    Enough to say whether the ROI was clipped or moved and how much room the
+    target had; the full plan reaches a developer tool through the capture
+    observer instead of through the trace.
+    """
+
+    if plan is None:
+        return {}
+    left, top, right, bottom = plan.target_edge_distances
+    clipped_left, clipped_top, clipped_right, clipped_bottom = plan.clipped_edges
+    return {
+        "roi_snapped": plan.snapped,
+        "roi_clipped": plan.clipped,
+        "roi_clipped_left": clipped_left,
+        "roi_clipped_top": clipped_top,
+        "roi_clipped_right": clipped_right,
+        "roi_clipped_bottom": clipped_bottom,
+        "target_distance_left": left,
+        "target_distance_top": top,
+        "target_distance_right": right,
+        "target_distance_bottom": bottom,
+        "cursor_clamped": plan.cursor_clamped,
+        "monitor_index": plan.monitor_index,
+    }
+
+
+class HoverLookupRuntime:
+    """Run stable hover attempts through a shared lookup controller.
+
+    ``LookupController`` is started by :meth:`start` and stopped by
+    :meth:`shutdown`, but capture ownership remains with the composition root
+    so a manual hotkey runtime can share the same service safely.  The caller
+    may pass the UI dispatcher used by the manual path; observation and stable
+    callbacks then re-enter the UI before capture or submission.
+    """
+
+    def __init__(
+        self,
+        controller: LookupController,
+        capture_service: CaptureSource,
+        *,
+        delay_ms: float = 150,
+        scheduler: HoverScheduler | None = None,
+        dispatcher: HoverDispatcher | None = None,
+        listener_factory: MouseListenerFactory | None = None,
+        on_error: HoverErrorHandler | None = None,
+        on_invalidate: Callable[[], None] | None = None,
+        trace_sink: RuntimeTraceSink | None = None,
+        capture_observer: CaptureObserver | None = None,
+        acquisition: DirectTextService | None = None,
+        origins: CaptureOrigins | None = None,
+        exit_scheduler: HoverScheduler | None = None,
+        transfer_ms: float = POPUP_TRANSFER_MS,
+        word_margin: int = WORD_MARGIN_PIXELS,
+        sticky: bool = True,
+    ) -> None:
+        if not isinstance(controller, LookupController):
+            raise TypeError("controller must be a LookupController")
+        if not callable(capture_service.capture_at_cursor):
+            raise TypeError("capture_service must provide capture_at_cursor(cursor)")
+        if dispatcher is not None and not callable(dispatcher):
+            raise TypeError("dispatcher must be callable")
+        if on_error is not None and not callable(on_error):
+            raise TypeError("on_error must be callable")
+        if on_invalidate is not None and not callable(on_invalidate):
+            raise TypeError("on_invalidate must be callable")
+
+        dispatch = dispatcher or _inline_dispatch
+        self._controller = controller
+        self._capture_service = capture_service
+        self._on_error = on_error
+        self._on_invalidate = on_invalidate
+        self._trace_sink = trace_sink
+        self._capture_observer = capture_observer
+        # Absent on a platform with no direct-text reader, which simply means
+        # every hover captures and runs OCR exactly as before.
+        self._acquisition = acquisition
+        self._dispatcher = dispatch
+        self._lock = RLock()
+        self._running = False
+        self._closed = False
+        self._failed = False
+        # Whether new work may start. A released push chord sets this False
+        # while observation continues, so the answer already on screen stays
+        # readable and leaving its word still dismisses it.
+        self._accepting = True
+        self._active_hover_request_id: int | None = None
+        self._active_hover_id: int | None = None
+        self._startup_point: Point | None = None
+        self._readiness_generation = 0
+        self._readiness_waiting = False
+        self._origins = origins if origins is not None else CaptureOrigins()
+        # Dwell and popup crossing overlap; sharing one QTimer lets a new
+        # dwell replace the callback that should dismiss the popup.
+        self._exit_scheduler = exit_scheduler
+        self._scheduler = scheduler
+        self._transfer_ms = float(transfer_ms)
+        self._word_margin = int(word_margin)
+        # A lookup the user deliberately asked for with a held chord stays
+        # on screen until they dismiss it. Leaving the word is not a
+        # dismissal, because reaching the popup means leaving the word.
+        self._sticky = bool(sticky)
+        self._retained: RetainedTarget | None = None
+        self._target_generation = 0
+        self._transfer_timer: Cancellable | None = None
+        self._protected_point: Point | None = None
+        self._transfer_distance: float | None = None
+        self._hover = HoverController(
+            self._on_stable,
+            delay_ms=delay_ms,
+            scheduler=scheduler,
+            dispatcher=dispatch,
+        )
+        self._mouse = MouseObserver(
+            self._on_position,
+            dispatcher=dispatch,
+            listener_factory=listener_factory,
+        )
+        self._hover.pause()
+
+    @property
+    def controller(self) -> LookupController:
+        """Return the shared desktop lookup controller."""
+
+        return self._controller
+
+    @property
+    def hover_controller(self) -> HoverController:
+        """Return the stability controller for deterministic integration tests."""
+
+        return self._hover
+
+    @property
+    def mouse_observer(self) -> MouseObserver:
+        """Return the global mouse observer owned by this runtime."""
+
+        return self._mouse
+
+    @property
+    def running(self) -> bool:
+        """Whether this runtime currently accepts hover movement."""
+
+        with self._lock:
+            return self._running and not self._closed and not self._failed
+
+    @property
+    def failed(self) -> bool:
+        """Whether a fatal lookup failure disabled hover for this process."""
+
+        with self._lock:
+            return self._failed
+
+    @property
+    def accepting(self) -> bool:
+        """Whether movement may still start a new lookup."""
+
+        with self._lock:
+            return self._accepting
+
+    def set_accepting(self, accepting: bool) -> None:
+        """Allow or refuse new lookups without forgetting the visible answer.
+
+        Releasing the push chord means "no new work", not "dismiss what I am
+        reading". Movement keeps being observed so the popup still disappears
+        when the cursor leaves the word it describes, and nothing is captured
+        or recognized in the meantime. Once nothing is retained there is
+        nothing left to watch for, and observation stops until the next press.
+        """
+
+        with self._lock:
+            if self._closed or self._accepting == bool(accepting):
+                return
+            self._accepting = bool(accepting)
+            running = self._running
+
+        if accepting:
+            if running:
+                self._mouse.start()
+            return
+        self._hover.invalidate()
+        self._invalidate_active_hover()
+        self._stop_observing_if_idle()
+
+    def observe(self, point: Point) -> None:
+        """Treat one point as movement, for a press with a stationary cursor.
+
+        Nothing moves when the user simply holds the chord over a word they are
+        already pointing at, so there is no event to start the dwell. This is
+        that event, and it goes through exactly the same path.
+        """
+
+        self._dispatcher(lambda: self._on_position(point))
+
+    def _stop_observing_if_idle(self) -> None:
+        """Stop watching the cursor once no popup needs its geometry."""
+
+        with self._lock:
+            watching = self._accepting or self._retained is not None or self._closed
+        if watching:
+            return
+        self._mouse.stop()
+
+    @property
+    def delay_ms(self) -> float:
+        """Return the live debounce delay used by the hover controller."""
+
+        return self._hover.delay_ms
+
+    def set_delay_ms(self, delay_ms: float) -> None:
+        """Apply a debounce delay to future and pending hover attempts."""
+
+        self._hover.set_delay_ms(delay_ms)
+
+    def start(self) -> None:
+        """Start lookup execution and global observation."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("hover lookup runtime has been shut down")
+            if self._failed:
+                raise RuntimeError(
+                    "automatic hover is unavailable until Hanly is restarted"
+                )
+            if self._running:
+                return
+            self._running = True
+
+        try:
+            self._controller.start()
+            self._mouse.start()
+            self._arm_observation_when_ready()
+        except Exception:
+            with self._lock:
+                self._running = False
+            self._mouse.stop()
+            self._hover.pause()
+            raise
+
+    def pause(self) -> None:
+        """Stop observation and invalidate a submitted hover attempt."""
+
+        with self._lock:
+            if self._closed or not self._running:
+                return
+            self._running = False
+            self._readiness_generation += 1
+            self._startup_point = None
+            self._accepting = True
+
+        self._mouse.stop()
+        hover_request_id = self._hover.current_request_id
+        self._hover.pause()
+        emit_trace(
+            self._trace_sink,
+            "hover_invalidation",
+            hover_request_id=hover_request_id,
+        )
+        self.clear_target()
+        self._invalidate_active_hover()
+
+    def resume(self) -> None:
+        """Resume observation after :meth:`pause`."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("hover lookup runtime has been shut down")
+            if self._failed:
+                raise RuntimeError(
+                    "automatic hover is unavailable until Hanly is restarted"
+                )
+            if self._running:
+                return
+            self._running = True
+
+        try:
+            self._controller.start()
+            self._mouse.start()
+            self._arm_observation_when_ready()
+        except Exception:
+            with self._lock:
+                self._running = False
+            self._mouse.stop()
+            self._hover.pause()
+            raise
+
+    def invalidate(self) -> None:
+        """Cancel the current hover attempt without stopping observation."""
+
+        hover_request_id = self._hover.current_request_id
+        emit_trace(
+            self._trace_sink,
+            "hover_invalidation",
+            hover_request_id=hover_request_id,
+        )
+        self.clear_target()
+        self._hover.invalidate()
+        self._invalidate_active_hover()
+
+    def shutdown(self) -> None:
+        """Stop observation, suppress queued work, and stop the shared worker."""
+
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._running = False
+            self._readiness_generation += 1
+            self._startup_point = None
+
+        self._mouse.stop()
+        hover_request_id = self._hover.current_request_id
+        self._hover.shutdown()
+        emit_trace(
+            self._trace_sink,
+            "hover_cancellation",
+            hover_request_id=hover_request_id,
+        )
+        self._cancel_transfer()
+        self._invalidate_active_hover()
+        if self._acquisition is not None:
+            # Its threads outlive one hover, so they are joined here rather
+            # than left to publish an answer into a stopped runtime.
+            self._acquisition.close()
+        self._controller.stop(wait=False)
+
+    @property
+    def origins(self) -> CaptureOrigins:
+        """Where recent requests captured from, shared with the manual path."""
+
+        return self._origins
+
+    @property
+    def retained_target(self) -> RetainedTarget | None:
+        """The successful result the cursor is currently allowed to sit on."""
+
+        with self._lock:
+            return self._retained
+
+    def retain(self, target: RetainedTarget | None) -> None:
+        """Adopt the result now on screen, and stop any exit already running.
+
+        The generation moves with every retention, so a grace timer armed for
+        the previous answer can never dismiss this one.
+        """
+
+        with self._lock:
+            if self._closed:
+                return
+            self._retained = target
+            self._target_generation += 1
+            # The word is where the cursor was when this answer was produced,
+            # so the crossing to the popup is measured from there even if the
+            # next movement is already outside it.
+            self._protected_point = None if target is None else _centre(target.word)
+            self._transfer_distance = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def clear_target(self) -> None:
+        """Forget the retained result; the next movement behaves as a first one."""
+
+        self.retain(None)
+
+    def _on_position(self, point: Point) -> None:
+        with self._lock:
+            if self._closed or not self._running:
+                return
+            retained = self._retained
+            accepting = self._accepting
+        if retained is not None and retained.protects(point, margin=self._word_margin):
+            # Still on the word, or on the popup itself. Nothing is captured,
+            # nothing is recognized, and what is on screen stays there.
+            self._cancel_transfer()
+            with self._lock:
+                self._protected_point = point
+            self._hover.invalidate()
+            emit_trace(
+                self._trace_sink,
+                "hover_inside_retained_target",
+                lookup_request_id=retained.lookup_request_id,
+            )
+            return
+        if retained is not None and self._crossing_to_popup(point, retained):
+            # In the gap between the word and its popup: the answer stays and
+            # nothing is captured against the empty space in between.
+            self._hover.invalidate()
+            return
+        self._leave_retained_target()
+        if not accepting:
+            # Observation without permission to start anything: the exit above
+            # is the whole of the work, and nothing is captured.
+            self._stop_observing_if_idle()
+            return
+        with self._lock:
+            if not self._controller.worker_ready:
+                self._startup_point = point
+                emit_trace(
+                    self._trace_sink,
+                    "hover_mouse_opportunity",
+                    hover_request_id=None,
+                    worker_ready=False,
+                )
+                return
+
+        # A movement supersedes a submitted hover request. Manual requests
+        # remain current when no hover request has actually been submitted.
+        previous_hover_id = self._hover.current_request_id
+        self._invalidate_active_hover()
+        if previous_hover_id is not None:
+            emit_trace(
+                self._trace_sink,
+                "hover_invalidation",
+                hover_request_id=previous_hover_id,
+            )
+        self._hover.on_position(point)
+        emit_trace(
+            self._trace_sink,
+            "hover_mouse_opportunity",
+            hover_request_id=self._hover.current_request_id,
+        )
+
+    def _crossing_to_popup(self, point: Point, retained: RetainedTarget) -> bool:
+        """Whether this movement is the user reaching for the popup.
+
+        Only a cursor that left the word inside the narrow corridor towards the
+        popup, and that keeps getting closer to it, is crossing. Anything else
+        -- sideways, backwards, or towards the next word -- is a real exit.
+        """
+
+        popup = retained.popup
+        if popup is None:
+            return False
+        with self._lock:
+            origin = self._protected_point
+            previous = self._transfer_distance
+        if origin is None or not in_transfer_corridor(point, origin, popup):
+            return False
+
+        distance = distance_to(popup, point)
+        if previous is not None and distance > previous:
+            # Turning back is leaving, whatever the corridor says.
+            return False
+        with self._lock:
+            self._transfer_distance = distance
+            starting = self._transfer_timer is None
+        if starting:
+            self._arm_transfer()
+        return True
+
+    def _leave_retained_target(self) -> None:
+        """Handle the cursor leaving the word an answer describes.
+
+        Under the sticky policy this releases the protection so the next word
+        can be looked up, but the answer stays on screen: the user asked for it
+        with a deliberate chord, and dismissal is their explicit act. Without
+        the policy it is an immediate dismissal, as it was before.
+        """
+
+        with self._lock:
+            retained = self._retained
+            sticky = self._sticky
+        if retained is None:
+            if not sticky:
+                self._notify_invalidation()
+            return
+        if sticky:
+            self._release_retained()
+            return
+        self._dismiss_retained()
+
+    def _release_retained(self) -> None:
+        """Stop protecting the word without taking the answer off screen."""
+
+        with self._lock:
+            self._retained = None
+            self._target_generation += 1
+            self._protected_point = None
+            self._transfer_distance = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
+        if timer is not None:
+            timer.cancel()
+        self._stop_observing_if_idle()
+
+    def dismiss(self) -> None:
+        """Take the answer off screen: the explicit dismissal Tier 1 provides.
+
+        Reached by the footer close control, a re-press of the hover chord, and
+        shutdown. A new current result replaces the answer through ``retain``
+        instead, so it does not come through here.
+        """
+
+        self._dispatcher(self._dismiss_retained)
+
+    def _arm_transfer(self) -> None:
+        """Bound the crossing, so a cursor parked in the gap does not hold it."""
+
+        with self._lock:
+            generation = self._target_generation
+            scheduler = self._exit_scheduler
+        if scheduler is None:
+            # Nothing can end the crossing later, so it does not begin.
+            self._dismiss_retained()
+            return
+        try:
+            timer = scheduler(
+                self._transfer_ms, lambda: self._transfer_expired(generation)
+            )
+        except Exception as error:
+            self._report_error("popup transfer", error)
+            self._dismiss_retained()
+            return
+        with self._lock:
+            current = generation == self._target_generation and not self._closed
+            if current:
+                self._transfer_timer = timer
+        if not current:
+            timer.cancel()
+
+    def _transfer_expired(self, generation: int) -> None:
+        with self._lock:
+            if self._closed or generation != self._target_generation:
+                return
+        self._dismiss_retained()
+
+    def _dismiss_retained(self) -> None:
+        """Drop the answer on screen and whatever was protecting it."""
+
+        with self._lock:
+            self._retained = None
+            self._target_generation += 1
+            self._protected_point = None
+            self._transfer_distance = None
+            timer = self._transfer_timer
+            self._transfer_timer = None
+        if timer is not None:
+            timer.cancel()
+        self._notify_invalidation()
+        self._stop_observing_if_idle()
+
+    def _cancel_transfer(self) -> None:
+        with self._lock:
+            timer = self._transfer_timer
+            self._transfer_timer = None
+            self._transfer_distance = None
+        if timer is not None:
+            timer.cancel()
+
+    def _notify_invalidation(self) -> None:
+        callback = self._on_invalidate
+        if callback is None:
+            return
+        try:
+            callback()
+        except BaseException as error:
+            self._report_error("popup clear", error)
+
+    def _arm_observation_when_ready(self) -> None:
+        """Enable dwell/capture only after background provider initialization."""
+
+        with self._lock:
+            if self._closed or not self._running:
+                return
+            self._readiness_generation += 1
+            generation = self._readiness_generation
+            if self._readiness_waiting:
+                # One waiter serves every pause/resume cycle; it finishes
+                # against whichever generation is current when it wakes.
+                return
+            if self._controller.worker_ready:
+                ready_now = True
+            else:
+                ready_now = False
+                self._readiness_waiting = True
+
+        if ready_now:
+            self._finish_readiness(generation, True)
+            return
+
+        emit_trace(self._trace_sink, "hover_observation_waiting_for_worker")
+
+        def wait_for_worker() -> None:
+            ready = self._controller.wait_until_ready()
+            try:
+                self._dispatcher(lambda: self._finish_waiting(ready))
+            except BaseException as error:
+                self._fail(error)
+
+        Thread(
+            target=wait_for_worker,
+            name="hanly-hover-readiness",
+            daemon=True,
+        ).start()
+
+    def _finish_waiting(self, ready: bool) -> None:
+        with self._lock:
+            self._readiness_waiting = False
+            generation = self._readiness_generation
+        self._finish_readiness(generation, ready)
+
+    def _finish_readiness(self, generation: int, ready: bool) -> None:
+        with self._lock:
+            if generation != self._readiness_generation:
+                return
+            if self._closed or not self._running:
+                return
+            startup_point = self._startup_point
+            self._startup_point = None
+
+        if not ready:
+            # The controller keeps the provider-construction failure, so hover
+            # reports the real cause rather than the fact that it gave up.
+            cause = self._controller.initialization_error
+            self._fail(cause or RuntimeError("lookup worker initialization failed"))
+            return
+
+        try:
+            self._hover.start()
+            if startup_point is not None:
+                self._hover.on_position(startup_point)
+        except BaseException as error:
+            self._fail(error)
+            return
+        emit_trace(self._trace_sink, "hover_observation_started")
+
+    def _on_stable(self, request: HoverRequest) -> None:
+        with self._lock:
+            if self._closed or not self._running:
+                return
+        if not self._hover.is_current(request):
+            return
+
+        emit_trace(
+            self._trace_sink,
+            "hover_stable_fire",
+            hover_request_id=request.request_id,
+        )
+
+        if self._start_direct_text(request):
+            return
+
+        self._capture_and_submit(request)
+
+    def _capture_and_submit(self, request: HoverRequest) -> None:
+        """Capture the screen and submit it, the path direct text falls back to."""
+
+        capture_started_ns = perf_counter_ns() if self._trace_sink is not None else 0
+        emit_trace(
+            self._trace_sink,
+            "hover_capture_attempted",
+            hover_request_id=request.request_id,
+        )
+        try:
+            capture = self._capture_service.capture_at_cursor(request.point)
+            if not isinstance(capture, CaptureResult):
+                raise TypeError("capture service returned an invalid CaptureResult")
+        except Exception as error:
+            emit_trace(
+                self._trace_sink,
+                "hover_capture_error",
+                hover_request_id=request.request_id,
+                duration_ns=(
+                    perf_counter_ns() - capture_started_ns
+                    if self._trace_sink is not None
+                    else 0
+                ),
+                error_type=type(error).__name__,
+            )
+            self._report_error("hover capture", error)
+            return
+
+        emit_trace(
+            self._trace_sink,
+            "hover_capture_completed",
+            lookup_request_id=None,
+            hover_request_id=request.request_id,
+            duration_ns=(
+                perf_counter_ns() - capture_started_ns
+                if self._trace_sink is not None
+                else 0
+            ),
+            roi_width=capture.image.width,
+            roi_height=capture.image.height,
+            region_left=capture.region.left,
+            region_top=capture.region.top,
+            target_x=capture.target.x,
+            target_y=capture.target.y,
+            **_plan_trace_fields(capture.plan),
+        )
+        # Before the currency check, so a capture that goes stale still leaves
+        # the evidence explaining what it saw.
+        self._observe_capture(capture, hover_request_id=request.request_id)
+
+        if not self._hover.is_current(request):
+            emit_trace(
+                self._trace_sink,
+                "hover_stale_after_capture",
+                hover_request_id=request.request_id,
+            )
+            return
+
+        try:
+            lookup_request = self._controller.submit(
+                capture.image,
+                capture.target,
+                hover_request_id=request.request_id,
+            )
+            # The origin travels with this request: by the time its result
+            # arrives the cursor has usually moved somewhere else entirely.
+            self._origins.remember(lookup_request.request_id, capture.region)
+        except Exception as error:
+            emit_trace(
+                self._trace_sink,
+                "hover_submission_error",
+                hover_request_id=request.request_id,
+                error_type=type(error).__name__,
+            )
+            # A controller that can no longer accept work will never succeed
+            # again in this process, so hover stops instead of continuing to
+            # capture the screen for results that cannot arrive.
+            if not self._controller.accepting:
+                self._fail(error)
+            else:
+                self._report_error("hover submission", error)
+            return
+
+        self._track_submission(request, lookup_request)
+
+    def _track_submission(
+        self, request: HoverRequest, lookup_request: LookupRequest
+    ) -> None:
+        """Make a submitted lookup the one the next movement invalidates.
+
+        Both the capture and the direct-text routes go through here, so a
+        movement supersedes a submission whichever route produced it.
+        """
+
+        with self._lock:
+            if self._closed or not self._running or not self._hover.is_current(request):
+                stale = True
+            else:
+                self._active_hover_request_id = lookup_request.request_id
+                self._active_hover_id = request.request_id
+                stale = False
+        if stale:
+            emit_trace(
+                self._trace_sink,
+                "hover_stale_after_submission",
+                hover_request_id=request.request_id,
+                lookup_request_id=lookup_request.request_id,
+            )
+            self._controller.invalidate()
+        else:
+            emit_trace(
+                self._trace_sink,
+                "hover_submission",
+                hover_request_id=request.request_id,
+                lookup_request_id=lookup_request.request_id,
+            )
+
+    def _observe_capture(
+        self, capture: CaptureResult, *, hover_request_id: int
+    ) -> None:
+        """Hand a capture to the developer observer, if one is attached.
+
+        A failing or slow observer must not become a hover failure, so its
+        exceptions are swallowed exactly as trace-sink exceptions are.
+        """
+
+        observer = self._capture_observer
+        if observer is None:
+            return
+        try:
+            observer.observe(capture, hover_request_id=hover_request_id)
+        except BaseException:
+            pass
+
+    def _fail(self, error: BaseException) -> None:
+        """Disable hover for the rest of the process after a fatal failure."""
+
+        with self._lock:
+            if self._failed:
+                return
+            self._failed = True
+            self._running = False
+            self._readiness_generation += 1
+            self._startup_point = None
+
+        self._mouse.stop()
+        self._hover.pause()
+        self._invalidate_active_hover()
+        self._report_error("automatic hover disabled", error)
+
+    def _invalidate_active_hover(self) -> None:
+        with self._lock:
+            request_id = self._active_hover_request_id
+            hover_id = self._active_hover_id
+            self._active_hover_request_id = None
+            self._active_hover_id = None
+        if request_id is None:
+            return
+        emit_trace(
+            self._trace_sink,
+            "hover_cancellation",
+            lookup_request_id=request_id,
+            hover_request_id=hover_id,
+        )
+        if self._controller.is_current(request_id):
+            self._controller.invalidate()
+
+    def _start_direct_text(self, request: HoverRequest) -> bool:
+        """Schedule a native read, and say whether the caller should wait for it.
+
+        This runs on the thread that draws, so it must only hand the work over.
+        The answer arrives later on a worker and is marshalled back through the
+        same dispatcher every other hover callback uses.
+        """
+
+        service = self._acquisition
+        if service is None:
+            return False
+
+        def deliver(acquired: Acquisition) -> None:
+            with self._lock:
+                if self._closed:
+                    # Shutdown suppresses queued work on purpose.
+                    return
+            try:
+                self._dispatcher(lambda: self._on_direct_text(request, acquired))
+            except Exception as error:
+                # This runs on the native worker, which may neither capture nor
+                # touch Qt, so the rejection is only recorded, by its class.
+                emit_trace(
+                    self._trace_sink,
+                    "hover_direct_text_dispatch_failed",
+                    hover_request_id=request.request_id,
+                    error_type=type(error).__name__,
+                )
+
+        try:
+            service.submit(request.point, deliver)
+        except Exception:
+            # A closed or unusable service is not a lookup failure; the
+            # ordinary capture path still answers.
+            return False
+        return True
+
+    def _on_direct_text(self, request: HoverRequest, acquired: Acquisition) -> None:
+        """Act on a completed native read, back on the caller's own thread."""
+
+        if self._submit_direct_text(request, acquired):
+            return
+        if acquired.outcome is Outcome.NOT_KOREAN:
+            # The control read the pointer's character exactly and it is not
+            # Korean. OCR could only misread those same pixels, which is how
+            # Latin text turned into Hangul popups.
+            return
+        # Every other refusal is ordinary: capture and OCR exactly as before.
+        if self._hover.is_current(request):
+            self._capture_and_submit(request)
+
+    def _submit_direct_text(
+        self, request: HoverRequest, acquired: Acquisition
+    ) -> bool:
+        """Submit a validated direct reading, or decline it.
+
+        Declining is ordinary, and the reason is traced so coverage can be
+        measured without the word itself entering a trace.
+        """
+
+        emit_trace(
+            self._trace_sink,
+            "hover_direct_text",
+            hover_request_id=request.request_id,
+            # The reason only. The word itself never enters a trace.
+            outcome=acquired.outcome.value,
+            duration_ns=acquired.duration_ns,
+            used_direct_text=acquired.used_direct_text,
+        )
+        if not acquired.used_direct_text or acquired.selection is None:
+            return False
+        if not self._hover.is_current(request):
+            return True
+
+        try:
+            lookup_request = self._controller.submit_selection(
+                acquired.selection,
+                request.point,
+                hover_request_id=request.request_id,
+            )
+        except Exception as error:
+            emit_trace(
+                self._trace_sink,
+                "hover_submission_error",
+                hover_request_id=request.request_id,
+                error_type=type(error).__name__,
+            )
+            self._report_error("hover submission", error)
+            return True
+
+        if acquired.bounds is not None:
+            # The popup protects the word the answer came from, and direct text
+            # reports that rectangle itself instead of a captured region.
+            self._origins.remember_word(
+                lookup_request.request_id,
+                ScreenRect(
+                    left=acquired.bounds.left,
+                    top=acquired.bounds.top,
+                    width=acquired.bounds.right - acquired.bounds.left,
+                    height=acquired.bounds.bottom - acquired.bounds.top,
+                ),
+            )
+        self._track_submission(request, lookup_request)
+        return True
+
+    def _report_error(self, stage: str, error: BaseException) -> None:
+        if self._on_error is None:
+            return
+        try:
+            self._on_error(stage, error)
+        except Exception:
+            # Error reporting must not terminate the mouse/stability callback.
+            pass
+
+
+__all__ = [
+    "CaptureObserver",
+    "CaptureSource",
+    "HoverDispatcher",
+    "HoverErrorHandler",
+    "HoverLookupRuntime",
+    "RetainedTarget",
+]

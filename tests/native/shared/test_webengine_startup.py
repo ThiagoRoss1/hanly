@@ -24,7 +24,7 @@ from tests.hanly_fixtures.webengine_probe import (
 #: ``prepare_control_center_qt`` refuses once a ``QApplication`` exists, so a
 #: run that shares a process with any Qt case asserts nothing about it.
 _PREPARE_PROGRAM = """
-from hanly_app.control_center import prepare_control_center_qt
+from hanly_app.control_center.bridge import prepare_control_center_qt
 
 prepare_control_center_qt()
 

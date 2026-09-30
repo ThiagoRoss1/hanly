@@ -1,12 +1,7 @@
-"""The two real production failures this Wave 3 change exists to correct.
+"""Replay original Vision failures from private, gitignored captures.
 
-The inputs are private screen captures under the gitignored artifact root, so
-they cannot be committed. When they are absent this skips rather than pretending
-to have run; when they are present it is the strongest evidence available that
-the correction still holds, because the pixels are the original failure.
-
-`benchmarks/dev` owns the tooling that produced them:
-`live-hover`, freeze, then export.
+Absent captures skip honestly; developer freeze/Export creates local repros,
+which cannot be committed.
 """
 
 from __future__ import annotations

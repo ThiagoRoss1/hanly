@@ -1,13 +1,7 @@
-"""What the machine running the tests is actually allowed to do.
+"""Report unavailable runtime capabilities as skips or required-suite failures.
 
-A capability the operating system withholds belongs in a skip with a reason,
-not in a failure: an unprivileged desktop and a CI runner have to disagree
-about what ran, never about what passed.
-
-That holds for an ordinary developer run. It does not hold for the job whose
-entire purpose is the capability in question -- a native or packaged gate that
-skips everything is a green run proving nothing. Those jobs set the variable
-below, and every reason becomes a failure instead.
+Ordinary runs skip with a reason; required native/packaged environments fail
+instead, preventing an unavailable runtime from appearing green.
 """
 
 from __future__ import annotations
@@ -20,8 +14,8 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
-from hanly_app.app_inventory import write_xattr
-from hanly_app.app_manifest import MATERIAL_XATTR_PREFIXES
+from hanly_app.updates.inventory import write_xattr
+from hanly_app.updates.manifest import MATERIAL_XATTR_PREFIXES
 
 #: Set by the CI jobs that exist to run the native suites, and by the build
 #: job that exists to run the packaged suite.

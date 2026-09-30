@@ -19,7 +19,7 @@ from hanly_app.first_run import (
     provision_runtime_config,
 )
 from hanly_app.runtime import load_runtime
-from hanly_app.update_service import (
+from hanly_app.updates.resource_service import (
     DownloadProgress,
     RemoteManifest,
     RemoteResource,

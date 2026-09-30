@@ -18,21 +18,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from hanly_app.app_inventory import read_installation, read_installed_manifest
-from hanly_app.app_manifest import (
-    MANIFEST_ASSET,
-    UPDATE_METADATA_ASSET,
-    InstallManifest,
-    UpdateMetadata,
-)
-from hanly_app.app_update_install import (
+from hanly_app.updates.installer import (
     ARCHIVE_ROOT,
     CHECKSUM_ASSET,
     DifferentialInstaller,
     DifferentialUpdateError,
     UpdateCancelled,
 )
-from hanly_app.app_update_journal import (
+from hanly_app.updates.inventory import read_installation, read_installed_manifest
+from hanly_app.updates.journal import (
     COMMITTED,
     PREPARED,
     RECOVERY_REQUIRED,
@@ -42,7 +36,13 @@ from hanly_app.app_update_journal import (
     unsettled_journals,
     working_root,
 )
-from hanly_app.app_update_plan import (
+from hanly_app.updates.manifest import (
+    MANIFEST_ASSET,
+    UPDATE_METADATA_ASSET,
+    InstallManifest,
+    UpdateMetadata,
+)
+from hanly_app.updates.plan import (
     ADD,
     DELETE,
     FROM_DELTA,
@@ -51,8 +51,8 @@ from hanly_app.app_update_plan import (
     REPLACE,
     plan_update,
 )
-from hanly_app.app_update_runner import settle_previous_update
-from hanly_app.update_service import RemoteResource
+from hanly_app.updates.resource_service import RemoteResource
+from hanly_app.updates.runner import settle_previous_update
 
 from tools.update_artifacts import build_release_products, generate_manifest
 
@@ -600,7 +600,7 @@ def test_an_update_the_volume_cannot_hold_stops_before_it_downloads(
     installer = _installer(release, root, tmp_path)
     prepared = installer.prepare("1.1.0")
     monkeypatch.setattr(
-        "hanly_app.app_update_install.shutil.disk_usage",
+        "hanly_app.updates.installer.shutil.disk_usage",
         lambda _path: SimpleNamespace(total=0, used=0, free=1024),
     )
 
@@ -661,7 +661,7 @@ def _reissued(release: _Release, delta_path: Path) -> UpdateMetadata:
 
     from dataclasses import replace
 
-    from hanly_app.app_manifest import AssetReference
+    from hanly_app.updates.manifest import AssetReference
 
     metadata = release.metadata
     assert metadata.delta is not None

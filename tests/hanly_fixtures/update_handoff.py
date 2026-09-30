@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
-from hanly_app.app_update import APPLICATION_STEM, BUNDLE_NAME
-from hanly_app.app_update_handoff import (
+from hanly_app.updates.desktop_update import APPLICATION_STEM, BUNDLE_NAME
+from hanly_app.updates.handoff import (
     EXIT_WAIT_SECONDS,
     READY_WAIT_SECONDS,
     UpdateTransaction,
@@ -72,10 +72,8 @@ int main(int argc, char **argv) {
 """
 
 
-#: Which handoff variants this host can actually execute. macOS runs its own
-#: and Linux's: the Linux body is plain POSIX shell that execs the program at
-#: the final path, which a macOS host runs identically. Only the ``open``
-#: relaunch is Darwin-specific, and only Windows needs a Windows host.
+#: macOS can also run Linux's POSIX-shell handoff; only Darwin's ``open``
+#: relaunch and the Windows helper require their respective hosts.
 HANDOFF_VARIANTS = ["linux"] if sys.platform != "win32" else ["win32"]
 if sys.platform == "darwin":
     HANDOFF_VARIANTS.insert(0, "darwin")
@@ -328,11 +326,8 @@ def _builds_programs(compiler: str) -> bool:
     return finished.returncode == 0
 
 
-#: The two builds being swapped are compiled rather than scripted: macOS
-#: refuses to ``open`` a bundle whose executable is a shell script, and Windows
-#: needs a real executable to ``Start-Process``. Named explicitly so a host
-#: without a working one says so, rather than failing on a missing or broken
-#: ``cc``.
+#: Both swapped builds need real executables for macOS ``open`` and Windows
+#: ``Start-Process``; a missing compiler should fail explicitly.
 COMPILER = next(
     (
         found

@@ -601,10 +601,8 @@ class _NativeTool:
     def __call__(self, command: list[str], **_options: object) -> object:
         self.commands.append(command)
         target = Path(command[-1])
-        # Archiving names the file it writes; unpacking names a directory that
-        # already exists, and what lands in it is the caller's business. A
-        # command ending in a flag - `hdiutil detach ... -force` - names no
-        # file at all, and writing one would leave a file called `-force`.
+    # Only archive commands name an output file; unpacking names a directory,
+    # and detach may end in a flag such as ``-force``.
         writes_a_file = (
             self.returncode == 0 and not command[-1].startswith("-") and not target.is_dir()
         )
@@ -905,8 +903,8 @@ def test_a_weight_is_never_fetched_over_plain_http(
 def test_every_producer_and_consumer_names_the_same_release_products() -> None:
     """The builder, the release contract, and the updater must not drift apart."""
 
-    from hanly_app import app_update
-    from hanly_app.app_manifest import (
+    from hanly_app.updates import desktop_update as app_update
+    from hanly_app.updates.manifest import (
         MANIFEST_ASSET,
         UPDATE_METADATA_ASSET,
         delta_asset_name,
@@ -928,10 +926,8 @@ def test_every_producer_and_consumer_names_the_same_release_products() -> None:
         "hanly-desktop-macos.dmg",
         "hanly-desktop-linux.tar.gz",
     }
-    # The release publishes exactly those four, plus the Windows update
-    # metadata, the resource manifest, and the sums. The metadata names come
-    # from the producer's own constants, so a rename fails here rather than in
-    # a release run.
+    # Derive metadata names from producer constants so a release rename fails
+    # this test instead of surfacing only during publication.
     assert produced < FIXED_RELEASE_ASSETS
     assert FIXED_RELEASE_ASSETS - produced == {
         MANIFEST_ASSET,
@@ -1084,8 +1080,8 @@ def test_neither_child_process_does_the_shell_s_work() -> None:
         "hotkeys.register",
     )
     children = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center_process.py",
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup_process.py",
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center" / "process.py",
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup" / "process.py",
     )
     for path in children:
         source = path.read_text(encoding="utf-8")
@@ -1244,6 +1240,60 @@ def test_a_timed_out_run_takes_the_processes_it_started_with_it(tmp_path: Path) 
     # Deleting the file is the assertion: a surviving child still holds the
     # handle it inherited, and Windows refuses the unlink while it does.
     (profile / "work" / "self-check.err").unlink()
+
+
+_SPAWNING_PROGRAM = """
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+grandchild = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+Path(sys.argv[-1]).write_text(str(grandchild.pid), encoding="utf-8")
+time.sleep(120)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="taskkill /T covers Windows")
+def test_a_timed_out_run_kills_the_grandchildren_it_left_behind(tmp_path: Path) -> None:
+    import os
+    import time
+
+    record = tmp_path / "grandchild.pid"
+    report = run_packaged_self_check(
+        _self_check_program(tmp_path / "bundle", _SPAWNING_PROGRAM),
+        mode=str(record),
+        timeout=5,
+    )
+
+    assert report["exit_timeout"] is True
+    pid = int(record.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 5
+    # Not this process's child, so only a signal probe can see it; its orphan
+    # is reaped by init once killed.
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(pid, 9)
+        pytest.fail("the grandchild outlived the timed-out run")
+
+
+def test_a_detach_failure_does_not_hide_the_error_that_caused_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    image = tmp_path / "hanly-desktop-macos.dmg"
+    image.write_bytes(b"disk image")
+
+    def refuse_detach(command: list[str], **_options: object) -> object:
+        return SimpleNamespace(returncode=int(command[1] == "detach"), stderr=b"busy")
+
+    with pytest.raises(FileNotFoundError, match=SMOKE_BUNDLE_NAME):
+        reconstruct_from_disk_image(image, tmp_path / "out", runner=refuse_detach)
+    assert "could not unmount" in capsys.readouterr().err
 
 
 def test_a_crash_before_any_marker_stays_explicitly_unknown() -> None:

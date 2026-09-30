@@ -133,6 +133,14 @@ ever unstable across repeats. The gap is entirely in what the region said.
 | EasyOCR detection-only | 33.3 ms | 46.2 ms | 27.5 ms | 42.1 ms | 24 |
 | EasyOCR recognition-only | 33.8 ms | 52.8 ms | 28.8 ms | 45.1 ms | 24 |
 
+> **Caveat (2026-09-28):** when these were measured, `detection-only` and
+> `recognition-only` both ran detection, recognition and normalization, and
+> reported the whole pass; the two rows are therefore not stage-isolated, which
+> is why they match `ocr-only`. The modes were corrected in the pre-V1 cleanup
+> (`detection-only` no longer recognizes; `recognition-only` excludes detection
+> from its total). The `ocr-only` rows, and the Vision-versus-EasyOCR decision
+> that rests on them, are unaffected.
+
 Cold p95 is one sample by construction (eight cold passes, one per case) and is
 dominated by first-inference setup. These are small images on an idle machine
 and are not an SLA.

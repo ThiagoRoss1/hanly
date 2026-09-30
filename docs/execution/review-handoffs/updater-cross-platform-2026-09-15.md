@@ -2,7 +2,7 @@
 
 ## Bundle
 
-- Plan: [`docs/execution/updater-cross-platform-distribution-plan-2026-09-15.md`](../updater-cross-platform-distribution-plan-2026-09-15.md)
+- Plan: [`docs/execution/plans/2026-09-15-updater-cross-platform-distribution.md`](../plans/2026-09-15-updater-cross-platform-distribution.md)
   (Gate-tier, Phase A only)
 - Running record: [`docs/execution/reports/updater-cross-platform-execution-2026-09-15.md`](../reports/updater-cross-platform-execution-2026-09-15.md)
 - Implementation ecosystem: Claude Opus 5, directly, one session

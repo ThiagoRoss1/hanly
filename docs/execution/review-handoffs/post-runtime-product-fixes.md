@@ -2,7 +2,7 @@
 
 ## Bundle
 
-- Member issues: none; this executes `docs/execution/post-runtime-product-fixes.md`
+- Member issues: none; this executes `docs/execution/plans/2026-09-12-post-runtime-product-fixes.md`
   (T1–T11), which is FINAL after the macOS investigation in its section 4.2.
 - Implementation ecosystem: macOS 26.6.2 (arm64), repository `.venv` on Python
   3.13.11, plus a clean Python 3.10.20 environment for the dependency floor.
@@ -290,12 +290,8 @@ enabled.**
 
 ### Diff produced by this review
 
-The [review patch](patches/post-runtime-product-review.patch) captures the
-Codex/Astra changes relative to `3f1eb81`, including the visual companion and
-the new portable process-probe fixture, and excludes this handoff and the patch
-itself. It is a record of that pass only: the second pass below amended several
-of those files, so the patch no longer reconstructs the branch. Read the
-commits instead.
+The first-pass patch no longer reconstructs the branch after the second pass,
+so it was removed. Use Git history after baseline `3f1eb81` for the exact diff.
 
 ## Second pass — human-requested review of the above, 2026-09-12
 

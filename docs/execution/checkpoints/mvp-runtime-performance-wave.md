@@ -508,7 +508,7 @@ dispatch check before settings are built on an unproven base.
 
 ### 2026-09-10 23:09 -03 — Before baseline and concrete plan
 
-What changed: Wrote `docs/execution/mvp-runtime-performance-wave.md`, with
+What changed: Wrote `docs/execution/plans/mvp-runtime-performance-wave.md`, with
 ownership/IPC, policy matrix, exact modules, migration, hotkey rollback, retained
 geometry, logging, cleanup and source/frozen/native acceptance. Measured unchanged
 source in isolated temporary profiles and verified all probe processes exited.
@@ -525,7 +525,7 @@ Files:
 - `packages/hanly-app/src/hanly_app/control_center_host.py:L269-L291`
 - `packages/hanly-app/src/hanly_app/control_center.py:L548-L563`
 - `packages/hanly-app/src/hanly_app/hover_lookup.py:L263-L294`
-- `docs/execution/mvp-runtime-performance-wave.md`
+- `docs/execution/plans/mvp-runtime-performance-wave.md`
 Tests/measurements: 57 focused existing tests passed (app config, lookup
 controller, hover lookup, Control Center host, hotkeys); diff whitespace check
 passed. Initial test invocation used a nonexistent `test_config.py`; corrected

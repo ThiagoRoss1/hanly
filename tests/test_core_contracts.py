@@ -440,6 +440,7 @@ def test_public_export_surface_is_explicit() -> None:
     }
 
     assert set(hanly.__all__) == expected
+    assert len(hanly.__all__) == len(expected), "a name is exported twice"
 
 
 def test_dictionary_entry_derives_the_representation_it_was_not_given() -> None:

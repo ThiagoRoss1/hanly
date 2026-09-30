@@ -84,8 +84,8 @@ The official harness was run with:
 
 - image: `tests/hanly_fixtures/assets/korean_reading_roi.png`
 - target: `(40, 25)` in ROI-local pixels
-- detection model: `C:\Users\Thiago\.paddlex\official_models\PP-OCRv5_mobile_det`
-- recognition model: `C:\Users\Thiago\.paddlex\official_models\korean_PP-OCRv5_mobile_rec`
+- detection model: `C:\Users\<user>\.paddlex\official_models\PP-OCRv5_mobile_det`
+- recognition model: `C:\Users\<user>\.paddlex\official_models\korean_PP-OCRv5_mobile_rec`
 - dictionary: generated `resources/dev/krdict/krdict.sqlite3`
 - PaddleX source check disabled for the offline development run through
   `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`

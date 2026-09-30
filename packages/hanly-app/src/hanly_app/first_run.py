@@ -1,19 +1,8 @@
-"""First-run acquisition of the production runtime resources.
+"""Provision a per-user runtime manifest and independently updatable dictionary.
 
-The desktop keeps resource validation in :class:`hanly.ResourceManager` and
-delivery in :class:`hanly_app.UpdateService`. This module only joins those two
-existing seams at the process-start boundary: it writes a small per-user
-runtime manifest and asks for whatever that manifest declares but does not yet
-have, leaving staging, validation, and activation to ``UpdateService``.
-
-A missing artifact comes from an already-built local database when there is one
-(see ``LOCAL_KRDICT_VARIABLE``), otherwise from the public release channel.
-Both travel the same install path, so a developer launch exercises what a real
-download does.
-
-The generated manifest intentionally contains no dictionary bytes. Resources
-remain independently released and can be replaced atomically by the update
-service without modifying application code.
+ResourceManager validates local resources; UpdateService delivers them. Prefer
+an explicitly supplied/local built KRDICT database, otherwise install from the
+public release through the same delivery path.
 """
 
 from __future__ import annotations
@@ -31,12 +20,7 @@ from typing import Any
 from hanly.krdict_schema import KRDICTSchemaError, validate_krdict_connection
 from hanly.resource_manager import ResourceManager, ResourceMetadata, ResourceStatus
 
-from .runtime import (
-    KRDICT_RESOURCE_ID,
-    RuntimeConfigError,
-    load_resource_manager,
-)
-from .update_service import (
+from hanly_app.updates.resource_service import (
     DownloadProgress,
     GitHubReleaseFetcher,
     ProgressCallback,
@@ -45,6 +29,12 @@ from .update_service import (
     ResourceFetcher,
     UpdateService,
     UpdateServiceError,
+)
+
+from .runtime import (
+    KRDICT_RESOURCE_ID,
+    RuntimeConfigError,
+    load_resource_manager,
 )
 
 PUBLIC_REPOSITORY_OWNER = "ThiagoRoss1"
@@ -152,10 +142,8 @@ def _install_resources(
     try:
         availability = service.check_for_updates()
     except UpdateServiceError as error:
-        # Reaching the release channel is only how a launch with no
-        # configuration of its own obtains resources. Say so, because the
-        # failure otherwise reads as a broken application to anyone running
-        # from a checkout before any release exists.
+            # A checkout without a release channel needs a local resource;
+            # report that setup gap rather than a generic app failure.
         raise FirstRunError(
             f"Hanly needs its Korean dictionary and could not reach "
             f"{PUBLIC_RELEASE_CHANNEL} to get it: {error}. Check the network "
@@ -351,13 +339,8 @@ def persist_installed_resource(
         )
 
     updated_entry = dict(entry)
-    # ``version`` is the operator's expected-version pin, which ResourceManager
-    # compares the observed version against; writing a release identity over it
-    # would report the freshly installed artifact as OUTDATED.
-    #
-    # ``installed_version`` is deliberately separate: KRDICT's version is the
-    # embedded SQLite schema contract, while the release version identifies the
-    # independently delivered database.
+        # Preserve the operator's expected-version pin; ResourceManager checks it.
+        # The release identity is separate from KRDICT's embedded schema version.
     if updated_entry.get("version") is None:
         updated_entry["installed_version"] = version
     if integrity_identity is not None:

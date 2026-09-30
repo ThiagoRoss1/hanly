@@ -1,14 +1,7 @@
-"""What the update handoff script says, before any shell is asked to run it.
+"""Check rendered handoff quoting, bounded relaunch, and old-install retention.
 
-Schema 2 adds the descriptor the native POSIX helper reads instead of a
-script. It is a fixed binary record, so its round trip and its refusals are
-checked here; running the real helper against it is native behavior.
-
-These are the decisions the renderer makes -- which program each platform
-relaunches, how the previous build outlives the swap, which waits are bounded,
-how paths travel -- and every one of them is checked by reading the rendered
-body. Running that body against real builds is native behavior and lives in
-the native suite.
+Portable cases cover platform scripts and fixed POSIX descriptor round trips and
+refusals; native suites execute the real helpers.
 """
 
 from __future__ import annotations
@@ -18,8 +11,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from hanly_app.app_update import APPLICATION_STEM
-from hanly_app.app_update_handoff import (
+from hanly_app.updates.desktop_update import APPLICATION_STEM
+from hanly_app.updates.handoff import (
     DESCRIPTOR_MAGIC,
     EXIT_WAIT_SECONDS,
     LAUNCH_EXEC,

@@ -1,16 +1,9 @@
-"""macOS global hotkeys through Carbon's ``RegisterEventHotKey``.
+"""Deliver macOS global hotkeys through Carbon on Qt's main run loop.
 
-pynput's keyboard listener asks for the input-source list off the main queue,
-which macOS 26 aborts instead of raising. Carbon needs no privacy grant and
-delivers physical-key combinations on the Qt-owned main run loop.
-
-Both edges are installed, so a held combination is a real hold here. Carbon
-reports a hot key as released when its non-modifier key goes up: letting a
-modifier go first while the primary key stays down does not end the hold. That
-was measured on this backend, and the alternatives -- a global ``NSEvent``
-monitor, which needs an Accessibility grant this backend deliberately does not
-ask for, or polling the modifier state -- both cost more than the case is
-worth.
+Carbon needs no privacy grant; pynput's off-main input-source query aborts on
+macOS 26. Press/release events support holds, which end when the primary key rises:
+releasing a modifier first does not end the hold. This backend neither requests
+Accessibility for an NSEvent monitor nor polls modifier state.
 """
 
 from __future__ import annotations

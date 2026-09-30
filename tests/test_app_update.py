@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from hanly_app import app_update
-from hanly_app.app_update import (
+from hanly_app.updates import desktop_update as app_update
+from hanly_app.updates.desktop_update import (
     APPLICATION_STEM,
     BUNDLE_IDENTIFIER,
     BUNDLE_NAME,
@@ -441,10 +441,8 @@ class _Ditto:
         if self.returncode == 0:
             archive, destination = Path(command[-2]), Path(command[-1])
             with zipfile.ZipFile(archive) as bundle:
-                # ``ditto -x -k`` consumes the ``__MACOSX`` sidecar rather than
-                # writing it, folding its attributes back into the files it
-                # creates. A plain extractor writes it out as a directory, which
-                # is the difference this double exists to keep.
+    # ditto folds __MACOSX attributes into extracted files; a generic
+    # extractor instead leaves the sidecar as a directory.
                 bundle.extractall(
                     destination,
                     members=[
@@ -685,7 +683,7 @@ def test_a_link_to_a_directory_that_escapes_is_caught_after_extraction(
     and ``os.walk`` reports a link to a directory as a subdirectory it does
     not descend, so a walk over files alone would never look at one."""
 
-    from hanly_app.app_update import _require_contained_tree
+    from hanly_app.updates.desktop_update import _require_contained_tree
 
     payload = tmp_path / BUNDLE_NAME / "Contents"
     payload.mkdir(parents=True)

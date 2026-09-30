@@ -1,13 +1,8 @@
-"""A small, versioned OCR corpus that can mix committed and private cases.
+"""Load a versioned OCR corpus of committed fixtures or private captures.
 
-Two kinds of evidence have to coexist without contaminating each other. Licensed
-or generated fixtures can live in Git and be compared across machines. Real
-frozen captures are somebody's screen: they stay on the machine that made them,
-and a manifest in Git must not so much as name their paths or quote their text.
-
-A manifest declares which kind it is, and validation enforces the difference. A
-committed manifest may not carry an absolute path, may not reference a private
-case, and may not be loaded from outside the repository's fixture tree.
+Committed fixtures must be licensed or generated. Private captures stay local;
+committed manifests cannot quote their text, name absolute/private paths, or
+load from outside the repository fixture tree.
 """
 
 from __future__ import annotations

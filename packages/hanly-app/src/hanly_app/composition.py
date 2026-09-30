@@ -31,22 +31,20 @@ from hanly import (
 from hanly.errors import LookupCancelled
 from hanly.word_resolver import ResolutionEvidence, TargetResolver, WordResolver
 
-from .diagnostics import StartupTimeline
-from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
-from .lookup_evidence import (
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.evidence import (
     encode_dictionary_evidence,
     encode_morphology_evidence,
     encode_ocr_evidence,
     encode_resolution_evidence,
 )
+
+from .diagnostics import StartupTimeline
 from .runtime_trace import JSONPrimitive, RuntimeTraceSink, emit_trace
 
 _LOOKUP_CACHE_SIZE = 32
-# One entry holds a few OCR results and their geometry, on the order of a
-# few hundred bytes, so a generous ring is cheap. It matters because live
-# screen content changes under the cursor -- a blinking text caret inside
-# the ROI is enough to miss -- and a small ring evicts a region the user
-# is still moving around in.
+# A generous ring is cheap and survives ROI changes as small as a blinking
+# caret while the user moves within the same text.
 _OCR_CACHE_SIZE = 96
 # Text-presence gate sampling. Tuned to reject flat regions only; see
 # :class:`_TextPresenceGate`.
@@ -61,7 +59,7 @@ _OCRCacheKey = tuple[int, int, str, bytes]  # dimensions, format, ROI digest
 
 
 class Worker(Protocol):
-    """Worker shape consumed by :class:`hanly_app.job_executor.JobExecutor`."""
+    """Worker shape consumed by :class:`hanly_app.lookup.executor.JobExecutor`."""
 
     def __call__(self, item: LookupRequest) -> object:
         ...
@@ -70,10 +68,8 @@ class Worker(Protocol):
         ...
 
 
-# Each factory names the protocol it must produce. Returning ``object`` was
-# what forced the call site to suppress mypy; the provider protocols are
-# structural, so any conforming adapter still satisfies these without
-# inheriting anything.
+    # Structural provider protocols keep factories typed without requiring
+    # concrete adapters to inherit from them.
 OCRProviderFactory = Callable[[], OCRProvider]
 MorphologyProviderFactory = Callable[[], MorphologyProvider]
 DictionaryProviderFactory = Callable[[], DictionaryProvider]
@@ -315,10 +311,8 @@ class LookupWorker:
         if self._sensitive_pipeline is None or not _nothing_was_read_at_target(result):
             return result
 
-        # The cursor sits on something the ordinary detection pass did not
-        # report as text at all, a lone Hangul syllable at a normal UI size is
-        # the case that motivated this. One keener retry is worth its cost here
-        # because it only runs when the alternative is showing the user nothing.
+        # Retry only when ordinary detection found nothing under the cursor;
+        # isolated Hangul syllables motivate this cost.
         emit_trace(
             self._trace_sink,
             "ocr_sensitive_retry",
@@ -639,17 +633,10 @@ class _GateMeasurement:
 
 
 class _TextPresenceGate:
-    """Skip OCR for an ROI that holds no text-like structure at all.
+    """Refuse only nearly uniform ROIs using a coarse luminance sample.
 
-    With a short hover delay most captures land on empty desktop, a flat window
-    background, or an image with no writing, and each one otherwise costs a
-    full OCR call. Sampling a coarse grid for sharp luminance transitions
-    settles that in about a millisecond.
-
-    The test is deliberately lopsided: it only refuses ROIs that are almost
-    perfectly flat. Rejecting real text would make the popup silently stop
-    working, which is far worse than occasionally running OCR over a busy
-    photograph.
+    The gate is conservative: false positives cost OCR work, while false negatives
+    would silently reject real text.
     """
 
     def __init__(self, provider: OCRProvider) -> None:
@@ -738,23 +725,11 @@ def _measure_text_presence(image: ROIImage) -> _GateMeasurement:
     return measured(transitions, sampled_rows, sampled_columns, False)
 
 
-def _has_text_like_structure(image: ROIImage) -> bool:
-    """Return whether a sampled grid shows enough sharp luminance transitions."""
-
-    return _measure_text_presence(image).passed
-
-
 class _CachingOCRProvider:
-    """Reuse a previous OCR result for a byte-identical ROI.
+    """Cache OCR for byte-identical ROIs aligned by the capture grid.
 
-    OCR is ~99% of a lookup's cost, and capture snaps ROI origins to a grid
-    (see :data:`~hanly_app.capture.DEFAULT_ROI_GRID`) precisely so that nearby
-    cursor positions produce the same pixels. Caching here rather than around
-    the whole lookup means a cursor moving to a different word inside an
-    already-recognized ROI skips OCR while target resolution, morphology, and
-    dictionary lookup still run — together under half a millisecond.
-
-    The provider is confined to one worker thread, so no lock is needed.
+    Cursor resolution, morphology, and dictionary lookup still run for each request.
+    Only one worker thread accesses the cache, so no lock is needed.
     """
 
     def __init__(self, provider: OCRProvider) -> None:
@@ -935,10 +910,6 @@ class _TracingOCRProvider:
             ),
             **character_counts,
         }
-        if getattr(self._sink, "retain_text", False) is True:
-            trace_fields["ocr_text"] = "\n".join(
-                item.text for item in result if isinstance(item, OCRResult)
-            )
         if getattr(self._sink, "retain_geometry", False) is True:
             trace_fields["ocr_boxes"] = _encoded_boxes(result)
         if _wants_evidence(self._sink) and isinstance(result, Sequence):
@@ -961,8 +932,8 @@ def _encoded_boxes(results: Sequence[object]) -> str:
     """Encode region boxes in provider reading order as ``l,t,r,b`` groups.
 
     Geometry carries no recognized characters, but it still describes where
-    text sits on someone's screen, so it travels under its own opt-in beside
-    ``retain_text`` rather than on every event.
+    text sits on someone's screen, so it travels under its own opt-in rather
+    than on every event.
     """
 
     return ";".join(
@@ -1012,16 +983,10 @@ class _TracingResolver:
 
 
 class _TracingDetailResolver(_TracingResolver):
-    """Tracing for a resolver that answers the richer pointer-offset contract.
+    """Trace target details without changing resolver semantics or doing a second pass.
 
-    :meth:`LookupPipeline._resolve_target` probes for ``resolve_target_detail``
-    and falls back to the pair contract with ``cursor_index=0`` when it is
-    absent. A wrapper that dropped the method therefore moved the pointer to the
-    start of the resolved word, which is exactly the divergence instrumentation
-    must not introduce.
-
-    When the resolver can also explain itself, the explanation comes from the
-    same call that produced the answer rather than from a second pass.
+    Preserve ``resolve_target_detail`` and its character offset; dropping that method
+    would fall back to cursor index zero and change lookup selection.
     """
 
     def resolve_target_detail(

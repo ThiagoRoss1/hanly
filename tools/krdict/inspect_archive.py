@@ -88,10 +88,8 @@ def _compact_entry(node: ElementTree.Element, language: str) -> dict[str, object
         "part_of_speech": _feature(node, "partOfSpeech"),
         "pronunciation": _pronunciation(node),
         "level": _feature(node, "vocabularyLevel"),
-        # Categories are entry-level features, not a SubjectField element, and
-        # the two kinds are kept apart because the source keeps them apart.
-        # "subjectCategiory" is misspelled in the official XML; matching the
-        # correct spelling would silently report no subject categories.
+    # Categories are entry-level features, distinct from SubjectField.
+    # The official XML misspells "subjectCategiory"; match it literally.
         "semantic_categories": _direct_features(node, "semanticCategory"),
         "subject_categories": _direct_features(node, "subjectCategiory"),
         "senses": senses,

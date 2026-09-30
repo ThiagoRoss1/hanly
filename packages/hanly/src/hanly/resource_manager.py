@@ -41,6 +41,10 @@ class SchemaSpec:
 
     The contract itself is not described here. Each supported schema owns its
     own validator module, so a spec only has to say which one applies.
+
+    ``version`` is descriptive: validation is selected by ``name``, and that
+    validator enforces the one version it implements. A different version
+    declared here is not compared against the database.
     """
 
     name: str
@@ -61,17 +65,12 @@ _SCHEMA_VALIDATORS = {KRDICT_SCHEMA_NAME: validate_krdict_connection}
 
 @dataclass(frozen=True)
 class ResourceSpec:
-    """Manifest entry describing one local resource.
+    """Describe a local resource and its expected version.
 
-    ``version`` is the expected version.  A resource can provide its installed
-    version through ``installed_version`` (useful for an application manifest),
-    a small text ``version_file``, or a schema's metadata.  If none is given,
-    the expected version is treated as the installed version because ordinary
-    opaque files have no universal embedded-version format.
-
-    ``compatible_with`` and ``requires`` map another resource id to the
-    version it must expose.  ``requires`` is an alias useful to callers that
-    think in dependency terms; both mappings are checked.
+    Installed version comes from ``installed_version``, ``version_file``, or schema
+    metadata; opaque resources without those use the expected version. Both
+    ``compatible_with`` and its dependency alias ``requires`` map resource IDs to
+    required versions and are checked.
     """
 
     resource_id: str
@@ -151,12 +150,12 @@ class ValidatedResource:
 
 
 class ResourceManager:
-    """Locate and validate resources from a local manifest.
+    """Locate and explicitly validate resources from a local manifest.
 
-    Validation is explicit and repeatable: ``validate`` performs a fresh local
-    scan and returns a resource-id keyed copy of normalized metadata.  Paths
-    and configuration are exposed only through accessors that require
-    ``ResourceStatus.VALID``.
+    Each ``validate`` scans afresh and returns copied, normalized metadata by ID.
+    Accessors require VALID: ``validated_path``, ``configuration``, ``metadata``, and
+    ``validated_resource``. Published ``get_validated_path``, ``get_configuration``,
+    and ``get_metadata`` aliases remain equivalent.
     """
 
     def __init__(

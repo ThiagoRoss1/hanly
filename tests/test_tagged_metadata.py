@@ -14,7 +14,7 @@ import pytest
 # The tool defers this import for 3.10; the parsing it guards is what is tested.
 pytest.importorskip("tomllib")
 
-from tools.tagged_metadata import (  # noqa: E402
+from tools.tagged_metadata import (
     APPLICATION_PROJECT,
     ENGINE_PROJECT,
     TaggedMetadataError,

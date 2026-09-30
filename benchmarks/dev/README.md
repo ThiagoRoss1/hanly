@@ -113,7 +113,9 @@ repeated same Korean word, several Korean words, stationary changing content,
 fast movement, and normal browser/game use.
 
 Each run writes `metadata.json`, `live-events.jsonl`, `process.csv`,
-`summary.json`, and `stdout.log`. Pixel hashing runs on a separate bounded
+`summary.json`, and `stdout.log`. `process.csv` and the summary's resource use
+describe the benchmark's own shell process only; the lookup child that holds the
+OCR models is a separate process and is not sampled. Pixel hashing runs on a separate bounded
 thread; no screenshot or pixel buffer is written to disk.
 
 ### Freeze and export
@@ -134,9 +136,12 @@ change. Close the session without exporting and it is gone.
 
 Exporting is the separate, deliberate act that puts real screen content on disk.
 It writes `metadata.json`, `input.png`, `diagnostic.json`, `diagnostic.html` and
-`events.jsonl` under `<run>/frozen-<lookup-id>/`, plus `ocr/` when a staged
-EasyOCR run is attached. It refuses any destination outside
-`artifacts/benchmarks/runs/`.
+`events.jsonl` under `<run>/frozen-<lookup-id>/`. (The export can also carry an
+`ocr/` folder for a staged EasyOCR replay, but no command attaches one yet, so
+`live-hover` never writes it.) It refuses any destination outside
+`artifacts/benchmarks/runs/`, including a run directory placed elsewhere with
+`--output-root`: the rest of that run's evidence goes there, but an export is
+refused.
 
 There is no raw-text tracing option any more. Recognized text reaches disk
 through an export of one pinned lookup or not at all.
@@ -192,7 +197,7 @@ python -m benchmarks.dev ocr-corpus --manifest benchmarks/fixtures/ocr/manifest.
 |---|---|
 | `ocr-only` | image to normalized results, through the provider seam |
 | `detection-only` | detector geometry; the text is dropped, and every transcription metric reports `not_applicable` rather than a perfect score for a transcription that never happened |
-| `recognition-only` | annotated or detected crops straight to the recognizer |
+| `recognition-only` | detected crops through the recognizer; detection still runs to find them but is excluded from the reported total |
 | `frozen-replay` | a frozen ROI at its recorded configuration, labelled as replay |
 
 Every run writes `metadata.json`, `corpus-inventory.json`, `samples.jsonl` (one

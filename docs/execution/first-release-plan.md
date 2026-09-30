@@ -1,8 +1,15 @@
 # First release runbook
 
-This runbook bootstraps the first public desktop release. The release envelope
-contains four application products, `hanly-resources.json`, the exact
-`krdict-<version>.sqlite3.zst` named by that manifest, and `SHA256SUMS`.
+This runbook bootstraps the first public desktop release. The release asset set
+is **derived**, not listed by hand: `python tools/release_build.py assets
+--package <hup> --resource <krdict asset>` prints it, and both halves below use
+exactly that. On a release with no predecessor it is ten assets — the four
+application products, the two Windows compatibility files
+(`hanly-desktop-windows.manifest.json`, `.update.json`), the update package
+`Hanly-v<version>.hup`, `hanly-resources.json`, the exact
+`krdict-<version>.sqlite3.zst` it names, and `SHA256SUMS` — plus one
+`…-from-<base>-to-<target>.delta.zip` per platform whenever a verified
+predecessor existed. `packaging/README.md` describes each asset.
 
 KRDICT is built locally from the manually acquired official ZIP. That ZIP and
 the raw `krdict.sqlite3` never leave the operator's machine and are never
@@ -17,12 +24,13 @@ or changes its version.
   or manually for an existing tag. It resolves the tag commit, verifies the
   successful **Build Desktop Artifacts** run for that exact commit, checks the
   tagged package versions and pins, and creates or repairs a private draft
-  holding the four application products. It never publishes and never writes
+  holding the application products, the Windows compatibility files, the update
+  package and any deltas it indexes. It never publishes and never writes
   `SHA256SUMS`.
 - **`finalize`** waits on the `hanly-release` environment. Approving it re-runs
   every check from the tag up, takes the KRDICT pair from the draft, validates
-  the manifest, writes `SHA256SUMS`, uploads the seven assets, asserts the draft
-  holds exactly those seven, and only then clears the draft flag.
+  the manifest, writes `SHA256SUMS`, uploads the derived asset set, asserts the
+  draft holds exactly that set, and only then clears the draft flag.
 
 The two halves are one run in one per-tag concurrency group, and that group is
 never cancelled automatically. **A second run for the same tag queues behind a
@@ -58,8 +66,8 @@ assume it will become `latest`.
 
 2. Wait for the three platform jobs in **Build Desktop Artifacts** to succeed.
    The successful same-repository tag build triggers `release.yml`.
-3. `stage` finishes with a private draft for the tag holding the four application
-   products. There is no previous public release, so no resource pair is carried
+3. `stage` finishes with a private draft for the tag holding the application
+   products, compatibility files and update package. There is no previous public release, so no resource pair is carried
    and none is required yet.
 4. Open the draft in **Releases → Edit** and attach both local files: exactly
    one `krdict-<resource-version>.sqlite3.zst` and one `hanly-resources.json`.
@@ -67,7 +75,9 @@ assume it will become `latest`.
    finalize job uses it to prove the draft is the one staged for this commit.
 5. Open the run, find the `finalize` job waiting under **Review deployments**,
    and approve it. It revalidates everything and publishes.
-6. Confirm the published release lists exactly seven assets.
+6. Confirm the published release lists exactly the set `release_build.py assets`
+   printed for this tag — ten assets for the first release, which has no
+   predecessor and therefore no deltas.
 7. Verify first-run acquisition on a clean machine with no `HANLY_KRDICT_DB` and
    no local generated database. Confirm download, checksum/schema validation,
    installation, vocabulary lookup, and a restart while offline. Repeat with the
@@ -96,8 +106,9 @@ use a new `resource_version`; the same version with a different checksum is
 rejected at finalization.
 
 The carried pair is written only when the draft is created. A rerun that repairs
-an existing draft touches the four application products and nothing else, so an
-uploaded pair is never silently overwritten.
+an existing draft re-uploads only the application-side assets (products,
+compatibility files, update package, deltas), so an uploaded pair is never
+silently overwritten.
 
 ## Manual recovery
 

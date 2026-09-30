@@ -1,5 +1,7 @@
 # macOS campaign Review Handoff — component panel, Wave 5 AX, Wave 7 verdict
 
+> **Historical (labelled 2026-09-28):** the "not started" and readiness statements below were superseded by Wave 6 and the 0.9.0 merge. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 ## Campaign
 
 - One authorized Phase A campaign with three internal boundaries, run on

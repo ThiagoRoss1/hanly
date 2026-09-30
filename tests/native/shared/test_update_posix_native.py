@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from hanly_app.app_update_handoff import (
+from hanly_app.updates.handoff import (
     LAUNCH_EXEC,
     NativeTransaction,
     read_descriptor,

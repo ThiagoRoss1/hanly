@@ -24,9 +24,9 @@ from hanly import (
     Quad,
 )
 from hanly.word_resolver import WordResolver
-from hanly_app.capture import ScreenRect
-from hanly_app.hover_lookup import HoverLookupRuntime
-from hanly_app.hover_target import (
+from hanly_app.acquisition.capture import ScreenRect
+from hanly_app.hover.lookup import HoverLookupRuntime
+from hanly_app.hover.target import (
     POPUP_TRANSFER_MS,
     WORD_MARGIN_PIXELS,
     CaptureOrigins,
@@ -34,7 +34,7 @@ from hanly_app.hover_target import (
     expanded,
     screen_rect,
 )
-from hanly_app.lookup_controller import LookupController
+from hanly_app.lookup.controller import LookupController
 
 from tests.test_hover_lookup import (  # deliberate reuse of one runtime's doubles
     _Capture,

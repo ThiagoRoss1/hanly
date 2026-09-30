@@ -1,7 +1,7 @@
 """Tests for desktop capture probes."""
 
 from hanly import PixelFormat, Point, ROIImage
-from hanly_app.capture import CaptureResult, MonitorInfo, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, MonitorInfo, ScreenRect
 
 from benchmarks.dev.desktop_probes import measure_capture_service
 

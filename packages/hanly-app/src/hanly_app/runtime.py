@@ -1,16 +1,8 @@
-"""The real Hanly V1 provider runtime, described by a JSON config file.
+"""Translate validated runtime configuration into deferred provider factories.
 
-``hanly_app.composition`` accepts provider factories and knows nothing about
-local resources; this module supplies them, reading a runtime configuration
-file and passing ResourceManager-validated values to the real V1 providers.
-
-Provider construction is deferred to the ``JobExecutor`` thread. Constructing
-``KRDICTProvider`` opens a thread-affine SQLite connection that must be closed
-on the same thread, and keeping each OCR library's import lazy lets clients
-import this package without the native OCR stack installed.
-
-EasyOCR is the only OCR adapter. It is a plain ``OCRProvider`` implementation
-and is not visible to ``LookupPipeline``.
+ResourceManager supplies normalized local values. The executor constructs and
+closes providers on one thread for SQLite affinity; lazy OCR imports keep the
+runtime importable without optional OCR dependencies.
 """
 
 from __future__ import annotations
@@ -33,22 +25,23 @@ from hanly.resource_manager import (
 )
 from hanly.vision_provider import VisionConfig, VisionProvider
 
-from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
-from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
-from .composition import create_lookup_controller as _create_in_process_controller
-from .config import OCRBackend
-from .diagnostics import StartupTimeline
-from .lookup_controller import LookupController, LookupRequest, ResultDispatcher
-from .lookup_process import (
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.process import (
     DiagnosticReporter,
     LookupEngine,
     LookupSettings,
     StateReporter,
 )
-from .lookup_process import create_lookup_engine as _create_lookup_engine
-from .lookup_process import (
+from hanly_app.lookup.process import create_lookup_engine as _create_lookup_engine
+from hanly_app.lookup.process import (
     create_process_lookup_controller as _create_process_controller,
 )
+
+from .composition import LookupWorker, OCRProviderFactory, ResolverFactory
+from .composition import build_lookup_worker_factory as _build_lookup_worker_factory
+from .composition import create_lookup_controller as _create_in_process_controller
+from .config import OCRBackend
+from .diagnostics import StartupTimeline
 from .runtime_trace import RuntimeTraceSink
 
 
@@ -60,10 +53,6 @@ class RuntimeConfigError(ValueError):
 #: What the interface calls each recognizer.
 EASYOCR_DISPLAY_NAME = "EasyOCR"
 VISION_DISPLAY_NAME = "Apple Vision"
-#: Retained for callers that predate the recognizer choice.
-OCR_DISPLAY_NAME = EASYOCR_DISPLAY_NAME
-
-
 def ocr_display_name(backend: OCRBackend | None) -> str:
     """Name the recognizer a launch with this preference actually constructs.
 
@@ -743,7 +732,6 @@ def _mapping_field(value: object, field_name: str, resource_id: str) -> Mapping[
 __all__ = [
     "KRDICT_RESOURCE_ID",
     "EASYOCR_DISPLAY_NAME",
-    "OCR_DISPLAY_NAME",
     "VISION_DISPLAY_NAME",
     "ocr_display_name",
     "PACKAGED_MODEL_DIRECTORY",

@@ -1,5 +1,7 @@
 # Vision hover and macOS restore stabilization plan
 
+> **Historical (labelled 2026-09-28):** the clipping recovery it proposed was implemented, then rolled back (see `checkpoints/vision-hover-and-macos-restore-stabilization-2026-09-20.md`); the branch it names no longer exists. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 **Status:** investigated and proposed; implementation is not authorized by this document.
 **Branch context:** `visual/interface-update`, after the 2026-09-19 Bundle A implementation and post-bundle review. Git state is not asserted because the local Xcode licence currently prevents git from running.
 **Scope:** stabilize word ownership while Apple Vision is active, finish the one-attempt clipping recovery that A5 left unwired, and make the existing Control Center reliably return from the Dock without replacing its process or state.

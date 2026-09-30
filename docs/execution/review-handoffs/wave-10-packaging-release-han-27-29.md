@@ -1,5 +1,7 @@
 # Wave 10 Packaging, CI, and Release Review Handoff
 
+> **Historical (labelled 2026-09-28):** its release asset set predates the update package; see `packaging/README.md`. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 ## Bundle
 
 - Member issues: HAN-27, HAN-28, HAN-29

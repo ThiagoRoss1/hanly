@@ -23,27 +23,17 @@ from .errors import ProviderError
 # rising, which is the wrong trade for a background desktop helper.
 _MAX_DEFAULT_CPU_THREADS = 4
 
-# CRAFT ignores a text box whose longest side is under ``min_size``, and needs
-# roughly 22 px of glyph height before it reports anything at all. A single
-# Hangul syllable standing alone at a normal UI size fails both tests, while
-# the same syllable with a particle attached passes because the box is twice
-# as wide. Upscaling and lowering the box floor together recover it; neither
-# does so alone. The pair costs about 2.7x the latency, so it belongs on a
-# retry rather than on every lookup.
+# CRAFT needs both a larger glyph and a lower box floor to recover isolated
+# syllables. Together they cost ~2.7x latency, so reserve them for a retry.
 _DEFAULT_SENSITIVE_OPTIONS: Mapping[str, Any] = {"mag_ratio": 2.0, "min_size": 4}
 
 
 @dataclass(frozen=True)
 class EasyOCRConfig:
-    """Explicit EasyOCR construction options supplied by composition code.
+    """Configure the CPU-only V1 recognizer with Korean and English character sets.
 
-    ``languages`` defaults to Korean and English, which ``korean_g2`` reads
-    with one model. EasyOCR masks every character the listed languages do not
-    name, and Korean's list has no Latin letters: under Korean alone, Latin
-    text can only decode as Hangul lookalikes, which then look words up. GPU
-    is never requested: V1 targets CPU-only desktops, and a GPU option would
-    make provider behavior depend on hardware the rest of the runtime does not
-    model.
+    Both use one korean_g2 model. EasyOCR masks unlisted characters: Korean alone
+    can turn Latin text into false Hangul matches.
     """
 
     languages: tuple[str, ...] = ("ko", "en")

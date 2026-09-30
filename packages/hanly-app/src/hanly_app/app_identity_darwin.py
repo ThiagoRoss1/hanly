@@ -1,15 +1,7 @@
-"""What macOS thinks this process is, for the windows Hanly does not own.
+"""Keep the macOS Dock and application menu owned by the persistent shell.
 
-Every process that creates a ``QApplication`` becomes a Regular application:
-one Dock tile, one menu bar, one entry in the app switcher. The shell is that
-application. The Control Center lives in a child process and creates a
-``QApplication`` of its own, so without this it became a second, identical
-Hanly beside the real one.
-
-An Accessory application has no Dock tile and no menu bar, and its windows
-still appear and still take the keyboard, which is exactly what a panel owned
-by another process needs. It has to be activated explicitly, because showing a
-window no longer brings an application forward on its own.
+The Control Center child uses accessory policy without its own Dock/menu identity;
+its window accepts keyboard input but needs explicit activation.
 """
 
 from __future__ import annotations
@@ -166,20 +158,9 @@ def yield_activation_to(pid: int) -> bool:
     return bridge.yield_to(bridge.application(), pid)
 
 
-def activation_policy() -> int | None:
-    """Report the current policy, for tests and diagnostics."""
-
-    try:
-        bridge = _objective_c()
-    except RuntimeError:
-        return None
-    return bridge.policy(bridge.application())
-
-
 __all__ = [
     "ACCESSORY_POLICY",
     "activate_application",
-    "activation_policy",
     "run_as_accessory_application",
     "yield_activation_to",
 ]

@@ -21,6 +21,10 @@ runtime = [
     "PyQt6>=6.7,<7",
     "pywebview[qt6]>=6.2,<7",
     "pystray>=0.19,<1",
+    # Apple Vision, the default recognizer on macOS, is reached through these;
+    # they must not depend on pywebview happening to bring them along.
+    "pyobjc-core>=10,<13; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10,<13; sys_platform == 'darwin'",
 ]
 dev = [
     "hanly-app[runtime]",

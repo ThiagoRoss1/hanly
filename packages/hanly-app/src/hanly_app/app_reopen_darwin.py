@@ -1,12 +1,6 @@
-"""Routing a macOS application reactivation back to the Control Center.
+"""Route macOS Dock reactivation to the shell's Control Center open action.
 
-On macOS the shell owns the Dock tile; the Control Center child runs as an
-accessory with none of its own. Clicking Hanly in the Dock therefore activates
-the *shell*, which by itself does nothing visible while the child sits
-minimized. This connects that activation to the one existing open path.
-
-It deliberately does not create a window, a child, an entry point, or a second
-Dock identity: it calls the same action the tray menu calls.
+Reuse the tray action without creating another application identity or window.
 """
 
 from __future__ import annotations

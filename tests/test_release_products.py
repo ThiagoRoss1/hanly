@@ -11,11 +11,11 @@ import json
 from pathlib import Path
 
 import pytest
-from hanly_app.app_hup import HupError, package_asset_name, read_package
-from hanly_app.app_inventory import read_tree
-from hanly_app.app_manifest import TreeLayout, TreeManifest
-from hanly_app.app_update_plan import FROM_DELTA, OWNERSHIP_RECEIPT, plan_tree_update
-from hanly_app.app_update_tree import assemble_candidate, verify_candidate
+from hanly_app.updates.inventory import read_tree
+from hanly_app.updates.manifest import TreeLayout, TreeManifest
+from hanly_app.updates.package import HupError, package_asset_name, read_package
+from hanly_app.updates.plan import FROM_DELTA, OWNERSHIP_RECEIPT, plan_tree_update
+from hanly_app.updates.tree import assemble_candidate, verify_candidate
 
 from tests.hanly_fixtures.update_tree import (
     LINUX,

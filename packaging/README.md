@@ -620,8 +620,9 @@ resource. It runs in two halves around that manual step.
 1. `stage` runs automatically after a successful tag build, or manually for an
    existing tag. It resolves the tag commit, verifies the successful **Build
    Desktop Artifacts** run for that exact commit, checks the tagged package
-   metadata against the tag, and creates a private **draft** holding the three
-   platform archives. It never publishes and never writes `SHA256SUMS`.
+   metadata against the tag, and creates a private **draft** holding the four
+   application products, the Windows compatibility files, the update package
+   and any deltas it indexes. It never publishes and never writes `SHA256SUMS`.
 2. If a previous public release exists, stage also copies that release's
    `hanly-resources.json` and the KRDICT `.zst` it references into the draft, so
    an application-only release needs no upload at all. A new application tag
@@ -634,12 +635,13 @@ resource. It runs in two halves around that manual step.
    re-downloads the four application products from that exact run, takes the
    resource pair
    from the draft, validates the manifest shape, filename, version, size,
-   SHA-256, schema version and entry count, writes `SHA256SUMS` only once all
-   six payload assets pass, uploads the seven assets, asserts the draft holds
-   exactly those seven, and only then clears the draft flag.
+   SHA-256, schema version and entry count, writes `SHA256SUMS` only once every
+   payload passes, uploads the asset set derived from the update package (ten
+   on a release without deltas), asserts the draft holds exactly that set, and
+   only then clears the draft flag.
 
-A first release has no previous resource to copy, so its draft is created with
-the four application products alone and waits for the operator's two files. Missing
+A first release has no previous resource to copy, so its draft is created
+without a resource pair and waits for the operator's two files. Missing
 resources fail at finalization, never at draft creation.
 
 ### Recovery, dry runs, and idempotency

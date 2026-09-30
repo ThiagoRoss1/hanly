@@ -36,8 +36,8 @@ import json
 import sys
 import threading
 
-from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_process import ControlCenterProcess, bridge_operations
+from hanly_app.control_center.bridge import ControlCenterBridge
+from hanly_app.control_center.process import ControlCenterProcess, bridge_operations
 
 REPORT_PREFIX = "LIFECYCLE_REPORT "
 HEAVY_MODULES = ("PyQt6.QtWebEngineWidgets", "easyocr", "torch", "kiwipiepy")
@@ -176,8 +176,8 @@ import json
 import sys
 import threading
 
-from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_process import ControlCenterProcess, bridge_operations
+from hanly_app.control_center.bridge import ControlCenterBridge
+from hanly_app.control_center.process import ControlCenterProcess, bridge_operations
 
 REPORT_PREFIX = "FOCUS_RACE_REPORT "
 
@@ -368,7 +368,7 @@ def test_owned_child_leaves_sigint_to_parent_shutdown(tmp_path: Path) -> None:
     program.write_text('''
 import os
 import signal
-from hanly_app.process_transport import Transport, spawn_child, stop_process
+from hanly_app.lookup.transport import Transport, spawn_child, stop_process
 
 
 def child(connection):

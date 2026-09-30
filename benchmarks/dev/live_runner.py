@@ -29,6 +29,7 @@ from .live_telemetry import (
 )
 from .metadata import build_metadata
 from .microscope import (
+    ARTIFACT_ROOT,
     MicroscopeCaptureObserver,
     MicroscopeSink,
     build_ring,
@@ -473,7 +474,7 @@ def production_capture_service(backend: Any | None = None) -> Any:
     measures a runtime the product does not ship.
     """
 
-    from hanly_app.capture import DEFAULT_ROI_GRID, CaptureService
+    from hanly_app.acquisition.capture import DEFAULT_ROI_GRID, CaptureService
 
     if backend is None:
         return CaptureService(roi_grid=DEFAULT_ROI_GRID)
@@ -595,10 +596,8 @@ def run_live_hover(args: Any) -> int:
         report(f"Live benchmark run {metadata['run_id']}")
         report("Preparing the real resident hover composition; do not move yet.")
 
-        # Match production startup ordering: native OCR preload precedes Qt.
-        from hanly_app.ocr_preload import preload_ocr_runtime
-
-        preload_ocr_runtime()
+        # OCR runs in the spawned lookup child, as in production, so the shell
+        # never imports it and the resource samples below describe that shell.
         from hanly_app.manual_lookup import (
             create_qt_manual_lookup,
         )
@@ -640,8 +639,10 @@ def run_live_hover(args: Any) -> int:
 
         def export_lookup() -> None:
             report(
+                # Private screen content is held to the fixed gitignored root,
+                # whatever --output-root says about the rest of the run.
                 _export_message(
-                    frozen_holder, run_dir, args.output_root, evidence_counts
+                    frozen_holder, run_dir, ARTIFACT_ROOT, evidence_counts
                 )
             )
 

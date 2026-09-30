@@ -1,5 +1,7 @@
 # HAN-35 Benchmark, Reconciliation, and CLI Technical Handoff
 
+> **Historical (labelled 2026-09-28):** PaddleOCR-era (v0.1.0); `--retain-text` and the MKLDNN option it describes were removed. Current state: `docs/CODE-MAP.md`, the READMEs, and `docs/architecture/`.
+
 Date: 2026-08-23  
 Issue: HAN-35  
 Base revision: `24ed285bd8cc33390875917d602a3a8526e77128` (`v0.1.0`)  

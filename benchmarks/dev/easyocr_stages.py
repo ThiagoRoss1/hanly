@@ -1,20 +1,8 @@
-"""Drive EasyOCR's detection and recognition stages one region at a time.
+"""Inspect EasyOCR detection and recognition stages for one region.
 
-The shipped provider calls ``Reader.readtext`` and sees only its normalized
-output. That is the right shape for a product and the wrong shape for finding
-out *why* a word came back wrong, so this module reproduces what ``readtext``
-does internally and keeps every intermediate image.
-
-It is developer-only and pinned to one EasyOCR version, because it uses
-implementation detail the library makes no promises about. Normalization is not
-reimplemented here: the adapter's own helpers turn raw detections into contract
-values, so a staged run and a production run cannot disagree about what a
-detection means.
-
-**Two evidence classes, never mixed.** A lookup deliberately executed through
-this path owns its crops. Staging a frozen ROI *after* a production lookup is
-``comparison_replay``: it may agree or disagree with the live result, and a
-disagreement is reported rather than resolved.
+This developer-only path uses version-pinned internals and the shipped adapter's
+normalizers. A staged lookup owns its crops; staging a frozen production ROI is
+``comparison_replay``, whose disagreements with the live result are reported.
 """
 
 from __future__ import annotations
@@ -163,11 +151,14 @@ def run_staged_easyocr(
     evidence_class: str = STAGED_DIAGNOSTIC,
     detector_options: dict[str, Any] | None = None,
     recognizer_options: dict[str, Any] | None = None,
+    recognize: bool = True,
 ) -> StagedRun:
     """Reproduce ``readtext`` stage by stage, retaining every image in memory.
 
     Nothing is written to disk. The caller decides whether these internals
-    belong to a diagnostic invocation or to a replay of an earlier one.
+    belong to a diagnostic invocation or to a replay of an earlier one. With
+    ``recognize`` false the recognizer is never called: regions carry only the
+    detector's geometry, and nothing is normalized.
     """
 
     if evidence_class not in (STAGED_DIAGNOSTIC, COMPARISON_REPLAY):
@@ -189,9 +180,12 @@ def run_staged_easyocr(
     # ``detect`` returns a list per input image; ``readtext`` takes the first.
     horizontal, free = _first_of_each(horizontal_list, free_list)
 
-    regions, recognition_ns = _staged_regions(
-        reader, grayscale, horizontal, free, recognize_kwargs
-    )
+    if recognize:
+        regions, recognition_ns = _staged_regions(
+            reader, grayscale, horizontal, free, recognize_kwargs
+        )
+    else:
+        regions, recognition_ns = _detected_regions(horizontal, free), 0
 
     normalize_started = time.perf_counter_ns()
     normalized = normalize_easyocr_results(
@@ -306,6 +300,22 @@ def _staged_regions(
             )
         )
     return tuple(regions), recognition_ns
+
+
+def _detected_regions(
+    horizontal: list[Any], free: list[Any]
+) -> tuple[StagedRegion, ...]:
+    boxes = [("horizontal", box) for box in horizontal] + [("free", box) for box in free]
+    return tuple(
+        StagedRegion(
+            index=index,
+            kind=kind,
+            raw_box=_raw_box(box),
+            quad=_quad_from_box(kind, box),
+            unavailable_reason="recognition_not_run",
+        )
+        for index, (kind, box) in enumerate(boxes)
+    )
 
 
 def _crop_for(

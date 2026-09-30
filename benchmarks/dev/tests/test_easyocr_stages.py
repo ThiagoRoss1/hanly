@@ -1,12 +1,7 @@
-"""The staged EasyOCR runner, driven through a reader double.
+"""Pin the version-specific EasyOCR stage contract and crop/text correlation.
 
-The runner reproduces ``Reader.readtext``'s body, so the two things worth
-pinning are that it fails loudly when those internals move and that its retained
-crops really are the images its reported text came from.
-
-``easyocr.utils`` pulls in Torch and OpenCV, so every test that needs the real
-cropping helpers skips rather than importing them on a machine without the OCR
-runtime.
+Doubles expose changes in library internals; real-helper cases skip when Torch
+or OpenCV is unavailable.
 """
 
 from __future__ import annotations
@@ -262,3 +257,20 @@ def test_a_replay_that_found_a_different_number_of_regions_says_so() -> None:
 
     assert comparison.matches is False
     assert comparison.differences == ("region count: live 1 vs staged 0",)
+
+
+def test_a_detection_only_run_never_calls_the_recognizer() -> None:
+    _requires_easyocr()
+    reader = _Reader(horizontal=[[8, 80, 4, 28], [4, 40, 2, 20]])
+
+    run = run_staged_easyocr(reader, _roi(), recognize=False)
+
+    assert len(reader.detect_calls) == 1
+    assert reader.recognize_calls == []
+    assert run.recognition_ns == 0
+    assert run.normalized == ()
+    assert [region.unavailable_reason for region in run.regions] == [
+        "recognition_not_run",
+        "recognition_not_run",
+    ]
+    assert all(region.text is None and region.crop is None for region in run.regions)

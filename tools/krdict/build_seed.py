@@ -19,6 +19,8 @@ if __package__ in (None, ""):
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
+from hanly.krdict_schema import KRDICT_SCHEMA_VERSION
+
 from tools.krdict.source import EntryRecord, KRDICTSource, KRDICTSourceError
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -249,7 +251,7 @@ def build_database(
             for entry_id, entry in enumerate(scanned.iter_entries(), start=1):
                 _insert_entry(connection, entry, entry_id, counters)
             metadata = (
-                ("schema_version", "1"),
+                ("schema_version", str(KRDICT_SCHEMA_VERSION)),
                 ("resource_version", resource_version),
                 ("source", "krdict"),
                 ("source_date", source_date),

@@ -2,7 +2,7 @@
 
 ## Authority and baseline
 
-- Approved [stable plan](../stabilization-distribution-2026-09-07-plan.md).
+- Approved [stable plan](../plans/2026-09-07-stabilization-distribution.md).
 - Baseline HEAD: `194a4b2939551986f611607e6b73489d7b50e75b`.
 - Pre-existing change: untracked `artifacts/`; preserve, do not claim ownership.
 - Plan lives directly in docs/execution alongside the repository's existing plans;

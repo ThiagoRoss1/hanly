@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from hanly import PixelFormat, Point, ROIImage
-from hanly_app.capture import (
+from hanly_app.acquisition.capture import (
     BackendCapture,
     BackendMonitor,
     CaptureBackendError,

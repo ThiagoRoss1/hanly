@@ -77,9 +77,9 @@
 - **Version authority:** `tools/release_version.py`.
 - **Tests:** `tests/test_ci_workflows.py`, `tests/test_release_version.py`.
 - **Operator/implementation docs:** `docs/execution/first-release-plan.md`,
-  `docs/execution/github-release-automation-plan.md`, `packaging/README.md`,
+  `docs/execution/plans/github-release-automation.md`, `packaging/README.md`,
   `tools/README.md`.
-- **Ledger and handoff:** `docs/execution/github-releases-feature-ledger.md` and this file.
+- **Ledger and handoff:** `docs/execution/reports/2026-09-01-github-releases-feature-ledger.md` and this file.
 
 ## Review scope
 
@@ -177,7 +177,7 @@ standard-library shadow; the remaining `sys.path` insert exists only so a plain
 `build_release_asset` names its step runner instead of asserting it is callable.
 The dead `persist_resource_version` shim was removed. The Zstandard limits are
 unchanged; only their comments were made exact. The agent ledger moved from the
-repository root to `docs/execution/github-releases-feature-ledger.md`.
+repository root to `docs/execution/reports/2026-09-01-github-releases-feature-ledger.md`.
 
 Gates after the pass: **661 passed, 1 skipped**; Ruff clean; mypy clean over 139
 source files; all workflow YAML parses and every workflow shell block passes

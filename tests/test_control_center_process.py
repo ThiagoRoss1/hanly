@@ -13,8 +13,8 @@ import threading
 from typing import Any
 
 import pytest
-from hanly_app.control_center import ControlCenterBridge, ControlCenterUnavailable
-from hanly_app.control_center_process import (
+from hanly_app.control_center.bridge import ControlCenterBridge, ControlCenterUnavailable
+from hanly_app.control_center.process import (
     CONTROL_CENTER_OPERATIONS,
     MAX_OUTSTANDING_OPERATIONS,
     ControlCenterOptions,
@@ -23,7 +23,7 @@ from hanly_app.control_center_process import (
     _ControlCenterChild,
     bridge_operations,
 )
-from hanly_app.process_transport import (
+from hanly_app.lookup.transport import (
     MAX_CONTROL_MESSAGE_BYTES,
     MessageTooLarge,
     Transport,
@@ -611,7 +611,7 @@ def test_choosing_an_area_first_lets_the_shell_come_to_the_front(
 ) -> None:
     """Windows only lets the process the user clicked hand the foreground on."""
 
-    from hanly_app import control_center_process
+    from hanly_app.control_center import process as control_center_process
 
     order: list[str] = []
     monkeypatch.setattr(
@@ -631,7 +631,8 @@ def test_the_hand_over_reaches_both_platform_mechanisms(
 
     import os
 
-    from hanly_app import app_identity_darwin, control_center_process
+    from hanly_app import app_identity_darwin
+    from hanly_app.control_center import process as control_center_process
 
     calls: list[object] = []
     monkeypatch.setattr(

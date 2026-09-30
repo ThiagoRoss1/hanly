@@ -130,7 +130,7 @@ def test_the_lookup_child_builds_the_recognizer_it_was_told_to(tmp_path) -> None
 
     from hanly.easyocr_provider import EasyOCRConfig
     from hanly_app.config import OCRBackend
-    from hanly_app.lookup_process import LookupSettings, _ocr_provider_factory
+    from hanly_app.lookup.process import LookupSettings, _ocr_provider_factory
 
     def settings(backend: OCRBackend) -> LookupSettings:
         return LookupSettings(
@@ -177,12 +177,8 @@ def test_the_runtime_sends_its_backend_to_the_child(tmp_path) -> None:
     )
 
 
-# --- Model input scale (Wave 3) ---------------------------------------------
-#
-# Vision silently omitted whole proportional lines -- Korean and Latin alike --
-# at the sizes Hanly captures, while reading the same pixels correctly once
-# enlarged. Only the encoded payload grows; the ROI and its coordinate space do
-# not, which is the part worth guarding.
+# Vision can omit proportional text at capture size; enlarge only its model
+# payload, never the ROI geometry returned to the resolver.
 
 
 def test_the_recognizer_is_given_a_doubled_image_by_default() -> None:

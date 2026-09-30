@@ -80,7 +80,7 @@ Wave 2 branches A–E share `Core Contracts` and have no approved dependencies o
 - **Convergence:** `LookupPipeline`.
 - **Acceptance criteria:** OCR results are normalized and no EasyOCR objects leak through the `OCRProvider` seam.
 
-> **Current OCR decision (2026-09-22):** `VisionProvider` (Apple Vision) is preferred on supported macOS and `EasyOCRProvider` is the cross-platform implementation and fallback, both behind `OCRProvider` and chosen by the internal `ocr_backend` setting (`auto`, `vision`, `easyocr`), with no user-facing selection. PaddleOCR stays removed. This DAG node built the EasyOCR adapter, which still unblocks V1 everywhere. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 and 2026-08-24 decisions are historical.
+> **Current OCR decision (2026-09-22):** `VisionProvider` (Apple Vision) is preferred on supported macOS and `EasyOCRProvider` is the cross-platform implementation and fallback, both behind `OCRProvider` and chosen by the `ocr_backend` setting (`auto`, `vision`, `easyocr`), which the Control Center offers as a setting (amended 2026-09-28). PaddleOCR stays removed. This DAG node built the EasyOCR adapter, which still unblocks V1 everywhere. See [the decision record](DECISION-2026-09-22-ocr-backend.md); the 2026-08-26 and 2026-08-24 decisions are historical.
 
 ### B — Kiwi Morphology Provider
 

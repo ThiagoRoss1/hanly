@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from hanly_app.control_center import load_control_center_assets
+from hanly_app.control_center.bridge import load_control_center_assets
 
 _HARNESS = Path(__file__).parent / "hanly_fixtures" / "assets" / "control_center_harness.js"
 _NODE = shutil.which("node")
@@ -475,3 +475,34 @@ def test_a_page_opened_after_a_load_does_not_replay_it(tmp_path: Path) -> None:
     )
 
     assert trace[0]["engine_state"] == "loaded"
+
+
+def test_a_refresh_keeps_keyboard_focus_on_the_section_it_was_on(
+    tmp_path: Path,
+) -> None:
+    """The navigation is rebuilt on every snapshot; focus must survive that."""
+
+    preparing = _snapshot("preparing")
+    trace = _run(
+        [preparing, preparing, preparing],
+        tmp_path,
+        actions=[{"step": 0, "focus_nav": "shortcuts"}],
+    )
+
+    assert "shortcuts" in trace[0]["nav_pages"]
+    assert len(trace) > 2
+    assert all(entry["focused_nav_page"] == "shortcuts" for entry in trace[1:])
+
+
+def test_a_refresh_during_a_slider_drag_does_not_snap_it_back(tmp_path: Path) -> None:
+    preparing = _snapshot("preparing")
+    trace = _run(
+        [preparing, preparing, preparing],
+        tmp_path,
+        actions=[{"step": 0, "slide": 480}],
+    )
+
+    assert trace[0]["delay_slider"] == "150"
+    assert len(trace) > 2
+    assert all(entry["delay_slider"] == "480" for entry in trace[1:])
+    assert all(entry["delay_field"] == "480" for entry in trace[1:])

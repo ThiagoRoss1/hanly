@@ -1,13 +1,7 @@
-"""A disposable installation, a real transaction, and the real helper over it.
+"""Build disposable update installs and journals entirely under temporary roots.
 
-The helper is a PowerShell program that moves files inside a directory Windows
-is holding open. Nothing about that is provable from the rendered text, so every
-case here builds two compiled programs, stages a transaction through the
-production journal, and runs the shipped script over the result.
-
-The installation under test is built from scratch in ``tmp_path``. Nothing
-outside it is read or written, and the user's own installation is never a
-subject: the point is a Hanly-shaped tree, not this machine's Hanly.
+Two compiled programs exercise real PowerShell moves of locked Windows files,
+which script-text checks cannot prove. The normal user installation is untouched.
 """
 
 from __future__ import annotations
@@ -17,23 +11,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
-from hanly_app.app_inventory import file_digest, write_installed_manifest
-from hanly_app.app_manifest import (
-    BuildIdentity,
-    FileEntry,
-    InstallManifest,
-    content_fingerprint,
-)
-from hanly_app.app_update_helper import (
+from hanly_app.updates.helper import (
     EXIT_WAIT_SECONDS,
     HELPER_SCRIPT_NAME,
     READY_WAIT_SECONDS,
     render_helper_script,
 )
-from hanly_app.app_update_journal import (
+from hanly_app.updates.inventory import file_digest, write_installed_manifest
+from hanly_app.updates.journal import (
     JournalOperation,
     TransactionPlan,
     UpdateJournal,
+)
+from hanly_app.updates.manifest import (
+    BuildIdentity,
+    FileEntry,
+    InstallManifest,
+    content_fingerprint,
 )
 
 from .update_handoff import PROGRAM_SUFFIX, _compile, c_string  # noqa: F401
@@ -249,10 +243,8 @@ def _script(journal: UpdateJournal) -> Path:
     return script
 
 
-#: The replacement has to be a real program: the helper starts it with
-#: ``Start-Process`` and waits for it to write a readiness file, which a text
-#: file cannot do. ``LINGER_SECONDS`` keeps a rejected build holding the
-#: installation open, which is the state a rollback has to cope with.
+#: The helper needs a real process to start and acknowledge readiness; linger
+#: keeps a rejected build holding the installation during rollback.
 _PROBE_SOURCE = """
 #include <stdio.h>
 #include <string.h>

@@ -278,10 +278,8 @@ def test_build_retains_the_release_archive_and_its_evidence() -> None:
 
     assert upload["with"]["name"] == "hanly-desktop-${{ matrix.platform }}"
     assert upload["with"]["if-no-files-found"] == "error"
-    # The products, the small JSON reports saying what was verified against
-    # which artifact, and this platform's release metadata - which is what the
-    # aggregation job reads. The onedir tree beside the archive is the same
-    # payload a second time, and never travels.
+    # Upload products, verification reports, and release metadata, but not
+    # the duplicate onedir tree beside the archive.
     carried = ("dist/hanly-desktop-", "dist/reports/", "dist/release/")
     assert all(path.startswith(carried) for path in paths), paths
     assert not any("hanly-desktop/" in path or ".pyinstaller" in path for path in paths)
@@ -357,15 +355,14 @@ def test_every_native_build_opens_the_frozen_window_it_is_about_to_ship() -> Non
     assert "continue-on-error" not in steps[window]
 
 
-# --- What one failed packaging step is still allowed to prove -----------------
-#
-# A default GitHub step runs only while every step before it succeeded, so one
-# failed smoke used to skip every later check and the artifact upload with
-# them: a red run produced a single line of evidence. Each step below states
-# the product it actually needs, and the scenarios prove what survives.
+# A failed smoke must not suppress independent packaging evidence or artifact
+# upload; each following step declares only the product it needs.
 
-#: The step conditions these workflows use, evaluated the way Actions does.
+#: The step conditions these workflows use, evaluated the way Actions does for
+#: a run nobody cancelled on a branch ref: cancellation and tag refs are not
+#: modelled, and a scenario that needs them must extend this first.
 _STATUS_TERMS = {"always()": True, "!cancelled()": True, "cancelled()": False}
+_STATUS_FUNCTIONS = ("always()", "success()", "failure()", "cancelled()")
 
 _STEP_OUTCOME = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outcome\s*==\s*'(\w+)'")
 _MATRIX_PLATFORM = re.compile(r"matrix\.platform\s*==\s*'(\w+)'")
@@ -415,6 +412,10 @@ def _condition_holds(
     needs: Mapping[str, str],
 ) -> bool:
     expression = condition.strip().removeprefix("${{").removesuffix("}}").strip()
+    # Actions prefixes an implicit success() to a condition naming no status
+    # function, so such a step is skipped after any failure.
+    if not any(function in expression for function in _STATUS_FUNCTIONS) and failed:
+        return False
     return all(
         _term_holds(term.strip(), outcomes, platform, failed, needs)
         for term in expression.split("&&")
@@ -736,12 +737,8 @@ def test_every_parameterised_gh_api_query_states_its_method(name: str) -> None:
                 assert "--method GET" in command or "-X GET" in command, (name, command)
 
 
-# --- The two-job release lane -------------------------------------------------
-#
-# KRDICT is built locally from the manually acquired official ZIP, so the
-# workflow never fetches a source archive and never produces the resource. It
-# stages a draft, waits for a human to attach the two local files and approve,
-# and only then publishes.
+# The workflow stages a draft; a human attaches the locally built KRDICT
+# files and approves publication. CI never fetches the source archive.
 
 
 def _release() -> dict[str, Any]:
@@ -1287,3 +1284,11 @@ def test_each_artifact_records_the_build_an_update_will_be_offered_against() -> 
     for field in ("build_id", "architecture", "manifest_sha256", "delta_omitted_reason"):
         assert field in code, field
     assert "release" in code and "descriptor.json" in code
+
+
+def test_a_condition_without_a_status_function_implies_success() -> None:
+    """Actions skips such a step after any failure; the replay must too."""
+
+    assert _run_plan("build", platform="linux", failing=["Install packages"])["base"] == (
+        "skipped"
+    )

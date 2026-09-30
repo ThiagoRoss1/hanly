@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 from hanly import BoundingBox, Point, TextSelection
-from hanly_app.text_acquisition import (
+from hanly_app.acquisition.direct_text import (
     DEFAULT_TIMEOUT_MS,
     Acquisition,
     DirectText,

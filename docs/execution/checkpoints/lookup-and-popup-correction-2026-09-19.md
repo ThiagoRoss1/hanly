@@ -716,7 +716,7 @@ with their file sets are recorded above, in order, ready to replay.
 
 **Artifacts written:** this checkpoint,
 `docs/execution/review-handoffs/lookup-and-popup-correction-2026-09-19.md`, and
-`docs/execution/lookup-and-popup-correction-operator-notes-2026-09-19.md`.
+`docs/execution/reports/2026-09-19-lookup-and-popup-operator-notes.md`.
 
 **Stop.** Phase A ends here. Phase B deep review is not authorized and was not
 begun.

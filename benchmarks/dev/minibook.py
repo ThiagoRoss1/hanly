@@ -1,14 +1,8 @@
-"""The mini book: an original Korean page read end to end, target by target.
+"""Generate an original Korean story fixture with dictionary target forms.
 
-``benchmarks/fixtures/minibook/minibook.json`` holds a short synthetic story and
-the words in it a reader might hover, each with the dictionary form it should
-answer to. This module renders that page in the forms Hanly meets text in --
-accessible text (HTML for a browser, RTF for a native text view) and pixels
-(an HTML canvas, or an in-memory raster) -- and judges each acquisition path
-separately, naming the first stage where a target went wrong.
-
-It is developer tooling. Nothing in ``packages/`` imports it, and the page is
-synthetic, so its reports carry no private screen or text content.
+HTML/RTF expose accessible text; canvas/raster variants expose pixels, allowing
+each acquisition path and failure stage to be compared. This developer fixture
+contains no private screen content.
 """
 
 from __future__ import annotations
@@ -416,7 +410,7 @@ def evaluate_ocr(
     """
 
     from hanly import PixelFormat, Point, ROIImage
-    from hanly_app.capture import _centered_region
+    from hanly_app.acquisition.capture import _centered_region
 
     width, height = ROI_SIZE
     outcomes = []
@@ -686,8 +680,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             book, render_raster(book), _pixel_pipeline(args.database, args.backend)
         )
     if "direct" in paths:
-        from hanly_app.text_acquisition import DirectTextCoordinator
-        from hanly_app.text_acquisition_ax import AccessibilityTextProvider
+        from hanly_app.acquisition.ax import AccessibilityTextProvider
+        from hanly_app.acquisition.direct_text import DirectTextCoordinator
 
         coordinator = DirectTextCoordinator(AccessibilityTextProvider(), timeout_ms=200)
         outcomes += evaluate_direct(book, textedit_points(book), coordinator, language)

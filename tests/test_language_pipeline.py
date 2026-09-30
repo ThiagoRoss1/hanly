@@ -150,6 +150,28 @@ def test_pixel_and_direct_selections_agree_at_every_cursor_offset(
     assert direct_dictionary.queries[:3] == ["초대받았어요", "초대받다", lemma]
 
 
+@pytest.mark.parametrize(
+    ("text", "cursor_index", "lemma"),
+    [
+        ("   초대받았어요", 3, "초대"),
+        ("   초대받았어요", 5, "받다"),
+        ("\t\n초대받았어요", 2, "초대"),
+        ("초대받았어요   ", 2, "받다"),
+        # A cursor on the stripped whitespace itself lands on the first unit.
+        ("   초대받았어요", 1, "초대"),
+    ],
+)
+def test_the_cursor_moves_with_text_when_surrounding_whitespace_is_stripped(
+    text: str, cursor_index: int, lemma: str
+) -> None:
+    language, morphology, _d = _language()
+
+    result = language.lookup(TextSelection(text, cursor_index))
+
+    assert morphology.analyzed == [_SURFACE]
+    assert result.context is not None and result.context.lemma == lemma
+
+
 def test_a_real_pixel_lookup_and_an_equivalent_direct_selection_agree() -> None:
     """The pixel path resolves a selection; handing the engine that same
     selection directly must reach the same answer."""

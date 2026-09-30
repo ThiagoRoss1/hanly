@@ -9,16 +9,14 @@ from packaging.utils import canonicalize_name
 
 ROOT = Path(__file__).parents[1]
 ENGINE_SOURCE = ROOT / "packages" / "hanly" / "src" / "hanly"
+APP_SOURCE = ROOT / "packages" / "hanly-app" / "src" / "hanly_app"
 
 
-def test_engine_source_only_imports_distributable_packages() -> None:
-    """``hanly`` ships independently, so it may not reach into its desktop
-    client or into repository-only tooling that no wheel contains."""
+def _importers_of(source: Path, forbidden: tuple[str, ...]) -> list[str]:
+    """Every file under ``source`` importing one of ``forbidden`` or below it."""
 
-    forbidden = ("hanly_app", "tools")
     violations: list[str] = []
-
-    for source_file in ENGINE_SOURCE.rglob("*.py"):
+    for source_file in source.rglob("*.py"):
         tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -34,8 +32,20 @@ def test_engine_source_only_imports_distributable_packages() -> None:
                 for root in forbidden
             ):
                 violations.append(str(source_file))
+    return violations
 
-    assert violations == []
+
+def test_engine_source_only_imports_distributable_packages() -> None:
+    """``hanly`` ships independently, so it may not reach into its desktop
+    client or into repository-only tooling that no wheel contains."""
+
+    assert _importers_of(ENGINE_SOURCE, ("hanly_app", "tools", "benchmarks")) == []
+
+
+def test_desktop_source_never_imports_repository_tooling() -> None:
+    """Nothing dev-only belongs in ``packages/``: a frozen build has neither."""
+
+    assert _importers_of(APP_SOURCE, ("tools", "benchmarks")) == []
 
 
 def test_distribution_dependency_direction() -> None:

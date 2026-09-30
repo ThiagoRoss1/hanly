@@ -8,9 +8,9 @@ from typing import Any, cast
 
 import pytest
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceMetadata
-from hanly_app.app_update import ApplicationUpdate
-from hanly_app.update_coordinator import UpdateCoordinator, _progress_message
-from hanly_app.update_service import (
+from hanly_app.updates.coordinator import UpdateCoordinator, _progress_message
+from hanly_app.updates.desktop_update import ApplicationUpdate
+from hanly_app.updates.resource_service import (
     DownloadProgress,
     ProgressCallback,
     RemoteResource,
@@ -512,7 +512,7 @@ class _DeferredExecutor:
         future.set_running_or_notify_cancel()
         try:
             future.set_result(operation())
-        except BaseException as error:  # noqa: BLE001 - delivered to the callback
+        except BaseException as error:
             future.set_exception(error)
         return _HeldFuture(future, self.callbacks)
 

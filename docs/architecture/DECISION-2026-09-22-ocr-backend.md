@@ -22,8 +22,23 @@ behaviour authoritative; it adds nothing to it.
   where the platform provides it, otherwise EasyOCR), `vision` or `easyocr`.
   `auto` is resolved in the shell; the lookup child receives a concrete choice.
 - There is **no user-facing provider selection**. The Control Center may report
-  which implementation is active; it does not offer a choice.
+  which implementation is active; it does not offer a choice. *(Amended
+  2026-09-28 — see below.)*
 - PaddleOCR is not restored, and no further provider is added.
+
+## Amendment, 2026-09-28: the Control Center recognizer setting
+
+Status: **approved by the human** during the pre-V1 cleanup. The Control Center
+has offered a "Text recognizer" setting (Automatic, Apple Vision where the
+platform provides it, EasyOCR) since the Vision commit `d66a361`, one day before
+this record said it would not. The human confirmed the setting as intended
+product behaviour, so the bullet above is superseded:
+
+- The Control Center **may** offer the `ocr_backend` choice among the two
+  implementations above. `auto` remains the default and is still resolved in
+  the shell; the lookup child still receives a concrete choice.
+- Everything else here stands: no third provider, no plugin system, no
+  dictionary-backed spelling correction, and the same evidence limits.
 
 ## Evidence, and how far it reaches
 

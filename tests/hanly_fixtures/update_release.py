@@ -17,10 +17,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from hanly_app.app_build_identity import BuildStamp
-from hanly_app.app_hup import package_asset_name
-from hanly_app.app_manifest import TreeManifest
-from hanly_app.update_service import DownloadProgress, ProgressCallback, RemoteResource
+from hanly_app.updates.build_identity import BuildStamp
+from hanly_app.updates.manifest import TreeManifest
+from hanly_app.updates.package import package_asset_name
+from hanly_app.updates.resource_service import DownloadProgress, ProgressCallback, RemoteResource
 
 from tests.hanly_fixtures.capabilities import MATERIAL_XATTRS
 from tests.hanly_fixtures.update_tree import (
@@ -77,15 +77,10 @@ class PublishedRelease:
         self.checksums = self._checksums()
 
     def _sign(self) -> None:
-        """Give a macOS build the signature material a published one carries.
+        """Sign macOS fixtures with distinguishable per-version signature material.
 
-        Per version, so the attribute really changes between two releases: an
-        update that dropped it would produce a bundle that no longer verifies,
-        and a case built on an unsigned tree would never notice.
-
-        Only macOS can carry it. Elsewhere the build is published unsigned and
-        the cases whose subject is that material declare they need a host that
-        can hold it.
+        Tests must detect discarded signature attributes. Other platforms remain
+        unsigned and skip cases requiring macOS signing.
         """
 
         if self.product.platform != "macos" or not MATERIAL_XATTRS:
@@ -257,7 +252,7 @@ def stamp_for(release: PublishedRelease) -> BuildStamp:
 
 
 def _difference(base: TreeManifest, target: TreeManifest) -> tuple[tuple[str, ...], ...]:
-    from hanly_app.app_manifest import tree_difference
+    from hanly_app.updates.manifest import tree_difference
 
     computed = tree_difference(base, target)
     return computed.changed_paths, computed.deleted_paths

@@ -25,17 +25,17 @@ from hanly import (
     Quad,
     ROIImage,
 )
-from hanly_app.capture import CaptureResult, ScreenRect
+from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation
 from hanly_app.hotkeys import HotkeyAction, HotkeyEdge
-from hanly_app.hover_target import (
+from hanly_app.hover.target import (
     SCREEN_SCALE,
     TRANSFER_CORRIDOR_PIXELS,
     WORD_MARGIN_PIXELS,
     expanded,
     screen_rect,
 )
-from hanly_app.lookup_controller import LookupController, LookupRequest, ResultDispatcher
+from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import create_manual_lookup
 from hanly_app.runtime_trace import RuntimeTraceSink
 

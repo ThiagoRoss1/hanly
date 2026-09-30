@@ -1,19 +1,9 @@
-"""Hold recent lookups in memory so one of them can be pinned and inspected.
+"""Pin completed lookups in a bounded in-memory ring for inspection.
 
-The point of a hover popup is that it disappears. That makes a wrong answer
-almost impossible to study: by the time you have read it, the cursor has moved
-and the next lookup has replaced everything. Freezing pins one completed lookup
-so its pixels, geometry, decisions, and outputs stay inspectable afterwards.
-
-**Freezing writes nothing.** Real screen pixels, recognized text, and provider
-crops live in this bounded ring and nowhere else; they disappear with the
-process. Persisting any of it is a separate explicit export, which is the only
-thing in this package that touches the gitignored artifact root.
-
-Correlation is by identifier. A capture arrives with the hover request it was
-taken for, ``hover_submission`` joins that hover to a lookup, and every later
-stage names the lookup. Nothing here depends on the order events happen to
-arrive in.
+Pixels, recognized text, and provider crops disappear at process exit; only
+explicit export persists them under the gitignored artifact root. Capture hover
+IDs, ``hover_submission``, and lookup IDs correlate stages regardless of arrival
+order.
 """
 
 from __future__ import annotations
@@ -23,8 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hanly import ROIImage
-from hanly_app.capture import CapturePlan, CaptureResult, ScreenRect
-from hanly_app.lookup_evidence import decode_evidence
+from hanly_app.acquisition.capture import CapturePlan, CaptureResult, ScreenRect
+from hanly_app.lookup.evidence import decode_evidence
 
 #: How many recent lookups stay inspectable. Each one holds one ROI (about
 #: 60 KB at the production size) plus its events, so this is a few megabytes.
@@ -134,7 +124,6 @@ class LookupRing:
         self._records: list[_Record] = []
         self._by_hover: dict[int, _Record] = {}
         self._by_lookup: dict[int, _Record] = {}
-        self.dropped_captures = 0
 
     def observe_capture(
         self,
@@ -148,7 +137,6 @@ class LookupRing:
         """Retain one ROI by reference, keyed to the request it belongs to."""
 
         if hover_request_id is None and lookup_request_id is None:
-            self.dropped_captures += 1
             return
         evidence = CaptureEvidence(
             observed_ns=observed_ns,

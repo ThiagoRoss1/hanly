@@ -1,15 +1,7 @@
-"""Render reproducible Korean UI-like samples, or refuse to.
+"""Generate controlled OCR fixtures, not evidence of real-surface accuracy.
 
-Synthetic text is useful for isolating one variable — size, weight, contrast,
-scale — in a way real captures never allow. It is not evidence about how any
-real application renders Korean, and a good score here is not a product
-accuracy claim.
-
-Two refusals keep it honest. A face that is not installed is never quietly
-replaced by whatever the platform would substitute, because a mislabelled font
-turns every measurement into a measurement of something else. And a face whose
-licence does not permit redistribution can only produce local samples, never
-ones committed to Git.
+Missing fonts are refused rather than substituted. Fixtures whose fonts cannot
+be redistributed stay local.
 """
 
 from __future__ import annotations
@@ -353,7 +345,9 @@ def _metadata(spec: SampleSpec, font: ResolvedFont, image_module: Any) -> dict[s
         "font_name": font.spec.name,
         "font_licence": font.spec.licence,
         "font_redistributable": font.redistributable,
-        "font_path": str(font.path),
+        # The file name and hash identify the face; a full path would carry a
+        # home directory into any manifest built from this sample.
+        "font_file": font.path.name,
         "font_sha256": font.sha256,
         "font_index": font.spec.index,
         "font_size": spec.font_size,

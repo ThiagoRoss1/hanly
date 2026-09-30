@@ -21,8 +21,8 @@ import subprocess
 import threading
 import time
 
-from hanly_app.control_center import ControlCenterBridge
-from hanly_app.control_center_process import ControlCenterProcess, bridge_operations
+from hanly_app.control_center.bridge import ControlCenterBridge
+from hanly_app.control_center.process import ControlCenterProcess, bridge_operations
 
 REPORT_PREFIX = "IDENTITY_REPORT "
 

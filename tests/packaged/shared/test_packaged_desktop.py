@@ -1,12 +1,6 @@
-"""The release gate: a frozen bundle must look a word up using only itself.
+"""Exercise the real frozen executable without repo, venv, or model-cache fallback.
 
-This is the only test that runs the produced artifact. It refuses every
-developer fallback -- no repository, no virtual environment, no developer
-model cache -- so a bundle that passes here is one a user could actually run.
-
-It skips when no bundle has been built, and a skip is not a pass -- so the
-build job that exists to run it sets ``HANLY_REQUIRE_PACKAGED`` and turns every
-one of those reasons into a failure.
+Missing bundles skip ordinarily; ``HANLY_REQUIRE_PACKAGED=1`` makes absence fail.
 """
 
 from __future__ import annotations
@@ -161,10 +155,8 @@ def test_the_frozen_worker_becomes_ready_on_an_isolated_profile(tmp_path: Path) 
         "dictionary",
     }
 
-    # The same run says which source produced it. A stale bundle passes every
-    # functional check it ever passed, so working is not evidence of being
-    # this tree's build: one tested artifact reported 0.1.3 beside a 0.5.0
-    # checkout and nothing in the run said so.
+    # A stale bundle can pass functional checks; require its build identity
+    # to match the source tree under test.
     identity = verify_frozen_identity(report, product_version())
     assert identity["ok"], identity["problems"]
 

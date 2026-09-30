@@ -1,16 +1,7 @@
-"""The one ``QApplication`` a Hanly process owns, created in one place.
+"""Create the process's single QApplication without loading WebEngine or OCR.
 
-Qt registers window classes on construction and never unregisters them, so a
-second application object in the same process is not a fresh start. Every
-caller goes through :func:`ensure_qt_application` so that decision exists once.
-
-The program name is not cosmetic: Qt WebEngine initializes Chromium's command
-line from the application arguments and aborts without argument zero. The
-shell has no WebEngine, but the Control Center child creates its application
-through this same function.
-
-Nothing heavy is imported here. Qt WebEngine belongs to the Control Center
-child and the OCR runtime to the lookup child; the shell has neither.
+Qt does not unregister classes when an application dies, so another is not a
+fresh instance. Supply argv[0]: WebEngine's Chromium aborts without it.
 """
 
 from __future__ import annotations
@@ -21,8 +12,9 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from hanly_app.control_center.bridge import ControlCenterUnavailable
+
 from .app_icon import APPLICATION_NAME, qt_icon
-from .control_center import ControlCenterUnavailable
 from .diagnostics import DiagnosticLog, install_qt_message_handler
 
 QT_PROGRAM_ARGUMENTS: tuple[str, ...] = ("hanly",)
@@ -122,16 +114,10 @@ ScreenProbe = Callable[[], object | None]
 
 
 def verify_primary_screen(probe: ScreenProbe | None = None) -> None:
-    """Fail before a library reads the geometry of a screen that is not there.
+    """Validate the primary screen after QApplication, before pywebview uses geometry.
 
-    Qt initializes in a session with no screen and only says so fatally later.
-    pywebview then asks the primary screen for its geometry while creating the
-    window, without checking that there is one, and the failure surfaces from
-    inside that library rather than from Hanly.
-
-    This runs after the application exists, so it cannot prevent an abort
-    inside ``QApplication`` itself; that case stays with the packaging
-    self-check's stage markers and Qt's own message handler.
+    This cannot prevent an abort during QApplication initialization; native failure
+    handling and stage markers cover that earlier boundary.
     """
 
     screen = (_primary_screen if probe is None else probe)()
