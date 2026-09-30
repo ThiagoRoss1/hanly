@@ -1,15 +1,8 @@
-"""Freeze one real lookup, inspect it, and export it only when asked.
+"""Inspect live lookup traces and freeze evidence without capture-path I/O.
 
-This is the developer-facing half of the microscope. It wires three things onto
-a live desktop session: a trace sink that tees, a capture observer that hashes
-off the capture path, and a freeze action.
-
-**The tee is the privacy boundary.** The raw event, recognized text and all,
-goes to the in-memory ring; a redacted copy goes to the recorder that writes
-JSONL. Nothing that reaches disk during a session carries screen content, and
-that stays true whether or not a lookup is frozen. Only :func:`export_frozen`
-writes private artifacts, only when a developer explicitly asks, and only under
-the gitignored artifact root.
+Hashing runs off the capture path. Private screen/text evidence stays in the
+in-memory ring; normal JSONL recording is redacted, and only explicit export
+writes private evidence under the gitignored artifact root.
 """
 
 from __future__ import annotations
@@ -59,15 +52,11 @@ def _is_private_evidence(key: str) -> bool:
 
 
 class MicroscopeSink:
-    """Tee one runtime event: raw to memory, evidence-stripped to the inner sink.
+    """Tee raw events into memory and redacted events into the recorder.
 
-    Wraps the sink that would otherwise have received the event, so there is
-    one recorder, one redaction pass, and one privacy rule. The tee is the
-    privacy boundary: the in-memory ring keeps the full structures, and what
-    continues towards persistence never carries screen content.
-
-    ``emit`` runs on the hover path and on the lookup child's trace replay, so
-    it does dictionary work and nothing else.
+    The recorder receives evidence-stripped events through one privacy boundary.
+    Lookup replay and hover-path emission only build dictionaries; they perform no
+    I/O.
     """
 
     #: Ask the production tracing wrappers for the full private structures.

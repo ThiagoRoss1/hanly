@@ -1,19 +1,8 @@
-"""First-run acquisition of the production runtime resources.
+"""Provision a per-user runtime manifest and independently updatable dictionary.
 
-The desktop keeps resource validation in :class:`hanly.ResourceManager` and
-delivery in :class:`hanly_app.UpdateService`. This module only joins those two
-existing seams at the process-start boundary: it writes a small per-user
-runtime manifest and asks for whatever that manifest declares but does not yet
-have, leaving staging, validation, and activation to ``UpdateService``.
-
-A missing artifact comes from an already-built local database when there is one
-(see ``LOCAL_KRDICT_VARIABLE``), otherwise from the public release channel.
-Both travel the same install path, so a developer launch exercises what a real
-download does.
-
-The generated manifest intentionally contains no dictionary bytes. Resources
-remain independently released and can be replaced atomically by the update
-service without modifying application code.
+ResourceManager validates local resources; UpdateService delivers them. Prefer
+an explicitly supplied/local built KRDICT database, otherwise install from the
+public release through the same delivery path.
 """
 
 from __future__ import annotations

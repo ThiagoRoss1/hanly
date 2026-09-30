@@ -1,13 +1,7 @@
-"""One Korean line rendered at many crop origins, for measuring OCR churn.
+"""Keep Korean text fixed while varying crop origins to isolate ROI-grid churn.
 
-The hover path re-captures whenever the cursor crosses an ROI grid boundary, so
-the recognizer sees the same word inside differently-offset crops. This fixture
-reproduces that deterministically: one unchanged source line, many origins, and
-no rendering randomness, so a provider's *stability* can be measured separately
-from its accuracy.
-
-It deliberately does not assert a desired lemma. A fixture that encoded the
-right answer could not show churn, which is the thing worth seeing.
+Measure selection stability without an expected lemma that could conceal churn;
+dictionary accuracy is a separate concern.
 """
 
 from __future__ import annotations

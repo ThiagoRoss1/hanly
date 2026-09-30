@@ -1,21 +1,9 @@
-"""The Windows helper that applies an in-place update, and can undo it.
+"""Apply or recover an update without depending on files the update moves.
 
-The installation holds the executable, the interpreter, and every native
-library this process has loaded, so the moment files inside it start moving,
-nothing written in Python may still be running. This module renders and starts
-the program that takes over at that point.
-
-What it renders is deliberately poor in dependencies: Windows PowerShell and
-the .NET Framework that ships with Windows, and nothing else. It must run when
-Hanly is stopped, when Hanly is half-replaced, and when Hanly cannot start at
-all, so it may not load anything out of the installation it is repairing. A
-verified copy is kept outside the installation for exactly the last case.
-
-Correctness comes from the filesystem, not from the record. Every step is
-decided by looking at what is actually there - is the backup present, is the
-staged file still waiting - so a step interrupted after the move succeeded and
-before the journal was appended reaches the same answer on the next run. The
-journal bounds the work and drives the progress window; it is not the authority.
+Windows uses standalone PowerShell/.NET; a verified helper copy outside the
+installation remains available for recovery. Filesystem state decides apply and
+rollback, including interruptions after a move but before its record; the journal
+provides bounded replay and progress.
 """
 
 from __future__ import annotations

@@ -1,12 +1,7 @@
-"""Apple Vision adapter for the normalized Hanly OCR provider seam.
+"""Adapt local macOS Vision OCR without model downloads or cross-platform imports.
 
-Vision is part of macOS, so there is no model to download and nothing leaves
-the machine. The framework is loaded lazily through the Objective-C bridge and
-only on Darwin, which keeps this module importable everywhere the engine is.
-
-Vision reports normalized coordinates with the origin at the bottom left;
-:class:`~hanly.contracts.OCRResult` uses top-left pixel coordinates, so the
-conversion happens here and no Objective-C object leaves this module.
+Load pyobjc lazily on Darwin. Convert normalized bottom-left coordinates into
+top-left pixels and keep Objective-C objects behind the provider seam.
 """
 
 from __future__ import annotations
@@ -50,16 +45,10 @@ class VisionProviderError(ProviderError):
 
 @dataclass(frozen=True)
 class VisionConfig:
-    """Construction options for the Vision text recognizer.
+    """Configure Vision's text correction and presentation-only input scaling.
 
-    ``language_correction`` lets Vision nudge a reading toward a more probable
-    word. That can repair a damaged glyph, and it can also turn one real word
-    into a different real word, which matters more for a dictionary than for
-    prose. It is exposed so the trade can be measured rather than assumed.
-
-    ``input_scale`` enlarges the image handed to Vision without changing what
-    was captured; see :func:`_png_bytes` for the measurement behind the
-    default.
+    Language correction may alter damaged or real words, a measurable dictionary
+    tradeoff. ``input_scale`` enlarges the PNG, not captured/result geometry.
     """
 
     languages: tuple[str, ...] = ("ko-KR",)
@@ -176,19 +165,11 @@ class VisionProvider:
 
 
 def _png_bytes(image: ROIImage, scale: int = 1) -> bytes:
-    """Encode a normalized ROI as PNG, which is what the handler accepts.
+    """Encode a presentation-only enlargement without changing ROI geometry.
 
-    ``scale`` enlarges the encoded image by exact pixel replication. Vision
-    silently omits whole text lines at the sizes Hanly captures -- in two real
-    frozen failures it returned only the bold left-margin numerals and dropped
-    every proportional line, Korean and Latin alike, while reading the same
-    content correctly once enlarged. Nearest-neighbour keeps this to a
-    presentation change: every output pixel is an input pixel, so no subpixel
-    detail is invented for the recognizer to read.
-
-    Only the encoded payload grows. Vision reports normalized coordinates, and
-    :func:`_normalize` denormalizes against the original ROI, so geometry comes
-    back in the captured coordinate space with no mapping of its own.
+    Nearest-neighbor replication prevents Vision from dropping small Korean/Latin
+    lines without inventing subpixel detail. Only the payload grows; results are
+    mapped back to the original ROI.
     """
 
     from PIL import Image

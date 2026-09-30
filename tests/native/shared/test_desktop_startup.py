@@ -1,12 +1,7 @@
-"""Real-process proof that the desktop opens first and becomes ready behind it.
+"""Exercise bounded real desktop startup with a temporary profile and dictionary.
 
-The unit tests drive the startup coordinator with doubles. This one runs the
-production `run_desktop` in a bounded subprocess against a temporary profile
-and an already-built dictionary, so the whole chain -- Qt bootstrap, the one
-pywebview window, background preparation, provider warm-up, readiness -- is
-exercised as a user would meet it.
-
-It reads an existing KRDICT database and never writes to the user's profile.
+Check background readiness and one GUI/provider bootstrap without writing the
+normal user profile.
 """
 
 from __future__ import annotations

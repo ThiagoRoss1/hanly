@@ -1,17 +1,8 @@
-"""Which build is running, and what the last update left behind about it.
+"""Tie schema-2 build identity to the published manifest and installed receipt.
 
-Schema 2 identifies a build by a UUID allocated before it is frozen, not by a
-digest of its own contents. On macOS it could not be otherwise: a manifest
-written inside ``Hanly.app`` after signing would change the seal it describes,
-and one written before signing would describe a tree that no longer exists. So
-the identifier goes in ahead of the freeze as ordinary package data, the
-manifest is produced outside the application afterwards, and the two are tied
-together by a receipt kept per installation in the user's own directory.
-
-That receipt is what an update reads to know it is starting from a build this
-updater installed. A build installed by hand has a stamp and no receipt, which
-is a different and recoverable situation - not a licence to assume ownership of
-whatever happens to be on disk.
+Embed the UUID before freezing; generate the manifest outside the signed bundle
+after freezing/signing to preserve the seal and avoid a self-hash. A manually
+installed stamp without a receipt is recoverable, but does not prove ownership.
 """
 
 from __future__ import annotations

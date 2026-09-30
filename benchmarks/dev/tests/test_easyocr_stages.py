@@ -1,12 +1,7 @@
-"""The staged EasyOCR runner, driven through a reader double.
+"""Pin the version-specific EasyOCR stage contract and crop/text correlation.
 
-The runner reproduces ``Reader.readtext``'s body, so the two things worth
-pinning are that it fails loudly when those internals move and that its retained
-crops really are the images its reported text came from.
-
-``easyocr.utils`` pulls in Torch and OpenCV, so every test that needs the real
-cropping helpers skips rather than importing them on a machine without the OCR
-runtime.
+Doubles expose changes in library internals; real-helper cases skip when Torch
+or OpenCV is unavailable.
 """
 
 from __future__ import annotations

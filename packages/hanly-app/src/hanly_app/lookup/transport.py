@@ -1,13 +1,7 @@
-"""Messaging between Hanly's persistent shell and its optional child processes.
+"""Exchange checked, bounded pickle messages over an inherited duplex Pipe.
 
-Hanly's heavy parts — Qt WebEngine and the OCR/morphology/dictionary providers
-— do not give their memory back when their objects are destroyed, so each one
-lives in a child process the shell can retire. This module owns the one way
-those processes talk: an inherited duplex ``Pipe``, explicit pickling so every
-message has a checked size, one reader per direction, and serialized sends.
-
-There is deliberately no listening socket, no method dispatch by name from the
-wire, and no shell command line: both ends are Hanly, started by Hanly.
+Both ends belong to Hanly, with one reader per direction and serialized sends.
+No sockets, command-line transport, or wire-selected dynamic dispatch is exposed.
 """
 
 from __future__ import annotations

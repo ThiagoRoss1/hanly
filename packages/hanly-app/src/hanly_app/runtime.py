@@ -1,16 +1,8 @@
-"""The real Hanly V1 provider runtime, described by a JSON config file.
+"""Translate validated runtime configuration into deferred provider factories.
 
-``hanly_app.composition`` accepts provider factories and knows nothing about
-local resources; this module supplies them, reading a runtime configuration
-file and passing ResourceManager-validated values to the real V1 providers.
-
-Provider construction is deferred to the ``JobExecutor`` thread. Constructing
-``KRDICTProvider`` opens a thread-affine SQLite connection that must be closed
-on the same thread, and keeping each OCR library's import lazy lets clients
-import this package without the native OCR stack installed.
-
-EasyOCR is the only OCR adapter. It is a plain ``OCRProvider`` implementation
-and is not visible to ``LookupPipeline``.
+ResourceManager supplies normalized local values. The executor constructs and
+closes providers on one thread for SQLite affinity; lazy OCR imports keep the
+runtime importable without optional OCR dependencies.
 """
 
 from __future__ import annotations

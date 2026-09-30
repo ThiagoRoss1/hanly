@@ -1,14 +1,7 @@
-"""The Control Center window, in a process the shell can throw away.
+"""Host WebEngine in a child so its native memory is released on exit.
 
-Qt WebEngine does not return its memory when the window is destroyed, so the
-window lives in a child process instead of in the shell. The canonical
-:class:`~hanly_app.control_center.ControlCenterBridge` stays in the parent,
-which keeps configuration, permissions, capture selection, updates, and Quit
-where they already were; the child only carries the page and a proxy whose
-methods are a fixed list of that bridge's public UI operations.
-
-Closing the window ends the child. It never ends the parent, never pauses
-capture, and never takes the lookup engine with it.
+The parent owns configuration, permissions, capture, updates, and Quit; the child
+proxies fixed bridge operations. Closing it leaves shell capture and lookup alive.
 """
 
 from __future__ import annotations
@@ -432,15 +425,10 @@ class ControlCenterProcess:
             self._release(generation)
 
     def _child_gone(self, generation: int, reason: str | None) -> None:
-        """Retire the child this reader owned, unless ``close`` owns it.
+        """Reap the reader's child before releasing ownership, unless close owns the join.
 
-        A close in progress is already joining the process and will retire it,
-        so the reader must leave that transition alone rather than opening the
-        door for a replacement while the old window is still being reaped.
-
-        EOF only says the pipe is gone. This reaps the process before giving
-        ownership up, so a reopen cannot start a window beside one that is
-        still exiting. It runs on the reader thread, never the shell's loop.
+        Pipe EOF does not prove process exit. Reap on the reader thread so a reopen
+        cannot overlap a child that is still alive.
         """
 
         with self._lock:

@@ -1,15 +1,8 @@
-"""Record what a packaging host actually is, before a build can lose it.
+"""Record OS, CPU/core, interpreter, and isolated Torch CPU-probe diagnostics.
 
-A frozen build that dies on an illegal instruction is a native library meeting
-a CPU that does not implement what it was compiled to use, and the exit status
-alone names no suspect. This writes the host's identity as one small JSON
-document early in a run, so a later crash still has a machine to describe.
-
-The probes are deliberately narrow: operating system, CPU, core counts, the
-build interpreter, and -- in a subprocess of its own -- what Torch believes the
-CPU supports. Environment variables and machine-wide process inventories are
-never collected. A value the host will not give up is reported as unavailable
-with the reason, never as a plausible default.
+The probe helps explain later native illegal-instruction failures. Do not collect
+environment values or process inventories; unavailable data carries a reason,
+never a guessed default.
 """
 
 from __future__ import annotations

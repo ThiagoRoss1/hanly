@@ -132,16 +132,10 @@ class MonitorInfo:
 
 @dataclass(frozen=True, slots=True)
 class CapturePlan:
-    """Every input and intermediate rectangle behind one captured ROI.
+    """Describe CaptureService inputs and intermediate rectangles for one ROI.
 
-    Purely descriptive. It reports the calculation :meth:`
-    CaptureService.capture_at_cursor` already performed so a diagnostic does not
-    have to reimplement ROI math to explain a capture, and it introduces no
-    scale factor, snapping rule, or clipping decision of its own.
-
-    The ROI bytes are deliberately absent: a digest of them belongs off the
-    capture path, where a developer tool can key it and pay for it on its own
-    thread.
+    This reports existing capture math without new scaling, snapping, or clipping.
+    It carries no pixels or digest; developer hashing stays off the capture path.
     """
 
     requested_cursor: Point

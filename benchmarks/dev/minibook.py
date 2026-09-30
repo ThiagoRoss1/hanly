@@ -1,14 +1,8 @@
-"""The mini book: an original Korean page read end to end, target by target.
+"""Generate an original Korean story fixture with dictionary target forms.
 
-``benchmarks/fixtures/minibook/minibook.json`` holds a short synthetic story and
-the words in it a reader might hover, each with the dictionary form it should
-answer to. This module renders that page in the forms Hanly meets text in --
-accessible text (HTML for a browser, RTF for a native text view) and pixels
-(an HTML canvas, or an in-memory raster) -- and judges each acquisition path
-separately, naming the first stage where a target went wrong.
-
-It is developer tooling. Nothing in ``packages/`` imports it, and the page is
-synthetic, so its reports carry no private screen or text content.
+HTML/RTF expose accessible text; canvas/raster variants expose pixels, allowing
+each acquisition path and failure stage to be compared. This developer fixture
+contains no private screen content.
 """
 
 from __future__ import annotations

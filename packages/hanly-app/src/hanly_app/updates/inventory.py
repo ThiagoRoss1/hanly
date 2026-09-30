@@ -1,19 +1,8 @@
-"""Reading an installed tree into the inventory the manifest describes.
+"""Walk installed builds identically for release producers and update clients.
 
-The producer hashes a freshly frozen build to publish its manifest; the client
-hashes the installation it is about to change to find out what actually differs
-from it. Both are the same walk, so both are here.
-
-Schema 2 reads the same tree as a tree: directories, permission bits, relative
-links, and the extended attributes a macOS signature lives in. Nothing is
-followed - a link is recorded as a link, and a directory link is never
-descended - so what comes back describes the installation rather than whatever
-it happens to point at.
-
-The walk is deliberately one sequential worker. Hashing a gigabyte across a
-thread pool turns a disk into the bottleneck for everything else on the machine
-and finishes no sooner, and this runs while the user is waiting with the
-application still open.
+Schema 2 records directories, permissions, relative links, xattrs, and detached
+macOS signatures without following links. Sequential I/O avoids thrashing the
+installation while the application is open.
 """
 
 from __future__ import annotations

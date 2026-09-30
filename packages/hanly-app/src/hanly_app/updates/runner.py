@@ -1,20 +1,9 @@
-"""Running one in-place update from the desktop, start to handoff.
+"""Coordinate preparation, staging, helper ownership, and next-startup recovery.
 
-:mod:`hanly_app.updates.installer` decides and stages; :mod:`hanly_app.updates.helper`
-applies. This is the seam between them and the rest of the desktop: it holds the
-per-installation lock for the whole operation, refuses to let the application
-quit until the helper has taken the transaction over, and settles whatever an
-interrupted run left behind the next time Hanly starts.
-
-Schema 2 keeps that shape for every platform. One runner holds the lock,
-refuses to quit before a helper owns the transaction, and settles what an
-interrupted run left behind; only the final apply differs, and it differs by
-what was staged rather than by a test for the current platform.
-
-The split into :meth:`prepare` and :meth:`install` is the user-facing contract,
-not an implementation detail. Preparing reaches the network for two small
-documents and reads the installation; it downloads no payload. Installing is
-what the user authorized after being told the real size.
+Hold a per-install lock and refuse Quit until the helper owns the handoff.
+Preparation fetches only small metadata and reads inventory; install follows the
+user's download-size review. Choose application from the staged plan, not the
+current host's conditions.
 """
 
 from __future__ import annotations

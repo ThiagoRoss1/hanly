@@ -1,17 +1,8 @@
-"""UI-side coordination for the UI-independent resource update service.
+"""Run synchronous UpdateService work off the bridge caller's thread.
 
-``UpdateService`` deliberately exposes synchronous, client-independent operations.
-This module is the small application seam that lets a Control Center request those
-operations without running network or validation work on the bridge caller's
-thread.  It stores only JSON-compatible snapshots; the UI never receives a
-provider, database, or update-service implementation object.
-
-The two kinds of update are deliberately distinct in the state this exposes. A
-resource is hot-swapped: lookups pause, the artifact is replaced, the runtime is
-rebuilt, and Hanly keeps running.  An application build replaces the executable
-this process runs from, so it can only be staged here and finished by a
-restart.  ``restart_required`` says which of the two just happened, and it
-says so only once a build is actually staged and its handoff is ready.
+Expose JSON snapshots, never provider/database objects. Resource updates pause,
+hot-swap, and rebuild the running runtime; application updates remain staged as
+``restart_required`` until a ready handoff.
 """
 
 from __future__ import annotations

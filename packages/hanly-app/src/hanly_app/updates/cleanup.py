@@ -1,25 +1,9 @@
-"""Removing what Hanly left behind, and nothing else.
+"""Reap marked update roots only when their recorded owner is gone and they are old enough.
 
-Every temporary directory Hanly creates is a small bet that the process will
-live long enough to clean it up. A crash, a forced quit, or a rejected update
-loses that bet, and the leftovers accumulate in a profile nobody looks at.
-
-This removes them, under rules chosen so that the failure mode is always
-leaving something behind rather than deleting something that mattered:
-
-* New work happens under one clearly identified root, in a directory carrying a
-  marker with a version, the owner's process identity, and what it was doing.
-* A marked directory is reaped only once its owner is gone and it is old
-  enough, which means a recycled process id can only make Hanly keep a
-  directory, never remove a live one.
-* Symlinks are refused outright, and so is any path that does not resolve
-  inside the root it was found in.
-* A staged update that still holds the only copy of a working installation is
-  reported as needing recovery and left exactly where it is. Disk is never a
-  reason to delete somebody's last working Hanly.
-
-There is no periodic collection and no sweep of caches Hanly does not own: this
-runs at startup and after an operation completes.
+Markers bind version, process identity, and operation; PID reuse means keep the
+root. Refuse symlinks and paths outside the resolved owned root. Report and retain
+staged copies needed to recover the only working installation. Cleanup runs at
+startup/operation end, never periodically or over unknown caches.
 """
 
 from __future__ import annotations

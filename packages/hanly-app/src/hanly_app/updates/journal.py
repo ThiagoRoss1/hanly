@@ -1,31 +1,11 @@
-"""The durable record of one in-place update, and the paths it owns.
+"""Persist an immutable update plan and flush intent before each mutation.
 
-Replacing a directory is one rename, and a rename either happened or did not.
-Replacing forty files inside a directory is forty renames, and an interruption
-can land between any two of them - or between a rename and the record of it.
-This module is what makes that recoverable: a plan written once before anything
-moves, and a running record of intent flushed before each mutation.
-
-Correctness does not depend on the running record. Every apply and rollback
-step is decided from what is actually on disk, so a step interrupted after the
-filesystem succeeded and before the journal was updated replays to the same
-result. The record exists so a helper can resume in bounded time, so progress
-can be shown, and so a person can be told what happened.
-
-Layout, all inside ``<installation>/.hanly-update/<transaction>/``::
-
-    plan.json        written once; the root, the identities, the operations
-    progress.jsonl   appended as the apply runs
-    helper.json      the helper's acknowledgement that it owns the transaction
-    ready.txt        the new build's report that it started
-    result.json      the settled outcome
-    payload/NNNN     one staged file per add or replace
-    backup/NNNN      the original of one replaced or deleted file
-
-Staged and backed-up files are named by operation index rather than by mirroring
-the installed tree. A payload path is then always short and always plain ASCII,
-whatever the installation is called, and the journal is the only thing that maps
-one back to where it belongs.
+Filesystem state decides apply/rollback, so a move completed before its journal
+record safely replays; the record bounds recovery and supplies progress.
+Under ``<installation>/.hanly-update/<transaction>/``: ``plan.json`` holds identities
+and operations, ``progress.jsonl`` records progress, ``helper.json`` acknowledges
+ownership, ``ready.txt`` reports startup, and ``result.json`` records the outcome.
+Short ASCII ``payload/NNNN`` and ``backup/NNNN`` indices map to paths via the journal.
 """
 
 from __future__ import annotations

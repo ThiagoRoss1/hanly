@@ -1,20 +1,9 @@
-"""The parts of a macOS update only macOS can do.
+"""Preserve the published macOS code seal while reconstructing an update.
 
-A ``.app`` is sealed. Its signature covers the executable, every nested binary,
-and a hash of every resource, so an update that rebuilt any of that locally
-would produce a bundle Gatekeeper refuses - and an updater that re-signed it
-would be asserting an identity it does not have. So the published signature
-material travels as ordinary file content and extended attributes, and the only
-thing done here is to check that what was reassembled still verifies.
-
-The full fallback is the disk image a person downloads, read the way a program
-must read one: attached read-only at a private mount point nobody browsed into,
-copied out with ``ditto`` so links and permissions survive, and detached again
-whatever happens. Nothing is ever launched from a mounted image.
-
-Ad-hoc signing is what this product carries today. ``codesign --verify`` proves
-the bundle is internally consistent and unmodified; it does not establish that
-Thiago published it, and nothing here says otherwise.
+Retain file and xattr signature material without regenerating or re-signing it.
+Mount DMGs read-only and privately; ditto preserves links/permissions, and every
+path detaches the mount. Never launch from it. Ad-hoc signature verification
+proves integrity, not publisher authenticity.
 """
 
 from __future__ import annotations

@@ -1,15 +1,7 @@
-"""Read the text under the pointer through the macOS accessibility API.
+"""Read pointer text through macOS accessibility using a small ctypes binding.
 
-The four calls this needs are bound through ``ctypes`` rather than pyobjc, for
-the same reason :mod:`hanly_app.popup.macos` does it: the desktop does not
-carry an Objective-C dependency.
-
-Accessibility answers in the screen's own coordinate space with the origin at
-the top left, which is what the capture path already uses, so the rectangle it
-reports can be compared against the pointer directly. What it does *not*
-guarantee is that the answer belongs to the pointer at all -- a control may
-return its nearest range -- so everything this module reads is evidence for
-:mod:`hanly_app.acquisition.direct_text` to accept or refuse.
+AX uses the same top-left screen coordinates as capture. Its nearest range need
+not contain the pointer, so ``direct_text`` validates the evidence before use.
 """
 
 from __future__ import annotations

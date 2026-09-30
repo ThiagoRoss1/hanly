@@ -1,30 +1,10 @@
-"""What one installed Hanly build is made of, and what a release offers.
+"""Define shared release/installation data without release or filesystem I/O.
 
-An application update used to need nothing but an archive name: the whole
-bundle was downloaded and the whole directory replaced. Replacing only the
-files that differ needs the release to say which files there are, so this
-module defines that inventory and the release metadata pointing at it.
-
-Three documents, one schema version, all produced from the final frozen tree:
-
-``InstallManifest``
-    every managed file in a build, with its digest, size, and component label.
-``UpdateMetadata``
-    what a client should download - the full archive always, and a delta from
-    one named previous build when one was produced.
-``FileEntry``
-    the unit both are made of.
-
-Schema 2 adds the vocabulary the other two platforms need. A macOS bundle and
-a Linux onedir are trees rather than lists of regular files, so ``TreeManifest``
-names every directory, permission bit, and relative link as well, and
-``TreeLayout`` says what the root is called. V1 is frozen exactly as it is: old
-Windows clients still read documents in that shape, and this module keeps
-producing them.
-
-Nothing here reads a release or touches an installation. It is the vocabulary
-the producer in ``tools/`` and the installer in :mod:`hanly_app.updates.desktop_update`
-both speak, and the only place their agreement is defined.
+Schema 1 uses ``InstallManifest`` for managed files, ``FileEntry`` for digest,
+size, and component, and ``UpdateMetadata`` for the full archive and optional
+delta from a named build. Schema 2 adds ``TreeManifest`` directories, permissions,
+and relative links, plus ``TreeLayout``'s root name. Preserve schema-1 output for
+older Windows clients; producers and installers share this vocabulary.
 """
 
 from __future__ import annotations

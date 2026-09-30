@@ -1,24 +1,8 @@
-"""Preparing a Windows update that changes only the files that differ.
+"""Prepare and stage a release-pinned update without mutating the installation.
 
-The whole-bundle installer in :mod:`hanly_app.updates.desktop_update` downloads one archive
-and hands a directory swap to a script. This is the other strategy: read what is
-installed, work out what has to change, fetch only that, and leave a transaction
-the helper can apply file by file.
-
-It runs in two halves on purpose. :meth:`DifferentialInstaller.prepare` answers
-"what would this update do, and how much would it download" without fetching a
-payload, because that answer is what the user is shown before they commit to a
-download whose size they were not told. :meth:`DifferentialInstaller.stage` then
-fetches exactly what the prepared plan named.
-
-Schema 2 keeps that two-step shape and makes it the shared one. Preparing is
-identical on every platform - pin the release, read the one metadata package,
-read the installation, establish what it is, plan - and only what a platform
-then does with the plan differs.
-
-Nothing here writes into the installation. Staged files land in the transaction
-directory and stay there until the native helper moves them, which is the only
-step that cannot happen while Hanly is running.
+Preparation reads metadata and inventory to build an identity-bound plan and
+show download size, without fetching payloads. Staging fetches that exact plan's
+payload into its transaction; a native helper applies it after Hanly exits.
 """
 
 from __future__ import annotations

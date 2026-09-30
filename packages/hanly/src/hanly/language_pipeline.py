@@ -1,22 +1,9 @@
-"""Turn one selected surface word into a normalized lookup outcome.
+"""Resolve a text selection through Korean morphology, lemmas, and dictionary lookup.
 
-Everything from here on is about language, not about where the words came from.
-The stage takes a :class:`~hanly.contracts.TextSelection` -- surface text plus a
-cursor offset -- applies Hanly's Korean-only policy, asks the morphology
-provider what lexical units the surface holds, picks the one the cursor is on,
-and looks that lemma up.
-
-It never sees an image, a screen rectangle, a window, or a desktop object, and
-it must not learn to. Pixels reach it through
-:class:`~hanly.lookup_pipeline.LookupPipeline`, which does OCR and target
-resolution first; a reader that already knows the word can construct the
-selection directly and skip all of that. Both then run this one implementation,
-which is what makes the two paths answer identically.
-
-A caller that has pixel evidence to preserve passes it as ``evidence``. The
-stage fills in the language fields and leaves the rest of that context alone, so
-a pixel lookup keeps its OCR regions and geometry without this module knowing
-what any of it means.
+Apply the Korean-only policy and select the lexical unit at the cursor. This
+acquisition-neutral path has no images, screen coordinates, or desktop state.
+Pixel lookup resolves OCR text first, then uses the same language path. Optional
+existing evidence gains language fields without changing its other fields.
 """
 
 from collections.abc import Callable, Sequence
@@ -371,16 +358,11 @@ def _components(
     cursor_index: int,
     listed_whole: bool = False,
 ) -> tuple[LexicalComponent, ...]:
-    """Describe how ``text`` is built, with a gloss for each part.
+    """Describe a surface's components with a gloss for each part.
 
-    A surface that does not decompose has nothing to explain, so it returns
-    nothing and a client has no panel to show.
-
-    When the dictionary lists the surface itself, the word is already settled
-    and its morphological split is only worth showing if every part genuinely
-    explains the characters it covers. ``두통거리`` is ``두통`` and ``거리``,
-    which is worth knowing; ``고소득층`` is not ``고 · the late``. The endings
-    are kept either way, because they describe the form rather than rename it.
+    Non-decomposing results return an empty tuple. A dictionary-known surface exposes
+    lexical parts only when they faithfully explain their spans; ending descriptors
+    are retained either way.
     """
 
     lexical = (
@@ -400,17 +382,10 @@ def _components(
 def _decomposition_is_faithful(
     probes: _DictionaryProbes, analysis: MorphologyAnalysis, text: str
 ) -> bool:
-    """Whether every part explains exactly the characters it covers.
+    """Require every dictionary lemma to match its exact surface span.
 
-    A part earns its place when the dictionary holds its lemma *and* that lemma
-    is what the span actually reads. Both halves are needed: a lemma the
-    dictionary lacks explains nothing, and a lemma that differs from its own
-    surface is the morphology having substituted a different word -- ``가다``
-    for the ``가`` of ``여행가``, ``이다`` for the ``이야`` of ``깜짝이야``, or a
-    bare ``소득`` for the ``소득층`` of ``고소득층``.
-
-    Running out of dictionary budget answers no as well, since an unglossed
-    part cannot be shown to explain anything.
+    Substituted morphology lemmas are not faithful. Missing dictionary evidence or
+    an exhausted budget refuses the decomposition.
     """
 
     candidates = analysis.candidates

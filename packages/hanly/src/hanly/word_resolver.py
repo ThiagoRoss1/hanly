@@ -36,28 +36,13 @@ class TargetResolver(Protocol):
 
 
 class WordResolver:
-    """Select the Korean word under a target point.
+    """Select the Korean word under a point in the OCR quads' coordinate space.
 
-    The resolver deliberately owns no cursor or capture integration. The
-    caller supplies a point in the same normalized coordinate space as the
-    OCR quads. A point must be inside the actual quadrilateral: the derived
-    integer bounding box is useful for coarse consumers but cannot decide a
-    hit for tilted text. OCR commonly returns one line-level quad, so a
-    second, local hit test maps the target's position along that quad to the
-    whitespace-delimited word inside the recognized text.
-
-    OCR adapters already provide reading order, so candidate handling keeps
-    that order and never depends on set/dict iteration or confidence as an
-    implicit tie-breaker. A target inside no candidate returns ``None``, as
-    does a target in the whitespace between words.
-
-    Several candidates may legitimately contain one target: an OCR adapter
-    reading a dense paragraph emits line quads that overlap vertically where
-    the lines are tightly set, so a point near a line boundary falls inside
-    two of them. That is ordinary output rather than ambiguity, and refusing
-    to answer showed up as a popup that worked on loosely spaced text and
-    silently failed on a chat transcript. The line the point sits furthest
-    inside wins.
+    Require containment in the actual quad, not its bounding box; a local weighted
+    hit test selects a whitespace-delimited word within a line. Preserve adapter
+    reading order, without set/dict iteration or confidence tie-breakers. No candidate
+    or a whitespace hit returns None. Overlapping lines are valid: choose the line
+    the point lies furthest inside.
     """
 
     @staticmethod
@@ -122,16 +107,10 @@ class WordResolver:
 
     @staticmethod
     def word_bounds(region: OCRResult, target: Point) -> BoundingBox | None:
-        """Return the box around the word at ``target``, not the whole line.
+        """Estimate the axis-aligned word box at ``target`` for precise popup protection.
 
-        OCR reports line quads, so the recognized region usually spans several
-        words. A client that wants to know where the answer came from -- to
-        keep a popup alive while the cursor is still on the word it describes,
-        say -- has to be told the word, or it would protect a whole sentence.
-
-        The span is derived from the same per-script advance weights that place
-        word boundaries, so it is an estimate of a rendered position rather than
-        a font measurement, and it is deliberately axis-aligned.
+        Use the word-selection advance weights to avoid protecting the whole line.
+        This estimates rendered position, not font measurements.
         """
 
         if not isinstance(region, OCRResult) or not isinstance(target, Point):
@@ -368,15 +347,11 @@ _PLACEHOLDER_QUAD = Quad(
 
 
 def _usable_quad(quad: Quad) -> bool:
-    """Return whether a quad encloses a usable polygonal area.
+    """Reject nearly collinear quads whose area is only floating-point noise.
 
-    ``Quad`` already rejects a shape with no extent on an axis, but four
-    nearly collinear points still pass construction and enclose only float
-    noise. An exact ``!= 0.0`` test would call such a sliver usable while the
-    containment code, which works to a scaled epsilon, cannot meaningfully
-    place a point inside it. The threshold is scaled from the quad's own
-    extent for the same reason tolerances are scaled there: a large negative
-    desktop origin must not inflate it.
+    Axis extents alone cannot establish usable polygon area. Match containment's
+    scaled tolerance using the quad's extent, so large/negative desktop origins
+    cannot inflate the threshold.
     """
 
     points = quad.points

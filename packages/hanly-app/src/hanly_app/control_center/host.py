@@ -1,13 +1,7 @@
-"""One pywebview window and the GUI loop it runs in.
+"""Run the Control Center's Qt window for the child and packaged self-check.
 
-This is the window itself, not the desktop's lifecycle. The Control Center
-runs in its own process (see :mod:`hanly_app.control_center.process`), and the
-packaging self-check opens the same window against an in-process bridge; both
-go through this host so there is one place that creates the window, insists on
-the Qt backend, and owns the loop.
-
-Closing the window destroys it and ends the loop. Whatever started the host
-decides what that means — for the child process it means exiting.
+Closing its single window ends its event loop; the caller owns process exit
+policy.
 """
 
 from __future__ import annotations

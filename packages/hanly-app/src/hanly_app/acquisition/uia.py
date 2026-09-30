@@ -1,22 +1,10 @@
-"""Read the text under the pointer through Windows UI Automation.
+"""Read pointer text through Windows UI Automation without COM code generation.
 
-UI Automation is a COM API, bound here through ``ctypes`` rather than
-``comtypes`` for the same reason :mod:`hanly_app.acquisition.ax` binds the
-macOS accessibility API that way: the desktop carries no COM code-generation
-dependency, and four interfaces out of a very large library are wanted, not a
-generated projection of all of them.
-
-UIA answers in physical screen pixels across the whole virtual desktop, origin
-at the primary monitor and negative coordinates to its left, which is the space
-the pointer already arrives in while the process is per-monitor DPI aware. What
-UIA does *not* guarantee is that the answer belongs to the pointer at all --
-``RangeFromPoint`` is documented to return the *nearest* range -- so everything
-read here is evidence for :mod:`hanly_app.acquisition.direct_text` to accept or refuse.
-
-Two providers were measured disagreeing about what a character is: Chromium
-counts code points and RichEdit counts UTF-16 code units. Neither reading is
-trusted; a narrowed range is asked for both ways and kept only if the text it
-returns is the text that was asked for.
+The ctypes binding receives physical pixels in the DPI-aware virtual desktop:
+origin at the primary monitor, negative coordinates to its left. ``RangeFromPoint``
+returns the nearest range, so ``direct_text`` must validate pointer containment.
+Chromium counts code points; RichEdit counts UTF-16 units. Narrowed ranges are
+tried both ways and accepted only when their text matches the requested text.
 """
 
 from __future__ import annotations

@@ -1,17 +1,8 @@
-"""Application build awareness and in-app installation.
+"""Stage desktop updates through the existing resource release-delivery seam.
 
-:class:`~hanly_app.updates.resource_service.UpdateService` replaces *resources* declared
-in the runtime manifest. It has no concept of the program executing it, so a
-new desktop build is invisible to it. This module supplies that missing half.
-
-It reuses the same delivery primitives rather than adding a second updater: the
-release fetcher downloads the platform archive, :func:`verify_checksum` proves
-it against the release's ``SHA256SUMS``, and :func:`extract_archive` unpacks it.
-Only the last step differs. A resource is swapped in place while Hanly keeps
-running; an application bundle contains the executable and the interpreter
-currently running from it, so it is staged in a directory this module owns and
-moved into place by :mod:`~hanly_app.updates.handoff` once this process has
-exited.
+Reuse release fetching, SHA256SUMS verification, and extraction. An owned
+transaction applies through a handoff after this process exits; resource updates
+instead hot-swap within the running application.
 """
 
 from __future__ import annotations
@@ -495,15 +486,10 @@ def confirm_started(path: Path) -> None:
 
 
 def confirm_started_v2(challenge_path: Path, *, install_root: Path | None = None) -> None:
-    """Answer one update's challenge, from this build's own stamp.
+    """Prove this running build's installed identity and location against the challenge.
 
-    The challenge says which build was installed and where. This does not copy
-    that back: it reads the identity out of the running build's own embedded
-    stamp and refuses unless the two agree, so the answer means "the build that
-    was installed is the build now running", which a version number never did.
-
-    Only once that holds does the receipt the update staged become this
-    installation's own.
+    Read its embedded stamp, rather than echoing the challenge or checking only the
+    version. Adopt the staged receipt only after that proof succeeds.
     """
 
     challenge = read_challenge(Path(challenge_path))

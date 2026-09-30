@@ -1,15 +1,7 @@
-"""What the cursor may move over without losing the answer it is reading.
+"""Protect the current word, popup, and narrow corridor between them.
 
-A popup that disappears the moment the cursor moves towards it cannot be read,
-and one that survives any movement covers the next word. Between those, Hanly
-keeps a successful result while the cursor is still on the word it describes or
-on the popup itself, and while it is crossing the gap between the two.
-
-Both protected areas are deliberately kept apart rather than merged into one
-rectangle: the hull of a word and a popup placed diagonally from it covers
-whatever is in between, which is usually other words the user wants to look up.
-The crossing is a narrow corridor along the line between them for the same
-reason.
+Keep these areas separate: their combined bounding hull would shield other words
+from hover lookup.
 """
 
 from __future__ import annotations
@@ -124,17 +116,11 @@ def expanded(rect: ScreenRect, margin: int) -> ScreenRect:
 def screen_rect(
     region: ScreenRect, bounds: BoundingBox, *, scale: float = SCREEN_SCALE
 ) -> ScreenRect | None:
-    """Place an ROI-local box on the screen the capture came from.
+    """Convert a word's ROI box to screen coordinates for popup protection.
 
-    The origin travels with the request that produced it rather than with a
-    latest global capture: by the time a result arrives the cursor has usually
-    moved, and a later capture describes somewhere else entirely.
-
-    ``scale`` is the one place image pixels and screen coordinates could
-    diverge. On macOS they do not -- the capture backend reports the same
-    logical geometry Qt does, and a captured ROI is the same size as the region
-    asked for -- so it is 1.0 here and remains a named input for the platforms
-    where that still has to be checked.
+    Use its request's capture origin, not the latest capture, which may differ for a
+    stale result. Scale image pixels into screen units: macOS logical geometry uses
+    1.0; other platforms supply their scale explicitly.
     """
 
     if scale <= 0:

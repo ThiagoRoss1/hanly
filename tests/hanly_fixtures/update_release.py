@@ -77,15 +77,10 @@ class PublishedRelease:
         self.checksums = self._checksums()
 
     def _sign(self) -> None:
-        """Give a macOS build the signature material a published one carries.
+        """Sign macOS fixtures with distinguishable per-version signature material.
 
-        Per version, so the attribute really changes between two releases: an
-        update that dropped it would produce a bundle that no longer verifies,
-        and a case built on an unsigned tree would never notice.
-
-        Only macOS can carry it. Elsewhere the build is published unsigned and
-        the cases whose subject is that material declare they need a host that
-        can hold it.
+        Tests must detect discarded signature attributes. Other platforms remain
+        unsigned and skip cases requiring macOS signing.
         """
 
         if self.product.platform != "macos" or not MATERIAL_XATTRS:

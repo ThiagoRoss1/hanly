@@ -1,20 +1,8 @@
-"""Decide whether the word under the pointer can be read without pixels.
+"""Validate native accessibility evidence independently of the platform.
 
-The desktop can sometimes ask the operating system what text is on screen
-instead of photographing it. That is faster and exact when it works, and wrong
-or unavailable often enough that it may never be trusted on its own: a control
-can return the nearest text rather than the text under the pointer, report
-geometry in another coordinate space, hand back a password field, or block.
-
-This module owns that judgement and nothing platform-specific. A platform
-adapter answers one question -- what does the accessibility layer say is at this
-point -- and every rule about whether the answer may be used lives here, so both
-desktop platforms reach the same decision from the same evidence.
-
-A refusal is never a failure. Every outcome other than :data:`Outcome.DIRECT`
-means the caller captures the screen and runs OCR exactly as it always has --
-except :data:`Outcome.NOT_KOREAN`, which is itself an answer: the control read
-the pointer's character exactly, and it is not Korean.
+Nearest text, coordinates, password fields, and blocking behavior must pass the
+shared acceptance policy. Refusals request OCR, except ``NOT_KOREAN``: exact
+pointer evidence of non-Korean text is already a final outcome.
 """
 
 from __future__ import annotations
@@ -414,18 +402,11 @@ class _Job:
 
 
 class DirectTextService:
-    """Run native acquisitions away from the caller's thread, one at a time.
+    """Acquire native text off the UI thread with one worker and bounded pending work.
 
-    Accessibility calls are synchronous IPC into another application, so they
-    must not execute on the thread that draws. They are also not reliably
-    interruptible: a messaging deadline makes the ordinary case return, but the
-    caller still cannot be left waiting on a target that never answers. So a
-    worker performs the call and a watcher answers the deadline, whichever
-    happens first delivers exactly one outcome, and the other is discarded.
-
-    Only the newest request matters. A hover that supersedes another replaces
-    the pending job rather than queueing behind it, so a slow target cannot
-    build up a backlog of calls against stale pointer positions.
+    Native IPC is not reliably interruptible. The deadline watcher and worker deliver one
+    outcome between them, discarding late results; each new pending request replaces
+    the previous one to prevent a backlog.
     """
 
     def __init__(

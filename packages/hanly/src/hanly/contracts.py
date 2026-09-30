@@ -254,27 +254,12 @@ class TargetResolution:
 
 @dataclass(frozen=True)
 class TextSelection:
-    """One surface word and where inside it the reader is pointing.
+    """Describe an acquisition-neutral lexical surface and character cursor offset.
 
-    This is the whole input the language stage needs, and deliberately the
-    whole of it. Pixels arrive at it through OCR and target resolution; a
-    future accessibility or DOM reader would arrive at it from an API that
-    already knows the word. Neither is visible here.
-
-    Nothing about *where on a screen* the text was may be added to this value.
-    Rectangles, window handles, element references, and desktop lifecycle stay
-    in the client that owns them: an engine that knew about them could no
-    longer be consumed by a caller that has none.
-
-    ``cursor_index`` is an offset into ``text``, counted in characters. It
-    selects which lexical unit of a compound the answer is about -- Korean
-    writes them without spaces, so ``초대받았어요`` is one surface word holding
-    more than one addressable unit. Surrounding whitespace is ignored, and the
-    cursor keeps pointing at the same character when it is.
-
-    ``source`` is a free-form label naming what produced the selection, for
-    diagnostics only. The pipeline never reads it, so no behaviour can come to
-    depend on which acquisition a caller used.
+    Carry text and language policy, never screen rectangles, window handles, or
+    desktop state. Compound-word offsets select the lexical unit; trimming whitespace
+    must preserve the same character selection. ``source`` is diagnostic only and
+    must not change lookup behavior.
     """
 
     text: str

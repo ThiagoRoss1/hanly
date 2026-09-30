@@ -95,15 +95,10 @@ def test_showing_and_updating_still_renders_and_repositions(
     qt_application: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Record the placement asked for, which is the part Hanly decides.
+    """Check rendering and requested repositioning on both show and update.
 
-    Where a top-level window finally lands is the window system's answer, and
-    it differs by platform, work area, and frame; the view's contract is that
-    both showing and updating render the result and request its position.
-
-    The recorder replaces the bound method rather than overriding it in a
-    subclass: ``QWidget.move`` is overloaded, and a narrower override is only
-    valid where the Qt stubs are absent.
+    Assert requested coordinates rather than OS placement. Replace the method instead
+    of overriding a narrowed QWidget.move overload, preserving Qt stub compatibility.
     """
 
     view = QtPopupView()

@@ -1,18 +1,8 @@
-"""Deciding what an update has to change, before anything is downloaded.
+"""Plan additions, replacements, deletions, payloads, and refusals from inventories.
 
-A plan is produced from three things: the target manifest the release
-publishes, the inventory of what is actually installed, and the delta the
-release offers if it offers one. It says which files are added, replaced, and
-deleted, which payload can supply them, and what it refuses to touch.
-
-Planning is separate from downloading and from applying so that the answer can
-be shown to the user - a real size, a real file count - before the first byte
-of payload is fetched, and so the same answer can be re-checked against disk
-after the application has stopped and before anything is written.
-
-Schema 2 keeps that shape and widens it to every platform. There is one
-planning algorithm; what differs between Windows, macOS, and Linux is only what
-each does with the plan it is given.
+Use the target manifest, installed inventory, and optional delta to show download
+bytes/file counts before fetching. Revalidate disk state after Hanly exits, before
+applying. Planning is shared across platforms; application differs.
 """
 
 from __future__ import annotations

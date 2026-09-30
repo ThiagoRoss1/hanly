@@ -91,17 +91,11 @@ class LookupPipeline:
         *,
         cancelled: Callable[[], bool] | None = None,
     ) -> LookupResult:
-        """Return a normalized result for ``image`` at ``target``.
+        """Resolve normalized image/point input through OCR targeting and language lookup.
 
-        The compatible pixel facade, unchanged for every existing caller. It
-        owns what only pixels can decide -- recognition, which region the
-        pointer is in, and OCR confidence -- and then hands the resulting
-        selection to the same language stage a non-pixel caller would use.
-
-        Empty, unresolved, low-confidence, and not-found outcomes are ordinary
-        results.  Exceptions from a provider or processing stage are converted
-        into an ``ERROR`` result carrying a ``HanlyError`` so callers do not
-        need exception handling for normal lookup execution.
+        Empty, unresolved, low-confidence, and not-found outcomes are ordinary results.
+        Provider exceptions become ERROR results with HanlyError; callers need no
+        exception handling for those failures.
         """
 
         abort_if_cancelled(cancelled)

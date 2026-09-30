@@ -633,17 +633,10 @@ class _GateMeasurement:
 
 
 class _TextPresenceGate:
-    """Skip OCR for an ROI that holds no text-like structure at all.
+    """Refuse only nearly uniform ROIs using a coarse luminance sample.
 
-    With a short hover delay most captures land on empty desktop, a flat window
-    background, or an image with no writing, and each one otherwise costs a
-    full OCR call. Sampling a coarse grid for sharp luminance transitions
-    settles that in about a millisecond.
-
-    The test is deliberately lopsided: it only refuses ROIs that are almost
-    perfectly flat. Rejecting real text would make the popup silently stop
-    working, which is far worse than occasionally running OCR over a busy
-    photograph.
+    The gate is conservative: false positives cost OCR work, while false negatives
+    would silently reject real text.
     """
 
     def __init__(self, provider: OCRProvider) -> None:
@@ -733,16 +726,10 @@ def _measure_text_presence(image: ROIImage) -> _GateMeasurement:
 
 
 class _CachingOCRProvider:
-    """Reuse a previous OCR result for a byte-identical ROI.
+    """Cache OCR for byte-identical ROIs aligned by the capture grid.
 
-    OCR is ~99% of a lookup's cost, and capture snaps ROI origins to a grid
-    (see :data:`~hanly_app.acquisition.capture.DEFAULT_ROI_GRID`) precisely so that nearby
-    cursor positions produce the same pixels. Caching here rather than around
-    the whole lookup means a cursor moving to a different word inside an
-    already-recognized ROI skips OCR while target resolution, morphology, and
-    dictionary lookup still run — together under half a millisecond.
-
-    The provider is confined to one worker thread, so no lock is needed.
+    Cursor resolution, morphology, and dictionary lookup still run for each request.
+    Only one worker thread accesses the cache, so no lock is needed.
     """
 
     def __init__(self, provider: OCRProvider) -> None:
@@ -996,16 +983,10 @@ class _TracingResolver:
 
 
 class _TracingDetailResolver(_TracingResolver):
-    """Tracing for a resolver that answers the richer pointer-offset contract.
+    """Trace target details without changing resolver semantics or doing a second pass.
 
-    :meth:`LookupPipeline._resolve_target` probes for ``resolve_target_detail``
-    and falls back to the pair contract with ``cursor_index=0`` when it is
-    absent. A wrapper that dropped the method therefore moved the pointer to the
-    start of the resolved word, which is exactly the divergence instrumentation
-    must not introduce.
-
-    When the resolver can also explain itself, the explanation comes from the
-    same call that produced the answer rather than from a second pass.
+    Preserve ``resolve_target_detail`` and its character offset; dropping that method
+    would fall back to cursor index zero and change lookup selection.
     """
 
     def resolve_target_detail(

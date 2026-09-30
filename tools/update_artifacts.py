@@ -1,26 +1,10 @@
-"""Produce the manifest, delta, and update metadata a release publishes.
+"""Produce manifests, deltas, and update metadata from finished frozen builds.
 
-The frozen application is built first; this runs against that finished tree and
-never modifies it beyond writing the inventory into it. Three products come out:
-
-``hanly-desktop-windows.manifest.json``
-    every managed file in the build, with digest, size, and component.
-``hanly-desktop-windows-from-<base>-to-<target>.delta.zip``
-    only the files that differ from one named previous published build.
-``hanly-desktop-windows.update.json``
-    what a client downloads, and which build the delta starts from.
-
-Schema 2 adds the same three products for macOS and Linux, and one more step
-before any of them: the build stamp. A macOS bundle is sealed by its signature,
-so its manifest cannot live inside it and cannot be a hash of its own contents
-either. The identifier goes in as package data before the freeze, the manifest
-is produced from the finished, signed tree afterwards, and the two meet in the
-update package.
-
-The delta is assembled against the *published* previous manifest, verified
-against that release's ``SHA256SUMS``. Rebuilding an old tag and diffing
-against the result would produce a delta whose base is a build nobody has
-installed.
+Schema 1 keeps Windows asset names; schema 2 extends products to macOS/Linux.
+Embed the build stamp before freezing and produce the manifest outside the signed
+bundle afterwards, preserving its seal and avoiding a self-hash; the .hup ties
+them together. Base deltas on the published manifest verified by SHA256SUMS,
+never a rebuild of an old tag that users did not install.
 """
 
 from __future__ import annotations
@@ -723,17 +707,11 @@ def assemble_update_package(
     source_commit: str,
     products: Path | None = None,
 ) -> Path:
-    """Build the one update package from every platform that succeeded.
+    """Assemble one update package from one run's successful platform descriptors.
 
-    Assembled once, from the descriptors of one run. Every platform has to
-    agree about the version and the commit, and no tuple may appear twice: a
-    package mixing two runs would describe builds that were never published
-    together.
-
-    ``products`` is where the assets those descriptors name actually are. Given
-    one, every size and digest is taken from the file rather than believed,
-    which is the only place a descriptor and the thing it describes can be
-    compared at all.
+    Require matching versions/commits and unique platform tuples. When ``products``
+    is supplied, verify each asset's actual size/digest rather than trusting its
+    descriptor.
     """
 
     releases = [PlatformRelease.read(directory) for directory in directories]

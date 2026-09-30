@@ -1,12 +1,6 @@
-"""The release gate: a frozen bundle must look a word up using only itself.
+"""Exercise the real frozen executable without repo, venv, or model-cache fallback.
 
-This is the only test that runs the produced artifact. It refuses every
-developer fallback -- no repository, no virtual environment, no developer
-model cache -- so a bundle that passes here is one a user could actually run.
-
-It skips when no bundle has been built, and a skip is not a pass -- so the
-build job that exists to run it sets ``HANLY_REQUIRE_PACKAGED`` and turns every
-one of those reasons into a failure.
+Missing bundles skip ordinarily; ``HANLY_REQUIRE_PACKAGED=1`` makes absence fail.
 """
 
 from __future__ import annotations

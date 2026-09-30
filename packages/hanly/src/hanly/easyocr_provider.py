@@ -30,15 +30,10 @@ _DEFAULT_SENSITIVE_OPTIONS: Mapping[str, Any] = {"mag_ratio": 2.0, "min_size": 4
 
 @dataclass(frozen=True)
 class EasyOCRConfig:
-    """Explicit EasyOCR construction options supplied by composition code.
+    """Configure the CPU-only V1 recognizer with Korean and English character sets.
 
-    ``languages`` defaults to Korean and English, which ``korean_g2`` reads
-    with one model. EasyOCR masks every character the listed languages do not
-    name, and Korean's list has no Latin letters: under Korean alone, Latin
-    text can only decode as Hangul lookalikes, which then look words up. GPU
-    is never requested: V1 targets CPU-only desktops, and a GPU option would
-    make provider behavior depend on hardware the rest of the runtime does not
-    model.
+    Both use one korean_g2 model. EasyOCR masks unlisted characters: Korean alone
+    can turn Latin text into false Hangul matches.
     """
 
     languages: tuple[str, ...] = ("ko", "en")

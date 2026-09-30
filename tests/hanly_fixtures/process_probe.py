@@ -1,17 +1,8 @@
-"""Portable process inventory embedded in the native smoke subprocesses.
+"""Probe process identity with a self-contained child and no fixture imports.
 
-This is source text, not an import: the smoke tests prepend it to the child
-program they write out, so the child needs no path setup to ask the operating
-system what is running. Each row is ``pid ppid detail``, where ``detail`` is
-the command line -- callers identify multiprocessing's resource tracker and
-the inventory command itself by what is in it, so the detail has to be the
-whole command line rather than as much of it as a terminal would show.
-
-``process_rows`` raises rather than returning nothing when the operating
-system refuses to answer. A denied ``ps``, a missing probe tool, and a probe
-that never returns are all *inspection unavailable*; an empty list would say
-the opposite, that the process owns no children, and a test reading it that
-way would report a clean retirement it never observed.
+PID, parent PID, and full command line distinguish resource trackers and the
+probe itself. Missing, refused, or timed-out inspection raises unavailable,
+never an empty result that could falsely prove retirement.
 """
 
 #: Raised in the child when the host will not say what is running. Its name is

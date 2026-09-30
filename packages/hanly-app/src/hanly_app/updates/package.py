@@ -1,17 +1,8 @@
-"""The one metadata package a release publishes for every platform at once.
+"""Read a .hup ZIP index and platform manifests, not application payload bytes.
 
-``Hanly-vX.Y.Z.hup`` is a small ZIP holding an index and one tree manifest per
-built platform, and no application bytes at all. A client downloads it, finds
-the one entry that matches the build it is actually running, and learns from
-that entry which release assets it may fetch and what the result has to look
-like. Everything large stays a separate release asset, so nobody downloads
-another platform's payload to read their own metadata.
-
-Reading is deliberately hostile-input work: the file is fetched over the
-network before anything about it is known, so every bound here is checked while
-reading rather than after a decompression has already finished. Nothing in a
-HUP is ever written to the filesystem - it is parsed in memory, within limits,
-and the paths it contains are data the installer validates again.
+Select the current platform's separately published assets. Treat input as hostile:
+bound parsing during decompression, keep it in memory, and let the installer
+validate paths before filesystem use.
 """
 
 from __future__ import annotations

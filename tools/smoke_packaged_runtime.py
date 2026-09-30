@@ -1,16 +1,8 @@
-"""Prove a frozen Hanly bundle can look a word up with only what it ships.
+"""Check frozen inventory, then execute the bundle's real provider self-check.
 
-Two checks, in order. The inventory says whether the required runtime
-dependencies were collected at all; the self-check runs the bundle's own
-executable and makes it construct the real providers. Inventory alone is not
-evidence -- a present file that cannot be imported still leaves the desktop
-unable to become ready.
-
-Nothing here may fall back to the repository, the developer virtual
-environment, or developer model caches: the run uses a temporary profile and a
-working directory outside the checkout. What the run may be given is named on
-the command line -- a dictionary to install, a model directory to seed -- so
-determinism is always an explicit argument rather than an inherited accident.
+Collected files alone cannot prove imports work. Use an isolated profile and
+working directory outside the checkout, without repo/venv/cache fallback. Any
+dictionary or model seed must be supplied explicitly on the command line.
 """
 
 from __future__ import annotations
@@ -492,26 +484,12 @@ def _is_extension(path: Path) -> bool:
 
 
 class _ProfileContext:
-    """A per-user profile and working directory outside the repository.
+    """Isolate settings, home, work, and every model location outside the repository.
 
-    Settings, home, the working directory, and every EasyOCR model location are
-    redirected together. Redirecting only the settings root would still let a
-    frozen bundle read the developer's ``~/.EasyOCR`` cache and pass a check
-    the released artifact would fail on a user's machine.
-
-    A packaged build carries its own EasyOCR weights and cannot download, so a
-    clean profile has to succeed on what the bundle ships. ``model_cache``
-    seeds the isolated model directory for a build that still resolves models
-    through the environment; a current frozen bundle ignores it.
-
-    ``headless`` belongs to a check that opens no window: it names a Qt
-    platform that always loads rather than letting Qt abort on a display the
-    session advertises but cannot serve.
-
-    ``krdict`` names an already-built dictionary for the bundle to install.
-    The database is licensed and ships in neither the bundle nor the
-    repository, so without one a first run reaches the public release channel
-    -- a network dependency this check has no business carrying.
+    Current frozen builds use shipped weights without downloads; ``model_cache``
+    only seeds legacy builds that resolve models through the environment. ``headless``
+    selects a loadable non-window Qt platform. An explicit ``krdict`` supplies the
+    licensed, unbundled database, avoiding first-run release-network dependency.
     """
 
     def __init__(

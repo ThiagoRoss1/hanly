@@ -1,21 +1,10 @@
-"""The lookup engine, in a process the shell can throw away.
+"""Isolate lookup providers in a child whose exit releases native allocations.
 
-EasyOCR, Torch, and Kiwi allocate hundreds of megabytes natively and give none
-of it back when their objects are destroyed, so the providers live in a child
-process. The child owns provider construction, every lookup, and provider
-close on one processing thread, which is what keeps SQLite's connection on the
-thread that opened it.
-
-The parent keeps everything that decides what a lookup means:
-:class:`~hanly_app.lookup.controller.LookupController` still allocates request
-IDs and still makes the final currency check before a result is presented, and
-:class:`~hanly_app.lookup.executor.JobExecutor` still bounds work to one running
-job plus one latest pending one. Only the worker at the bottom changed: it is
-now a proxy that sends an ROI down a pipe instead of calling providers.
-
-Nothing library-specific crosses the boundary. Images travel as bytes and
-dimensions, results as the engine's own normalized values, and failures as a
-stable error type and message rather than as a foreign exception object.
+Construction, lookup, and close share one thread to preserve SQLite affinity.
+The parent controller owns request IDs and final currency checks; its executor
+bounds work to one running and one latest pending job. The proxy sends image
+bytes/dimensions and receives normalized results or stable error type/message,
+never library objects or foreign exceptions.
 """
 
 from __future__ import annotations
@@ -383,18 +372,12 @@ class LookupProcess:
 
 
 class LookupEngine:
-    """Owns whether the lookup providers are resident, and in which child.
+    """Own provider residency and serve as the JobExecutor's worker.
 
-    This is also the :class:`JobExecutor` worker: a lookup asks for a live
-    child and gets one, starting it if the current policy left the engine
-    asleep. Residency itself is decided elsewhere -- preparing on capture
-    start, retiring on pause, expiring after an idle manual session -- and
-    this class only carries it out.
-
-    Engine state is exactly sleeping, preparing, ready, or error, plus the
-    generation that owns the current child and the last failure. A retired or
-    crashed child's generation stops matching, so nothing it reports
-    afterwards is mistaken for news about its replacement.
+    Lookups wake the child when needed; external policy decides capture preparation,
+    pause retirement, and manual-session idle expiry. State is sleeping, preparing,
+    ready, or error with a generation and last failure; generation checks reject
+    reports from retired or crashed children.
     """
 
     def __init__(

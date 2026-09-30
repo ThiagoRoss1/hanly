@@ -91,17 +91,11 @@ def _inline_dispatch(callback: Callable[[], None]) -> None:
 
 
 class LookupController:
-    """Submit latest-wins lookup work and hand off only current results.
+    """Own request IDs, latest-wins execution, and the final result-currency check.
 
-    The controller owns the executor lifecycle while composition supplies the
-    worker factory. Production composition should use the provider-factory
-    worker from :mod:`hanly_app.composition`, keeping provider construction on
-    the executor thread.
-
-    Submission and invalidation expect one serialized caller -- the desktop
-    routes hotkey, hover and result callbacks through one dispatcher. Request
-    numbers are allocated under a lock, but dispatch is not, so two threads
-    submitting at once could hand the executor an older request last.
+    The executor thread constructs providers through the factory. Callers must
+    serialize submission/invalidation and dispatch: the ID lock alone cannot prevent
+    an older request being submitted last.
     """
 
     def __init__(

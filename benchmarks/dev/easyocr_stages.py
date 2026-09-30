@@ -1,20 +1,8 @@
-"""Drive EasyOCR's detection and recognition stages one region at a time.
+"""Inspect EasyOCR detection and recognition stages for one region.
 
-The shipped provider calls ``Reader.readtext`` and sees only its normalized
-output. That is the right shape for a product and the wrong shape for finding
-out *why* a word came back wrong, so this module reproduces what ``readtext``
-does internally and keeps every intermediate image.
-
-It is developer-only and pinned to one EasyOCR version, because it uses
-implementation detail the library makes no promises about. Normalization is not
-reimplemented here: the adapter's own helpers turn raw detections into contract
-values, so a staged run and a production run cannot disagree about what a
-detection means.
-
-**Two evidence classes, never mixed.** A lookup deliberately executed through
-this path owns its crops. Staging a frozen ROI *after* a production lookup is
-``comparison_replay``: it may agree or disagree with the live result, and a
-disagreement is reported rather than resolved.
+This developer-only path uses version-pinned internals and the shipped adapter's
+normalizers. A staged lookup owns its crops; staging a frozen production ROI is
+``comparison_replay``, whose disagreements with the live result are reported.
 """
 
 from __future__ import annotations

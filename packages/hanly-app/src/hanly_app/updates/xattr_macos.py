@@ -1,13 +1,7 @@
-"""Extended attributes on macOS, which CPython does not expose.
+"""Bind macOS xattrs through ctypes to preserve detached signature attributes.
 
-``os.listxattr`` and its neighbours are Linux-only, and macOS is the platform
-that actually needs them: a signed bundle can keep a detached signature in
-``com.apple.cs.*``, and a copy reassembled without those attributes no longer
-verifies. So the four calls are bound here directly.
-
-Every call passes ``XATTR_NOFOLLOW``. An updater that read attributes through a
-link would describe whatever the link points at, and one that wrote through a
-link would write outside the tree it is assembling.
+CPython's bindings expose Linux-only APIs here. ``XATTR_NOFOLLOW`` prevents
+symlinks from redirecting reads or writes outside the tree.
 """
 
 from __future__ import annotations

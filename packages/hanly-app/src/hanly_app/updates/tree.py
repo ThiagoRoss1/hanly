@@ -1,20 +1,8 @@
-"""Building the new installation beside the old one, on macOS and Linux.
+"""Reconstruct macOS/Linux candidates privately on the installation's volume.
 
-Windows changes an installation file by file. POSIX does not: a whole candidate
-is reconstructed in a private directory on the same volume, proved to be
-exactly the published build, and only then swapped in. Two renames are cheaper
-to undo than forty, a rejected candidate is one directory to throw away, and
-macOS gets the one thing it cannot do any other way - a bundle whose signature
-material is reproduced rather than regenerated.
-
-Most of a candidate is not downloaded. Every file the installation already
-holds with the right content is copied across from it, which is what makes an
-update the size of what changed. "Reused" means copied here, not left alone:
-the candidate is a real second copy, and saying otherwise would misdescribe
-both the disk it needs and the time it takes.
-
-Nothing in this module touches the installation. It reads from it and writes
-into a directory it created, and the swap belongs to the native helper.
+Verify the exact published tree before native swapping. Reused files are copied,
+so staging needs disk space and time for a real second copy; preserve macOS
+signature material. Only the native helper mutates the installed tree.
 """
 
 from __future__ import annotations

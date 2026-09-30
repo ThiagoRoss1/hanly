@@ -1,20 +1,9 @@
-"""The one step of an application update that cannot happen in-process.
+"""Hand updates to a helper that outlives Hanly and waits for its exit.
 
-A new build has to replace the directory holding the executable and the
-interpreter currently running from it, so the last stretch belongs to a small
-script that outlives this process: it waits for Hanly to exit, swaps the staged
-build in, starts it, and waits for the new build to say it came up. Only then
-is the previous build discarded.
-
-Schema 2 replaces the POSIX half of that with a small native program, because
-a shell script cannot give durable renames, exact process identity, or a lock
-that outlives the process that took it. What is here is the Python side of the
-handoff: the fixed descriptor that program reads, the copy of it kept outside
-the installation, and the confirmation that it has taken ownership.
-
-Everything the swap touches lives inside one transaction directory beside the
-installation, so finishing - successfully or not - is a single directory
-removal rather than a set of fixed names to clean up.
+Keep the old install until the swapped-in build reports readiness. Schema-2 POSIX
+helpers provide durability, exact process identity, and locking; Python writes a
+fixed descriptor and an external helper copy confirms ownership. Transaction
+paths beside the install remain under owned cleanup.
 """
 
 from __future__ import annotations
@@ -131,15 +120,11 @@ def render_handoff_script(*, executable: str, platform: str = sys.platform) -> s
 
 
 def spawn_detached(command: list[str], directory: Path) -> None:
-    """Start the handoff so it outlives the process it is waiting for.
+    """Start a helper that outlives the parent process it is waiting for.
 
-    Windows gets a new process group, so a console signal sent to Hanly does
-    not reach the script, and no window, so nothing flashes on screen. It does
-    **not** get ``DETACHED_PROCESS``: a PowerShell started with no console at
-    all exits zero having run none of its script, which leaves the update
-    staged, the application closed, and nothing to say why. A process outlives
-    its parent on Windows regardless; detaching the console is not what makes
-    that true.
+    On Windows, use NEW_PROCESS_GROUP to isolate console signals and CREATE_NO_WINDOW.
+    Avoid DETACHED_PROCESS: PowerShell can exit successfully without running its
+    script. Windows children outlive their parent without console detachment.
     """
 
     if sys.platform.startswith("win32"):
@@ -228,19 +213,11 @@ def _posix_stop(platform: str) -> str:
 
 
 def _macos_candidate_pids() -> list[str]:
-    """Return the lines that collect every pid running out of the bundle.
+    """Render shell lines collecting macOS PIDs by literal executable path from ps.
 
-    ``ps`` reports each process's program path, and a ``case`` pattern built
-    from a quoted expansion compares that path as literal text. Asking
-    ``pkill -f`` the same question instead makes the installation path a
-    regular expression, and an installation named ``Hanly [beta]`` or
-    ``C++ apps`` is then a pattern that matches a different directory, matches
-    nothing, or does not compile at all - each of which silently leaves the
-    rejected build running.
-
-    The pattern carries a leading ``(`` because macOS ships bash 3.2 as
-    ``/bin/sh``, whose command-substitution parser reads the ``)`` closing a
-    bare ``case`` pattern as the one closing ``$(``.
+    Quoted case patterns avoid pkill regex mismatches for brackets or C++ paths.
+    The leading ``(`` is required by bash 3.2's /bin/sh parser; otherwise the pattern's
+    ``)`` can terminate its surrounding command substitution.
     """
 
     return [

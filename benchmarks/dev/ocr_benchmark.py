@@ -1,18 +1,9 @@
-"""Measure OCR on its own, without waking the rest of the lookup pipeline.
+"""Measure OCR independently of morphology, dictionaries, hover, and UI.
 
-A `real-lookup` run measures capture, OCR, Kiwi, KRDICT and presentation
-together, which is the right thing to measure for a product and the wrong thing
-for finding out whether OCR read the word. These modes construct one recognizer
-and nothing else: no morphology, no dictionary, no `LookupPipeline`, no hover,
-no UI. A test asserts that, because the cheapest way to get a misleading number
-is to accidentally pay for a stage the mode claims not to run.
-
-Four modes, and each reports honestly on the stages its provider does not
-expose. Apple Vision has no separately addressable detector, so asking it for
-detection-only geometry gets `unavailable` rather than a fabricated box.
-`detection-only` never calls the recognizer. `recognition-only` still has to
-detect to find its crops, but detection is timed apart and excluded from its
-total, so each mode's total is the stage it names.
+The four modes report unavailable provider stages explicitly; Vision has no
+separate detector. Detection-only never runs recognition. Recognition-only
+detects to obtain crops but times that work separately and excludes it from the
+recognition total.
 """
 
 from __future__ import annotations

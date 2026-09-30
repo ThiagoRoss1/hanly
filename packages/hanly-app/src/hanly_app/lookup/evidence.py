@@ -1,13 +1,8 @@
-"""Encode private diagnostic structures as one JSON string per trace event.
+"""Encode private diagnostic structures as JSON strings on ordinary trace events.
 
-The lookup worker runs in a spawned child process (see
-:mod:`hanly_app.lookup.process`), and only JSON-safe primitives cross that pipe.
-A structure like a resolver explanation is not a primitive, so it travels as one
-encoded string on an ordinary trace event rather than as a new message kind.
-
-Encoding happens only for a sink that asked for it. Recognized text is screen
-content, so the field names here are the ones the benchmark's privacy layer
-redacts before anything is written to disk; persistence is an explicit export.
+Only JSON-safe primitives cross the lookup pipe; encoding avoids a new message
+kind and occurs only for sinks requesting evidence. Benchmarks redact recognized
+text before ordinary persistence; only explicit export may retain it.
 """
 
 from __future__ import annotations

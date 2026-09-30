@@ -1,13 +1,7 @@
-"""A disposable installation, a real transaction, and the real helper over it.
+"""Build disposable update installs and journals entirely under temporary roots.
 
-The helper is a PowerShell program that moves files inside a directory Windows
-is holding open. Nothing about that is provable from the rendered text, so every
-case here builds two compiled programs, stages a transaction through the
-production journal, and runs the shipped script over the result.
-
-The installation under test is built from scratch in ``tmp_path``. Nothing
-outside it is read or written, and the user's own installation is never a
-subject: the point is a Hanly-shaped tree, not this machine's Hanly.
+Two compiled programs exercise real PowerShell moves of locked Windows files,
+which script-text checks cannot prove. The normal user installation is untouched.
 """
 
 from __future__ import annotations
