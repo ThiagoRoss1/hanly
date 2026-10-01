@@ -1219,6 +1219,9 @@ def _session_parsers(subcommands: Any) -> None:
 
     report = subcommands.add_parser("report", help="rebuild the report of a recorded run")
     report.add_argument("run_dir", type=Path, nargs="?", help="run directory (default: newest)")
+    report.add_argument(
+        "--baseline", type=Path, help="earlier tour to compare with, both under the current rule"
+    )
     report.add_argument("--no-open", action="store_true")
     report.set_defaults(handler=run_lab_report)
 
@@ -1281,7 +1284,7 @@ def run_lab_report(args: argparse.Namespace) -> int:
         if not recorded:
             raise SystemExit("lab: no recorded run under artifacts/lab/runs")
         run_dir = recorded[-1]
-    report = build_report(run_dir)
+    report = build_report(run_dir, baseline=args.baseline)
     print(f"lab: report {report}")
     if not args.no_open:
         webbrowser.open(report.resolve().as_uri())

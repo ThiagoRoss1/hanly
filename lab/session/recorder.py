@@ -4,6 +4,10 @@ The desktop's trace seam, its diagnostics log and the lab's own driver all feed
 one ``LabRecorder``. Producers only timestamp and enqueue; a daemon thread
 writes ``events.jsonl``. Listeners (the tour driver, the HUD) see each event
 synchronously and must return promptly.
+
+``events.jsonl`` never holds recognized text or OCR geometry, whatever the
+session. Listeners see those fields in memory; only the tour driver keeps any of
+it, derived and bound to one verified hover (``driver.py``).
 """
 
 from __future__ import annotations
@@ -16,14 +20,19 @@ from pathlib import Path
 from typing import Any
 
 from hanly_app.diagnostics import DiagnosticLog, RotatingLogFile, sanitize_text
+from hanly_app.lookup.evidence import EVIDENCE_FIELDS as _APP_EVIDENCE_FIELDS
 
 from ..live_telemetry import LiveTraceRecorder
 
-#: Evidence fields carry recognized text. They reach disk only when the session
-#: shows nothing but lab-authored content (a tour), never in a human session.
-EVIDENCE_FIELDS = frozenset(
-    {"ocr_evidence", "resolution_evidence", "morphology_evidence", "dictionary_evidence"}
-)
+#: Fields that carry recognized text or where text sits on screen.
+CONTENT_FIELDS = frozenset(_APP_EVIDENCE_FIELDS) | {"ocr_boxes"}
+_ALIASES = frozenset({"event", "event_kind", "monotonic_ns", "timestamp_ns", "thread_ident"})
+
+
+def is_content_field(key: str) -> bool:
+    """Whether a trace field may carry screen content; unknown evidence fails closed."""
+
+    return key in CONTENT_FIELDS or key.endswith("_evidence")
 
 _STARTUP_PHASE = re.compile(r"^(?P<name>.+?): (?P<ms>\d+) ms \((?P<outcome>[^)]*)\)$")
 _STARTUP_MILESTONE = re.compile(r"^(?P<name>.+?) at (?P<ms>\d+) ms$")
@@ -41,9 +50,6 @@ class LabRecorder:
     def __init__(self, path: Path, *, retain_evidence: bool, retain_geometry: bool) -> None:
         self.retain_evidence = retain_evidence
         self.retain_geometry = retain_geometry
-        #: Evidence is kept only while the driver has proven the pointer is over
-        #: lab-owned pixels; the production side encodes it whenever asked.
-        self.evidence_open = False
         self.origin_ns = time.perf_counter_ns()
         self._recorder = LiveTraceRecorder(path, queue_size=65_536)
         self._listeners: list[Listener] = []
@@ -71,13 +77,7 @@ class LabRecorder:
             return None
         stamp = event.get("timestamp_ns", event.get("monotonic_ns"))
         observed = stamp if isinstance(stamp, int) else time.perf_counter_ns()
-        fields = {
-            key: value
-            for key, value in event.items()
-            # The aliases duplicate the canonical keys; evidence is gated above.
-            if key not in {"event", "event_kind", "monotonic_ns", "timestamp_ns", "thread_ident"}
-            and (self.evidence_open or key not in EVIDENCE_FIELDS)
-        }
+        fields = {key: value for key, value in event.items() if key not in _ALIASES}
         self._publish(name, observed, fields, source="app")
         return None
 
@@ -93,8 +93,9 @@ class LabRecorder:
         with self._lock:
             self._counts[name] = self._counts.get(name, 0) + 1
             listeners = tuple(self._listeners)
+        durable = {key: value for key, value in fields.items() if not is_content_field(key)}
         self._recorder.record_at(
-            name, observed, by=source, t_ms=(observed - self.origin_ns) / 1e6, **fields
+            name, observed, by=source, t_ms=(observed - self.origin_ns) / 1e6, **durable
         )
         for listener in listeners:
             try:
@@ -143,4 +144,4 @@ class LabDiagnosticLog(DiagnosticLog):
         )
 
 
-__all__ = ["EVIDENCE_FIELDS", "LabDiagnosticLog", "LabRecorder"]
+__all__ = ["CONTENT_FIELDS", "LabDiagnosticLog", "LabRecorder", "is_content_field"]

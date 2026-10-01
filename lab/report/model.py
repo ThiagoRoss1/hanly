@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..session.scoring import PASS, RULE, UNSCORED, classify, summarize
+
 #: Waterfall segments in pipeline order. Colors follow this order in the report.
 SEGMENTS: tuple[tuple[str, str], ...] = (
     ("dwell", "Dwell (debounce)"),
@@ -457,10 +459,21 @@ def startup(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def tour_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    scored = [r for r in results if r.get("verdict") != "obscured"]
-    verdicts = Counter(str(r.get("verdict")) for r in results)
-    good = {"correct", "refused"}
+def tour_summary(recorded: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Score every result under the current rule, keeping what was recorded at the time."""
+
+    results = []
+    for record in recorded:
+        current = classify(record)
+        results.append({**record, "verdict": current, "recorded_verdict": record.get("verdict")})
+    changed = [
+        {k: r.get(k) for k in ("target", "expected", "recorded_verdict", "verdict", "headword")}
+        for r in results
+        if r["recorded_verdict"] != r["verdict"]
+    ]
+    scored = [r for r in results if r["verdict"] not in UNSCORED]
+    verdicts = Counter(str(r["verdict"]) for r in results)
+    good = PASS
 
     def by(key: str) -> list[dict[str, Any]]:
         groups: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
@@ -524,7 +537,12 @@ def tour_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for r in results
         if r.get("verdict") not in good
     ]
+    recorded_rules = sorted({str(r.get("rule") or "strict-headword-v1") for r in recorded})
     return {
+        "rule": RULE,
+        "recorded_rules": recorded_rules,
+        "rescored_changes": changed,
+        **{k: v for k, v in summarize([r["verdict"] for r in results]).items() if k != "rule"},
         "total": len(results),
         "scored": len(scored),
         "verdicts": dict(verdicts.most_common()),
@@ -566,6 +584,58 @@ def tour_summary(results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             }
             for r in results
         ],
+    }
+
+
+def _comparable(row: Mapping[str, Any]) -> str:
+    """Story targets by ID; words by surface, since their IDs follow sampling order."""
+
+    if row.get("source") == "words":
+        return f"words:{row.get('surface')}"
+    return str(row.get("target"))
+
+
+def compare_tours(baseline_dir: Path, current: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Both runs' tour results under the current rule, matched by target.
+
+    Reads the baseline's raw recording only; nothing is written beside it.
+    """
+
+    events, _, metadata = load(baseline_dir)
+    recorded = [event for event in events if event["event"] == "tour_result"]
+    tour = current.get("tour")
+    if not recorded or not tour:
+        return None
+    before = tour_summary(recorded)
+    after_by = {_comparable(row): row for row in tour["results"]}
+    before_by = {_comparable(row): row for row in before["results"]}
+    changed = [
+        {
+            "target": after_by[target].get("target"),
+            "expected": after_by[target].get("expected"),
+            "before": before_by[target]["verdict"],
+            "after": after_by[target]["verdict"],
+            "before_answer": before_by[target].get("headword"),
+            "after_answer": after_by[target].get("headword"),
+        }
+        for target in sorted(set(before_by) & set(after_by))
+        if before_by[target]["verdict"] != after_by[target]["verdict"]
+    ]
+    keys = ("scored", "unscored", "passed", "accuracy")
+    return {
+        "baseline": baseline_dir.name,
+        "rule": RULE,
+        "baseline_settings": {
+            k: metadata.get(k) for k in ("commit", "options")
+        },
+        "before": {k: before[k] for k in keys},
+        "after": {k: tour[k] for k in keys},
+        "matched": len(set(before_by) & set(after_by)),
+        "only_before": len(set(before_by) - set(after_by)),
+        "only_after": len(set(after_by) - set(before_by)),
+        "changed": changed,
+        "before_popup_ms": before["popup_ms"],
+        "after_popup_ms": tour["popup_ms"],
     }
 
 
@@ -762,14 +832,32 @@ def findings(model: Mapping[str, Any]) -> list[dict[str, str]]:
                 "in morphology or dictionary querying even when the text was read correctly.",
                 "",
             )
-        obscured = tour["verdicts"].get("obscured", 0)
-        if obscured:
+        ambiguous = tour["verdicts"].get("ambiguous_surface", 0)
+        if ambiguous:
+            add(
+                "insight",
+                f"{ambiguous} hovers answered a different, valid reading of the exact surface",
+                "The surface is itself a dictionary word, and Hanly reads no sentence context "
+                "to prefer the one the story intends. Scored as a failure, labelled apart.",
+                "hanly/language_pipeline.py",
+            )
+        unscored = tour["unscored"]
+        if unscored:
             add(
                 "warning",
-                f"{obscured} hovers skipped: another window covered the page",
-                "The lab refuses to read anything that is not its own page. These are not "
-                "scored; close or move the covering window and rerun.",
+                f"{unscored} hovers not scored: page ownership could not be shown",
+                "The lab samples who owns the capture region before and after each hover and "
+                "discards anything it cannot attribute to its own page. Close or move the "
+                "covering window and rerun.",
                 "",
+            )
+        if tour["rescored_changes"]:
+            add(
+                "warning",
+                f"{len(tour['rescored_changes'])} verdicts differ from when they were recorded",
+                f"Recorded under {', '.join(tour['recorded_rules'])}; shown under {tour['rule']}. "
+                "Compare runs only under the same rule.",
+                "lab/session/scoring.py",
             )
     if model["metadata"].get("dropped_events"):
         add(

@@ -5,7 +5,9 @@ Two sources, both free of anyone's screen content:
 - ``story``: the minibook, prose with hand-set dictionary forms, conjugations,
   particles and Latin words that must be refused.
 - ``words``: KRDICT headwords sampled with a fixed seed, each its own answer.
-  Scales to thousands of hovers.
+  Scales to thousands of hovers. Only headwords with an English translation are
+  eligible: the dictionary provider answers in English, so an entry without
+  one (often a cross-reference such as 애기 → 아기) has no answer to expect.
 """
 
 from __future__ import annotations
@@ -58,7 +60,12 @@ def story_targets() -> list[TourTarget]:
 
 
 def word_targets(database: Path, count: int, *, seed: int = 7) -> list[TourTarget]:
-    """Sample distinct, plain-Hangul headwords of two to five syllables."""
+    """Sample distinct, plain-Hangul headwords of two to five syllables.
+
+    The shuffle runs over the same pool as before eligibility existed, so a seed
+    keeps choosing the same words; an ineligible one is skipped, not replaced
+    in place.
+    """
 
     if count <= 0:
         return []
@@ -74,6 +81,18 @@ def word_targets(database: Path, count: int, *, seed: int = 7) -> list[TourTarge
             ORDER BY lemmas.written_form
             """
         ).fetchall()
+        answerable = {
+            form
+            for (form,) in connection.execute(
+                """
+                SELECT DISTINCT lemmas.written_form
+                FROM lemmas
+                JOIN senses ON senses.entry_id = lemmas.entry_id
+                JOIN translations ON translations.sense_id = senses.id
+                WHERE translations.language = 'en'
+                """
+            )
+        }
     usable = [row for row in rows if all("가" <= ch <= "힣" for ch in row[0])]
     # Prefer the vocabulary a learner actually meets, then fill from the rest.
     common = [row for row in usable if row[1] in {"초급", "중급"}]
@@ -81,11 +100,12 @@ def word_targets(database: Path, count: int, *, seed: int = 7) -> list[TourTarge
     generator = random.Random(seed)
     generator.shuffle(common)
     generator.shuffle(rest)
-    chosen = (common + rest)[:count]
     seen: set[str] = set()
     targets: list[TourTarget] = []
-    for form, level, part in chosen:
-        if form in seen:
+    for form, level, part in common + rest:
+        if len(targets) == count:
+            break
+        if form in seen or form not in answerable:
             continue
         seen.add(form)
         targets.append(

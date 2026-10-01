@@ -14,8 +14,9 @@ from lab.cli import _parser, with_default_verb
 from lab.report.build import build_report
 from lab.report.model import build_model
 from lab.session.corpus import TourTarget, story_targets, word_targets
-from lab.session.driver import _judge, _Observation
+from lab.session.driver import _Observation, observe, outcome_record
 from lab.session.recorder import LabDiagnosticLog, LabRecorder
+from lab.session.scoring import classify, summarize
 
 
 def _events(path: Path) -> list[dict[str, Any]]:
@@ -25,24 +26,23 @@ def _events(path: Path) -> list[dict[str, Any]]:
 # -- recorder ---------------------------------------------------------------------------
 
 
-def test_evidence_reaches_disk_only_inside_a_verified_hover(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "field",
+    ["ocr_evidence", "result_evidence", "dictionary_evidence", "future_evidence", "ocr_boxes"],
+)
+def test_no_content_field_ever_reaches_disk(tmp_path: Path, field: str) -> None:
     recorder = LabRecorder(tmp_path / "events.jsonl", retain_evidence=True, retain_geometry=True)
-    stage = {
-        "event_kind": "lookup_stage_completed",
-        "timestamp_ns": 1,
-        "stage": "ocr",
-        "ocr_evidence": '{"text":"secret"}',
-        "region_count": 1,
-    }
+    seen: list[Any] = []
+    recorder.subscribe(lambda name, ns, fields: seen.append(fields.get(field)))
+    sentinel = "SENTINEL-보이면-안됨"
 
-    recorder.emit(stage)
-    recorder.evidence_open = True
-    recorder.emit(stage)
+    recorder.emit({"event_kind": "lookup_stage_completed", "timestamp_ns": 1, field: sentinel})
+    recorder.lab("tour_target", **{field: sentinel})
     recorder.close()
 
-    first, second = _events(tmp_path / "events.jsonl")
-    assert "ocr_evidence" not in first and first["region_count"] == 1
-    assert second["ocr_evidence"] == '{"text":"secret"}'
+    assert sentinel not in (tmp_path / "events.jsonl").read_text(encoding="utf-8")
+    # The in-memory listener (the tour driver) still receives it.
+    assert seen == [sentinel, sentinel]
 
 
 def test_a_failing_listener_never_reaches_the_app(tmp_path: Path) -> None:
@@ -81,7 +81,7 @@ def test_startup_lines_become_structured_phases(tmp_path: Path) -> None:
     assert str(Path.home()) not in other["message"]
 
 
-# -- scoring a hover ---------------------------------------------------------------------
+# -- binding and scoring a hover -----------------------------------------------------------
 
 
 def _placed(**target: Any) -> Any:
@@ -99,69 +99,157 @@ def _placed(**target: Any) -> Any:
     return SimpleNamespace(target=TourTarget(**fields), font_family="F", font_px=22, theme="light")
 
 
-def _seen(**result: Any) -> _Observation:
+def _result(selected: str | None, headword: str | None, status: str = "SUCCESS") -> str:
+    return json.dumps(
+        {"status": status, "selected": selected, "lemma": headword, "headword": headword}
+    )
+
+
+def _hovered(*events: tuple[str, dict[str, Any]]) -> _Observation:
     observation = _Observation()
-    observation.lookup_ids.add(1)
-    observation.result = result or None
+    for name, fields in events:
+        observe(observation, name, 0, fields)
     return observation
 
 
-@pytest.mark.parametrize(
-    ("result", "recognized", "verdict"),
-    [
+def _answered(hover: int, lookup: int, selected: str, headword: str) -> list[Any]:
+    return [
+        ("hover_stable_fire", {"hover_request_id": hover}),
+        ("hover_submission", {"hover_request_id": hover, "lookup_request_id": lookup}),
         (
-            {"status": "SUCCESS", "selected": "가다", "lemma": "가다", "headword": "가다"},
-            ["가다"],
-            "correct",
+            "lookup_stage_completed",
+            {
+                "hover_request_id": hover,
+                "lookup_request_id": lookup,
+                "stage": "total_pipeline",
+                "outcome": "SUCCESS",
+                "duration_ns": 1,
+                "result_evidence": _result(selected, headword),
+            },
         ),
+        ("popup_visible", {"lookup_request_id": lookup, "result_status": "SUCCESS"}),
+    ]
+
+
+def test_a_stale_lookup_from_another_hover_cannot_answer_this_one() -> None:
+    stale = (
+        "lookup_stage_completed",
+        {
+            "hover_request_id": 3,
+            "lookup_request_id": 9,
+            "stage": "total_pipeline",
+            "outcome": "SUCCESS",
+            "duration_ns": 1,
+            "result_evidence": _result("오다", "오다"),
+        },
+    )
+    stale_popup = ("popup_visible", {"lookup_request_id": 9, "result_status": "SUCCESS"})
+    seen = _hovered(stale, stale_popup, *_answered(4, 10, "가다", "가다"))
+
+    record = outcome_record(_placed(), seen, 0, timed_out=False, keep_text=True)
+    assert (record["lookup_ids"], record["headword"]) == ([10], "가다")
+    assert record["ignored_foreign_events"] == 2
+    assert classify(record) == "correct"
+
+
+def test_only_a_stale_answer_leaves_this_hover_without_a_result() -> None:
+    stale = ("popup_visible", {"lookup_request_id": 9, "result_status": "SUCCESS"})
+    seen = _hovered(("hover_stable_fire", {"hover_request_id": 4}), stale)
+
+    record = outcome_record(_placed(), seen, 0, timed_out=True, keep_text=True)
+    assert seen.done.is_set() is False
+    assert classify(record) == "no_hover"
+
+
+def test_a_discarded_hover_keeps_no_recognized_text() -> None:
+    seen = _hovered(*_answered(4, 10, "가다", "가다"))
+    record = outcome_record(_placed(), seen, 0, timed_out=False, keep_text=False)
+    assert not {"selected", "lemma", "headword", "recognized", "queries"} & set(record)
+    record["unscored"] = "obscured_during_capture"
+    assert classify(record) == "obscured_during_capture"
+
+
+def _record(**fields: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "surface": "가다",
+        "cursor": 1,
+        "expected": "가다",
+        "expected_lemma": "가다",
+        "refuse": False,
+        "lookup_ids": [1],
+        "status": "SUCCESS",
+        "selected": "가다",
+        "lemma": "가다",
+        "headword": "가다",
+        "recognized": ["가다"],
+    }
+    base.update(fields)
+    return base
+
+
+@pytest.mark.parametrize(
+    ("fields", "verdict"),
+    [
+        ({}, "correct"),
         (
-            {"status": "SUCCESS", "selected": "기다", "lemma": "기다", "headword": "기다"},
-            ["기다"],
+            {"headword": "기다", "lemma": "기다", "selected": "기다", "recognized": ["기다"]},
             "misread",
         ),
         (
-            {"status": "SUCCESS", "selected": "오다", "lemma": "오다", "headword": "오다"},
-            ["가다 오다"],
+            {"headword": "오다", "lemma": "오다", "selected": "오다", "recognized": ["가다 오다"]},
             "wrong_word",
         ),
         (
-            {"status": "SUCCESS", "selected": "가다", "lemma": "갈다", "headword": "갈다"},
-            ["가다"],
+            {"surface": "가다가", "selected": "가다가", "headword": "가", "lemma": "가"},
             "wrong_lemma",
         ),
-        ({"status": "EMPTY", "selected": None, "lemma": None, "headword": None}, [], "no_text"),
         (
-            {"status": "UNUSABLE", "selected": None, "lemma": None, "headword": None},
-            ["천천히 가다 오다"],
-            "unresolved",
+            {
+                "surface": "드릴",
+                "selected": "드릴",
+                "headword": "드릴",
+                "lemma": "드릴",
+                "expected": "드리다",
+                "expected_lemma": "드리다",
+            },
+            "ambiguous_surface",
         ),
-        (
-            {"status": "NOT_FOUND", "selected": "가다", "lemma": None, "headword": None},
-            ["가다"],
-            "not_found",
-        ),
+        ({"status": "NOT_FOUND", "headword": None, "lemma": None}, "not_found"),
+        ({"status": "EMPTY", "selected": None, "recognized": []}, "no_text"),
+        ({"status": "UNUSABLE", "selected": None, "recognized": ["천천히 가다"]}, "unresolved"),
+        ({"status": "ERROR"}, "error"),
+        ({"error": "OSError"}, "error"),
+        ({"status": None}, "no_result"),
+        ({"status": None, "lookup_ids": []}, "no_hover"),
     ],
 )
 def test_a_hover_is_judged_by_the_first_stage_that_went_wrong(
-    result: dict[str, Any], recognized: list[str], verdict: str
+    fields: dict[str, Any], verdict: str
 ) -> None:
-    seen = _seen(**result)
-    seen.recognized = recognized
-    assert _judge(_placed(), seen, 0, timed_out=False)["verdict"] == verdict
+    assert classify(_record(**fields)) == verdict
 
 
-def test_a_refuse_target_passes_only_without_an_answer() -> None:
-    refuse = _placed(surface="Hanly", refuse=True, lemma=None, headword=None)
-    assert _judge(refuse, _seen(status="UNUSABLE"), 0, timed_out=False)["verdict"] == "refused"
-    answered = _seen(status="SUCCESS", selected="x", lemma="x", headword="x")
-    assert _judge(refuse, answered, 0, timed_out=False)["verdict"] == "false_answer"
+@pytest.mark.parametrize(
+    ("fields", "verdict"),
+    [
+        ({"status": "UNUSABLE"}, "refused"),
+        ({"status": "SUCCESS"}, "false_answer"),
+        ({"status": None}, "no_result"),
+        ({"status": None, "timed_out": True, "lookup_ids": []}, "no_hover"),
+        ({"status": "ERROR"}, "error"),
+        ({"error": "TransportClosed"}, "error"),
+    ],
+)
+def test_only_a_deliberate_non_answer_counts_as_a_refusal(
+    fields: dict[str, Any], verdict: str
+) -> None:
+    assert classify(_record(refuse=True, expected=None, expected_lemma=None, **fields)) == verdict
 
 
-def test_silence_is_never_a_pass() -> None:
-    nothing = _Observation()
-    assert _judge(_placed(), nothing, 0, timed_out=True)["verdict"] == "no_hover"
-    started = _seen()
-    assert _judge(_placed(), started, 0, timed_out=True)["verdict"] == "no_result"
+def test_unscored_hovers_stay_out_of_the_accuracy() -> None:
+    summary = summarize(["correct", "refused", "wrong_lemma", "obscured", "unverifiable_region"])
+    assert (summary["scored"], summary["unscored"], summary["passed"]) == (3, 2, 2)
+    assert summary["accuracy"] == pytest.approx(2 / 3)
 
 
 # -- corpus --------------------------------------------------------------------------------
@@ -174,26 +262,48 @@ def test_the_story_carries_every_minibook_target() -> None:
     assert any(t.refuse for t in targets)
 
 
-def test_words_are_sampled_deterministically_and_plain_hangul(tmp_path: Path) -> None:
-    database = tmp_path / "krdict.sqlite3"
-    with sqlite3.connect(database) as connection:
+def _dictionary(path: Path, forms: list[str], *, untranslated: tuple[str, ...] = ()) -> Path:
+    with sqlite3.connect(path) as connection:
         connection.executescript(
             """
             CREATE TABLE entries (id INTEGER PRIMARY KEY, vocabulary_level TEXT,
                                   part_of_speech TEXT);
             CREATE TABLE lemmas (id INTEGER PRIMARY KEY, entry_id INTEGER, written_form TEXT,
                                  is_primary INTEGER);
+            CREATE TABLE senses (id INTEGER PRIMARY KEY, entry_id INTEGER);
+            CREATE TABLE translations (id INTEGER PRIMARY KEY, sense_id INTEGER, language TEXT);
             """
         )
-        forms = ["가다", "오다", "먹다", "abc", "가", "책상", "학교", "친구", "사랑-하다"]
         for index, form in enumerate(forms, 1):
             connection.execute("INSERT INTO entries VALUES (?, '초급', '동사')", (index,))
             connection.execute("INSERT INTO lemmas VALUES (?, ?, ?, 1)", (index, index, form))
+            connection.execute("INSERT INTO senses VALUES (?, ?)", (index, index))
+            language = "ko" if form in untranslated else "en"
+            connection.execute(
+                "INSERT INTO translations VALUES (?, ?, ?)", (index, index, language)
+            )
+    return path
+
+
+def test_words_are_sampled_deterministically_and_plain_hangul(tmp_path: Path) -> None:
+    forms = ["가다", "오다", "먹다", "abc", "가", "책상", "학교", "친구", "사랑-하다"]
+    database = _dictionary(tmp_path / "krdict.sqlite3", forms)
 
     first = word_targets(database, 4, seed=3)
     assert [t.surface for t in first] == [t.surface for t in word_targets(database, 4, seed=3)]
     assert len(first) == 4
     assert all(t.surface == t.headword and all("가" <= c <= "힣" for c in t.surface) for t in first)
+
+
+def test_a_headword_with_no_english_translation_is_not_a_target(tmp_path: Path) -> None:
+    forms = ["가다", "오다", "먹다", "애기", "책상", "학교", "친구"]
+    full = word_targets(_dictionary(tmp_path / "a.sqlite3", forms), 7, seed=3)
+    without = word_targets(
+        _dictionary(tmp_path / "b.sqlite3", forms, untranslated=("애기",)), 7, seed=3
+    )
+
+    assert "애기" in [t.surface for t in full]
+    assert [t.surface for t in without] == [t.surface for t in full if t.surface != "애기"]
 
 
 # -- report --------------------------------------------------------------------------------
@@ -267,7 +377,14 @@ def _write_session(run: Path) -> None:
             "tour_result",
             target="t1",
             verdict="correct",
+            rule="strict-headword-v2",
             expected="가다",
+            expected_lemma="가다",
+            surface="가다",
+            cursor=1,
+            status="SUCCESS",
+            selected="가다",
+            lemma="가다",
             headword="가다",
             confidence=0.9,
             font_px=22,
@@ -314,6 +431,36 @@ def test_a_hover_is_rebuilt_across_both_processes(tmp_path: Path) -> None:
     assert "lookup helpers" in model["processes"]["summary"]
     assert model["tour"]["accuracy"] == 1.0
     assert any("OCR" in finding["title"] for finding in model["findings"])
+
+
+def test_a_comparison_rescores_both_runs_and_leaves_the_baseline_untouched(
+    tmp_path: Path,
+) -> None:
+    _write_session(tmp_path / "before")
+    _write_session(tmp_path / "after")
+    events = tmp_path / "after" / "events.jsonl"
+    rows = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()]
+    rows[-1].update(
+        headword="갈다",
+        lemma="갈다",
+        selected="가다",
+        surface="가다",
+        status="SUCCESS",
+        verdict="wrong_lemma",
+    )
+    events.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    before_files = sorted(path.name for path in (tmp_path / "before").iterdir())
+
+    build_report(tmp_path / "after", baseline=tmp_path / "before")
+
+    comparison = json.loads((tmp_path / "after" / "report.json").read_text(encoding="utf-8"))[
+        "comparison"
+    ]
+    assert comparison["matched"] == 1
+    assert [(c["before"], c["after"]) for c in comparison["changed"]] == [
+        ("correct", "wrong_lemma")
+    ]
+    assert sorted(path.name for path in (tmp_path / "before").iterdir()) == before_files
 
 
 def test_the_report_cannot_be_broken_out_of_by_recorded_text(tmp_path: Path) -> None:

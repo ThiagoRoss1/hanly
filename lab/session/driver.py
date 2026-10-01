@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from .ownership import owner_at
 from .recorder import LabRecorder
+from .scoring import RULE, classify
 
 if TYPE_CHECKING:
     from .page import Placed, TourPage
@@ -29,28 +30,50 @@ if TYPE_CHECKING:
 _INTERVENTION_PX = 24
 _GLIDE_STEPS = 8
 _GLIDE_STEP_S = 0.006
-#: Half the capture region the desktop takes around the pointer, checked at its corners.
+#: Half the capture region the desktop takes around the pointer (its default 200x100).
 _ROI_HALF = (100, 50)
+#: Probe grid over that region, as fractions of its half-size from the centre.
+_PROBES = tuple((fx, fy) for fx in (-1.0, -0.5, 0.0, 0.5, 1.0) for fy in (-1.0, 0.0, 1.0))
+#: Hover events that carry an ID before it fires; they are not foreign work.
+_PRE_FIRE = frozenset({"hover_mouse_opportunity", "hover_invalidation", "hover_cancellation"})
 
 
 @dataclass
-class _Observation:
-    """What the trace said about one target while the pointer rested on it."""
+class _Lookup:
+    """What the trace said about one lookup a bound hover submitted."""
 
-    hover_ids: set[int] = field(default_factory=set)
-    lookup_ids: set[int] = field(default_factory=set)
-    events: dict[str, int] = field(default_factory=dict)
+    status: str | None = None
     result: dict[str, Any] | None = None
-    popup_status: str | None = None
-    popup_ns: int | None = None
-    delivered_ns: int | None = None
+    error: str | None = None
     acquisition: str | None = None
     ocr_ms: float | None = None
     total_ms: float | None = None
     queries: list[tuple[str, bool]] = field(default_factory=list)
     recognized: list[str] = field(default_factory=list)
     confidence: float | None = None
+
+
+@dataclass
+class _Observation:
+    """One target's hover, bound by ID so a stale or neighbouring lookup cannot answer it.
+
+    A hover ID binds when it fires after the pointer arrived; a lookup ID binds
+    when one of those hovers submits it. Everything else is counted and ignored.
+    """
+
+    hover_ids: set[int] = field(default_factory=set)
+    lookups: dict[int, _Lookup] = field(default_factory=dict)
+    roi: tuple[int, int] | None = None
+    ignored: int = 0
+    events: dict[str, int] = field(default_factory=dict)
+    popup_status: str | None = None
+    popup_ns: int | None = None
+    delivered_ns: int | None = None
     done: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def latest(self) -> _Lookup | None:
+        return self.lookups[max(self.lookups)] if self.lookups else None
 
 
 class TourDriver:
@@ -73,9 +96,10 @@ class TourDriver:
         self._lock = threading.Lock()
         self._active: _Observation | None = None
         self._ready = threading.Event()
-        self._engine_ready = threading.Event()
         self._popup_hidden = threading.Event()
         self._expected: tuple[int, int] | None = None
+        #: Captured images are in device pixels; the probe grid is in points.
+        self._scale = float(page.devicePixelRatioF() or 1.0)
         self.stopped_by_user = False
         self.completed = 0
         recorder.subscribe(self._observe)
@@ -118,34 +142,20 @@ class TourDriver:
         self._recorder.lab("tour_finished", completed=self.completed)
 
     def _hover(self, placed: Placed, page: int, first: bool) -> None:
-        target = placed.target
-        observation = _Observation()
         x, y = self._page.to_global(placed.point)
         foreign = self._foreign_windows(x, y)
         if foreign:
             # Another application covers the page here: reading it would retain
             # somebody else's text. Re-raise the page and skip this target.
             self._page.show_page(page)
-            self.completed += 1
-            self._recorder.lab(
-                "tour_result",
-                target=target.id,
-                source=target.source,
-                verdict="obscured",
-                surface=target.surface,
-                expected=target.headword,
-                refuse=target.refuse,
-                font=placed.font_family,
-                font_px=placed.font_px,
-                theme=placed.theme,
-                foreign_points=foreign,
-            )
+            self._finish(placed, _Observation(), 0, unscored="obscured", foreign=foreign)
             return
         self._glide(x, y)
         arrived = time.perf_counter_ns()
+        observation = _Observation()
         with self._lock:
             self._active = observation
-        self._recorder.evidence_open = self._recorder.retain_evidence
+        target = placed.target
         self._recorder.lab(
             "tour_target",
             target=target.id,
@@ -162,14 +172,46 @@ class TourDriver:
         # A popup is only part of the answer; give a late popup event a moment.
         if observation.popup_status is None and observation.delivered_ns is not None:
             time.sleep(0.15)
-        self._recorder.evidence_open = False
         with self._lock:
             self._active = None
-        self.completed += 1
-        self._recorder.lab(
-            "tour_result",
-            **_judge(placed, observation, arrived, timed_out=not observation.done.is_set()),
+
+        # Ownership is sampled again after the answer. The probes cover a grid
+        # of the region at two moments, not every pixel or the time between.
+        unscored = None
+        foreign = self._foreign_windows(x, y)
+        if foreign:
+            unscored = "obscured_during_capture"
+        elif observation.roi is not None and _exceeds_probe(observation.roi, self._scale):
+            unscored = "unverifiable_region"
+        self._finish(
+            placed,
+            observation,
+            arrived,
+            unscored=unscored,
+            foreign=foreign,
+            timed_out=not observation.done.is_set(),
         )
+
+    def _finish(
+        self,
+        placed: Placed,
+        seen: _Observation,
+        arrived_ns: int,
+        *,
+        unscored: str | None,
+        foreign: list[str],
+        timed_out: bool = False,
+    ) -> None:
+        self.completed += 1
+        record = outcome_record(
+            placed, seen, arrived_ns, timed_out=timed_out, keep_text=unscored is None
+        )
+        if unscored is not None:
+            record["unscored"] = unscored
+            record["foreign_points"] = foreign
+        record["verdict"] = classify(record)
+        record["rule"] = RULE
+        self._recorder.lab("tour_result", **record)
 
     # -- observing the desktop's own trace ---------------------------------------
 
@@ -180,89 +222,39 @@ class TourDriver:
             self._popup_hidden.set()
         with self._lock:
             observation = self._active
-        if observation is None:
-            return
-        observation.events[name] = observation.events.get(name, 0) + 1
-        hover_id = fields.get("hover_request_id")
-        lookup_id = fields.get("lookup_request_id")
-        if isinstance(hover_id, int):
-            observation.hover_ids.add(hover_id)
-        if isinstance(lookup_id, int):
-            observation.lookup_ids.add(lookup_id)
-        if name == "lookup_acquisition":
-            observation.acquisition = str(fields.get("acquisition_source"))
-        elif name == "lookup_stage_completed":
-            self._stage(observation, fields)
-        elif name == "lookup_current_delivered":
-            observation.delivered_ns = observed_ns
-        elif name in {"popup_visible", "popup_suppressed"}:
-            observation.popup_status = str(fields.get("result_status") or name)
-            observation.popup_ns = observed_ns
-            observation.done.set()
-        elif name in {"lookup_error", "lookup_stage_error", "hover_capture_error"}:
-            observation.done.set()
-
-    @staticmethod
-    def _stage(observation: _Observation, fields: Mapping[str, Any]) -> None:
-        stage = fields.get("stage")
-        duration = fields.get("duration_ns")
-        if stage == "ocr" and isinstance(duration, int):
-            observation.ocr_ms = duration / 1e6
-            observation.acquisition = observation.acquisition or "ocr"
-            observation.confidence = _float(fields.get("confidence_mean"))
-            evidence = _decode(fields.get("ocr_evidence"))
-            if evidence:
-                observation.recognized = [str(r.get("text")) for r in evidence.get("regions", [])]
-        elif stage == "dictionary":
-            evidence = _decode(fields.get("dictionary_evidence"))
-            if evidence:
-                observation.queries.append(
-                    (str(evidence.get("query")), bool(evidence.get("found")))
-                )
-        elif stage == "total_pipeline":
-            if isinstance(duration, int):
-                observation.total_ms = duration / 1e6
-            observation.result = _decode(fields.get("result_evidence"))
+        if observation is not None:
+            observe(observation, name, observed_ns, fields)
 
     @staticmethod
     def _foreign_windows(x: int, y: int) -> list[str]:
-        """Probe points of the capture region another process covers, and by whom."""
+        """Probe points of the capture region not owned by this process, and by whom.
+
+        An unknown owner counts as foreign: the check fails closed.
+        """
 
         own = os.getpid()
         children = {child.pid: child.name for child in multiprocessing.active_children()}
         half_w, half_h = _ROI_HALF
-        probes = {
-            "center": (x, y),
-            "top_left": (x - half_w, y - half_h),
-            "top_right": (x + half_w - 1, y - half_h),
-            "bottom_left": (x - half_w, y + half_h - 1),
-            "bottom_right": (x + half_w - 1, y + half_h - 1),
-        }
         foreign = []
-        for name, (px, py) in probes.items():
+        for fx, fy in _PROBES:
+            px = min(x + fx * half_w, x + half_w - 1)
+            py = min(y + fy * half_h, y + half_h - 1)
             owner = owner_at(px, py)
             if owner == own:
                 continue
             # The owner's identity stays coarse: which Hanly child, or simply "other".
             who = "none" if owner is None else children.get(owner, "other")
-            foreign.append(f"{name}:{who}")
+            foreign.append(f"{fx:+.1f},{fy:+.1f}:{who}")
         return foreign
 
     # -- the real input devices ---------------------------------------------------
 
     def _press_capture_hotkey(self) -> None:
         parts = [part.strip().lower() for part in self._capture_hotkey.split("+")]
+        aliases = {"control": "ctrl", "option": "alt", "command": "cmd"}
         keys: list[Any] = []
         for part in parts:
-            named = {
-                "ctrl": "ctrl",
-                "control": "ctrl",
-                "shift": "shift",
-                "alt": "alt",
-                "option": "alt",
-                "cmd": "cmd",
-                "command": "cmd",
-            }.get(part, part)
+            named = aliases.get(part, part)
             keys.append(getattr(self._keys, named, None) or named)
         for key in keys:
             self._keyboard.press(key)
@@ -294,84 +286,126 @@ class TourDriver:
         return abs(x - self._expected[0]) + abs(y - self._expected[1]) > _INTERVENTION_PX
 
 
-def _judge(
-    placed: Placed, seen: _Observation, arrived_ns: int, *, timed_out: bool
+def observe(
+    observation: _Observation, name: str, observed_ns: int, fields: Mapping[str, Any]
+) -> None:
+    """Fold one trace event into the hover it belongs to, or count it as foreign."""
+
+    hover_id = fields.get("hover_request_id")
+    lookup_id = fields.get("lookup_request_id")
+    if isinstance(hover_id, int):
+        if name == "hover_stable_fire":
+            observation.hover_ids.add(hover_id)
+        if hover_id not in observation.hover_ids:
+            if name not in _PRE_FIRE:
+                observation.ignored += 1
+            return
+        if isinstance(lookup_id, int):
+            observation.lookups.setdefault(lookup_id, _Lookup())
+    lookup = observation.lookups.get(lookup_id) if isinstance(lookup_id, int) else None
+    if isinstance(lookup_id, int) and lookup is None:
+        # A lookup none of this target's hovers submitted: stale earlier work.
+        observation.ignored += 1
+        return
+    if lookup_id is None and hover_id is None:
+        return
+    observation.events[name] = observation.events.get(name, 0) + 1
+
+    if name == "hover_capture_completed":
+        width, height = fields.get("roi_width"), fields.get("roi_height")
+        if isinstance(width, int) and isinstance(height, int):
+            observation.roi = (width, height)
+    elif name == "popup_visible" or name == "popup_suppressed":
+        observation.popup_status = str(fields.get("result_status") or name)
+        observation.popup_ns = observed_ns
+        observation.done.set()
+    elif name == "lookup_current_delivered":
+        observation.delivered_ns = observed_ns
+    if lookup is None:
+        return
+    if name == "lookup_acquisition":
+        lookup.acquisition = str(fields.get("acquisition_source"))
+    elif name == "lookup_stage_completed":
+        _stage(lookup, fields)
+    elif name in {"lookup_stage_error", "lookup_error"}:
+        lookup.error = str(fields.get("error_type") or name)
+        observation.done.set()
+
+
+def _stage(lookup: _Lookup, fields: Mapping[str, Any]) -> None:
+    stage = fields.get("stage")
+    duration = fields.get("duration_ns")
+    if stage == "ocr" and isinstance(duration, int):
+        lookup.ocr_ms = duration / 1e6
+        lookup.acquisition = lookup.acquisition or "ocr"
+        lookup.confidence = _float(fields.get("confidence_mean"))
+        evidence = _decode(fields.get("ocr_evidence"))
+        if evidence:
+            lookup.recognized = [str(r.get("text")) for r in evidence.get("regions", [])]
+    elif stage == "dictionary":
+        evidence = _decode(fields.get("dictionary_evidence"))
+        if evidence:
+            lookup.queries.append((str(evidence.get("query")), bool(evidence.get("found"))))
+    elif stage == "total_pipeline":
+        if isinstance(duration, int):
+            lookup.total_ms = duration / 1e6
+        outcome = fields.get("outcome")
+        lookup.status = str(outcome) if outcome else None
+        lookup.result = _decode(fields.get("result_evidence"))
+
+
+def outcome_record(
+    placed: Placed, seen: _Observation, arrived_ns: int, *, timed_out: bool, keep_text: bool
 ) -> dict[str, Any]:
-    """Classify one hover by the first stage that went wrong."""
+    """The durable outcome of one hover; recognized text only when ``keep_text``."""
 
     target = placed.target
-    result = seen.result or {}
-    status = result.get("status")
-    selected = result.get("selected")
-    headword = result.get("headword")
-    lemma = result.get("lemma")
-    recognized = " ".join(seen.recognized)
-
-    if target.refuse:
-        verdict = "refused" if status != "SUCCESS" else "false_answer"
-    elif not seen.lookup_ids and not seen.hover_ids:
-        verdict = "no_hover"
-    elif not result:
-        verdict = "no_result" if timed_out else "no_lookup"
-    elif status == "SUCCESS" and target.headword in (headword, lemma):
-        verdict = "correct"
-    elif not selected and not recognized.strip():
-        verdict = "no_text"
-    elif not selected:
-        # Text was recognized, but no word under the pointer was chosen from it.
-        verdict = "unresolved" if target.surface in recognized else "misread"
-    elif selected and _core(selected) not in (_core(target.surface), _hangul_run(target)):
-        # Recognition misread the word, or resolution picked a neighbour.
-        verdict = "misread" if target.surface not in recognized else "wrong_word"
-    elif lemma != target.lemma and headword != target.headword:
-        verdict = "wrong_lemma" if status == "SUCCESS" else "not_found"
-    else:
-        verdict = "not_found"
-
-    return {
+    lookup = seen.latest
+    result = (lookup.result if lookup is not None else None) or {}
+    record: dict[str, Any] = {
         "target": target.id,
         "source": target.source,
         "surface": target.surface,
+        "cursor": target.cursor,
         "expected": target.headword,
+        "expected_lemma": target.lemma,
         "refuse": target.refuse,
         "kinds": list(target.kinds),
         "level": target.level,
         "font": placed.font_family,
         "font_px": placed.font_px,
         "theme": placed.theme,
-        "verdict": verdict,
-        "status": status,
-        "selected": selected,
-        "lemma": lemma,
-        "headword": headword,
-        "recognized": seen.recognized,
-        "queries": seen.queries,
-        "confidence": seen.confidence,
-        "acquisition": seen.acquisition,
-        "ocr_ms": seen.ocr_ms,
-        "pipeline_ms": seen.total_ms,
+        "status": None if lookup is None else lookup.status,
+        "error": None if lookup is None else lookup.error,
+        "acquisition": None if lookup is None else lookup.acquisition,
+        "ocr_ms": None if lookup is None else lookup.ocr_ms,
+        "pipeline_ms": None if lookup is None else lookup.total_ms,
+        "confidence": None if lookup is None else lookup.confidence,
         "popup": seen.popup_status,
         "hover_to_popup_ms": None if seen.popup_ns is None else (seen.popup_ns - arrived_ns) / 1e6,
         "timed_out": timed_out,
         "hover_ids": sorted(seen.hover_ids),
-        "lookup_ids": sorted(seen.lookup_ids),
+        "lookup_ids": sorted(seen.lookups),
+        "ignored_foreign_events": seen.ignored,
         "events": seen.events,
     }
+    if keep_text and lookup is not None:
+        # Lab-authored text, read from pixels the lab sampled as its own.
+        record.update(
+            selected=result.get("selected"),
+            lemma=result.get("lemma"),
+            headword=result.get("headword"),
+            recognized=lookup.recognized,
+            queries=lookup.queries,
+        )
+    return record
 
 
-def _core(text: str) -> str:
-    return text.strip().strip("\"'“”‘’.,!?()[]")
+def _exceeds_probe(roi: tuple[int, int], scale: float = 1.0) -> bool:
+    """A captured region larger than the probed one cannot be attributed."""
 
-
-def _hangul_run(target: Any) -> str:
-    text, index = target.surface, target.cursor
-    start = index
-    while start > 0 and "가" <= text[start - 1] <= "힣":
-        start -= 1
-    end = index + 1
-    while end < len(text) and "가" <= text[end] <= "힣":
-        end += 1
-    return text[start:end]
+    width, height = roi[0] / scale, roi[1] / scale
+    return width > 2 * _ROI_HALF[0] or height > 2 * _ROI_HALF[1]
 
 
 def _decode(value: object) -> dict[str, Any] | None:
@@ -388,4 +422,4 @@ def _float(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-__all__ = ["TourDriver"]
+__all__ = ["TourDriver", "observe", "outcome_record"]

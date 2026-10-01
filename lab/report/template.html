@@ -201,7 +201,10 @@ const VERD = {
   misread: ["Misread by OCR", "var(--critical)"], no_text: ["OCR read nothing", "var(--critical)"],
   unresolved: ["Read, but no word chosen", "var(--serious)"], wrong_word: ["Wrong word selected", "var(--critical)"],
   false_answer: ["Answered a refuse target", "var(--critical)"], no_result: ["No result (timed out)", "var(--serious)"],
-  no_lookup: ["No lookup", "var(--serious)"], no_hover: ["Hover never fired", "var(--serious)"], obscured: ["Skipped: covered", "var(--neutral)"],
+  no_hover: ["Hover never fired", "var(--serious)"], error: ["Processing error", "var(--critical)"],
+  ambiguous_surface: ["Other valid reading (no context)", "var(--warning)"],
+  obscured: ["Not scored: covered", "var(--neutral)"], obscured_during_capture: ["Not scored: covered during capture", "var(--neutral)"],
+  unverifiable_region: ["Not scored: region not attributable", "var(--neutral)"],
 };
 const LEVEL = { warning: ["Warning", "var(--warning)", "!"], opportunity: ["Opportunity", "var(--s1)", "↗"], insight: ["Insight", "var(--neutral)", "i"] };
 const tip = $("#tip");
@@ -448,7 +451,8 @@ function selectEpisode(e) {
 (function () {
   const body = $("#tourbody"); const T = M.tour;
   if (!T) { body.append(el("p", { class: "lede" }, "This was a person-driven session; there is no ground truth to score. Run `python -m lab tour` to have the lab hover lab-authored Korean and score every answer.")); return; }
-  body.append(el("p", { class: "lede" }, `The lab hovered ${T.total} targets whose answers are known in advance. ${T.scored} were scored; a hover is skipped (never read) when another window covers the page. Accuracy ${pct(T.accuracy)}; time from the pointer arriving to the popup: median ${ms(T.popup_ms.p50)}, p90 ${ms(T.popup_ms.p90)}.`));
+  body.append(el("p", { class: "lede" }, `The lab hovered ${T.total} targets whose answers are known in advance: ${T.scored} scored, ${T.unscored} not scored because ownership of the page could not be shown. Score ${pct(T.accuracy)} under rule ${T.rule}: the popup's dictionary form equals the hand-set expected form, or a must-refuse target was deliberately not answered. This is a score on the lab's controlled corpus, not general OCR or translation accuracy, and not a judgment of every definition. Pointer arriving to popup: median ${ms(T.popup_ms.p50)}, p90 ${ms(T.popup_ms.p90)}.`));
+  if (T.rescored_changes.length) body.append(el("p", { class: "lede" }, `${T.rescored_changes.length} verdicts were recorded under ${T.recorded_rules.join(", ")} and differ under ${T.rule}: ${T.rescored_changes.map((c) => `${c.expected ?? c.target} ${c.recorded_verdict}→${c.verdict}`).join(", ")}.`));
   const lg = el("div", { class: "legend" }); const vb = el("div", { class: "mini", style: "width:100%;height:22px" });
   for (const [k, n] of Object.entries(T.verdicts)) { const [label, color] = VERD[k] || [k, "var(--neutral)"]; const i = el("i"); i.style.width = (100 * n / T.total) + "%"; i.style.background = color; hoverable(i, `<b>${esc(label)}</b>: ${n}`); vb.append(i); const s = el("span"); const sw = el("i", { class: "sw" }); sw.style.background = color; s.append(sw, document.createTextNode(`${label} ${n}`)); lg.append(s); }
   body.append(vb, lg);

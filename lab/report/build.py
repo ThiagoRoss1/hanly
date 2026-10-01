@@ -7,14 +7,17 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .model import SEGMENTS, build_model
+from .model import SEGMENTS, build_model, compare_tours
 
 _TEMPLATE = Path(__file__).with_name("template.html")
 
 
-def build_report(run_dir: Path) -> Path:
+def build_report(run_dir: Path, *, baseline: Path | None = None) -> Path:
+    """Write the run's reports; ``baseline`` adds a same-rule before/after comparison."""
+
     run_dir = Path(run_dir)
     model = build_model(run_dir)
+    model["comparison"] = None if baseline is None else compare_tours(Path(baseline), model)
     model["run"] = run_dir.name
     model["segments"] = [list(pair) for pair in SEGMENTS]
     model["map"] = system_map(model)
@@ -123,6 +126,10 @@ def system_map(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1%}"
+
+
 def _stage_n(stages: dict[str, Any], name: str) -> int:
     row = stages.get(name)
     return 0 if row is None else int(row["n"])
@@ -178,9 +185,33 @@ def summary_markdown(model: dict[str, Any]) -> str:
             f"| {role} | {row['rss_mib']} | {row['final_rss_mib']} | "
             f"{row['mean_cpu']} | {row['threads']} |"
         )
+    comparison = model.get("comparison")
+    if comparison:
+        before, after = comparison["before"], comparison["after"]
+        lines += [
+            "",
+            f"## Compared with {comparison['baseline']} (both under {comparison['rule']})",
+            "",
+            f"- before: {before['passed']}/{before['scored']} scored "
+            f"({_pct(before['accuracy'])}), {before['unscored']} unscored",
+            f"- after: {after['passed']}/{after['scored']} scored "
+            f"({_pct(after['accuracy'])}), {after['unscored']} unscored",
+            f"- matched targets: {comparison['matched']}  only before: "
+            f"{comparison['only_before']}  only after: {comparison['only_after']}",
+            f"- popup median: {comparison['before_popup_ms'].get('p50')} -> "
+            f"{comparison['after_popup_ms'].get('p50')} ms",
+            "",
+            "| target | expected | before | after | answer before | answer after |",
+            "|---|---|---|---|---|---|",
+        ]
+        for row in comparison["changed"]:
+            lines.append(
+                f"| {row['target']} | {row['expected']} | {row['before']} | {row['after']} | "
+                f"{row['before_answer']} | {row['after_answer']} |"
+            )
     tour = model.get("tour")
     if tour:
-        accuracy = "n/a" if tour["accuracy"] is None else f"{tour['accuracy']:.1%}"
+        accuracy = f"{_pct(tour['accuracy'])} under {tour['rule']}"
         lines += [
             "",
             "## Tour",
