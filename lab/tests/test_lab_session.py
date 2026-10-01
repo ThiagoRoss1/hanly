@@ -246,6 +246,23 @@ def test_only_a_deliberate_non_answer_counts_as_a_refusal(
     assert classify(_record(refuse=True, expected=None, expected_lemma=None, **fields)) == verdict
 
 
+@pytest.mark.parametrize(
+    ("fields", "verdict"),
+    [
+        ({"timed_out": True}, "timed_out"),
+        ({"timed_out": False}, "correct"),
+        ({"refuse": True, "expected": None, "status": "UNUSABLE", "timed_out": True}, "timed_out"),
+        ({"refuse": True, "expected": None, "status": "UNUSABLE", "timed_out": False}, "refused"),
+        ({"status": None, "timed_out": True}, "timed_out"),
+        ({"error": "OSError", "timed_out": True}, "error"),
+    ],
+)
+def test_a_hover_the_app_never_finished_cannot_pass(fields: dict[str, Any], verdict: str) -> None:
+    """A result without the app's own presentation decision is partial, not an answer."""
+
+    assert classify(_record(**fields)) == verdict
+
+
 def test_unscored_hovers_stay_out_of_the_accuracy() -> None:
     summary = summarize(["correct", "refused", "wrong_lemma", "obscured", "unverifiable_region"])
     assert (summary["scored"], summary["unscored"], summary["passed"]) == (3, 2, 2)

@@ -17,7 +17,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 #: Bumped whenever a verdict could change for the same recorded outcome.
-RULE = "strict-headword-v2"
+#: v3: a hover the app never finished (no presentation decision before the
+#: driver's deadline) is ``timed_out``, whatever partial result it carried.
+RULE = "strict-headword-v3"
 
 PASS = frozenset({"correct", "refused"})
 FAIL = frozenset(
@@ -31,6 +33,7 @@ FAIL = frozenset(
         "wrong_word",
         "no_text",
         "error",
+        "timed_out",
         "no_result",
         "no_hover",
     }
@@ -67,6 +70,12 @@ def classify(record: Mapping[str, Any]) -> str:
 
     if record.get("error"):
         return "error"
+    if not has_result and not record.get("lookup_ids"):
+        return "no_hover"
+    if record.get("timed_out"):
+        # Completion is the app's own popup decision for the bound lookup; a
+        # pipeline result that never reached it is partial, not an answer.
+        return "timed_out"
     if not has_result:
         # A timeout or a missing answer is never a refusal or a pass.
         return "no_result" if record.get("lookup_ids") else "no_hover"
