@@ -161,6 +161,17 @@ SCENARIOS = (
         timeout_seconds=1260,
     ),
     Scenario(
+        "BUNDLE-LAUNCH-IDENTITY",
+        "packaging",
+        "Normal frozen launch, close, reactivation and tray reopen",
+        ("tests/packaged/macos/test_frozen_identity.py",),
+        "real_packaged_launch",
+        "Only the shell is a Foreground app; children never are; all exit on quit.",
+        platforms=("darwin",),
+        needs_bundle=True,
+        timeout_seconds=600,
+    ),
+    Scenario(
         "WINDOWS-UPDATE",
         "updater",
         "Complete Windows application update",
@@ -175,7 +186,8 @@ SCENARIOS = (
         "Real desktop hover and OCR fallback",
         (),
         "human_operated",
-        "Run the existing live-hover microscope and explicitly export evidence.",
+        "`python -m lab tour` drives real hovers over lab pages; private screens "
+        "need a person and live-hover's explicit Export.",
     ),
     Scenario(
         "RESOURCE-DELIVERY",
@@ -193,5 +205,5 @@ def select_scenarios(ids: tuple[str, ...]) -> tuple[Scenario, ...]:
 
     catalog = {item.id: item for item in SCENARIOS}
     if not ids or len(set(ids)) != len(ids) or any(item not in catalog for item in ids):
-        raise ValueError("select one or more unique scenario IDs from app-lab list")
+        raise ValueError("select one or more unique scenario IDs from `python -m lab check list`")
     return tuple(catalog[item] for item in ids)
