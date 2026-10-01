@@ -270,3 +270,14 @@ def test_a_listed_word_is_found_without_its_particles(
     """The stem lost 님 or a compound half to morphology; the word is still listed."""
 
     assert _primary(language, surface, index)[0] == headword
+
+
+@pytest.mark.parametrize(
+    ("surface", "headword"), [("누군가는", "누구"), ("뭔가", "뭐"), ("무언가를", "무어")]
+)
+def test_a_contraction_answers_its_real_stem_not_an_invented_join(
+    language: LanguagePipeline, surface: str, headword: str
+) -> None:
+    """누군가 itself is not in KRDICT; joining across its overlap made 누이다."""
+
+    assert _primary(language, surface, 0)[0] == headword

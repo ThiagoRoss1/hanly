@@ -329,3 +329,30 @@ def test_a_particle_after_a_second_word_is_not_stripped_across_the_space() -> No
     LanguagePipeline(_Morphology(analysis), dictionary).lookup(TextSelection("책 학교에", 0))
 
     assert "책 학교" not in dictionary.queries
+
+
+def test_overlapping_units_are_never_joined_into_a_whole_form() -> None:
+    """`누군가는`: 누구 spans 누군, 이다 starts inside it; 누+이다 is a different word."""
+
+    analysis = MorphologyAnalysis(
+        tokens=(
+            TokenAnalysis(token="누구", lemma="누구", part_of_speech="NP", start=0, length=2),
+            TokenAnalysis(token="이", lemma="이다", part_of_speech="VCP", start=1, length=1),
+            TokenAnalysis(token="ᆫ가", lemma="ᆫ가", part_of_speech="EF", start=1, length=2),
+            TokenAnalysis(token="는", lemma="는", part_of_speech="JX", start=3, length=1),
+        ),
+        candidates=(
+            LexicalCandidate(lemma="누구", start=0, end=2, part_of_speech="NP"),
+            LexicalCandidate(lemma="이다", start=1, end=4, part_of_speech="VCP"),
+        ),
+    )
+    dictionary = _Dictionary(
+        {"누이다": _entry("누이다", "lay down"), "누구": _entry("누구", "who")}
+    )
+
+    result = LanguagePipeline(_Morphology(analysis), dictionary).lookup(
+        TextSelection("누군가는", 0)
+    )
+
+    assert result.entries[0].headword == "누구"
+    assert "누이다" not in dictionary.queries

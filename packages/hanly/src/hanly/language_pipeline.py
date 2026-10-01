@@ -551,6 +551,10 @@ def _complete_form(
     first, last = candidates[0], candidates[-1]
     if last.start <= first.start or last.end > len(text):
         return None
+    # Overlapping units are a contraction (누군가 = 누구 + 이다 + ㄴ가). Their
+    # surfaces do not concatenate, so a join would cut a unit and invent a word.
+    if any(later.start < earlier.end for earlier, later in zip(candidates, candidates[1:])):
+        return None
 
     span = text[first.start : last.end]
     # Whitespace means these are separate words that happen to share a
