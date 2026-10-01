@@ -26,8 +26,11 @@ repository root.
 ```bash
 python -m lab                 # run Hanly; you use it, quit it, the report opens
 python -m lab tour            # the lab uses Hanly itself and scores every answer
-python -m lab report          # rebuild the newest run's report (or pass a run dir)
+python -m lab report          # reopen the newest report
 ```
+
+Everything else is optional. `python -m lab report --list` shows recent runs,
+and `python -m lab report <run-name>` reopens one.
 
 ### `python -m lab` (`run`) — you drive
 
@@ -35,7 +38,8 @@ Starts the real desktop through `run_desktop`, the same composition `hanly`
 uses, with the lab's recorder as its trace sink. The lookup engine and the
 Control Center are still the real spawned children. Use Hanly normally; quit
 from the tray or with Ctrl+C, or pass `--duration SECONDS`. `--hud` also draws
-the on-screen HUD. No recognized text is retained in this mode.
+the on-screen HUD. Production tracing sends no recognized text to a sink that
+does not ask for it, and this mode does not ask.
 
 ### `python -m lab tour` — the lab drives
 
@@ -45,18 +49,55 @@ how that hover ended. Every target has a known answer:
 
 - the **story** (`fixtures/minibook`): prose with hand-set dictionary forms,
   conjugations, particles, and Latin words that must be refused;
-- **words**: KRDICT headwords sampled with `--seed`, as many as `--words N`
-  (thousands work), painted at `--word-sizes` across three page themes and the
+- **words**: KRDICT headwords with an English translation (the provider answers
+  in English, so an entry without one has nothing to expect), sampled with
+  seed 7 and painted at 16, 22, 30 and 40 px across three themes and the
   installed Korean typefaces.
 
-Text is painted, so each hover exercises capture and OCR. **Move the mouse
-yourself to stop the tour.** It needs Screen Recording and Accessibility (to
-move the pointer) granted to the terminal, and a bound capture shortcut.
+The plain command is the **standard tour**: the whole story and 300 words, about
+three and a half minutes. Tours with the same settings are comparable;
+`--baseline <earlier-run>` adds a before/after table to the new report.
+`--quick` is a 40-second smoke run (24 words, no story); `--words`,
+`--story-sizes`, `--word-sizes` and `--seed` change the corpus, which makes a run
+incomparable with the standard one.
 
-A tour retains recognized text so it can say *why* a hover failed. That is only
-safe because every pixel it reads is the lab's own: before each hover it asks
-the window server who owns the capture region, skips (never reads) a target
-another window covers, and keeps evidence only inside that verified window.
+Text is painted, so each hover exercises capture and OCR. **Move the mouse
+yourself to stop the tour.** It checks before starting that Screen Recording and
+Accessibility (to move the pointer) are granted to the terminal and that the
+capture shortcut is bound, and says what to change if not.
+
+#### Scoring
+
+Rule `strict-headword-v2` (`session/scoring.py`): a hover is **correct** when the
+lookup bound to that hover succeeded and the dictionary form it answered with
+equals the hand-set expected form; a must-refuse target is **refused** only when
+its lookup ran and deliberately declined. A timeout, a processing error or a
+missing result is never a refusal or a pass. `ambiguous_surface` marks an answer
+that is a valid reading of the exact surface without sentence context (드릴);
+it counts as a failure but is labelled apart. Hovers the lab could not attribute
+to its own page are **not scored** and are reported, never folded into either
+side. The score is on this controlled corpus; it is not general OCR or
+translation accuracy, and it does not judge every definition shown.
+
+A report always re-scores under the current rule and shows any verdict that
+differs from the one recorded at the time.
+
+#### What a tour may keep
+
+A tour keeps the recognized text of its own pages so it can say *why* a hover
+failed. What the lab guarantees, and what it does not:
+
+- `events.jsonl` never contains a recognized-text or OCR-geometry field, in any
+  mode. Only the tour driver sees that evidence, in memory.
+- An answer is bound to the hover that fired after the pointer arrived and the
+  lookup that hover submitted; a stale or neighbouring lookup cannot answer it.
+- Before the hover and again after the answer, the driver asks the window
+  server who owns a grid of points over the capture region. Any foreign or
+  unknown owner, or a captured region larger than the probed one, discards the
+  text and marks the hover not scored.
+- That is a sampled check at two moments, not proof of every pixel or of the
+  time in between. It fails closed when attribution is impossible, which on
+  Linux is always.
 
 ### What a run records and reports
 
@@ -66,19 +107,19 @@ profile; the runtime configuration, dictionary and models are reused read-only):
 
 | File | |
 |---|---|
-| `events.jsonl` | every trace event from the shell and the lookup child, startup phases, sanitized diagnostics, and the lab's own driver events |
+| `events.jsonl` | every trace event from the shell and the lookup child (content fields removed), startup phases, sanitized diagnostics, and the lab's own driver events, including each tour verdict |
 | `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms; roles are exact, not inferred |
 | `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
 | `report.json`, `summary.md` | the same model for scripts and agents |
 
-The report rebuilds from the recorded files at any time. Its findings name the
-code where each cost lives; they are derived from the run, not hand-written.
+The report rebuilds from the recorded files at any time and never writes beside
+a baseline it compares with. Its findings name the code where each cost lives;
+they are derived from the run, not hand-written.
 
 Measurement limits: child timestamps share the shell's clock (`perf_counter`
 is system-wide on every supported OS). RSS is resident, not private, memory and
 is sampled, so short spikes can be missed. The shell's numbers include the lab
-recorder hosted in the same process. A tour on Linux cannot verify window
-ownership and therefore skips every target.
+recorder hosted in the same process.
 
 ## `check` — fixed regression scenarios
 

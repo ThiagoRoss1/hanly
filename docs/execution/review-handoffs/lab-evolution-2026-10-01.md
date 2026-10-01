@@ -1,6 +1,15 @@
 # Review handoff: benchmarks become the Hanly Lab
 
-Branch `lab/app-health`, on top of `25e143b`. Uncommitted at handoff; nothing pushed.
+Branch `lab/app-health`, on top of `25e143b`. Nothing pushed.
+
+> **Correction (later the same day).** This handoff was written before the work
+> was committed; it landed as `4da283c`, `0f298a5`, `a066076` and `fc4d257`.
+> The evidence below is the earlier 303-hover tour. The 453-hover run
+> `20261001-053159-tour` on `fc4d257` superseded it as the baseline (434
+> correct, 9 refused, 10 failures, 97.8%), and the hardening bundle in
+> [`lab-hardening-mac-2026-10-01.md`](lab-hardening-mac-2026-10-01.md) found
+> that `result_evidence` reached `events.jsonl` outside verified hovers. The
+> text below is kept as it was written.
 
 ## Why
 

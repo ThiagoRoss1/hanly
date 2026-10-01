@@ -8,7 +8,7 @@
 - Git authorization: commit completed features, fixes or coherent small bundles locally after relevant checks, with English conventional subjects and short English action-bullet bodies. Use the configured human author and no assistant/co-author trailers. The user alone will push and merge; no tag or release is authorized.
 - Sequence: Mac foundation and Mac validation → stop at its Review Handoff; Windows implementation/validation when resumed on the Windows machine → stop at its handoff; human-authorized Claude deep review/refactor later.
 - Reported cases: `UI-UPD-03` is corrected; `MAC-START-04` has an evidenced source-child correction, with normal frozen-child identity still unvalidated. `WIN-UPD-01` install loop and `WIN-UPD-02` empty owned directory remain for real Windows investigation.
-- Existing related surfaces found: `benchmarks/dev/` developer harness; `updates/coordinator.py`, `updates/installer.py`, `updates/handoff.py` and `updates/cleanup.py`; Control Center `renderUpdates()`; native/packaged update tests. Existing Mac updater reportedly works, but this lab has not run it.
+- Existing related surfaces found: `benchmarks/dev/` developer harness (moved to `lab/` by `4da283c`; the `app-lab` command is now `lab check`); `updates/coordinator.py`, `updates/installer.py`, `updates/handoff.py` and `updates/cleanup.py`; Control Center `renderUpdates()`; native/packaged update tests. Existing Mac updater reportedly works, but this lab has not run it.
 
 ## Implementation decisions
 
