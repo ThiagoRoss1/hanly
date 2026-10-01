@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 import queue
+import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -939,6 +940,8 @@ def _parser() -> argparse.ArgumentParser:
         "dev-hud",
         help="run the real Hanly desktop with the on-screen developer HUD",
     )
+    _session_parsers(subcommands)
+
     lab = subcommands.add_parser(
         "check", help="run fixed regression scenarios on disposable profiles"
     )
@@ -1172,8 +1175,130 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _session_parsers(subcommands: Any) -> None:
+    run = subcommands.add_parser(
+        "run",
+        help="run the real Hanly under observation; you use it, quit it, get a report",
+        description=(
+            "Start the real desktop on a disposable profile with every trace, startup "
+            "phase and process recorded. Use Hanly normally, quit it from the tray or "
+            "with Ctrl+C, and the report opens. No recognized text is retained."
+        ),
+    )
+    _common_session_arguments(run)
+    run.add_argument("--duration", type=float, help="quit by itself after SECONDS")
+    run.add_argument("--hud", action="store_true", help="also draw the on-screen HUD")
+    run.set_defaults(handler=run_lab_session, mode="run")
+
+    tour = subcommands.add_parser(
+        "tour",
+        help="the lab uses Hanly itself: hovers lab-authored Korean and scores every answer",
+        description=(
+            "Covers the screen with lab-authored Korean, presses the real capture "
+            "shortcut, glides the real pointer onto each word, and checks each popup "
+            "against the known answer. Move the mouse yourself to stop it."
+        ),
+    )
+    _common_session_arguments(tour)
+    tour.add_argument(
+        "--words", type=int, default=120, help="KRDICT headwords to hover (default: 120)"
+    )
+    tour.add_argument(
+        "--story-sizes",
+        type=_parse_sizes,
+        default=(22,),
+        help="font pixel sizes for the story, comma separated; 0 skips it (default: 22)",
+    )
+    tour.add_argument(
+        "--word-sizes", type=_parse_sizes, default=(16, 22, 30, 40),
+        help="font pixel sizes cycled over words (default: 16,22,30,40)",
+    )
+    tour.add_argument("--seed", type=int, default=7)
+    tour.add_argument("--hud", action="store_true", help="also draw the on-screen HUD")
+    tour.set_defaults(handler=run_lab_session, mode="tour")
+
+    report = subcommands.add_parser("report", help="rebuild the report of a recorded run")
+    report.add_argument("run_dir", type=Path, nargs="?", help="run directory (default: newest)")
+    report.add_argument("--no-open", action="store_true")
+    report.set_defaults(handler=run_lab_report)
+
+
+def _common_session_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config", type=Path, help="runtime configuration (default: the one `hanly` uses)"
+    )
+    parser.add_argument(
+        "--backend", choices=("auto", "vision", "easyocr"), help="text recognizer for this run"
+    )
+    parser.add_argument("--no-open", action="store_true", help="do not open the report")
+
+
+def _parse_sizes(value: str) -> tuple[int, ...]:
+    try:
+        sizes = tuple(int(part) for part in value.split(",") if part.strip())
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("sizes are comma-separated integers") from error
+    if any(size < 0 or size > 200 for size in sizes):
+        raise argparse.ArgumentTypeError("sizes must be between 0 and 200 pixels")
+    return tuple(size for size in sizes if size > 0)
+
+
+def run_lab_session(args: argparse.Namespace) -> int:
+    """Run the real desktop under observation, driven by a person or by the lab."""
+
+    from .session.runner import SessionOptions, run_session
+
+    return run_session(
+        SessionOptions(
+            mode=args.mode,
+            runtime_config=args.config,
+            duration=getattr(args, "duration", None),
+            hud=args.hud,
+            open_report=not args.no_open,
+            story_sizes=getattr(args, "story_sizes", ()),
+            words=getattr(args, "words", 0),
+            word_sizes=getattr(args, "word_sizes", (16, 22, 30, 40)),
+            seed=getattr(args, "seed", 7),
+            backend=args.backend,
+        )
+    )
+
+
+def run_lab_report(args: argparse.Namespace) -> int:
+    """Rebuild one run's report from what it recorded."""
+
+    import webbrowser
+
+    from .report.build import build_report
+    from .session.runner import RUNS_ROOT
+
+    run_dir = args.run_dir
+    if run_dir is None:
+        recorded = sorted(
+            (path for path in RUNS_ROOT.glob("*") if (path / "events.jsonl").is_file()),
+            key=lambda path: path.stat().st_mtime,
+        )
+        if not recorded:
+            raise SystemExit("lab: no recorded run under artifacts/lab/runs")
+        run_dir = recorded[-1]
+    report = build_report(run_dir)
+    print(f"lab: report {report}")
+    if not args.no_open:
+        webbrowser.open(report.resolve().as_uri())
+    return 0
+
+
+def with_default_verb(arguments: Sequence[str]) -> list[str]:
+    """Like `hanly`, the lab's one obvious action needs no verb."""
+
+    arguments = list(arguments)
+    if not arguments or (arguments[0].startswith("-") and arguments[0] not in {"-h", "--help"}):
+        return ["run", *arguments]
+    return arguments
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    args = _parser().parse_args(with_default_verb(sys.argv[1:] if argv is None else argv))
     if getattr(args, "warmup", 0) < 0 or getattr(args, "samples", 0) < 0:
         raise SystemExit("--warmup and --samples must be non-negative")
     return int(args.handler(args))

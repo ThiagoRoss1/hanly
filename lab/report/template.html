@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hanly Lab Report</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --raised: #ffffff;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --neutral: #b9b7b0;
+  --q1: #cde2fb; --q2: #9ec5f4; --q3: #6da7ec; --q4: #3987e5;
+  --accent: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --raised: #222221;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --neutral: #5d5c58;
+    --q1: #104281; --q2: #184f95; --q3: #256abf; --q4: #3987e5;
+    --accent: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --raised: #222221;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --neutral: #5d5c58;
+  --q1: #104281; --q2: #184f95; --q3: #256abf; --q4: #3987e5;
+  --accent: #3987e5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--page);
+  border-bottom: 1px solid var(--ring); }
+.bar { max-width: 1240px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 16px;
+  align-items: center; flex-wrap: wrap; }
+.bar h1 { font-size: 16px; margin: 0; }
+.bar nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.bar nav a { color: var(--ink-2); text-decoration: none; padding: 4px 8px; border-radius: 6px; font-size: 13px; }
+.bar nav a:hover { background: var(--ring); color: var(--ink); }
+.bar .spacer { flex: 1; }
+button, select { font: inherit; color: var(--ink); background: var(--raised);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+main { max-width: 1240px; margin: 0 auto; padding: 16px; }
+section { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px;
+  padding: 18px 20px; margin: 0 0 16px; }
+section > h2 { font-size: 15px; margin: 0 0 4px; }
+.lede { color: var(--ink-2); margin: 0 0 14px; max-width: 80ch; }
+.meta { color: var(--ink-2); font-size: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.tile { background: var(--raised); border: 1px solid var(--ring); border-radius: 8px; padding: 12px; }
+.tile .k { color: var(--ink-2); font-size: 12px; }
+.tile .v { font-size: 24px; font-weight: 600; margin-top: 2px; }
+.tile .s { color: var(--muted); font-size: 12px; }
+.findings { display: grid; gap: 8px; }
+.finding { display: grid; grid-template-columns: 110px 1fr; gap: 12px; padding: 10px 12px;
+  border: 1px solid var(--ring); border-radius: 8px; background: var(--raised); }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--ink-2); white-space: nowrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.finding .t { font-weight: 600; }
+.finding .d { color: var(--ink-2); font-size: 13px; }
+.finding code, .where { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin: 6px 0 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--surface); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { max-height: 520px; overflow: auto; border: 1px solid var(--grid); border-radius: 8px; }
+.wide { overflow-x: auto; }
+svg text { fill: var(--ink-2); font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
+svg .ink { fill: var(--ink); }
+svg .mute { fill: var(--muted); }
+.node rect.box { fill: var(--raised); stroke: var(--axis); stroke-width: 1; }
+.node:hover rect.box, .node.sel rect.box { stroke: var(--accent); stroke-width: 2; }
+.node { cursor: pointer; }
+.lane { fill: var(--page); stroke: var(--grid); }
+.edge { fill: none; stroke: var(--axis); }
+.edge.ipc { stroke-dasharray: 5 4; }
+.panel { background: var(--raised); border: 1px solid var(--ring); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
+.panel h3 { margin: 0 0 6px; font-size: 14px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; font-size: 13px; }
+.kv div:nth-child(odd) { color: var(--ink-2); }
+.mini { display: flex; height: 10px; width: 260px; background: var(--grid); border-radius: 3px; overflow: hidden; gap: 1px; }
+.mini i { display: block; height: 100%; }
+tr.ep { cursor: pointer; }
+tr.ep:hover td, tr.ep.sel td { background: var(--ring); }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+#tip { position: fixed; pointer-events: none; z-index: 20; background: var(--raised); color: var(--ink);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15); display: none; max-width: 360px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.hbar { display: grid; grid-template-columns: 150px 1fr 70px; gap: 8px; align-items: center; font-size: 13px; margin: 3px 0; }
+.hbar .track { height: 14px; background: var(--grid); border-radius: 3px; overflow: hidden; }
+.hbar .fill { height: 100%; border-radius: 0 4px 4px 0; }
+.empty { color: var(--muted); font-style: italic; }
+details summary { cursor: pointer; color: var(--ink-2); margin: 8px 0; }
+@media (max-width: 640px) { .finding { grid-template-columns: 1fr; } .hbar { grid-template-columns: 90px 1fr 56px; } }
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <h1>Hanly Lab</h1><span class="meta" id="runid"></span>
+  <nav>
+    <a href="#overview">Overview</a><a href="#map">System map</a><a href="#time">Where time goes</a>
+    <a href="#funnel">Funnel</a><a href="#timeline">Timeline</a><a href="#hovers">Hovers</a>
+    <a href="#tour">Tour</a><a href="#startup">Startup</a><a href="#processes">Processes</a><a href="#data">Data</a>
+  </nav>
+  <span class="spacer"></span>
+  <button id="theme" title="Toggle theme">Theme</button>
+</div></header>
+<main>
+<section id="overview"><h2>Overview</h2><p class="lede" id="ovlede"></p>
+  <div class="tiles" id="tiles"></div>
+  <h2 style="margin-top:18px">Findings</h2>
+  <p class="lede">Derived automatically from this run. Each names the code where the cost lives.</p>
+  <div class="findings" id="findings"></div>
+</section>
+<section id="map"><h2>System map</h2>
+  <p class="lede">How a hover travels through Hanly's three processes, annotated with what this run measured at every component: how often it ran and its median time. Thicker edges carried more traffic; the stronger the accent bar, the slower that component. Click a component for details.</p>
+  <div class="wide"><svg id="mapsvg" viewBox="0 0 1200 600" style="min-width:900px;width:100%"></svg></div>
+  <div class="panel" id="mapinfo"><span class="empty">Select a component.</span></div>
+</section>
+<section id="time"><h2>Where the time goes</h2>
+  <p class="lede">Median time per segment for hovers that produced a fresh (uncached) answer, from the pointer settling to the popup appearing.</p>
+  <div class="legend" id="seglegend"></div>
+  <div class="wide"><svg id="breaksvg" viewBox="0 0 1100 84" style="min-width:700px;width:100%"></svg></div>
+  <h3 style="font-size:14px;margin:16px 0 6px">Distribution by stage</h3>
+  <div class="scroll" style="max-height:none"><table id="stagetable"></table></div>
+</section>
+<section id="funnel"><h2>Funnel</h2>
+  <p class="lede">How many hovers reached each step. Where the count falls is where hovers stopped, by design or not.</p>
+  <div id="funnelbars"></div>
+</section>
+<section id="timeline"><h2>Session timeline</h2>
+  <p class="lede">Every fired hover, lifecycle milestones, and each process's memory and CPU over the whole session, on one time axis. Hover any mark.</p>
+  <div class="filters">Zoom <button data-z="1" aria-pressed="true">1x</button><button data-z="3">3x</button><button data-z="8">8x</button><button data-z="20">20x</button></div>
+  <div class="legend" id="tllegend"></div>
+  <div class="wide" id="tlwrap"><svg id="tlsvg"></svg></div>
+</section>
+<section id="hovers"><h2>Hover explorer</h2>
+  <p class="lede">Every hover that fired. Click one for its waterfall, what each stage found, and the full event trail across processes.</p>
+  <div class="filters" id="epfilters"></div>
+  <div class="scroll"><table id="eptable"></table></div>
+  <div class="panel" id="epdetail"><span class="empty">Select a hover.</span></div>
+</section>
+<section id="tour"><h2>Tour accuracy</h2><div id="tourbody"></div></section>
+<section id="startup"><h2>Startup</h2>
+  <p class="lede">Shell startup phases as the app's own StartupTimeline reports them, and the lookup engine's provider prewarm in its child process.</p>
+  <div id="startupbody"></div>
+</section>
+<section id="processes"><h2>Processes</h2>
+  <p class="lede">Sampled every 250 ms. Roles are exact: the lab hosts the shell, so it knows its own children by name. Helpers are processes those children spawned (Qt WebEngine, the multiprocessing resource tracker). RSS is resident memory, not private memory; short spikes between samples can be missed.</p>
+  <table id="proctable"></table>
+</section>
+<section id="data"><h2>Data</h2>
+  <p class="lede">Everything above is rebuilt from the files beside this report: <code>events.jsonl</code> (every trace event), <code>processes.jsonl</code>, <code>metadata.json</code>, and the derived <code>report.json</code> and <code>summary.md</code>. Rebuild with <code>python -m lab report &lt;run&gt;</code>.</p>
+  <div class="two"><div><h3 style="font-size:14px">Event counts</h3><div class="scroll"><table id="counts"></table></div></div>
+  <div><h3 style="font-size:14px">Run metadata</h3><div class="scroll"><table id="metatable"></table></div></div></div>
+  <details><summary>Diagnostics log (last 200 lines, home directory and secrets removed)</summary><div class="scroll"><table id="diagtable"></table></div></details>
+</section>
+</main>
+<div id="tip"></div>
+<script>
+const M = /*__MODEL__*/null;
+const $ = (s) => document.querySelector(s);
+const el = (tag, attrs = {}, text) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; return n; };
+const NS = "http://www.w3.org/2000/svg";
+const sv = (tag, attrs = {}, text) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); if (text != null) n.textContent = text; return n; };
+const fmt = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toFixed(d);
+const ms = (v) => v == null ? "–" : v >= 1000 ? (v / 1000).toFixed(2) + " s" : v.toFixed(v < 10 ? 2 : 0) + " ms";
+const pct = (v) => v == null ? "–" : (v * 100).toFixed(1) + "%";
+const SHORT = { dwell: "Dwell", direct_text: "AX", capture: "Capture", to_engine: "Handoff", ocr: "OCR", language: "Language", to_popup: "Popup" };
+const SEG = M.segments.map(([k, label], i) => ({ k, label, color: `var(--s${i + 1})` }));
+const OUT = {
+  answered: ["Answered", "var(--good)"], no_answer: ["No answer (not shown)", "var(--neutral)"],
+  stale: ["Stale, discarded", "var(--serious)"], cancelled: ["Cancelled", "var(--serious)"],
+  abandoned: ["Abandoned after capture", "var(--warning)"], left_before_capture: ["Left before capture", "var(--warning)"],
+  error: ["Error", "var(--critical)"],
+};
+const VERD = {
+  correct: ["Correct", "var(--good)"], refused: ["Correctly refused", "var(--good)"],
+  not_found: ["Not found", "var(--warning)"], wrong_lemma: ["Wrong dictionary form", "var(--serious)"],
+  misread: ["Misread by OCR", "var(--critical)"], no_text: ["OCR read nothing", "var(--critical)"],
+  unresolved: ["Read, but no word chosen", "var(--serious)"], wrong_word: ["Wrong word selected", "var(--critical)"],
+  false_answer: ["Answered a refuse target", "var(--critical)"], no_result: ["No result (timed out)", "var(--serious)"],
+  no_lookup: ["No lookup", "var(--serious)"], no_hover: ["Hover never fired", "var(--serious)"], obscured: ["Skipped: covered", "var(--neutral)"],
+};
+const LEVEL = { warning: ["Warning", "var(--warning)", "!"], opportunity: ["Opportunity", "var(--s1)", "↗"], insight: ["Insight", "var(--neutral)", "i"] };
+const tip = $("#tip");
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = "block"; const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px"; }
+function hideTip() { tip.style.display = "none"; }
+function hoverable(node, html) { node.addEventListener("mousemove", (e) => showTip(e, typeof html === "function" ? html() : html)); node.addEventListener("mouseleave", hideTip); return node; }
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// theme -------------------------------------------------------------------------
+$("#theme").onclick = () => {
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const cur = document.documentElement.dataset.theme || (dark ? "dark" : "light");
+  document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
+};
+
+// overview ----------------------------------------------------------------------
+const meta = M.metadata || {};
+$("#runid").textContent = `${M.run} · ${meta.mode || ""}`;
+$("#ovlede").textContent = `${meta.mode === "tour" ? "The lab drove Hanly itself over lab-authored Korean." : "A person used Hanly; no recognized text was retained."} ${(M.duration_ms / 1000).toFixed(1)} s on ${meta.platform || "?"}, commit ${String(meta.commit || "").slice(0, 10)}${meta.dirty ? " (uncommitted changes)" : ""}, recognizer ${meta.settings?.ocr_backend || "?"}.`;
+const fired = M.episodes.length;
+const answered = M.episodes.filter((e) => e.outcome === "answered");
+const fresh = M.stages.find((s) => s.name === "hover.total_to_answer");
+const tiles = [
+  ["Hovers fired", fired, `${M.moved_on} moved on before the dwell`],
+  ["Answers shown", answered.length, `${M.event_counts.popup_suppressed || 0} non-answers not shown`],
+  ["Time to answer, median", fresh ? ms(fresh.p50) : "–", fresh ? `p90 ${ms(fresh.p90)} · max ${ms(fresh.max)}` : ""],
+  ["Lookup engine peak", M.processes.summary.lookup ? fmt(M.processes.summary.lookup.rss_mib, 0) + " MiB" : "–", M.startup.engine_load_ms ? `prewarm ${ms(M.startup.engine_load_ms)}` : ""],
+];
+if (M.tour) tiles.splice(2, 0, ["Tour accuracy", pct(M.tour.accuracy), `${M.tour.scored} scored hovers`]);
+for (const [k, v, s] of tiles) { const t = el("div", { class: "tile" }); t.append(el("div", { class: "k" }, k), el("div", { class: "v" }, String(v)), el("div", { class: "s" }, s)); $("#tiles").append(t); }
+for (const f of M.findings) {
+  const [label, color, icon] = LEVEL[f.level] || LEVEL.insight;
+  const row = el("div", { class: "finding" });
+  const b = el("span", { class: "badge" }); const d = el("span", { class: "dot" }); d.style.background = color; b.append(d, document.createTextNode(`${icon} ${label}`));
+  const body = el("div"); body.append(el("div", { class: "t" }, f.title), el("div", { class: "d" }, f.detail));
+  if (f.where) body.append(el("div", { class: "where" }, f.where));
+  row.append(b, body); $("#findings").append(row);
+}
+
+// system map ----------------------------------------------------------------------
+const NODES = [
+  { id: "mouse", label: "Mouse observer", x: 30, y: 70, lane: "shell", file: "hanly_app/hover/mouse_observer.py", about: "Observes global pointer movement through pynput. Every move is a hover opportunity; it only observes and decides nothing." },
+  { id: "hover", label: "Hover controller", x: 220, y: 70, lane: "shell", file: "hanly_app/hover/controller.py", about: "Debounces: a hover fires only after the pointer rests for the configured dwell. Movement invalidates the pending hover." },
+  { id: "direct", label: "Direct text (AX/UIA)", x: 410, y: 70, lane: "shell", file: "hanly_app/acquisition/direct_text.py", about: "Tries to read the word without pixels through the accessibility API. When the app under the pointer exposes nothing, Hanly falls back to capture." },
+  { id: "capture", label: "ROI capture", x: 600, y: 70, lane: "shell", file: "hanly_app/acquisition/capture.py", about: "Grabs a small region around the pointer (never continuous full-screen OCR). Runs on the shell's main thread." },
+  { id: "controller", label: "Lookup controller", x: 790, y: 70, lane: "shell", file: "hanly_app/lookup/controller.py", about: "Assigns request IDs, latest-wins submission, and stale handling." },
+  { id: "executor", label: "Executor thread", x: 980, y: 70, lane: "shell", file: "hanly_app/lookup/executor.py", about: "One job running, one latest pending; sends the request across the pipe to the lookup child." },
+  { id: "cache", label: "Lookup cache", x: 980, y: 320, lane: "lookup", file: "hanly_app/composition.py", about: "Identical requests are answered from an LRU cache without running any provider." },
+  { id: "gate", label: "Text-presence gate", x: 790, y: 320, lane: "lookup", file: "hanly_app/composition.py", about: "Skips OCR for flat regions with no text-like transitions." },
+  { id: "ocr", label: "OCR", x: 600, y: 320, lane: "lookup", file: "hanly/vision_provider.py · hanly/easyocr_provider.py", about: "Recognizes text in the region through the OCRProvider seam (Apple Vision or EasyOCR)." },
+  { id: "resolver", label: "Word resolver", x: 410, y: 320, lane: "lookup", file: "hanly/word_resolver.py", about: "Picks the word under the pointer from the recognized regions, down to the character." },
+  { id: "morphology", label: "Morphology (Kiwi)", x: 220, y: 320, lane: "lookup", file: "hanly/kiwi_provider.py", about: "Turns the surface form into dictionary candidates (lemmas)." },
+  { id: "dictionary", label: "Dictionary (KRDICT)", x: 30, y: 320, lane: "lookup", file: "hanly/krdict_provider.py", about: "Read-only SQLite queries: exact surface, whole form, then components; at most five." },
+  { id: "currency", label: "Currency check", x: 30, y: 170, lane: "shell", file: "hanly_app/lookup/controller.py", about: "The correctness gate: an answer is shown only if it is still the current request." },
+  { id: "popup", label: "Popup", x: 220, y: 170, lane: "shell", file: "hanly_app/popup/qt.py", about: "Shows successful answers near the word; non-answers are not shown." },
+  { id: "retained", label: "Retained answer", x: 410, y: 170, lane: "shell", file: "hanly_app/hover/target.py", about: "While the pointer stays on an answered word or the popup, movement starts nothing." },
+];
+const EDGES = [["mouse", "hover"], ["hover", "direct"], ["direct", "capture"], ["capture", "controller"], ["controller", "executor"], ["executor", "cache", "ipc"], ["cache", "gate"], ["gate", "ocr"], ["ocr", "resolver"], ["resolver", "morphology"], ["morphology", "dictionary"], ["dictionary", "currency", "ipc"], ["currency", "popup"], ["popup", "retained"], ["retained", "hover", "loop"]];
+const W = 160, H = 64;
+function drawMap() {
+  const svg = $("#mapsvg");
+  const lanes = [["Shell process · hanly", 20, 40, 240, M.map["process.shell"]], ["Lookup child · hanly-lookup (spawned)", 20, 290, 120, M.map["process.lookup"]], ["Control Center child · hanly-control-center (spawned on open)", 20, 450, 110, M.map["process.control_center"]]];
+  for (const [label, x, y, h, p] of lanes) {
+    svg.append(sv("rect", { class: "lane", x, y, width: 1160, height: h, rx: 10 }));
+    // Between the two vertical pipe edges, so neither crosses the text.
+    svg.append(sv("text", { x: 220, y: y + 18, class: "ink", "font-weight": 600 }, label));
+    if (p && p.rss_mib != null) svg.append(sv("text", { x: 1030, y: y + 18, "text-anchor": "end" }, `peak ${fmt(p.rss_mib, 0)} MiB · mean CPU ${fmt(p.mean_cpu, 0)}% · ${p.threads} threads`));
+  }
+  svg.append(sv("text", { x: 600, y: 278, "text-anchor": "middle", class: "mute" }, "─ ─ inherited duplex pipe (lookup/transport.py) ─ ─"));
+  const cc = sv("g", { class: "node", transform: "translate(30,480)" });
+  cc.append(sv("rect", { class: "box", width: 520, height: 64, rx: 8 }));
+  cc.append(sv("text", { x: 12, y: 22, class: "ink", "font-weight": 600 }, "pywebview + Qt WebEngine + Control Center page"));
+  const ccp = M.map["process.control_center"] || {};
+  cc.append(sv("text", { x: 12, y: 42 }, ccp.rss_mib != null ? `peak ${fmt(ccp.rss_mib, 0)} MiB, alive ${ms((ccp.alive_ms[1] - ccp.alive_ms[0]))} of the session` : "not opened in this run"));
+  cc.append(sv("text", { x: 12, y: 58, class: "mute" }, "hanly_app/control_center/ · not on the hover path"));
+  svg.append(cc);
+  const pos = Object.fromEntries(NODES.map((n) => [n.id, n]));
+  const maxCount = Math.max(1, ...NODES.map((n) => M.map[n.id]?.count || 0));
+  const p50s = NODES.map((n) => M.map[n.id]?.p50 || 0); const maxP = Math.max(1e-9, ...p50s);
+  for (const [a, b, kind] of EDGES) {
+    const A = pos[a], B = pos[b]; const count = M.map[b]?.count || 0;
+    const w = 1 + 5 * Math.log1p(count) / Math.log1p(maxCount);
+    let d;
+    if (A.y === B.y) d = A.x < B.x ? `M${A.x + W},${A.y + H / 2} L${B.x},${B.y + H / 2}` : `M${A.x},${A.y + H / 2} L${B.x + W},${B.y + H / 2}`;
+    else if (kind === "loop") d = `M${A.x + W / 2},${A.y} C${A.x + W / 2},${A.y - 30} ${B.x + W / 2},${B.y + H + 30} ${B.x + W / 2},${B.y + H}`;
+    else d = A.y < B.y ? `M${A.x + W / 2},${A.y + H} L${B.x + W / 2},${B.y}` : `M${A.x + W / 2},${A.y} L${B.x + W / 2},${B.y + H}`;
+    const path = sv("path", { class: "edge" + (kind === "ipc" ? " ipc" : ""), d, "stroke-width": w, "marker-end": "url(#arr)" });
+    if (kind === "loop") path.setAttribute("stroke-dasharray", "2 4");
+    svg.append(path);
+  }
+  const defs = sv("defs"); const mk = sv("marker", { id: "arr", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 9, markerHeight: 9, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" });
+  mk.append(sv("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--axis)" })); defs.append(mk); svg.prepend(defs);
+  for (const n of NODES) {
+    const s = M.map[n.id] || {}; const g = sv("g", { class: "node", transform: `translate(${n.x},${n.y})` });
+    g.append(sv("rect", { class: "box", width: W, height: H, rx: 8 }));
+    const heat = s.p50 ? Math.min(4, 1 + Math.floor(3.999 * s.p50 / maxP)) : 0;
+    if (heat) g.append(sv("rect", { x: 0, y: 0, width: 5, height: H, rx: 2, fill: `var(--q${heat})` }));
+    g.append(sv("text", { x: 12, y: 20, class: "ink", "font-weight": 600 }, s.label || n.label));
+    g.append(sv("text", { x: 12, y: 38 }, `${s.count ?? 0}×${s.p50 != null ? " · p50 " + ms(s.p50) : ""}`));
+    if (s.detail) g.append(sv("text", { x: 12, y: 55, class: "mute" }, s.detail.length > 26 ? s.detail.slice(0, 25) + "…" : s.detail));
+    g.onclick = () => { document.querySelectorAll(".node.sel").forEach((x) => x.classList.remove("sel")); g.classList.add("sel"); mapInfo(n, s); };
+    hoverable(g, `<b>${esc(s.label || n.label)}</b><br>${esc(s.count ?? 0)} times${s.p50 != null ? ", median " + ms(s.p50) : ""}<br>${esc(s.detail || "")}`);
+    svg.append(g);
+  }
+}
+function mapInfo(n, s) {
+  const p = $("#mapinfo"); p.innerHTML = "";
+  p.append(el("h3", {}, s.label || n.label), el("p", { class: "lede" }, n.about));
+  const kv = el("div", { class: "kv" });
+  const stage = M.stages.find((r) => r.name === { hover: "hover.dwell", direct: "hover.direct_text", capture: "hover.capture", executor: "hover.to_engine", ocr: "engine.ocr", resolver: "engine.token_selection", morphology: "engine.morphology", dictionary: "engine.dictionary", popup: "hover.to_popup" }[n.id]);
+  const rows = [["Code", n.file], ["Process", n.lane === "shell" ? "hanly (shell)" : "hanly-lookup (child)"], ["Ran", `${s.count ?? 0} times`]];
+  if (stage) rows.push(["Latency", `p50 ${ms(stage.p50)} · p90 ${ms(stage.p90)} · p99 ${ms(stage.p99)} · max ${ms(stage.max)} (n=${stage.n})`]);
+  if (s.detail) rows.push(["Also", s.detail]);
+  for (const [k, v] of rows) kv.append(el("div", {}, k), el("div", {}, v));
+  p.append(kv);
+}
+drawMap();
+
+// where time goes ----------------------------------------------------------------------
+(function () {
+  const med = M.breakdown.median_ms; const total = SEG.reduce((a, s) => a + (med[s.k] || 0), 0);
+  for (const s of SEG) { const span = el("span"); const sw = el("i", { class: "sw" }); sw.style.background = s.color; span.append(sw, document.createTextNode(`${s.label} ${ms(med[s.k] || 0)}`)); $("#seglegend").append(span); }
+  const svg = $("#breaksvg");
+  if (!total) { svg.append(sv("text", { x: 0, y: 30, class: "mute" }, "No uncached answered hover in this run.")); }
+  else {
+    let x = 0; const scale = 1090 / total;
+    for (const s of SEG) { const v = med[s.k] || 0; if (!v) continue; const w = Math.max(v * scale - 2, 1); const r = sv("rect", { x, y: 8, width: w, height: 30, fill: s.color, rx: 2 }); hoverable(r, `<b>${esc(s.label)}</b><br>median ${ms(v)} (${(100 * v / total).toFixed(0)}%)`); svg.append(r); if (w > 70) svg.append(sv("text", { x: x + 4, y: 54 }, `${SHORT[s.k]} ${ms(v)}`)); x += v * scale; }
+    svg.append(sv("text", { x: 1090, y: 78, "text-anchor": "end", class: "mute" }, `median sum ${ms(total)} over ${M.breakdown.answered_uncached} answers`));
+  }
+  const t = $("#stagetable");
+  t.innerHTML = "<tr><th>Stage</th><th>Process</th><th class=n>n</th><th class=n>p50</th><th class=n>p90</th><th class=n>p99</th><th class=n>max</th><th class=n>mean</th></tr>";
+  for (const r of M.stages) { const tr = el("tr"); const [where, name] = r.name.split("."); tr.append(el("td", {}, name.replaceAll("_", " ")), el("td", {}, where === "engine" ? "lookup child" : "shell (hover)"), ...[r.n, ms(r.p50), ms(r.p90), ms(r.p99), ms(r.max), ms(r.mean)].map((v) => el("td", { class: "n" }, String(v)))); t.append(tr); }
+})();
+
+// funnel ----------------------------------------------------------------------------------------
+(function () {
+  const max = Math.max(1, ...M.funnel.map((r) => r.count));
+  for (const r of M.funnel) {
+    const row = el("div", { class: "hbar" }); row.style.gridTemplateColumns = "260px 1fr 70px";
+    const lab = el("div", {}, (r.branch ? "↳ " : "") + r.step); const tr = el("div", { class: "track" }); const f = el("div", { class: "fill" });
+    f.style.width = (100 * r.count / max) + "%"; f.style.background = r.branch ? "var(--s2)" : "var(--s1)"; tr.append(f);
+    row.append(lab, tr, el("div", { class: "n", style: "text-align:right" }, String(r.count)));
+    $("#funnelbars").append(row);
+    if (r.note) $("#funnelbars").append(el("div", { class: "meta", style: "margin:-2px 0 6px 268px" }, r.note));
+  }
+})();
+
+// timeline --------------------------------------------------------------------------------------
+const ROLES = Object.keys(M.processes.series);
+let zoom = 1;
+function drawTimeline() {
+  const svg = $("#tlsvg"); svg.innerHTML = "";
+  const width = Math.max(900, $("#tlwrap").clientWidth - 4) * zoom; const left = 120, right = 130;
+  const T = Math.max(1, M.duration_ms); const X = (t) => left + (width - left - right) * t / T;
+  const lanes = { marks: 30, startup: 70, hovers: 110, tour: 150, mem: 190, memH: 150, cpu: 380, cpuH: 110 };
+  const height = lanes.cpu + lanes.cpuH + 30; svg.setAttribute("width", width); svg.setAttribute("height", height);
+  for (let i = 0; i <= 10; i++) { const t = T * i / 10; const x = X(t); svg.append(sv("line", { x1: x, x2: x, y1: 20, y2: height - 24, stroke: "var(--grid)" })); svg.append(sv("text", { x, y: height - 8, "text-anchor": "middle" }, (t / 1000).toFixed(1) + " s")); }
+  const lab = (y, text) => svg.append(sv("text", { x: 8, y: y + 4, class: "ink" }, text));
+  lab(lanes.marks, "Milestones"); lab(lanes.startup, "Startup"); lab(lanes.hovers, "Hovers"); if (M.tour) lab(lanes.tour, "Tour targets");
+  for (const m of M.lifecycle) { const x = X(m.t); const l = sv("line", { x1: x, x2: x, y1: lanes.marks - 10, y2: lanes.marks + 10, stroke: "var(--ink-2)", "stroke-width": 2 }); hoverable(l, `<b>${esc(m.label)}</b><br>${ms(m.t)}`); svg.append(l); const hit = sv("rect", { x: x - 5, y: lanes.marks - 12, width: 10, height: 24, fill: "transparent" }); hoverable(hit, `<b>${esc(m.label)}</b><br>${ms(m.t)}`); svg.append(hit); }
+  for (const p of M.startup.phases) { const r = sv("rect", { x: X(p.end - p.ms), y: lanes.startup - 8, width: Math.max(2, X(p.end) - X(p.end - p.ms)), height: 16, fill: "var(--s7)", rx: 2 }); hoverable(r, `<b>${esc(p.name)}</b><br>${p.ms} ms (${esc(p.outcome)})`); svg.append(r); }
+  for (const p of M.startup.prewarm) { if (p.ms == null) continue; const r = sv("rect", { x: X(p.end - p.ms), y: lanes.startup - 8, width: Math.max(2, X(p.end) - X(p.end - p.ms)), height: 16, fill: "var(--s4)", rx: 2 }); hoverable(r, `<b>prewarm ${esc(p.stage)}</b> (lookup child)<br>${ms(p.ms)}`); svg.append(r); }
+  for (const e of M.episodes) {
+    const [label, color] = OUT[e.outcome] || [e.outcome, "var(--neutral)"]; const end = e.segments.length ? e.segments[e.segments.length - 1][2] : 0;
+    const r = sv("rect", { x: X(e.t), y: lanes.hovers - 8, width: Math.max(3, X(e.t + end) - X(e.t)), height: 16, fill: color, rx: 2 });
+    hoverable(r, `<b>Hover ${e.hover}</b> · ${esc(label)}${e.status ? " (" + esc(e.status) + ")" : ""}<br>at ${ms(e.t)}${e.total != null ? ", answer after " + ms(e.total) : ""}<br>click to inspect`);
+    r.style.cursor = "pointer"; r.onclick = () => { selectEpisode(e); location.hash = "hovers"; };
+    svg.append(r);
+  }
+  if (M.tour) for (const r of M.tour.results) { const ep = M.episodes.find((e) => e.lookup != null && (r.lookup_ids || []).includes(e.lookup)); if (!ep) continue; const [label, color] = VERD[r.verdict] || [r.verdict, "var(--neutral)"]; const c = sv("circle", { cx: X(ep.t), cy: lanes.tour, r: 5, fill: color, stroke: "var(--surface)", "stroke-width": 2 }); hoverable(c, `<b>${esc(r.expected)}</b> · ${esc(label)}<br>answer: ${esc(r.headword ?? "–")}<br>${r.font_px}px ${esc(r.theme)}`); svg.append(c); }
+  const chart = (top, h, idx, unit, title) => {
+    svg.append(sv("text", { x: 8, y: top + 4, class: "ink" }, title));
+    let max = 1; for (const role of ROLES) for (const p of M.processes.series[role]) max = Math.max(max, p[idx]);
+    const Y = (v) => top + h - (h - 14) * v / max;
+    svg.append(sv("line", { x1: left, x2: width - right, y1: top + h, y2: top + h, stroke: "var(--axis)" }));
+    svg.append(sv("text", { x: left - 6, y: Y(max) + 4, "text-anchor": "end" }, fmt(max, 0) + unit));
+    const ends = [];
+    ROLES.forEach((role, i) => {
+      const pts = M.processes.series[role]; if (!pts.length) return;
+      svg.append(sv("polyline", { points: pts.map((p) => `${X(p[0])},${Y(p[idx])}`).join(" "), fill: "none", stroke: `var(--s${i + 1})`, "stroke-width": 2, "stroke-linejoin": "round" }));
+      const last = pts[pts.length - 1]; ends.push({ role, x: X(last[0]) + 4, y: Y(last[idx]) + 4 });
+    });
+    // Push end labels apart so neighbouring lines stay legible.
+    ends.sort((a, b) => a.y - b.y); for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 12);
+    for (const e of ends) svg.append(sv("text", { x: e.x, y: e.y }, e.role));
+    const hit = sv("rect", { x: left, y: top, width: width - left - right, height: h, fill: "transparent" });
+    hit.addEventListener("mousemove", (ev) => { const box = svg.getBoundingClientRect(); const t = (ev.clientX - box.left - left) / (width - left - right) * T; const rows = ROLES.map((role, i) => { const pts = M.processes.series[role]; let best = null; for (const p of pts) if (!best || Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p; return best && Math.abs(best[0] - t) < 1000 ? `<span class="dot" style="background:var(--s${i + 1})"></span> ${esc(role)} ${fmt(best[idx], idx === 1 ? 0 : 1)}${unit}` : null; }).filter(Boolean); showTip(ev, `<b>${(t / 1000).toFixed(2)} s</b><br>${rows.join("<br>")}`); });
+    hit.addEventListener("mouseleave", hideTip); svg.append(hit);
+  };
+  chart(lanes.mem, lanes.memH, 1, " MiB", "Memory (RSS)"); chart(lanes.cpu, lanes.cpuH, 2, "%", "CPU");
+}
+(function () {
+  const lg = $("#tllegend");
+  const add = (label, color) => { const s = el("span"); const sw = el("i", { class: "sw" }); sw.style.background = color; s.append(sw, document.createTextNode(label)); lg.append(s); };
+  for (const [k, [label, color]] of Object.entries(OUT)) if (M.episodes.some((e) => e.outcome === k)) add("Hover: " + label, color);
+  add("Startup phase (shell)", "var(--s7)"); add("Provider prewarm (lookup child)", "var(--s4)");
+  ROLES.forEach((r, i) => add("Process: " + r, `var(--s${i + 1})`));
+  document.querySelectorAll("[data-z]").forEach((b) => b.onclick = () => { zoom = +b.dataset.z; document.querySelectorAll("[data-z]").forEach((x) => x.setAttribute("aria-pressed", x === b)); drawTimeline(); });
+  drawTimeline(); addEventListener("resize", () => drawTimeline());
+})();
+
+// hover explorer -------------------------------------------------------------------------------
+const tourByLookup = new Map(); if (M.tour) for (const r of M.tour.results) for (const id of r.lookup_ids || []) tourByLookup.set(id, r);
+let epFilter = "all";
+function mini(e, scale) { const m = el("div", { class: "mini" }); const end = e.segments.length ? Math.max(...e.segments.map((s) => s[2])) : 0; const total = Math.max(scale, end); for (const s of SEG) { const span = e.segments.filter((x) => x[0] === s.k).reduce((a, x) => a + x[2] - x[1], 0); if (!span) continue; const i = el("i"); i.style.width = (100 * span / total) + "%"; i.style.background = s.color; m.append(i); } return m; }
+function drawEpisodes() {
+  const t = $("#eptable"); t.innerHTML = "<tr><th class=n>#</th><th class=n>at</th><th>outcome</th><th>tour</th><th class=n>to answer</th><th>acquisition</th><th>waterfall</th></tr>";
+  const scale = Math.max(150, ...M.episodes.map((e) => e.total || 0).filter((v) => v < 2000));
+  for (const e of M.episodes.filter((x) => epFilter === "all" || x.outcome === epFilter)) {
+    const tr = el("tr", { class: "ep" }); tr.dataset.hover = e.hover; const [label, color] = OUT[e.outcome] || [e.outcome, "var(--neutral)"];
+    const oc = el("td"); const b = el("span", { class: "badge" }); const d = el("span", { class: "dot" }); d.style.background = color; b.append(d, document.createTextNode(label + (e.status && e.outcome !== "answered" ? ` (${e.status})` : ""))); oc.append(b);
+    const tour = tourByLookup.get(e.lookup); const tc = el("td"); if (tour) { const [vl, vc] = VERD[tour.verdict] || [tour.verdict, "var(--neutral)"]; const bb = el("span", { class: "badge" }); const dd = el("span", { class: "dot" }); dd.style.background = vc; bb.append(dd, document.createTextNode(`${tour.expected} · ${vl}`)); tc.append(bb); }
+    const wf = el("td"); wf.append(mini(e, scale));
+    tr.append(el("td", { class: "n" }, String(e.hover)), el("td", { class: "n" }, (e.t / 1000).toFixed(2) + " s"), oc, tc, el("td", { class: "n" }, ms(e.total)), el("td", {}, [e.facts.acquisition, e.facts.lookup_cache === "hit" ? "cache hit" : null].filter(Boolean).join(" · ")), wf);
+    tr.onclick = () => selectEpisode(e); t.append(tr);
+  }
+}
+function selectEpisode(e) {
+  document.querySelectorAll("tr.ep.sel").forEach((x) => x.classList.remove("sel")); const row = document.querySelector(`tr.ep[data-hover="${e.hover}"]`); if (row) row.classList.add("sel");
+  const p = $("#epdetail"); p.innerHTML = ""; const [label] = OUT[e.outcome] || [e.outcome];
+  p.append(el("h3", {}, `Hover ${e.hover} · ${label}${e.status ? " · " + e.status : ""}${e.total != null ? " · answer after " + ms(e.total) : ""}`));
+  const end = Math.max(1, ...e.segments.map((s) => s[2]), ...e.trail.map((x) => x[0])); const svg = sv("svg", { viewBox: `0 0 1000 ${SEG.length * 24 + 30}`, width: "100%" });
+  SEG.forEach((s, i) => { const y = i * 24 + 6; svg.append(sv("text", { x: 0, y: y + 13 }, s.label)); for (const seg of e.segments.filter((x) => x[0] === s.k)) { const x = 230 + 740 * seg[1] / end; const w = Math.max(2, 740 * (seg[2] - seg[1]) / end); const r = sv("rect", { x, y, width: w, height: 16, fill: s.color, rx: 2 }); hoverable(r, `<b>${esc(s.label)}</b><br>${ms(seg[2] - seg[1])}, from ${ms(seg[1])}`); svg.append(r); svg.append(sv("text", { x: x + w + 4, y: y + 13 }, ms(seg[2] - seg[1]))); } });
+  svg.append(sv("text", { x: 230, y: SEG.length * 24 + 24, class: "mute" }, `0 = pointer settled · ${ms(end)} at right`)); p.append(svg);
+  const tour = tourByLookup.get(e.lookup);
+  const kv = el("div", { class: "kv", style: "margin:10px 0" });
+  const facts = { ...e.facts }; const stages = facts.stages || {}; delete facts.stages;
+  if (tour) for (const k of ["expected", "verdict", "headword", "selected", "recognized", "queries", "confidence", "font", "font_px", "theme"]) kv.append(el("div", {}, "tour." + k), el("div", {}, JSON.stringify(tour[k])));
+  for (const [k, v] of Object.entries(facts)) kv.append(el("div", {}, k), el("div", {}, typeof v === "number" && !Number.isInteger(v) ? fmt(v, 3) : String(v)));
+  for (const [k, v] of Object.entries(stages)) kv.append(el("div", {}, "stage." + k), el("div", {}, ms(v)));
+  p.append(kv);
+  const det = el("details"); det.open = true; det.append(el("summary", {}, `Event trail (${e.trail.length} events, ms from pointer settling)`));
+  const tb = el("table"); tb.innerHTML = "<tr><th class=n>+ms</th><th>event</th><th>thread</th><th>fields</th></tr>";
+  for (const [t, name, f] of e.trail) { const { thread_name, hover_request_id, lookup_request_id, ...rest } = f; tb.append(Object.assign(el("tr"), { innerHTML: `<td class=n>${fmt(t, 2)}</td><td>${esc(name)}</td><td>${esc(thread_name || "")}</td><td style="font:11px ui-monospace,Menlo,monospace;color:var(--ink-2)">${esc(Object.entries(rest).filter(([, v]) => v != null && v !== false).map(([k, v]) => k + "=" + (typeof v === "number" && !Number.isInteger(v) ? v.toFixed(3) : v)).join("  "))}</td>` })); }
+  const sc = el("div", { class: "scroll" }); sc.append(tb); det.append(sc); p.append(det);
+}
+(function () {
+  const f = $("#epfilters"); const kinds = ["all", ...Object.keys(OUT).filter((k) => M.episodes.some((e) => e.outcome === k))];
+  for (const k of kinds) { const n = k === "all" ? M.episodes.length : M.episodes.filter((e) => e.outcome === k).length; const b = el("button", { "aria-pressed": k === epFilter }, `${k === "all" ? "All" : OUT[k][0]} (${n})`); b.onclick = () => { epFilter = k; f.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); drawEpisodes(); }; f.append(b); }
+  drawEpisodes();
+})();
+
+// tour ---------------------------------------------------------------------------------------------------
+(function () {
+  const body = $("#tourbody"); const T = M.tour;
+  if (!T) { body.append(el("p", { class: "lede" }, "This was a person-driven session; there is no ground truth to score. Run `python -m lab tour` to have the lab hover lab-authored Korean and score every answer.")); return; }
+  body.append(el("p", { class: "lede" }, `The lab hovered ${T.total} targets whose answers are known in advance. ${T.scored} were scored; a hover is skipped (never read) when another window covers the page. Accuracy ${pct(T.accuracy)}; time from the pointer arriving to the popup: median ${ms(T.popup_ms.p50)}, p90 ${ms(T.popup_ms.p90)}.`));
+  const lg = el("div", { class: "legend" }); const vb = el("div", { class: "mini", style: "width:100%;height:22px" });
+  for (const [k, n] of Object.entries(T.verdicts)) { const [label, color] = VERD[k] || [k, "var(--neutral)"]; const i = el("i"); i.style.width = (100 * n / T.total) + "%"; i.style.background = color; hoverable(i, `<b>${esc(label)}</b>: ${n}`); vb.append(i); const s = el("span"); const sw = el("i", { class: "sw" }); sw.style.background = color; s.append(sw, document.createTextNode(`${label} ${n}`)); lg.append(s); }
+  body.append(vb, lg);
+  const grid = el("div", { class: "two" });
+  const group = (title, rows) => { const box = el("div"); box.append(el("h3", { style: "font-size:14px;margin:10px 0 6px" }, title)); for (const r of rows) { const row = el("div", { class: "hbar" }); const tr = el("div", { class: "track" }); const f = el("div", { class: "fill" }); f.style.width = (100 * r.accuracy) + "%"; f.style.background = "var(--s1)"; tr.append(f); hoverable(row, `<b>${esc(r.group)}</b><br>${pct(r.accuracy)} of ${r.n}<br>median popup ${ms(r.median_popup_ms)}`); row.append(el("div", {}, `${r.group} (n=${r.n})`), tr, el("div", { style: "text-align:right" }, pct(r.accuracy))); box.append(row); } grid.append(box); };
+  group("By font size (px)", T.by_font_px); group("By page theme", T.by_theme); group("By typeface", T.by_font); group("By source / vocabulary level", [...T.by_source, ...T.by_level.filter((r) => r.group !== "-")]);
+  body.append(grid);
+  const cal = el("div"); cal.append(el("h3", { style: "font-size:14px;margin:16px 0 4px" }, "OCR confidence vs. correctness"), el("p", { class: "lede" }, "Does the recognizer know when it is wrong? If low-confidence reads are the wrong ones, a second check only on low confidence would target the failures without slowing every hover."));
+  const ct = el("table"); ct.innerHTML = "<tr><th>confidence</th><th class=n>hovers</th><th class=n>accuracy</th></tr>"; for (const r of T.calibration) ct.append(Object.assign(el("tr"), { innerHTML: `<td>${r.range}</td><td class=n>${r.n}</td><td class=n>${pct(r.accuracy)}</td>` })); cal.append(ct); body.append(cal);
+  body.append(el("h3", { style: "font-size:14px;margin:16px 0 6px" }, `Failures (${T.failures.length})`));
+  if (!T.failures.length) body.append(el("p", { class: "empty" }, "None."));
+  else { const ft = el("table"); ft.innerHTML = "<tr><th>expected</th><th>verdict</th><th>answer</th><th>OCR read</th><th>dictionary queries</th><th class=n>conf.</th><th>font</th></tr>"; for (const r of T.failures) ft.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.expected)} <span class=meta>${esc(r.target)}</span></td><td>${esc((VERD[r.verdict] || [r.verdict])[0])}</td><td>${esc(r.headword ?? "–")}</td><td>${esc((r.recognized || []).join(" / "))}</td><td>${esc((r.queries || []).map(([q, f]) => q + (f ? "✓" : "✗")).join(" → "))}</td><td class=n>${fmt(r.confidence, 2)}</td><td>${r.font_px}px ${esc(r.font || "")} ${esc(r.theme || "")}</td>` })); const sc = el("div", { class: "scroll" }); sc.append(ft); body.append(sc); }
+  const det = el("details"); det.append(el("summary", {}, `All ${T.results.length} results`)); const at = el("table"); at.innerHTML = "<tr><th>target</th><th>verdict</th><th>answer</th><th class=n>popup</th><th class=n>OCR</th><th>font</th></tr>"; for (const r of T.results) at.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.expected)}</td><td>${esc((VERD[r.verdict] || [r.verdict])[0])}</td><td>${esc(r.headword ?? "–")}</td><td class=n>${ms(r.hover_to_popup_ms)}</td><td class=n>${ms(r.ocr_ms)}</td><td>${r.font_px}px ${esc(r.font || "")}</td>` })); const sc2 = el("div", { class: "scroll" }); sc2.append(at); det.append(sc2); body.append(det);
+})();
+
+// startup + processes + data -------------------------------------------------------------------------------
+(function () {
+  const S = M.startup; const b = $("#startupbody"); const rows = [...S.phases.map((p) => [p.name + " (shell)", p.ms, "var(--s7)"]), ...S.prewarm.filter((p) => p.ms != null).map((p) => [`prewarm ${p.stage} (lookup child)`, p.ms, "var(--s4)"])];
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  for (const [label, v, color] of rows) { const row = el("div", { class: "hbar" }); row.style.gridTemplateColumns = "260px 1fr 80px"; const tr = el("div", { class: "track" }); const f = el("div", { class: "fill" }); f.style.width = (100 * v / max) + "%"; f.style.background = color; tr.append(f); row.append(el("div", {}, label), tr, el("div", { style: "text-align:right" }, ms(v))); b.append(row); }
+  const kv = el("div", { class: "kv", style: "margin-top:10px" }); for (const m of S.milestones) kv.append(el("div", {}, m.name), el("div", {}, `${m.at_ms} ms after the shell's timeline started`)); if (S.engine_ready_t) kv.append(el("div", {}, "lookup engine ready"), el("div", {}, `${ms(S.engine_ready_t)} into the session`)); if (S.first_answer_t) kv.append(el("div", {}, "first answer shown"), el("div", {}, `${ms(S.first_answer_t)} into the session`)); b.append(kv);
+  const pt = $("#proctable"); pt.innerHTML = "<tr><th>role</th><th class=n>processes</th><th class=n>peak RSS</th><th class=n>final RSS</th><th class=n>peak CPU</th><th class=n>mean CPU</th><th class=n>peak threads</th><th class=n>alive</th></tr>";
+  for (const [role, r] of Object.entries(M.processes.summary)) pt.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(role)}</td><td class=n>${r.processes}</td><td class=n>${fmt(r.rss_mib, 0)} MiB</td><td class=n>${fmt(r.final_rss_mib, 0)} MiB</td><td class=n>${fmt(r.cpu, 0)}%</td><td class=n>${fmt(r.mean_cpu, 1)}%</td><td class=n>${r.threads}</td><td class=n>${ms(r.alive_ms[1] - r.alive_ms[0])}</td>` }));
+  const ct = $("#counts"); ct.innerHTML = "<tr><th>event</th><th class=n>count</th></tr>"; for (const [k, v] of Object.entries(M.event_counts)) ct.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(k)}</td><td class=n>${v}</td>` }));
+  const mt = $("#metatable"); const flat = (o, p = "") => Object.entries(o || {}).flatMap(([k, v]) => v && typeof v === "object" && !Array.isArray(v) ? flat(v, p + k + ".") : [[p + k, Array.isArray(v) ? v.join(", ") : v]]); for (const [k, v] of flat(M.metadata)) mt.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(k)}</td><td>${esc(v)}</td>` }));
+  const dt = $("#diagtable"); dt.innerHTML = "<tr><th class=n>at</th><th>subsystem</th><th>level</th><th>message</th></tr>"; for (const d of M.diagnostics) dt.append(Object.assign(el("tr"), { innerHTML: `<td class=n>${ms(d.t_ms)}</td><td>${esc(d.subsystem)}</td><td>${esc(d.level)}</td><td>${esc(d.message)}</td>` }));
+})();
+if (M.episodes.length) selectEpisode(M.episodes.find((e) => e.outcome === "answered") || M.episodes[0]);
+</script>
+</body>
+</html>
