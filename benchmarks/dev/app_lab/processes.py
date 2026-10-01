@@ -66,7 +66,7 @@ def macos_registrations(pids: set[int]) -> dict[int, str] | None:
     if sys.platform != "darwin" or not pids:
         return None
     try:
-        result = subprocess.run(
+        listing = subprocess.run(
             ["/usr/bin/lsappinfo", "list"],
             capture_output=True,
             text=True,
@@ -74,9 +74,9 @@ def macos_registrations(pids: set[int]) -> dict[int, str] | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode:
+    if listing.returncode:
         return None
-    output = result.stdout
+    output = listing.stdout
     result = {}
     for block in output.split("ASN:"):
         match = re.search(r"pid = (\d+)", block)
