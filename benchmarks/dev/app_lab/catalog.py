@@ -56,6 +56,14 @@ SCENARIOS = (
         "Choices respond to input and controls stay inside the page.",
     ),
     Scenario(
+        "CC-UPDATE-STAGE",
+        "updater_ui",
+        "Update stage transitions and progress",
+        ("tests/native/shared/test_update_stage_animation.py",),
+        "real_ui_injected_update",
+        "Stage motion happens once per changed label, not per poll.",
+    ),
+    Scenario(
         "CAPTURE-CHOICE",
         "capture",
         "Capture selection closes during quit",
