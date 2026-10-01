@@ -12,7 +12,7 @@ resources/dev/krdict/*.sqlite3
 resources/dev/models/
 resources/dev/runtime-local.json
 resources/dev/app-config.json
-artifacts/benchmarks/
+artifacts/lab/
 artifacts/investigation-2026-09-05
 data/source/
 data/generated/

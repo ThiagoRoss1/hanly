@@ -16,7 +16,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "benchmarks/dev/tests"]
+testpaths = ["tests", "lab/tests"]
 pythonpath = ["."]
 markers = [
     "native: runs real Qt, child-process, or OS-adapter behavior",
@@ -27,7 +27,7 @@ markers = [
 target-version = "py310"
 line-length = 100
 include = [
-    "benchmarks/**/*.py",
+    "lab/**/*.py",
     "packages/**/*.py",
     "packaging/**/*.py",
     "tests/**/*.py",
@@ -39,7 +39,7 @@ include = [
 select = ["E", "F", "I", "UP", "RUF100"]
 
 [tool.mypy]
-files = ["benchmarks", "packages", "packaging", "tests", "tools"]
+files = ["lab", "packages", "packaging", "tests", "tools"]
 # A suppression that stops being needed is noise that hides the next real
 # one, and several had already gone dead unnoticed.
 warn_unused_ignores = true

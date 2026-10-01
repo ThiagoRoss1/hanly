@@ -40,9 +40,9 @@ jobs:
       - name: Run the portable tests
         run: python -m pytest --suite portable
       - name: Run lint
-        run: python -m ruff check packages packaging tests tools benchmarks
+        run: python -m ruff check packages packaging tests tools lab
       - name: Run type checks
-        run: python -m mypy packages packaging tests tools benchmarks
+        run: python -m mypy packages packaging tests tools lab
 
   native:
     name: native (${{ matrix.platform }})

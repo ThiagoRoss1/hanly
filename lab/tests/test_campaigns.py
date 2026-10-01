@@ -1,0 +1,164 @@
+"""Integration tests for benchmark campaigns over the real engine seams."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from hanly import (
+    BoundingBox,
+    DictionaryEntry,
+    LookupStatus,
+    OCRResult,
+    PixelFormat,
+    Point,
+    Quad,
+    ROIImage,
+    TokenAnalysis,
+)
+
+from lab.campaigns import (
+    CampaignPlan,
+    ExpectedLookup,
+    ObservedLookupPipeline,
+    run_lookup_campaign,
+    summarize_stages,
+)
+from lab.metadata import build_metadata
+from lab.run_store import RunStore
+
+
+class _OCR:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def recognize(self, image: ROIImage) -> tuple[OCRResult, ...]:
+        self.calls += 1
+        assert image.width == 20
+        return (
+            OCRResult(
+                text="읽습니다.",
+                confidence=0.98,
+                quad=Quad.from_bounding_box(BoundingBox(0, 0, 20, 10)),
+            ),
+        )
+
+
+class _Morphology:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def analyze(self, text: str) -> tuple[TokenAnalysis, ...]:
+        self.calls += 1
+        assert text == "읽습니다."
+        return (TokenAnalysis(token=text, lemma="읽다"),)
+
+
+class _Dictionary:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def lookup(self, lemma: str) -> tuple[DictionaryEntry, ...]:
+        self.calls += 1
+        if lemma != "읽다":
+            return ()
+        return (DictionaryEntry(headword=lemma, definitions=("to read",)),)
+
+
+def test_campaign_uses_real_pipeline_seams_and_keeps_stage_and_total_timings(
+    tmp_path: Path,
+) -> None:
+    metadata = build_metadata(run_id="campaign-1", commit="abc", scenario={"name": "fixture"})
+    image = ROIImage(20, 10, PixelFormat.RGB_888, bytes(20 * 10 * 3))
+    ocr = _OCR()
+    morphology = _Morphology()
+    dictionary = _Dictionary()
+
+    with RunStore(tmp_path / "run", metadata, fsync=False) as store:
+        pipeline = ObservedLookupPipeline(ocr, morphology, dictionary, store=store)
+        results = run_lookup_campaign(
+            pipeline,
+            image,
+            Point(10, 5),
+            store=store,
+            scenario="fixture",
+            plan=CampaignPlan(warmup_samples=1, warm_samples=2),
+            expected=ExpectedLookup(
+                status="SUCCESS",
+                text="읽습니다.",
+                lemma="읽다",
+                headword="읽다",
+            ),
+        )
+        samples = store.read_samples()
+
+    assert [result.status for result in results] == [LookupStatus.SUCCESS] * 4
+    assert ocr.calls == morphology.calls == 4
+    # Each lookup probes the exact surface before the lemma.
+    assert dictionary.calls == 8
+    assert {sample["stage"] for sample in samples} == {
+        "ocr",
+        "token_selection",
+        "morphology",
+        "dictionary",
+        "total_pipeline",
+    }
+    assert [
+        sample["condition"] for sample in samples if sample["stage"] == "total_pipeline"
+    ] == ["cold", "warmup", "warm", "warm"]
+    assert all(sample["correctness_status"] == "success" for sample in samples)
+
+    summaries = summarize_stages(samples)
+    assert summaries["total_pipeline"]["count"] == 2
+    assert summaries["ocr"]["count"] == 2
+
+
+def test_campaign_records_correctness_failure_without_dropping_latency(tmp_path: Path) -> None:
+    metadata = build_metadata(run_id="campaign-2", commit="abc", scenario={"name": "fixture"})
+    image = ROIImage(20, 10, PixelFormat.RGB_888, bytes(20 * 10 * 3))
+
+    with RunStore(tmp_path / "run", metadata, fsync=False) as store:
+        pipeline = ObservedLookupPipeline(_OCR(), _Morphology(), _Dictionary(), store=store)
+        run_lookup_campaign(
+            pipeline,
+            image,
+            Point(10, 5),
+            store=store,
+            scenario="fixture",
+            plan=CampaignPlan(warmup_samples=0, warm_samples=1),
+            expected=ExpectedLookup(status="SUCCESS", lemma="wrong"),
+        )
+        total = [
+            sample for sample in store.read_samples() if sample["stage"] == "total_pipeline"
+        ]
+
+    assert [sample["correctness_status"] for sample in total] == ["failed", "failed"]
+    assert all(sample["duration_ns"] >= 0 for sample in total)
+
+
+
+def test_the_observed_resolver_keeps_the_pointer_offset_production_uses(
+    tmp_path: Path,
+) -> None:
+    """A multi-part word's lemma depends on where in it the pointer sits."""
+
+    from hanly.word_resolver import WordResolver
+
+    region = OCRResult(
+        text="초대받았어요",
+        confidence=0.95,
+        quad=Quad.from_bounding_box(BoundingBox(0, 0, 60, 10)),
+    )
+    pointer = Point(45, 5)
+    metadata = build_metadata(run_id="campaign-3", commit="abc", scenario={"name": "fixture"})
+
+    with RunStore(tmp_path / "run", metadata, fsync=False) as store:
+        pipeline = ObservedLookupPipeline(_OCR(), _Morphology(), _Dictionary(), store=store)
+        observed = pipeline._pipeline._word_resolver.resolve_target_detail(  # type: ignore[attr-defined]
+            [region], pointer
+        )
+        stages = [sample["stage"] for sample in store.read_samples()]
+
+    production = WordResolver().resolve_target_detail([region], pointer)
+    assert production is not None and production.cursor_index > 0
+    assert observed == production
+    assert stages == ["token_selection"]

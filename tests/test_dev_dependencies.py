@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[1]
-TEST_ROOTS = (ROOT / "tests", ROOT / "benchmarks" / "dev" / "tests")
+TEST_ROOTS = (ROOT / "tests", ROOT / "lab" / "tests")
 
 #: The suites whose own job installs the desktop runtime extra.
 RUNTIME_SUITES = (ROOT / "tests" / "native", ROOT / "tests" / "packaged")
@@ -38,7 +38,7 @@ _IMPORT_NAMES = {
 _RUNTIME_TRANSITIVE = frozenset({"easyocr", "kiwipiepy", "torch", "numpy"})
 
 #: Reached through the repository root on pytest's ``pythonpath``, not pip.
-_FIRST_PARTY = frozenset({"benchmarks", "hanly", "hanly_app", "tests", "tools"})
+_FIRST_PARTY = frozenset({"hanly", "hanly_app", "lab", "tests", "tools"})
 
 #: Locates ``dev = [...]`` for the runtimes without ``tomllib``, currently 3.10.
 _DEV_GROUP = re.compile(r"^dev\s*=\s*(\[.*?^\])", re.DOTALL | re.MULTILINE)

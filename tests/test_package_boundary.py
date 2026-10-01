@@ -39,13 +39,13 @@ def test_engine_source_only_imports_distributable_packages() -> None:
     """``hanly`` ships independently, so it may not reach into its desktop
     client or into repository-only tooling that no wheel contains."""
 
-    assert _importers_of(ENGINE_SOURCE, ("hanly_app", "tools", "benchmarks")) == []
+    assert _importers_of(ENGINE_SOURCE, ("hanly_app", "tools", "lab")) == []
 
 
 def test_desktop_source_never_imports_repository_tooling() -> None:
     """Nothing dev-only belongs in ``packages/``: a frozen build has neither."""
 
-    assert _importers_of(APP_SOURCE, ("tools", "benchmarks")) == []
+    assert _importers_of(APP_SOURCE, ("tools", "lab")) == []
 
 
 def test_distribution_dependency_direction() -> None:

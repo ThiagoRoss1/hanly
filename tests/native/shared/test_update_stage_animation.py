@@ -29,7 +29,7 @@ def test_stage_motion_tracks_label_changes_not_progress(tmp_path: Path, reduced:
         flags = environment.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
         environment["QTWEBENGINE_CHROMIUM_FLAGS"] = flags + " --force-prefers-reduced-motion"
     child = subprocess.run(
-        [sys.executable, "-m", "benchmarks.dev.app_lab.ui_probe"],
+        [sys.executable, "-m", "lab.checks.ui_probe"],
         env=environment,
         capture_output=True,
         text=True,
