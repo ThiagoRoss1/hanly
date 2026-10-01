@@ -120,7 +120,12 @@ class LanguagePipeline:
         probes = _DictionaryProbes(self._dictionary_provider)
         try:
             selected, entries = self._resolve_entries(probes, analysis, selected, text)
-            listed_whole = bool(entries) and selected.lemma == text
+            # A word found whole, with or without its particles, is explained as
+            # one unit, not by a split that names a different word.
+            listed_whole = bool(entries) and selected.lemma in (
+                text,
+                _without_particles(analysis, text),
+            )
             components = _components(
                 probes, analysis, text, cursor_index, listed_whole
             )
@@ -160,19 +165,23 @@ class LanguagePipeline:
         The exact surface comes first because a dictionary lists many forms
         verbatim -- ``깜짝이야`` and ``고소득층`` are entries in their own right,
         and reconstructing them from morphology would answer a different word.
-        Only then is the whole form reconstructed, and only then the component
-        the cursor is on.
+        Then the surface without its trailing particles, because ``손님이`` is
+        ``손님`` even where morphology splits off ``님``. Only then is the whole
+        form reconstructed, and only then the component the cursor is on.
         """
 
-        entries = probes.lookup(text)
-        if entries:
-            surface = LexicalCandidate(
-                lemma=text,
-                start=0,
-                end=len(text),
-                part_of_speech=selected.part_of_speech,
-            )
-            return surface, entries
+        for form in (text, _without_particles(analysis, text)):
+            if form is None:
+                continue
+            entries = probes.lookup(form)
+            if entries:
+                surface = LexicalCandidate(
+                    lemma=form,
+                    start=0,
+                    end=len(text),
+                    part_of_speech=selected.part_of_speech,
+                )
+                return surface, entries
 
         whole = _complete_form(analysis, text)
         if whole is not None:
@@ -318,8 +327,9 @@ _GRAMMATICAL_LABELS = {
     "XSA": "adjective-forming suffix",
 }
 
-#: The dictionary budget for one lookup: the exact surface, the reconstructed
-#: whole form, and up to three lexical components.
+#: The dictionary budget for one lookup: the exact surface, the surface without
+#: its particles, the reconstructed whole form, and up to three lexical
+#: components, never more than five queries in all.
 _MAX_DICTIONARY_QUERIES = 5
 _MAX_COMPONENT_QUERIES = 3
 
@@ -496,6 +506,30 @@ def _first_gloss(
         return None
     senses = _rank_entries(entries, part_of_speech)[0].senses
     return senses[0].gloss if senses else None
+
+
+def _without_particles(analysis: MorphologyAnalysis, text: str) -> str | None:
+    """The surface before its trailing particles, when it ends in any.
+
+    Only particles (``J``) and punctuation are removed, and only from the end;
+    endings and suffixes stay, so a predicate is never cut down to a stem. A
+    span that crosses whitespace belongs to more than one word and is refused.
+    """
+
+    trailing = None
+    stripped_particle = False
+    for token in sorted(analysis.tokens, key=lambda item: item.start or 0, reverse=True):
+        tag = (token.part_of_speech or "").upper()
+        if token.start is None or not (tag.startswith("J") or tag.startswith("S")):
+            break
+        trailing = token.start
+        stripped_particle = stripped_particle or tag.startswith("J")
+    if trailing is None or not stripped_particle or trailing <= 0:
+        return None
+    form = text[:trailing]
+    if form == text or any(character.isspace() for character in form):
+        return None
+    return form if _is_korean_segment(form) else None
 
 
 def _complete_form(

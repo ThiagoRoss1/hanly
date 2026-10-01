@@ -146,7 +146,8 @@ hover (while the push chord is held, or for the whole session)
       → Hangul-only gate                      language_pipeline.py
       → morphology (lemma)                    kiwi_provider.py
       → dictionary, at most five queries       krdict_provider.py
-        (exact surface, whole form, components)
+        (exact surface, surface without particles,
+         whole form, components)
   → final request-currency check              lookup/controller.py
   → popup, and the word it came from retained popup/qt.py / hover/target.py
 ```

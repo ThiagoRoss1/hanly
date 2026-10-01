@@ -247,3 +247,26 @@ def test_the_dictionary_is_never_asked_more_than_five_times(
             assert len(set(asked)) == len(asked), (surface, asked)
     finally:
         dictionary.close()
+
+
+@pytest.mark.parametrize(
+    ("surface", "index", "headword"),
+    [
+        ("손님이", 0, "손님"),
+        ("손님이", 2, "손님"),
+        ("비밀번호는", 0, "비밀번호"),
+        ("비밀번호는", 3, "비밀번호"),
+        ("고소득층이", 0, "고소득층"),
+        ("학교에서", 0, "학교"),
+        ("어머니께서", 0, "어머니"),
+        ("선생님께", 0, "선생님"),
+        ("책상이.", 0, "책상"),
+        ("회사원들은", 0, "회사원"),
+    ],
+)
+def test_a_listed_word_is_found_without_its_particles(
+    language: LanguagePipeline, surface: str, index: int, headword: str
+) -> None:
+    """The stem lost 님 or a compound half to morphology; the word is still listed."""
+
+    assert _primary(language, surface, index)[0] == headword
