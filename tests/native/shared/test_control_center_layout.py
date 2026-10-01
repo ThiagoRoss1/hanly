@@ -36,6 +36,7 @@ _CHILD_TIMEOUT_SECONDS = 300
 
 _CHILD_PROGRAM = '''
 import json
+import os
 import sys
 import time
 
@@ -96,6 +97,10 @@ def started():
 
 host.run(on_started=started)
 print(REPORT_PREFIX + json.dumps(report), flush=True)
+if sys.platform == "darwin":
+    # WebEngine can hang while Python unloads it after the Qt loop has ended.
+    sys.stderr.flush()
+    os._exit(0)
 '''
 
 
