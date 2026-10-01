@@ -281,3 +281,22 @@ def test_a_contraction_answers_its_real_stem_not_an_invented_join(
     """누군가 itself is not in KRDICT; joining across its overlap made 누이다."""
 
     assert _primary(language, surface, 0)[0] == headword
+
+
+@pytest.mark.parametrize(
+    ("surface", "index", "headword"),
+    [
+        ("뭉클해졌습니다", 0, "뭉클하다"),
+        ("뭉클했다", 0, "뭉클하다"),
+        ("가득했다", 0, "가득하다"),
+        ("뭉클해졌습니다", 3, "지다"),
+        ("옹기종기했다", 0, "옹기종기"),
+        ("공부했다", 0, "공부하다"),
+    ],
+)
+def test_an_adverb_and_its_ha_suffix_answer_the_predicate_only_when_listed(
+    language: LanguagePipeline, surface: str, index: int, headword: str
+) -> None:
+    """옹기종기하다 is not in KRDICT, so the adverb itself stays the answer."""
+
+    assert _primary(language, surface, index)[0] == headword

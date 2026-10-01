@@ -167,7 +167,8 @@ class LanguagePipeline:
         and reconstructing them from morphology would answer a different word.
         Then the surface without its trailing particles, because ``손님이`` is
         ``손님`` even where morphology splits off ``님``. Only then is the whole
-        form reconstructed, and only then the component the cursor is on.
+        form reconstructed, and only then the component the cursor is on -- as
+        the 하다 predicate it forms, where the dictionary lists one.
         """
 
         for form in (text, _without_particles(analysis, text)):
@@ -188,6 +189,12 @@ class LanguagePipeline:
             entries = probes.lookup(whole.lemma)
             if entries:
                 return whole, entries
+
+        derived = _derived_predicate(analysis, selected, text)
+        if derived is not None:
+            entries = probes.lookup(derived.lemma)
+            if entries:
+                return derived, entries
 
         return selected, probes.lookup(selected.lemma)
 
@@ -530,6 +537,40 @@ def _without_particles(analysis: MorphologyAnalysis, text: str) -> str | None:
     if form == text or any(character.isspace() for character in form):
         return None
     return form if _is_korean_segment(form) else None
+
+
+#: The derivational suffix 하 as Kiwi tags it: adjective- and verb-forming.
+_HA_SUFFIXES = {"XSA": "VA", "XSV": "VV"}
+
+
+def _derived_predicate(
+    analysis: MorphologyAnalysis, selected: LexicalCandidate, text: str
+) -> LexicalCandidate | None:
+    """``뭉클`` + 하 as ``뭉클하다``, for the dictionary to confirm.
+
+    Kiwi joins a noun or root with 하 itself (``공부하다``, ``깨끗하다``) but
+    leaves an adverb and the suffix apart. The unit keeps its own lemma; this is
+    only a probe, since many adverbs form no listed 하다 predicate.
+    """
+
+    if _tag_family(selected.part_of_speech) != "MAG":
+        return None
+    root = text[selected.start : selected.start + len(selected.lemma)]
+    if root != selected.lemma:
+        return None
+    for token in analysis.tokens:
+        if token.start != selected.start + len(root):
+            continue
+        family = _tag_family(token.part_of_speech)
+        if family in _HA_SUFFIXES and token.token == "하":
+            return LexicalCandidate(
+                lemma=root + "하다",
+                start=selected.start,
+                end=selected.end,
+                part_of_speech=_HA_SUFFIXES[family],
+                token_indices=selected.token_indices,
+            )
+    return None
 
 
 def _complete_form(

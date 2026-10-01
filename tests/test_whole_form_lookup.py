@@ -306,11 +306,9 @@ def test_endings_are_never_stripped_from_a_predicate() -> None:
     dictionary = _Dictionary({"받다": _entry("받다", "receive")})
     LanguagePipeline(_Morphology(_SPLIT), dictionary).lookup(TextSelection(_SURFACE, 3))
 
-    # 었/어요 are endings, not particles: nothing short of the surface is asked.
-    assert not any(
-        _SURFACE.startswith(query) and query != _SURFACE for query in dictionary.queries[:1]
-    )
-    assert "초대받았" not in dictionary.queries and "초대받" not in dictionary.queries
+    # 었/어요 are endings, not particles, so no shortened surface is probed.
+    assert dictionary.queries[:2] == [_SURFACE, "초대받다"]
+    assert not any(_SURFACE.startswith(query) for query in dictionary.queries[1:])
 
 
 def test_a_particle_after_a_second_word_is_not_stripped_across_the_space() -> None:
@@ -356,3 +354,36 @@ def test_overlapping_units_are_never_joined_into_a_whole_form() -> None:
 
     assert result.entries[0].headword == "누구"
     assert "누이다" not in dictionary.queries
+
+
+#: `뭉클했다`: Kiwi keeps the adverb 뭉클 apart from the adjective-forming 하.
+_ADVERB_HA = MorphologyAnalysis(
+    tokens=(
+        TokenAnalysis(token="뭉클", lemma="뭉클", part_of_speech="MAG", start=0, length=2),
+        TokenAnalysis(token="하", lemma="하", part_of_speech="XSA", start=2, length=1),
+        TokenAnalysis(token="었", lemma="었", part_of_speech="EP", start=2, length=1),
+        TokenAnalysis(token="다", lemma="다", part_of_speech="EF", start=3, length=1),
+    ),
+    candidates=(LexicalCandidate(lemma="뭉클", start=0, end=4, part_of_speech="MAG"),),
+)
+
+
+def test_an_adverb_with_the_ha_suffix_answers_the_listed_predicate() -> None:
+    dictionary = _Dictionary(
+        {"뭉클하다": _entry("뭉클하다", "touched"), "뭉클": _entry("뭉클", "")}
+    )
+    result = LanguagePipeline(_Morphology(_ADVERB_HA), dictionary).lookup(
+        TextSelection("뭉클했다", 0)
+    )
+
+    assert result.entries[0].headword == "뭉클하다"
+
+
+def test_an_adverb_whose_predicate_is_not_listed_keeps_its_own_answer() -> None:
+    dictionary = _Dictionary({"뭉클": _entry("뭉클", "with a lump in the throat")})
+    result = LanguagePipeline(_Morphology(_ADVERB_HA), dictionary).lookup(
+        TextSelection("뭉클했다", 0)
+    )
+
+    assert result.entries[0].headword == "뭉클"
+    assert dictionary.queries.index("뭉클하다") < dictionary.queries.index("뭉클")
