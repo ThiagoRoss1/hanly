@@ -54,8 +54,8 @@ are V1 scaffolding and may be archived after V1; `01`–`03` are not.
 
 ```bash
 python -m pytest                     # the full local gate
-python -m ruff check packages packaging tests tools benchmarks
-python -m mypy packages packaging tests tools benchmarks
+python -m ruff check packages packaging tests tools lab
+python -m mypy packages packaging tests tools lab
 ```
 
 `--suite portable` (no Qt, Torch or display), `--suite native` (`tests/native/`,
@@ -64,7 +64,9 @@ real desktop runtime and window server) and `--suite packaged`
 `packaging/README.md` has the details. The venv (`.venv/`) runs Python 3.13,
 but the code targets **3.10+** — no newer-only syntax or APIs.
 
-Run the desktop as a user does: `hanly` or `python -m hanly_app`. A first
+Run the desktop as a user does: `hanly` or `python -m hanly_app`. Run it under
+observation with `python -m lab` (you drive) or `python -m lab tour` (the lab
+drives and scores); each writes a visual report under `artifacts/lab/runs/`. A first
 launch writes the per-user `runtime.json` and provisions `krdict` from
 `HANLY_KRDICT_DB` or `data/generated/krdict.sqlite3` (see `data/README.md`).
 `resources/dev/` is benchmark-only configuration for `--runtime-config`.
@@ -86,9 +88,10 @@ launch writes the per-user `runtime.json` and provisions `krdict` from
   happen; `LookupEngine.state` says whether providers are loaded;
   `config.LookupPreload` decides which a launch pays for.
 - **Privacy:** tracing carries no recognized text and no pixels. Private
-  evidence reaches disk only through the benchmark's explicit Export, under
-  the gitignored `artifacts/benchmarks/runs/`.
-- Developer-only instrumentation lives under `benchmarks/dev/` (including its
+  evidence reaches disk only through the lab's explicit Export, or a
+  `lab tour` over lab-authored pages it has verified it owns, under the
+  gitignored `artifacts/lab/runs/`.
+- Developer-only instrumentation lives under `lab/` (including its
   tests and the `dev-hud`); nothing dev-only belongs in `packages/`.
 
 ## Architecture boundaries

@@ -1,33 +1,91 @@
-# Hanly developer harness
+# Hanly Lab
 
-On-screen instrumentation, hover measurements and whole-app health scenarios.
+The developer lab: run the real Hanly under observation, let the lab drive it,
+and read a visual report of exactly what every process did. It also keeps the
+measurement campaigns and regression checks that used to live in `benchmarks/`.
+
 Nothing here ships: neither `hanly` nor `hanly_app` imports this package, and it
-is not part of either distribution. Private screen evidence reaches disk only
-through explicit Export under gitignored `artifacts/benchmarks/`.
+is not part of either distribution.
 
 ## Setup
 
 Install the desktop as described in the root `README.md`, then add the `dev`
 extra on top of it:
 
-```powershell
+```bash
 python -m pip install -e "packages/hanly-app[dev]"
 ```
 
-That extra adds Pillow for image campaigns and psutil for the app lab. It must come
-*after* `packages/hanly` is installed — `hanly-app` depends on `hanly==1.0.0`,
-which exists only in this checkout.
+That extra adds Pillow for image campaigns and psutil for process sampling. It
+must come *after* `packages/hanly` is installed — `hanly-app` depends on
+`hanly==1.0.0`, which exists only in this checkout. Every command runs from the
+repository root.
 
-Every command below runs from the repository root.
+## The three commands
 
-## `app-lab` — whole-app checks
+```bash
+python -m lab                 # run Hanly; you use it, quit it, the report opens
+python -m lab tour            # the lab uses Hanly itself and scores every answer
+python -m lab report          # rebuild the newest run's report (or pass a run dir)
+```
 
-Run `python -m benchmarks.dev app-lab list`, then select fixed scenarios with
-`app-lab run --scenario ID` (repeat the flag for more checks). Startup, Control
-Center, settings, capture/popup, resources, updater and packaged checks share
-isolated child profiles and safe result reports. Real and simulated evidence are
-labelled separately; missing checks never pass. See [app_lab/README.md](app_lab/README.md)
-for commands, privacy, cleanup and measurement limits.
+### `python -m lab` (`run`) — you drive
+
+Starts the real desktop through `run_desktop`, the same composition `hanly`
+uses, with the lab's recorder as its trace sink. The lookup engine and the
+Control Center are still the real spawned children. Use Hanly normally; quit
+from the tray or with Ctrl+C, or pass `--duration SECONDS`. `--hud` also draws
+the on-screen HUD. No recognized text is retained in this mode.
+
+### `python -m lab tour` — the lab drives
+
+Covers the screen with lab-authored Korean, presses the real capture shortcut,
+glides the real pointer onto each word, and waits for the app's own trace to say
+how that hover ended. Every target has a known answer:
+
+- the **story** (`fixtures/minibook`): prose with hand-set dictionary forms,
+  conjugations, particles, and Latin words that must be refused;
+- **words**: KRDICT headwords sampled with `--seed`, as many as `--words N`
+  (thousands work), painted at `--word-sizes` across three page themes and the
+  installed Korean typefaces.
+
+Text is painted, so each hover exercises capture and OCR. **Move the mouse
+yourself to stop the tour.** It needs Screen Recording and Accessibility (to
+move the pointer) granted to the terminal, and a bound capture shortcut.
+
+A tour retains recognized text so it can say *why* a hover failed. That is only
+safe because every pixel it reads is the lab's own: before each hover it asks
+the window server who owns the capture region, skips (never reads) a target
+another window covers, and keeps evidence only inside that verified window.
+
+### What a run records and reports
+
+Each run gets its own directory under gitignored `artifacts/lab/runs/` with its
+own profile (`profile/`, so settings and logs never touch your everyday
+profile; the runtime configuration, dictionary and models are reused read-only):
+
+| File | |
+|---|---|
+| `events.jsonl` | every trace event from the shell and the lookup child, startup phases, sanitized diagnostics, and the lab's own driver events |
+| `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms; roles are exact, not inferred |
+| `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
+| `report.json`, `summary.md` | the same model for scripts and agents |
+
+The report rebuilds from the recorded files at any time. Its findings name the
+code where each cost lives; they are derived from the run, not hand-written.
+
+Measurement limits: child timestamps share the shell's clock (`perf_counter`
+is system-wide on every supported OS). RSS is resident, not private, memory and
+is sampled, so short spikes can be missed. The shell's numbers include the lab
+recorder hosted in the same process. A tour on Linux cannot verify window
+ownership and therefore skips every target.
+
+## `check` — fixed regression scenarios
+
+`python -m lab check list`, then `python -m lab check run --scenario ID`
+(repeat the flag). These orchestrate fixed repository tests on disposable
+profiles — startup, Control Center, settings, updater and packaged checks — and
+label real and simulated evidence separately. See [checks/README.md](checks/README.md).
 
 ---
 
@@ -40,14 +98,14 @@ token selection, morphology, dictionary), OCR hit rate, worker readiness, and
 process resources. A second overlay outlines the region that was captured.
 
 ```powershell
-python -m benchmarks.dev dev-hud
+python -m lab dev-hud
 ```
 
 That uses your normal per-user configuration, exactly like `hanly`. To run it
 against an explicit one instead:
 
 ```powershell
-python -m benchmarks.dev dev-hud --config resources/dev/runtime-local.json
+python -m lab dev-hud --config resources/dev/runtime-local.json
 ```
 
 | Flag | |
@@ -72,31 +130,31 @@ Close it from the tray, like the normal desktop.
 
 These record evidence rather than draw it. Each writes metadata, flushed JSONL
 measurements, process samples, summaries, and — where the input supports it —
-structured/PNG/HTML diagnostics, under `artifacts/benchmarks/runs/<run-id>/`.
+structured/PNG/HTML diagnostics, under `artifacts/lab/runs/<run-id>/`.
 
 ```powershell
 # Real resident providers: first inference, warm-ups, and 30 warm samples.
-python -m benchmarks.dev real-lookup `
+python -m lab real-lookup `
   --image tests/hanly_fixtures/assets/korean_reading_roi.png `
   --config resources/dev/runtime-local.json `
   --target-x 100 --target-y 24 --roi-size 192x48
 
 # Dwell through an actually visible Qt popup.
-python -m benchmarks.dev real-hover `
+python -m lab real-hover `
   --image tests/hanly_fixtures/assets/korean_reading_roi.png `
   --config resources/dev/runtime-local.json `
   --target-x 100 --target-y 24 --roi-size 192x48
 
 # OCR invocation opportunities by hover condition. Deterministic, no hardware.
-python -m benchmarks.dev hover-rate
+python -m lab hover-rate
 
 # Real monitor enumeration and ROI capture. Retains no screen pixels.
-python -m benchmarks.dev desktop-capture
+python -m lab desktop-capture
 
 # Exact composition of a frozen build tree.
-python -m benchmarks.dev package `
+python -m lab package `
   --root dist/windows/hanly-desktop `
-  --output artifacts/benchmarks/package-composition.json
+  --output artifacts/lab/package-composition.json
 ```
 
 A committed Korean fixture is correctness-regression evidence, not an OCR
@@ -108,7 +166,7 @@ at a KRDICT database you built yourself. `tools/README.md` has its shape.
 ## `live-hover` — human-operated session
 
 ```powershell
-python -m benchmarks.dev live-hover --config resources/dev/runtime-local.json --duration 300
+python -m lab live-hover --config resources/dev/runtime-local.json --duration 300
 ```
 
 Not part of normal startup and not covered by fixture benchmarks: it uses the
@@ -148,7 +206,7 @@ It writes `metadata.json`, `input.png`, `diagnostic.json`, `diagnostic.html` and
 `events.jsonl` under `<run>/frozen-<lookup-id>/`. (The export can also carry an
 `ocr/` folder for a staged EasyOCR replay, but no command attaches one yet, so
 `live-hover` never writes it.) It refuses any destination outside
-`artifacts/benchmarks/runs/`, including a run directory placed elsewhere with
+`artifacts/lab/runs/`, including a run directory placed elsewhere with
 `--output-root`: the rest of that run's evidence goes there, but an export is
 refused.
 
@@ -164,7 +222,7 @@ absent rather than zero.
 
 ### Staged EasyOCR
 
-`benchmarks/dev/easyocr_stages.py` reproduces `Reader.readtext` stage by stage
+`lab/easyocr_stages.py` reproduces `Reader.readtext` stage by stage
 against a pinned EasyOCR version, keeping the exact crop that reached the
 recognizer for each region. Normalization is the shipped adapter's own, so a
 staged run and a production run cannot disagree about what a detection means.
@@ -191,15 +249,15 @@ makes an OCR number attributable.
 
 ```powershell
 # Score the committed corpus with the product's own backend.
-python -m benchmarks.dev ocr-campaign --mode ocr-only --backend vision
+python -m lab ocr-campaign --mode ocr-only --backend vision
 
 # Time detection and recognition separately. EasyOCR only: it is the one
 # backend with separately addressable stages.
-python -m benchmarks.dev ocr-campaign --mode detection-only --backend easyocr
-python -m benchmarks.dev ocr-campaign --mode recognition-only --backend easyocr
+python -m lab ocr-campaign --mode detection-only --backend easyocr
+python -m lab ocr-campaign --mode recognition-only --backend easyocr
 
 # List a corpus without loading an OCR runtime at all.
-python -m benchmarks.dev ocr-corpus --manifest benchmarks/fixtures/ocr/manifest.json
+python -m lab ocr-corpus --manifest lab/fixtures/ocr/manifest.json
 ```
 
 | Mode | |
@@ -220,15 +278,15 @@ rather than reporting zero.
 
 ## The corpus
 
-`benchmarks/fixtures/ocr/manifest.json` is the committed corpus and
-`benchmarks/fixtures/ocr/README.md` explains why it is currently empty. A
+`lab/fixtures/ocr/manifest.json` is the committed corpus and
+`lab/fixtures/ocr/README.md` explains why it is currently empty. A
 manifest declares whether it is `committed` or `local`, and validation enforces
 the difference: a committed manifest may not carry an absolute path and may not
 reference a `local_private` or `local_synthetic` case.
 
 ```powershell
 # Render the synthetic corpus. Refuses if the licensed face is not installed.
-python -m benchmarks.dev ocr-corpus-generate
+python -m lab ocr-corpus-generate
 ```
 
 The generator never substitutes a face for a missing one — a mislabelled font
@@ -240,7 +298,7 @@ then refuses.
 ## Tests
 
 ```powershell
-python -m pytest benchmarks/dev/tests
+python -m pytest lab/tests
 ```
 
 They run as part of the normal `python -m pytest` too — `testpaths` includes
