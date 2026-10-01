@@ -110,6 +110,32 @@ def test_bundle_identity_requires_an_explicit_build_and_commit() -> None:
     assert runner._unavailable(scenario, runner.REPO_ROOT, None) == "expected_commit_not_supplied"
 
 
+@pytest.mark.parametrize(
+    ("samples", "events", "reason"),
+    [
+        (0, (), "application_identity_not_observed"),
+        (2, ({"activation": "Foreground"},), "transient_foreground_child"),
+    ],
+)
+def test_identity_needs_observation_and_refuses_a_transient_foreground_child(
+    monkeypatch: pytest.MonkeyPatch,
+    samples: int,
+    events: tuple[dict[str, str], ...],
+    reason: str,
+) -> None:
+    monkeypatch.setattr(runner.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        runner,
+        "execute",
+        lambda *args, **kwargs: _execution(
+            identity_samples=samples,
+            processes=events,
+        ),
+    )
+    result = runner._run_one(select_scenarios(("MAC-IDENTITY",))[0], None, None)
+    assert result["reason"] == reason and result["outcome"] != "passed"
+
+
 def test_artifact_root_cannot_be_redirected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
