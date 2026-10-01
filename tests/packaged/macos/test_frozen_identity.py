@@ -246,8 +246,10 @@ def test_only_the_shell_is_ever_an_application(tmp_path: Path) -> None:
         print(f"identity evidence: {tmp_path / 'identity.json'}", file=sys.stderr)
 
     assert "Foreground" in observer.kinds[shell.pid]
-    children = {pid: kinds for pid, kinds in observer.kinds.items() if pid != shell.pid}
-    assert first.pid in children and second.pid in children
-    foreground_children = {pid: kinds for pid, kinds in children.items() if "Foreground" in kinds}
+    child_kinds = {pid: kinds for pid, kinds in observer.kinds.items() if pid != shell.pid}
+    assert first.pid in child_kinds and second.pid in child_kinds
+    foreground_children = {
+        pid: kinds for pid, kinds in child_kinds.items() if "Foreground" in kinds
+    }
     assert not foreground_children, f"a child became a Dock application: {foreground_children}"
     assert not survivors, f"processes outlived quitting the shell: {[p.pid for p in survivors]}"
