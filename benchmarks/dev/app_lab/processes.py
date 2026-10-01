@@ -109,10 +109,17 @@ class _ProcessObserver:
         self.available = True
         self.cleanup_count = 0
         self.started = time.monotonic()
+        self.root: psutil.Process | None = None
+        try:
+            self.root = psutil.Process(pid)
+        except (psutil.Error, OSError):
+            self.available = False
 
     def sample(self) -> None:
         try:
-            root = psutil.Process(self.pid)
+            root = self.root
+            if root is None or not root.is_running():
+                return
             processes = [root, *root.children(recursive=True)]
         except psutil.NoSuchProcess:
             return

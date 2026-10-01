@@ -250,6 +250,28 @@ def test_denied_process_sampling_is_reported_without_raw_exception(
     assert runner._verdict(result) == ("unavailable", "process_observation_denied")
 
 
+def test_observer_never_rediscovers_a_reused_root_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.dev.app_lab import processes
+
+    class Root:
+        def is_running(self) -> bool:
+            return False
+
+        def children(self, **kwargs: Any) -> Any:
+            raise AssertionError("the retired root must not discover anybody else's children")
+
+    root = Root()
+    monkeypatch.setattr(processes.psutil, "Process", lambda pid: root)
+    observer = processes._ProcessObserver(123, False)
+
+    def rediscovered(pid: int) -> Any:
+        raise AssertionError("PID alone is not ownership")
+
+    monkeypatch.setattr(processes.psutil, "Process", rediscovered)
+    observer.sample()
+    assert observer.owned == {} and observer.events == []
+
+
 def test_cli_requires_explicit_scenario_selection() -> None:
     assert _parser().parse_args(["app-lab", "list"]).lab_action == "list"
     with pytest.raises(SystemExit):
