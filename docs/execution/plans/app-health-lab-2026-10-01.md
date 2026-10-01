@@ -1,6 +1,6 @@
 # App health lab — implementation and continuation prompt
 
-**Status:** Mac foundation not started. This file is the execution prompt and scope for the approved app-wide lab, not a claim that its scenarios or fixes exist. Starting branch: `codex/app-health-lab`, created from `main` at `9e44e3857eedb8743ce967d9a9d262ac99c1dfef`. The live state is in [`../checkpoints/app-health-lab-2026-10-01.md`](../checkpoints/app-health-lab-2026-10-01.md); read that file before doing any work. If this plan and the checkout disagree, inspect and report the discrepancy instead of resetting or replaying completed work.
+**Status:** Mac foundation not started. This file is the execution prompt and scope for the approved app-wide lab, not a claim that its scenarios or fixes exist. Starting branch: `lab/app-health`, created from `main` at `9e44e3857eedb8743ce967d9a9d262ac99c1dfef`. The live state is in [`../checkpoints/app-health-lab-2026-10-01.md`](../checkpoints/app-health-lab-2026-10-01.md); read that file before doing any work. If this plan and the checkout disagree, inspect and report the discrepancy instead of resetting or replaying completed work.
 
 ## Objective and authorized sequence
 

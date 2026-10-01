@@ -151,6 +151,12 @@ diffing against a backup.
 
 ## Governance
 
+Name a new branch or worktree for its actual workstream, not for the agent:
+for example `lab/app-health`, `fix/windows-updater` or `v2/pixel-interface`.
+Use a short descriptive slug and keep related phases on the same branch unless
+the human requests isolation. A worktree uses that same workstream name; do not
+create one per step. Do not add an automatic `codex/` prefix.
+
 Agents may propose architecture changes and draft ADRs, but approved
 architecture changes need human approval before becoming authoritative. Commit,
 push and merge are human actions unless explicitly authorized; editing,
