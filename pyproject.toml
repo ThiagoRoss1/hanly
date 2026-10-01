@@ -6,6 +6,7 @@ dev = [
     "numpy>=1.24",
     "packaging>=24.0",
     "Pillow>=10,<13",
+    "psutil>=5.9,<8",
     "pytest>=8.3",
     "pyyaml>=6.0",
     "ruff>=0.6",

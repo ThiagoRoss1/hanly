@@ -911,9 +911,41 @@ def run_dev_hud(args: argparse.Namespace) -> int:
     )
 
 
+def run_app_lab(args: argparse.Namespace) -> int:
+    """List or execute app-wide checks with isolated profiles."""
+
+    from .app_lab.catalog import SCENARIOS
+
+    if args.lab_action == "list":
+        for item in SCENARIOS:
+            print(f"{item.id}: {item.title} [{item.evidence}]")
+        return 0
+    from .app_lab.runner import run_scenarios
+
+    run_dir, summary = run_scenarios(
+        tuple(args.scenario), bundle=args.bundle, expected_commit=args.expected_commit,
+    )
+    for item in summary["results"]:
+        print(f"{item['id']}: {item['outcome']} ({item['reason']})")
+    print(f"evidence: {run_dir}")
+    return 1 if any(item["outcome"] != "passed" for item in summary["results"]) else 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    lab = subcommands.add_parser("app-lab", help="inspect app-wide scenario coverage")
+    lab_actions = lab.add_subparsers(dest="lab_action", required=True)
+    lab_list = lab_actions.add_parser("list", help="list scenarios and evidence limits")
+    lab_list.set_defaults(handler=run_app_lab)
+    lab_run = lab_actions.add_parser("run", help="run selected checks on disposable profiles")
+    lab_run.add_argument("--scenario", action="append", required=True)
+    lab_run.add_argument("--bundle", type=Path, help="explicit frozen application directory")
+    lab_run.add_argument(
+        "--expected-commit", help="complete source commit required by bundle identity"
+    )
+    lab_run.set_defaults(handler=run_app_lab)
 
     hud = subcommands.add_parser(
         "dev-hud",

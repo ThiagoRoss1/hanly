@@ -29,6 +29,7 @@ runtime = [
 dev = [
     "hanly-app[runtime]",
     "Pillow>=10,<13",
+    "psutil>=5.9,<8",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,9 +1,9 @@
 # Hanly developer harness
 
-On-screen instrumentation and measurement campaigns for the real hover
-pipeline. Nothing here ships: neither `hanly` nor `hanly_app` imports this
-package, and it is not part of either distribution. Raw evidence is written
-under the gitignored `artifacts/benchmarks/` tree.
+On-screen instrumentation, hover measurements and whole-app health scenarios.
+Nothing here ships: neither `hanly` nor `hanly_app` imports this package, and it
+is not part of either distribution. Private screen evidence reaches disk only
+through explicit Export under gitignored `artifacts/benchmarks/`.
 
 ## Setup
 
@@ -14,11 +14,20 @@ extra on top of it:
 python -m pip install -e "packages/hanly-app[dev]"
 ```
 
-That extra adds Pillow, which the image-driven campaigns need. It must come
+That extra adds Pillow for image campaigns and psutil for the app lab. It must come
 *after* `packages/hanly` is installed — `hanly-app` depends on `hanly==1.0.0`,
 which exists only in this checkout.
 
 Every command below runs from the repository root.
+
+## `app-lab` — whole-app checks
+
+Run `python -m benchmarks.dev app-lab list`, then select fixed scenarios with
+`app-lab run --scenario ID` (repeat the flag for more checks). Startup, Control
+Center, settings, capture/popup, resources, updater and packaged checks share
+isolated child profiles and safe result reports. Real and simulated evidence are
+labelled separately; missing checks never pass. See [app_lab/README.md](app_lab/README.md)
+for commands, privacy, cleanup and measurement limits.
 
 ---
 
