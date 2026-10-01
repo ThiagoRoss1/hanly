@@ -14,6 +14,7 @@ from typing import Any
 from hanly import (
     BoundingBox,
     LexicalCandidate,
+    LookupResult,
     MorphologyAnalysis,
     OCRResult,
     Point,
@@ -32,6 +33,7 @@ EVIDENCE_FIELDS = (
     "resolution_evidence",
     "morphology_evidence",
     "dictionary_evidence",
+    "result_evidence",
 )
 
 
@@ -141,6 +143,22 @@ def encode_ocr_evidence(results: Sequence[OCRResult]) -> str:
     return _dump(payload)
 
 
+def encode_result_evidence(result: LookupResult) -> str:
+    """Describe what a lookup answered: the word it chose and the entry it found."""
+
+    context = result.context
+    payload: dict[str, Any] = {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "kind": "result",
+        "status": result.status.value,
+        "selected": None if context is None else context.text,
+        "lemma": None if context is None else context.lemma,
+        "headword": result.entries[0].headword if result.entries else None,
+        "entry_count": len(result.entries),
+    }
+    return _dump(payload)
+
+
 def decode_evidence(encoded: object) -> dict[str, Any] | None:
     """Return a decoded payload, or ``None`` for anything unreadable.
 
@@ -216,4 +234,5 @@ __all__ = [
     "encode_morphology_evidence",
     "encode_ocr_evidence",
     "encode_resolution_evidence",
+    "encode_result_evidence",
 ]

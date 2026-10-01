@@ -37,6 +37,7 @@ from hanly_app.lookup.evidence import (
     encode_morphology_evidence,
     encode_ocr_evidence,
     encode_resolution_evidence,
+    encode_result_evidence,
 )
 
 from .diagnostics import StartupTimeline
@@ -240,6 +241,7 @@ class LookupWorker:
                 duration_ns=_trace_clock() - started_ns,
                 outcome=cached.status.value,
                 cached=True,
+                **_result_evidence(self._trace_sink, cached),
             )
             return cached
         emit_trace(
@@ -281,6 +283,7 @@ class LookupWorker:
             duration_ns=_trace_clock() - started_ns,
             outcome=result.status.value,
             cached=False,
+            **_result_evidence(self._trace_sink, result),
         )
         self._remember(cache_key, result)
         return result
@@ -1036,6 +1039,16 @@ class _TracingDetailResolver(_TracingResolver):
 
         detail = getattr(self._resolver, "resolve_target_detail")
         return cast(TargetResolution | None, detail(ocr_results, target)), None
+
+
+def _result_evidence(
+    sink: RuntimeTraceSink | None, result: LookupResult
+) -> dict[str, JSONPrimitive]:
+    """The answer itself, for a sink that asked for private evidence."""
+
+    if sink is None or not _wants_evidence(sink):
+        return {}
+    return {"result_evidence": encode_result_evidence(result)}
 
 
 def _wants_evidence(sink: RuntimeTraceSink) -> bool:

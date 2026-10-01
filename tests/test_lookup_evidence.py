@@ -282,9 +282,25 @@ def test_a_sink_that_did_not_ask_for_evidence_receives_none_of_it() -> None:
     sink = _PlainSink()
     _run(sink)
 
-    for stage in ("ocr", "token_selection", "morphology", "dictionary"):
+    for stage in ("ocr", "token_selection", "morphology", "dictionary", "total_pipeline"):
         event = _stage(sink, stage)
         assert not any(key.endswith("_evidence") for key in event)
+
+
+def test_the_answer_itself_is_recorded_on_the_whole_lookup() -> None:
+    sink = _EvidenceSink()
+    _run(sink)
+
+    payload = decode_evidence(_stage(sink, "total_pipeline")["result_evidence"])
+    assert payload == {
+        "schema_version": payload["schema_version"] if payload else None,
+        "kind": "result",
+        "status": "SUCCESS",
+        "selected": "책상",
+        "lemma": "책상",
+        "headword": "책상",
+        "entry_count": 1,
+    }
 
 
 def test_evidence_collection_does_not_change_the_result() -> None:
