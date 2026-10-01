@@ -306,9 +306,9 @@ def test_endings_are_never_stripped_from_a_predicate() -> None:
     dictionary = _Dictionary({"받다": _entry("받다", "receive")})
     LanguagePipeline(_Morphology(_SPLIT), dictionary).lookup(TextSelection(_SURFACE, 3))
 
-    # 었/어요 are endings, not particles, so no shortened surface is probed.
-    assert dictionary.queries[:2] == [_SURFACE, "초대받다"]
-    assert not any(_SURFACE.startswith(query) for query in dictionary.queries[1:])
+    # 었/어요 are endings, not particles: no shortened surface such as 초대받았 is
+    # probed, only the whole form and then the units themselves.
+    assert dictionary.queries == [_SURFACE, "초대받다", "받다", "초대"]
 
 
 def test_a_particle_after_a_second_word_is_not_stripped_across_the_space() -> None:
