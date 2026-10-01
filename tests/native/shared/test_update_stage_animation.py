@@ -49,6 +49,12 @@ def test_stage_motion_tracks_label_changes_not_progress(tmp_path: Path, reduced:
     assert [step["percent"] for step in steps] == ["10%", "20%", "30%", "40%"]
     assert all(step["retained"] for step in steps)
     assert all(step["iterations"] == "1" for step in steps)
+    for step in steps:
+        duration = float(step["duration"].removesuffix("s"))
+        if step["reduced"]:
+            assert duration <= 0.001
+        else:
+            assert 0.1 < duration <= 0.5
     assert len(steps[2]["starts"]) == 1, steps[2]
     assert len(steps[3]["starts"]) == 2, steps[3]
     if reduced:

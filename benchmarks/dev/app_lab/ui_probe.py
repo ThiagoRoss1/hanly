@@ -71,6 +71,7 @@ _MEASURE = """
     percent: panel.querySelector('.update-percent').textContent,
     starts: window.__labStarts.slice(),
     iterations: getComputedStyle(label).animationIterationCount,
+    duration: getComputedStyle(label).animationDuration,
     reduced: matchMedia('(prefers-reduced-motion: reduce)').matches,
     visible: label.getBoundingClientRect().height > 0,
     mode: panel.dataset.updateMode,
