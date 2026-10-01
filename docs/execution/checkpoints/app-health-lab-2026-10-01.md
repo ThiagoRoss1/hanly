@@ -27,6 +27,14 @@
 - Frozen standalone UI probes still sample Foreground → UIElement; their passing verdict covers the page, bridge and exit, not normal frozen-child Dock identity. Do not turn the source-child correction into an unverified packaged identity claim.
 - Next safe implementation boundary: real Windows continuation after the human resumes it. Use the executable section in the Mac handoff. The full Windows update, normal frozen Mac identity, live hover and cross-display checks remain explicit gaps; final deep review is separately authorized.
 
+## Lab evolution and hardening (2026-10-01, later)
+
+- `benchmarks/dev/` became the top-level `lab/` (`4da283c`), with `python -m lab` / `lab tour` / `lab report` added (`a066076`) and documented (`fc4d257`). The hardening bundle is `c8db0a6`..`bd7527b` plus the final docs commit; its [Review Handoff](../review-handoffs/lab-hardening-mac-2026-10-01.md) is the authoritative record.
+- Tour baseline `artifacts/lab/runs/20261001-053159-tour` (on `fc4d257`, rule v1) is preserved; under `strict-headword-v2` it scores 443/453. The corrected standard tour `20261001-171914-tour` scores 446/453, 0 unscored, with the same settings and a one-word corpus change (애기 → 삼총사).
+- Fresh macOS build from `bd7527bb8cfc245a577c6b37bce5054e4f8619ea`: ZIP and DMG reconstructions match all 7,342 manifest entries, pass strict signature checks, and pass 4/4 packaged cases with that SHA required. The earlier `e15204d` build was moved to `dist/archive-e15204d/`.
+- Local artifact to remove by hand: `artifacts/lab/runs/20261001-043306-tour` holds real screen text from before the ownership guard existed.
+- Next safe boundary: the Windows continuation (tour ownership via `WindowFromPoint`, then `WIN-UPD-01`/`WIN-UPD-02`). Deferred lookup/OCR/capture items are listed in the hardening handoff.
+
 ## Resume instructions
 
 1. Inspect branch, worktree, commits, interpreter and any newer artifacts. Preserve all existing changes; do not reset or replay work from this checkpoint.
