@@ -177,6 +177,39 @@ def test_output_is_bounded_and_private_text_is_not_returned(tmp_path: Path) -> N
     assert list(tmp_path.iterdir()) == []
 
 
+def test_visual_report_escapes_content_and_shows_measurement_limits() -> None:
+    report = runner.render_report(
+        {
+            "run_id": "test",
+            "platform": "test",
+            "commit": "test",
+            "source_dirty": True,
+            "coverage": [
+                {
+                    "id": "<script>",
+                    "outcome": "passed",
+                    "reason": "verified",
+                    "evidence": "simulated",
+                    "expected": "safe",
+                    "duration_ms": 123,
+                    "peak_rss_bytes": 2 * 1024 * 1024,
+                    "processes": [
+                        {
+                            "elapsed_ms": 20,
+                            "pid": 1234,
+                            "role": "scenario_runner",
+                            "activation": "not_observed",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    assert "<script>" not in report and "&lt;script&gt;" in report
+    assert "modified checkout" in report and "not private app memory" in report
+    assert "process timeline" in report and "2.0" in report
+
+
 def test_a_blocked_child_is_stopped_at_the_deadline(tmp_path: Path) -> None:
     result = execute(
         [sys.executable, "-c", "import time; time.sleep(60)"],

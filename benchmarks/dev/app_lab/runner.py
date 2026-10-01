@@ -212,23 +212,54 @@ def run_scenarios(
 def render_report(summary: dict[str, Any]) -> str:
     """Render the same safe coverage records without embedding private output."""
 
-    rows = "".join(
-        "<tr>"
-        + "".join(
-            f"<td>{html.escape(str(item.get(key, '')))}</td>"
-            for key in ("id", "outcome", "reason", "evidence", "expected")
+    rows = []
+    timelines = []
+    for item in summary["coverage"]:
+        rss = item.get("peak_rss_bytes")
+        cells = [item.get(key, "—") for key in ("id", "outcome", "reason", "evidence")]
+        cells.extend(
+            (
+                item.get("duration_ms", "—"),
+                round(rss / (1024 * 1024), 1) if rss is not None else "—",
+                item["expected"],
+            )
         )
-        + "</tr>"
-        for item in summary["coverage"]
+        rows.append(
+            "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in cells) + "</tr>"
+        )
+        events = "".join(
+            "<tr>"
+            + "".join(
+                f"<td>{html.escape(str(event[key]))}</td>"
+                for key in ("elapsed_ms", "pid", "role", "activation")
+            )
+            + "</tr>"
+            for event in item.get("processes", ())
+        )
+        if events:
+            timelines.append(
+                f"<details><summary>{html.escape(item['id'])} process timeline</summary>"
+                "<table><thead><tr><th>Elapsed ms</th><th>Owned PID</th><th>Inferred role</th>"
+                f"<th>Activation</th></tr></thead><tbody>{events}</tbody></table></details>"
+            )
+    dirty = summary.get("source_dirty")
+    provenance = (
+        "unknown checkout state"
+        if dirty is None
+        else ("modified checkout" if dirty else "clean checkout")
     )
     return (
         '<!doctype html><html lang="en"><meta charset="utf-8"><title>Hanly app lab</title>'
         "<style>body{font:15px system-ui;margin:32px;background:#202124;color:#eee}"
         "table{border-collapse:collapse;width:100%}td,th{padding:10px;text-align:left;"
-        "border-bottom:1px solid #555}td:nth-child(2){font-weight:700}</style>"
+        "border-bottom:1px solid #555}td:nth-child(2){font-weight:700}"
+        "details{margin-top:20px}summary{cursor:pointer}</style>"
         f"<h1>Hanly app lab</h1><p>Run {html.escape(summary['run_id'])} · "
-        f"{html.escape(summary['platform'])} · {html.escape(summary['commit'])}</p>"
+        f"{html.escape(summary['platform'])} · {html.escape(summary['commit'])} · {provenance}</p>"
         "<p>Evidence describes its scope. Unavailable and unrun checks are not passes.</p>"
+        "<p>RSS is a sampled sum of the test runner and its descendants, not private app memory. "
+        "Nominal 100 ms sampling has inspection overhead and can miss short-lived transitions.</p>"
         "<table><thead><tr><th>Scenario</th><th>Outcome</th><th>Reason</th><th>Evidence</th>"
-        f"<th>Expectation</th></tr></thead><tbody>{rows}</tbody></table></html>"
+        "<th>Duration ms</th><th>Sampled RSS MiB</th><th>Expectation</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>{''.join(timelines)}</html>"
     )

@@ -935,6 +935,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
 
+    hud = subcommands.add_parser(
+        "dev-hud",
+        help="run the real Hanly desktop with the on-screen developer HUD",
+    )
     lab = subcommands.add_parser("app-lab", help="inspect app-wide scenario coverage")
     lab_actions = lab.add_subparsers(dest="lab_action", required=True)
     lab_list = lab_actions.add_parser("list", help="list scenarios and evidence limits")
@@ -947,10 +951,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     lab_run.set_defaults(handler=run_app_lab)
 
-    hud = subcommands.add_parser(
-        "dev-hud",
-        help="run the real Hanly desktop with the on-screen developer HUD",
-    )
     hud.add_argument(
         "--config",
         type=Path,
