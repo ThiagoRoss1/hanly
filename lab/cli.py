@@ -1,4 +1,12 @@
-"""Command-line entry point for isolated benchmark campaigns."""
+"""The Hanly Lab: run Hanly under observation, let the lab drive it, read the report.
+
+  python -m lab               run Hanly; use it, quit it, the report opens
+  python -m lab tour          the lab hovers lab-authored Korean and scores each answer
+  python -m lab report        reopen the newest report (or name a run, or --list)
+
+Everything else is a focused measurement campaign or the fixed regression checks.
+Runs live under artifacts/lab/runs/.
+"""
 
 from __future__ import annotations
 
@@ -933,14 +941,18 @@ def run_app_lab(args: argparse.Namespace) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subcommands = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        prog="python -m lab",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subcommands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    _session_parsers(subcommands)
 
     hud = subcommands.add_parser(
         "dev-hud",
         help="run the real Hanly desktop with the on-screen developer HUD",
     )
-    _session_parsers(subcommands)
 
     lab = subcommands.add_parser(
         "check", help="run fixed regression scenarios on disposable profiles"
@@ -1201,7 +1213,16 @@ def _session_parsers(subcommands: Any) -> None:
     )
     _common_session_arguments(tour)
     tour.add_argument(
-        "--words", type=int, default=120, help="KRDICT headwords to hover (default: 120)"
+        "--words",
+        type=int,
+        default=300,
+        help="KRDICT headwords to hover (default: 300, the standard comparable tour)",
+    )
+    tour.add_argument(
+        "--quick", action="store_true", help="a short smoke tour: 24 words, no story"
+    )
+    tour.add_argument(
+        "--baseline", help="earlier tour (directory or name) to compare this one with"
     )
     tour.add_argument(
         "--story-sizes",
@@ -1213,14 +1234,19 @@ def _session_parsers(subcommands: Any) -> None:
         "--word-sizes", type=_parse_sizes, default=(16, 22, 30, 40),
         help="font pixel sizes cycled over words (default: 16,22,30,40)",
     )
-    tour.add_argument("--seed", type=int, default=7)
+    tour.add_argument("--seed", type=int, default=7, help="word sample seed (default: 7)")
     tour.add_argument("--hud", action="store_true", help="also draw the on-screen HUD")
     tour.set_defaults(handler=run_lab_session, mode="tour")
 
-    report = subcommands.add_parser("report", help="rebuild the report of a recorded run")
-    report.add_argument("run_dir", type=Path, nargs="?", help="run directory (default: newest)")
+    report = subcommands.add_parser("report", help="rebuild and open a run's report")
     report.add_argument(
-        "--baseline", type=Path, help="earlier tour to compare with, both under the current rule"
+        "run_dir",
+        nargs="?",
+        help="run directory or name under artifacts/lab/runs (default: newest)",
+    )
+    report.add_argument("--list", action="store_true", help="list recent runs and exit")
+    report.add_argument(
+        "--baseline", help="earlier tour (directory or name) to compare with under the current rule"
     )
     report.add_argument("--no-open", action="store_true")
     report.set_defaults(handler=run_lab_report)
@@ -1249,17 +1275,20 @@ def _parse_sizes(value: str) -> tuple[int, ...]:
 def run_lab_session(args: argparse.Namespace) -> int:
     """Run the real desktop under observation, driven by a person or by the lab."""
 
-    from .session.runner import SessionOptions, run_session
+    from .session.runner import SessionOptions, resolve_run, run_session
 
+    quick = getattr(args, "quick", False)
+    baseline = getattr(args, "baseline", None)
     return run_session(
         SessionOptions(
             mode=args.mode,
+            baseline=None if baseline is None else resolve_run(baseline),
             runtime_config=args.config,
             duration=getattr(args, "duration", None),
             hud=args.hud,
             open_report=not args.no_open,
-            story_sizes=getattr(args, "story_sizes", ()),
-            words=getattr(args, "words", 0),
+            story_sizes=() if quick else getattr(args, "story_sizes", ()),
+            words=24 if quick else getattr(args, "words", 0),
             word_sizes=getattr(args, "word_sizes", (16, 22, 30, 40)),
             seed=getattr(args, "seed", 7),
             backend=args.backend,
@@ -1273,18 +1302,23 @@ def run_lab_report(args: argparse.Namespace) -> int:
     import webbrowser
 
     from .report.build import build_report
-    from .session.runner import RUNS_ROOT
+    from .session.runner import RUNS_ROOT, recorded_runs, resolve_run
 
-    run_dir = args.run_dir
-    if run_dir is None:
-        recorded = sorted(
-            (path for path in RUNS_ROOT.glob("*") if (path / "events.jsonl").is_file()),
-            key=lambda path: path.stat().st_mtime,
-        )
-        if not recorded:
-            raise SystemExit("lab: no recorded run under artifacts/lab/runs")
-        run_dir = recorded[-1]
-    report = build_report(run_dir, baseline=args.baseline)
+    if args.list:
+        for run in recorded_runs()[-15:]:
+            print(run.name)
+        return 0
+    if args.run_dir is None:
+        runs = recorded_runs()
+        if not runs:
+            raise SystemExit(
+                f"lab: no recorded run under {RUNS_ROOT}; start one with `python -m lab`"
+            )
+        run_dir = runs[-1]
+    else:
+        run_dir = resolve_run(args.run_dir)
+    baseline = None if args.baseline is None else resolve_run(args.baseline)
+    report = build_report(run_dir, baseline=baseline)
     print(f"lab: report {report}")
     if not args.no_open:
         webbrowser.open(report.resolve().as_uri())

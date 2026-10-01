@@ -487,6 +487,31 @@ def test_the_lab_runs_the_app_when_given_no_verb() -> None:
     assert _parser().parse_args(with_default_verb([])).mode == "run"
 
 
+def test_the_default_tour_is_the_standard_comparable_one() -> None:
+    args = _parser().parse_args(["tour"])
+    assert (args.words, args.story_sizes, args.seed, args.quick) == (300, (22,), 7, False)
+    assert _parser().parse_args(["tour", "--quick"]).quick is True
+
+
+def test_only_lab_sessions_are_discovered_by_start_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lab.session import runner
+
+    for name in ("20261001-090000-tour", "20260930-230000-run", "w17-frozen-1", "20261001-1-x"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "events.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(runner, "RUNS_ROOT", tmp_path)
+
+    assert [path.name for path in runner.recorded_runs()] == [
+        "20260930-230000-run",
+        "20261001-090000-tour",
+    ]
+    assert runner.resolve_run("20261001-090000-tour") == tmp_path / "20261001-090000-tour"
+    with pytest.raises(SystemExit, match="not a recorded run"):
+        runner.resolve_run("nothing-here")
+
+
 def test_tour_options_parse() -> None:
     args = _parser().parse_args(
         ["tour", "--words", "500", "--story-sizes", "0", "--word-sizes", "14,18"]

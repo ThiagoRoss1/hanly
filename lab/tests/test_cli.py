@@ -153,13 +153,16 @@ def test_dev_hud_defaults_to_the_normal_configuration_and_shows_the_roi() -> Non
     assert args.dwell_ms == 80
 
 
-def test_dev_hud_is_the_first_command_offered() -> None:
-    """It is the one a developer reaches for, so it leads the help output."""
+def test_the_lab_commands_lead_the_help() -> None:
+    """They are what a developer reaches for; `run --hud` superseded `dev-hud` there."""
 
-    help_text = _parser().format_help()
-    commands = help_text[help_text.index("{") + 1 : help_text.index("}")].split(",")
+    import argparse
 
-    assert commands[0] == "dev-hud"
+    parser = _parser()
+    action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+
+    assert list(action.choices)[:3] == ["run", "tour", "report"]
+    assert "dev-hud" in action.choices
 
 
 def test_the_desktop_accepts_a_trace_sink_without_importing_the_harness() -> None:

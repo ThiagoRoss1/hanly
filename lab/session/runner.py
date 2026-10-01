@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import signal
 import subprocess
 import sys
@@ -32,6 +33,8 @@ from .recorder import LabDiagnosticLog, LabRecorder
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNS_ROOT = REPO_ROOT / "artifacts" / "lab" / "runs"
 _DEV_RUNTIME = REPO_ROOT / "resources" / "dev" / "runtime-local.json"
+#: Lab sessions; the runs root also holds older campaign evidence.
+_SESSION_NAME = re.compile(r"^\d{8}-\d{6}-(run|tour)$")
 
 
 @dataclass(frozen=True)
@@ -46,11 +49,36 @@ class SessionOptions:
     word_sizes: tuple[int, ...] = (16, 22, 30, 40)
     seed: int = 7
     backend: str | None = None
+    baseline: Path | None = None
+
+
+def recorded_runs() -> list[Path]:
+    """Recorded runs, oldest first. Names start with their start time; rebuilding a
+    report changes a directory's modification time, so that is not used."""
+
+    if not RUNS_ROOT.is_dir():
+        return []
+    return sorted(
+        path
+        for path in RUNS_ROOT.iterdir()
+        if _SESSION_NAME.match(path.name) and (path / "events.jsonl").is_file()
+    )
+
+
+def resolve_run(name: str | Path) -> Path:
+    """A run directory given as a path or as a bare name under the runs root."""
+
+    for candidate in (Path(name), RUNS_ROOT / str(name)):
+        if (candidate / "events.jsonl").is_file():
+            return candidate
+    raise SystemExit(f"lab: {name} is not a recorded run; `python -m lab report --list` shows them")
 
 
 def run_session(options: SessionOptions) -> int:
     runtime_config = _runtime_config(options.runtime_config)
     user_settings = _read_user_settings()
+    if options.mode == "tour":
+        _require_tour_prerequisites(user_settings)
 
     run_dir = RUNS_ROOT / f"{datetime.now():%Y%m%d-%H%M%S}-{options.mode}"
     profile = run_dir / "profile"
@@ -120,11 +148,54 @@ def run_session(options: SessionOptions) -> int:
 
     from ..report.build import build_report
 
-    report = build_report(run_dir)
-    print(f"lab: report {_display(report)}", flush=True)
+    report = build_report(run_dir, baseline=options.baseline)
+    print(f"lab: report {_display(report)}  (summary: {_display(run_dir / 'summary.md')})")
+    score = _score_line(run_dir)
+    if score:
+        print(f"lab: {score}", flush=True)
     if options.open_report:
         webbrowser.open(report.as_uri())
     return exit_code
+
+
+def _score_line(run_dir: Path) -> str | None:
+    try:
+        tour = json.loads((run_dir / "report.json").read_text(encoding="utf-8")).get("tour")
+    except (OSError, ValueError):
+        return None
+    if not tour or tour.get("accuracy") is None:
+        return None
+    return (
+        f"tour {tour['passed']}/{tour['scored']} ({tour['accuracy']:.1%}) under {tour['rule']}, "
+        f"{tour['unscored']} not scored"
+    )
+
+
+def _require_tour_prerequisites(settings: AppConfig) -> None:
+    """Refuse before taking the pointer, with what to do about it."""
+
+    problems = []
+    if sys.platform == "darwin":
+        from hanly_app import permissions_darwin
+
+        if not permissions_darwin.screen_recording_granted():
+            problems.append("Screen Recording is not granted to this terminal")
+        if not permissions_darwin.accessibility_trusted():
+            problems.append(
+                "Accessibility is not granted to this terminal (needed to move the pointer)"
+            )
+    elif sys.platform != "win32":
+        problems.append(
+            "a tour cannot verify window ownership on this platform, so nothing would be scored"
+        )
+    if not settings.capture_hotkey:
+        problems.append("the Start/Stop Capture shortcut is unbound; bind it in Hanly's settings")
+    if problems:
+        detail = "\n  - ".join(problems)
+        raise SystemExit(
+            f"lab: the tour cannot start:\n  - {detail}\n"
+            "macOS: System Settings > Privacy & Security, then restart the terminal."
+        )
 
 
 # -- profile and settings -------------------------------------------------------
@@ -171,8 +242,6 @@ def _lab_settings(user: AppConfig, options: SessionOptions) -> AppConfig:
     if options.mode == "tour":
         # The lab cannot hold a chord while it glides the pointer.
         settings = replace(settings, hover_activation=HoverActivation.ALWAYS_ACTIVE)
-        if not settings.capture_hotkey:
-            raise SystemExit("lab: the capture shortcut is unbound; bind it in settings first")
     return settings
 
 
@@ -294,6 +363,7 @@ def _metadata(options: SessionOptions, runtime_config: Path, settings: AppConfig
             "seed": options.seed,
             "duration": options.duration,
             "hud": options.hud,
+            "baseline": None if options.baseline is None else options.baseline.name,
         },
     }
 
