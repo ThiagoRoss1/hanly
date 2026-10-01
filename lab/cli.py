@@ -1225,6 +1225,14 @@ def _session_parsers(subcommands: Any) -> None:
         "--baseline", help="earlier tour (directory or name) to compare this one with"
     )
     tour.add_argument(
+        "--retain-fixture-text",
+        action="store_true",
+        help=(
+            "also save what verified hovers read from the lab's own pages "
+            "(default: only verdicts and text-free facts are saved)"
+        ),
+    )
+    tour.add_argument(
         "--story-sizes",
         type=_parse_sizes,
         default=(22,),
@@ -1283,6 +1291,7 @@ def run_lab_session(args: argparse.Namespace) -> int:
         SessionOptions(
             mode=args.mode,
             baseline=None if baseline is None else resolve_run(baseline),
+            retain_fixture_text=getattr(args, "retain_fixture_text", False),
             runtime_config=args.config,
             duration=getattr(args, "duration", None),
             hud=args.hud,

@@ -45,11 +45,54 @@ UNSCORED = frozenset({"obscured", "obscured_during_capture", "unverifiable_regio
 _DECLINED = frozenset({"EMPTY", "UNUSABLE", "NOT_FOUND"})
 
 
+#: The text-free facts a verdict depends on. A tour persists these instead of
+#: what was read, so a later rule can still re-score a run that kept no text.
+FACT_KEYS = (
+    "answer_matches_expected",
+    "has_selection",
+    "has_recognized_text",
+    "surface_was_read",
+    "selection_is_target",
+    "answer_is_selection",
+)
+
+
+def derive_facts(record: Mapping[str, Any]) -> dict[str, bool]:
+    """Compute the facts from in-memory text: the selected word, answer and reading."""
+
+    status = record.get("status")
+    selected = str(record.get("selected") or "")
+    raw_headword = record.get("headword")
+    headword = None if raw_headword is None else str(raw_headword)
+    lemma = record.get("lemma")
+    surface = str(record.get("surface") or "")
+    expected = record.get("expected")
+    expected_lemma = record.get("expected_lemma", expected)
+    recognized = " ".join(str(text) for text in record.get("recognized") or ())
+    succeeded = status == "SUCCESS"
+    return {
+        "answer_matches_expected": succeeded
+        and (
+            expected in (headword, lemma)
+            or (expected_lemma is not None and lemma == expected_lemma)
+        ),
+        "has_selection": bool(selected),
+        "has_recognized_text": bool(recognized.strip()),
+        "surface_was_read": bool(surface) and surface in recognized,
+        "selection_is_target": bool(selected)
+        and _core(selected) in (_core(surface), _hangul_run(surface, record.get("cursor"))),
+        "answer_is_selection": bool(selected)
+        and headword is not None
+        and _core(headword) == _core(selected),
+    }
+
+
 def classify(record: Mapping[str, Any]) -> str:
     """The verdict for one tour result record, by the first stage that went wrong.
 
-    ``record`` is a ``tour_result`` as written by the driver (any schema since
-    the first tour). Missing fields count against the hover, never for it.
+    ``record`` is a ``tour_result`` from any schema since the first tour: a
+    current one carries ``facts``; older ones carry the text they were derived
+    from. Missing facts count against the hover, never for it.
     """
 
     unscored = record.get("unscored")
@@ -59,14 +102,12 @@ def classify(record: Mapping[str, Any]) -> str:
         return str(record["verdict"])
 
     status = record.get("status")
-    selected = record.get("selected")
-    headword = record.get("headword")
-    lemma = record.get("lemma")
-    surface = str(record.get("surface") or "")
-    expected = record.get("expected")
-    expected_lemma = record.get("expected_lemma", expected)
-    recognized = " ".join(str(text) for text in record.get("recognized") or ())
     has_result = status is not None
+    stored = record.get("facts")
+    facts = stored if isinstance(stored, Mapping) else derive_facts(record)
+
+    def fact(name: str) -> bool:
+        return facts.get(name) is True
 
     if record.get("error"):
         return "error"
@@ -77,26 +118,23 @@ def classify(record: Mapping[str, Any]) -> str:
         # pipeline result that never reached it is partial, not an answer.
         return "timed_out"
     if not has_result:
-        # A timeout or a missing answer is never a refusal or a pass.
-        return "no_result" if record.get("lookup_ids") else "no_hover"
+        return "no_result"
     if record.get("refuse"):
         if status in _DECLINED:
             return "refused"
         return "false_answer" if status == "SUCCESS" else "error"
-    if status == "SUCCESS" and expected in (headword, lemma):
-        return "correct"
-    if status == "SUCCESS" and expected_lemma is not None and lemma == expected_lemma:
+    if fact("answer_matches_expected"):
         return "correct"
     if status not in _DECLINED and status != "SUCCESS":
         return "error"
-    if not selected:
-        if not recognized.strip():
+    if not fact("has_selection"):
+        if not fact("has_recognized_text"):
             return "no_text"
         # Text was read, but no word under the pointer was chosen from it.
-        return "unresolved" if surface and surface in recognized else "misread"
-    if _core(selected) not in (_core(surface), _hangul_run(surface, record.get("cursor"))):
-        return "misread" if surface not in recognized else "wrong_word"
-    if status == "SUCCESS" and headword is not None and _core(headword) == _core(selected):
+        return "unresolved" if fact("surface_was_read") else "misread"
+    if not fact("selection_is_target"):
+        return "wrong_word" if fact("surface_was_read") else "misread"
+    if status == "SUCCESS" and fact("answer_is_selection"):
         # The exact surface is itself a dictionary word, and Hanly has no
         # sentence context to prefer the reading the story intends (드릴).
         return "ambiguous_surface"
@@ -136,4 +174,4 @@ def _hangul_run(text: str, index: object) -> str:
     return text[start:end]
 
 
-__all__ = ["FAIL", "PASS", "RULE", "UNSCORED", "classify", "summarize"]
+__all__ = ["FACT_KEYS", "FAIL", "PASS", "RULE", "UNSCORED", "classify", "derive_facts", "summarize"]

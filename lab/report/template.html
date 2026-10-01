@@ -188,6 +188,8 @@ const fmt = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toFixed(d);
 const ms = (v) => v == null ? "–" : v >= 1000 ? (v / 1000).toFixed(2) + " s" : v.toFixed(v < 10 ? 2 : 0) + " ms";
 const pct = (v) => v == null ? "–" : (v * 100).toFixed(1) + "%";
 const SHORT = { dwell: "Dwell", direct_text: "AX", capture: "Capture", to_engine: "Handoff", ocr: "OCR", language: "Language", to_popup: "Popup" };
+//: Whether this run explicitly retained what its tour hovers read.
+const T_TEXT = Boolean(M.tour && M.tour.text_included);
 const SEG = M.segments.map(([k, label], i) => ({ k, label, color: `var(--s${i + 1})` }));
 const OUT = {
   answered: ["Answered", "var(--good)"], no_answer: ["No answer (not shown)", "var(--neutral)"],
@@ -374,7 +376,7 @@ function drawTimeline() {
     r.style.cursor = "pointer"; r.onclick = () => { selectEpisode(e); location.hash = "hovers"; };
     svg.append(r);
   }
-  if (M.tour) for (const r of M.tour.results) { const ep = M.episodes.find((e) => e.lookup != null && (r.lookup_ids || []).includes(e.lookup)); if (!ep) continue; const [label, color] = VERD[r.verdict] || [r.verdict, "var(--neutral)"]; const c = sv("circle", { cx: X(ep.t), cy: lanes.tour, r: 5, fill: color, stroke: "var(--surface)", "stroke-width": 2 }); hoverable(c, `<b>${esc(r.expected)}</b> · ${esc(label)}<br>answer: ${esc(r.headword ?? "–")}<br>${r.font_px}px ${esc(r.theme)}`); svg.append(c); }
+  if (M.tour) for (const r of M.tour.results) { const ep = M.episodes.find((e) => e.lookup != null && (r.lookup_ids || []).includes(e.lookup)); if (!ep) continue; const [label, color] = VERD[r.verdict] || [r.verdict, "var(--neutral)"]; const c = sv("circle", { cx: X(ep.t), cy: lanes.tour, r: 5, fill: color, stroke: "var(--surface)", "stroke-width": 2 }); hoverable(c, `<b>${esc(r.expected)}</b> · ${esc(label)}<br>${T_TEXT ? "answer: " + esc(r.headword ?? "–") + "<br>" : ""}${r.font_px}px ${esc(r.theme)}`); svg.append(c); }
   const chart = (top, h, idx, unit, title) => {
     svg.append(sv("text", { x: 8, y: top + 4, class: "ink" }, title));
     let max = 1; for (const role of ROLES) for (const p of M.processes.series[role]) max = Math.max(max, p[idx]);
@@ -432,7 +434,7 @@ function selectEpisode(e) {
   const tour = tourByLookup.get(e.lookup);
   const kv = el("div", { class: "kv", style: "margin:10px 0" });
   const facts = { ...e.facts }; const stages = facts.stages || {}; delete facts.stages;
-  if (tour) for (const k of ["expected", "verdict", "headword", "selected", "recognized", "queries", "confidence", "font", "font_px", "theme"]) kv.append(el("div", {}, "tour." + k), el("div", {}, JSON.stringify(tour[k])));
+  if (tour) for (const k of ["expected", "verdict", "headword", "selected", "recognized", "queries", "recognized_regions", "queries_tried", "queries_found", "confidence", "font", "font_px", "theme"]) if (tour[k] !== undefined && tour[k] !== null) kv.append(el("div", {}, "tour." + k), el("div", {}, JSON.stringify(tour[k])));
   for (const [k, v] of Object.entries(facts)) kv.append(el("div", {}, k), el("div", {}, typeof v === "number" && !Number.isInteger(v) ? fmt(v, 3) : String(v)));
   for (const [k, v] of Object.entries(stages)) kv.append(el("div", {}, "stage." + k), el("div", {}, ms(v)));
   p.append(kv);
@@ -464,8 +466,8 @@ function selectEpisode(e) {
   const ct = el("table"); ct.innerHTML = "<tr><th>confidence</th><th class=n>hovers</th><th class=n>accuracy</th></tr>"; for (const r of T.calibration) ct.append(Object.assign(el("tr"), { innerHTML: `<td>${r.range}</td><td class=n>${r.n}</td><td class=n>${pct(r.accuracy)}</td>` })); cal.append(ct); body.append(cal);
   body.append(el("h3", { style: "font-size:14px;margin:16px 0 6px" }, `Failures (${T.failures.length})`));
   if (!T.failures.length) body.append(el("p", { class: "empty" }, "None."));
-  else { const ft = el("table"); ft.innerHTML = "<tr><th>expected</th><th>verdict</th><th>answer</th><th>OCR read</th><th>dictionary queries</th><th class=n>conf.</th><th>font</th></tr>"; for (const r of T.failures) ft.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.expected)} <span class=meta>${esc(r.target)}</span></td><td>${esc((VERD[r.verdict] || [r.verdict])[0])}</td><td>${esc(r.headword ?? "–")}</td><td>${esc((r.recognized || []).join(" / "))}</td><td>${esc((r.queries || []).map(([q, f]) => q + (f ? "✓" : "✗")).join(" → "))}</td><td class=n>${fmt(r.confidence, 2)}</td><td>${r.font_px}px ${esc(r.font || "")} ${esc(r.theme || "")}</td>` })); const sc = el("div", { class: "scroll" }); sc.append(ft); body.append(sc); }
-  const det = el("details"); det.append(el("summary", {}, `All ${T.results.length} results`)); const at = el("table"); at.innerHTML = "<tr><th>target</th><th>verdict</th><th>answer</th><th class=n>popup</th><th class=n>OCR</th><th>font</th></tr>"; for (const r of T.results) at.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.expected)}</td><td>${esc((VERD[r.verdict] || [r.verdict])[0])}</td><td>${esc(r.headword ?? "–")}</td><td class=n>${ms(r.hover_to_popup_ms)}</td><td class=n>${ms(r.ocr_ms)}</td><td>${r.font_px}px ${esc(r.font || "")}</td>` })); const sc2 = el("div", { class: "scroll" }); sc2.append(at); det.append(sc2); body.append(det);
+  else { const ft = el("table"); ft.innerHTML = "<tr><th>expected</th><th>verdict</th><th>answer</th><th>OCR read</th><th>dictionary queries</th><th class=n>conf.</th><th>font</th></tr>"; for (const r of T.failures) ft.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.expected)} <span class=meta>${esc(r.target)}</span></td><td>${esc((VERD[r.verdict] || [r.verdict])[0])}</td><td>${T_TEXT ? esc(r.headword ?? "–") : "<span class=meta>not retained</span>"}</td><td>${T_TEXT ? esc((r.recognized || []).join(" / ")) : esc(`${r.recognized_regions ?? 0} region(s)`)}</td><td>${T_TEXT ? esc((r.queries || []).map(([q, f]) => q + (f ? "✓" : "✗")).join(" → ")) : esc(`${r.queries_found ?? 0} of ${r.queries_tried ?? 0} found`)}</td><td class=n>${fmt(r.confidence, 2)}</td><td>${r.font_px}px ${esc(r.font || "")} ${esc(r.theme || "")}</td>` })); const sc = el("div", { class: "scroll" }); sc.append(ft); body.append(sc); }
+  const det = el("details"); det.append(el("summary", {}, `All ${T.results.length} results`)); const at = el("table"); at.innerHTML = "<tr><th>target</th><th>verdict</th><th>answer</th><th class=n>popup</th><th class=n>OCR</th><th>font</th></tr>"; for (const r of T.results) at.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.expected)}</td><td>${esc((VERD[r.verdict] || [r.verdict])[0])}</td><td>${T_TEXT ? esc(r.headword ?? "–") : "–"}</td><td class=n>${ms(r.hover_to_popup_ms)}</td><td class=n>${ms(r.ocr_ms)}</td><td>${r.font_px}px ${esc(r.font || "")}</td>` })); const sc2 = el("div", { class: "scroll" }); sc2.append(at); det.append(sc2); body.append(det);
 })();
 
 // startup + processes + data -------------------------------------------------------------------------------

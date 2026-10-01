@@ -68,36 +68,57 @@ capture shortcut is bound, and says what to change if not.
 
 #### Scoring
 
-Rule `strict-headword-v2` (`session/scoring.py`): a hover is **correct** when the
-lookup bound to that hover succeeded and the dictionary form it answered with
-equals the hand-set expected form; a must-refuse target is **refused** only when
-its lookup ran and deliberately declined. A timeout, a processing error or a
-missing result is never a refusal or a pass. `ambiguous_surface` marks an answer
-that is a valid reading of the exact surface without sentence context (드릴);
-it counts as a failure but is labelled apart. Hovers the lab could not attribute
-to its own page are **not scored** and are reported, never folded into either
-side. The score is on this controlled corpus; it is not general OCR or
-translation accuracy, and it does not judge every definition shown.
+Rule `strict-headword-v3` (`session/scoring.py`): a hover is **correct** when the
+lookup bound to that hover finished -- the app made its popup decision before
+the driver's deadline -- and the dictionary form it answered with equals the
+hand-set expected form. A must-refuse target is **refused** only when its lookup
+finished and deliberately declined. A timeout (`timed_out`), a processing error
+or a missing result is never a refusal or a pass, whatever partial result it
+carried. `ambiguous_surface` marks an answer that is a valid reading of the
+exact surface without sentence context (드릴); it counts as a failure but is
+labelled apart. Hovers the lab could not attribute to its own page are **not
+scored** and are reported, never folded into either side. The score is on this
+controlled corpus; it is not general OCR or translation accuracy, and it does
+not judge every definition shown.
 
 A report always re-scores under the current rule and shows any verdict that
-differs from the one recorded at the time.
+differs from the one recorded at the time. Scoring needs no stored text: each
+result keeps text-free facts (did the answer match, was the surface read, was
+the selection the target word), from which every rule since v2 is computed.
 
-#### What a tour may keep
+#### What is saved, and what is not
 
-A tour keeps the recognized text of its own pages so it can say *why* a hover
-failed. What the lab guarantees, and what it does not:
+- **No recognized text or pixels in a session you drive.** Production tracing
+  sends evidence only to a sink that asks for it, and `python -m lab` does not.
+- **`events.jsonl` never holds a raw evidence or OCR-geometry field**, in any
+  mode. A tour's driver reads that evidence in memory only.
+- **A tour result keeps the target's own corpus text** (the story's surface and
+  expected form, or the KRDICT headword it sampled) and **structural facts**:
+  verdict, status, timings, counts of regions and dictionary queries, and the
+  text-free facts above. What the hover *read* -- the selected word, the answer,
+  the recognized regions and the dictionary queries -- is not saved.
+- **`--retain-fixture-text` saves what was read**, and only for verified hovers
+  over the lab's own page, so a failure can be studied word by word. The choice
+  is recorded in the run's `metadata.json`, and reports show read text only for
+  such a run. This is retention of lab-authored fixture text; it is not the
+  private-screen Export below, and it never applies to a session you drive.
+- **Diagnostics** mirrored into the timeline keep their text only for
+  informational lifecycle lines (startup, Control Center, lookup engine,
+  cleanup, capture, updates, resources); any other line keeps its subsystem and
+  level only. The run profile's own session log behaves as `hanly`'s does.
+- **Private screen content** reaches disk only through `live-hover`'s explicit
+  Export, under the gitignored `artifacts/lab/runs/`; Freeze stays in memory.
 
-- `events.jsonl` never contains a recognized-text or OCR-geometry field, in any
-  mode. Only the tour driver sees that evidence, in memory.
-- An answer is bound to the hover that fired after the pointer arrived and the
-  lookup that hover submitted; a stale or neighbouring lookup cannot answer it.
-- Before the hover and again after the answer, the driver asks the window
-  server who owns a grid of points over the capture region. Any foreign or
-  unknown owner, or a captured region larger than the probed one, discards the
-  text and marks the hover not scored.
-- That is a sampled check at two moments, not proof of every pixel or of the
-  time in between. It fails closed when attribution is impossible, which on
-  Linux is always.
+How a tour decides a hover is its own: the answer is bound to the hover that
+fired after the pointer arrived and the lookup that hover submitted, so a stale
+or neighbouring lookup cannot answer it. Before the hover and again after the
+answer, the driver asks the window server who owns a grid of points over the
+capture region; a foreign or unknown owner, or a captured region larger than the
+probed one, makes the hover not scored and keeps nothing it read. That is a
+sampled check at two moments, not proof of every pixel or of the time in
+between, and it fails closed where attribution is impossible (always, on Linux).
+Recordings made before this policy can still hold read text; rebuilding their
+reports no longer shows it.
 
 ### What a run records and reports
 
@@ -107,7 +128,7 @@ profile; the runtime configuration, dictionary and models are reused read-only):
 
 | File | |
 |---|---|
-| `events.jsonl` | every trace event from the shell and the lookup child (content fields removed), startup phases, sanitized diagnostics, and the lab's own driver events, including each tour verdict |
+| `events.jsonl` | every trace event from the shell and the lookup child (content fields removed), startup phases, lifecycle diagnostics, and the lab's own driver events, including each tour result as described above |
 | `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms; roles are exact, not inferred |
 | `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
 | `report.json`, `summary.md` | the same model for scripts and agents |

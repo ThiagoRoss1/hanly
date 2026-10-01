@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from .ownership import owner_at
 from .recorder import LabRecorder
-from .scoring import RULE, classify
+from .scoring import RULE, classify, derive_facts
 
 if TYPE_CHECKING:
     from .page import Placed, TourPage
@@ -87,12 +87,14 @@ class TourDriver:
         capture_hotkey: str,
         settle_timeout: float = 4.0,
         first_timeout: float = 90.0,
+        retain_fixture_text: bool = False,
     ) -> None:
         self._recorder = recorder
         self._page = page
         self._capture_hotkey = capture_hotkey
         self._settle_timeout = settle_timeout
         self._first_timeout = first_timeout
+        self._retain_fixture_text = retain_fixture_text
         self._lock = threading.Lock()
         self._active: _Observation | None = None
         self._ready = threading.Event()
@@ -204,7 +206,12 @@ class TourDriver:
     ) -> None:
         self.completed += 1
         record = outcome_record(
-            placed, seen, arrived_ns, timed_out=timed_out, keep_text=unscored is None
+            placed,
+            seen,
+            arrived_ns,
+            timed_out=timed_out,
+            verified=unscored is None,
+            retain_text=self._retain_fixture_text,
         )
         if unscored is not None:
             record["unscored"] = unscored
@@ -355,9 +362,22 @@ def _stage(lookup: _Lookup, fields: Mapping[str, Any]) -> None:
 
 
 def outcome_record(
-    placed: Placed, seen: _Observation, arrived_ns: int, *, timed_out: bool, keep_text: bool
+    placed: Placed,
+    seen: _Observation,
+    arrived_ns: int,
+    *,
+    timed_out: bool,
+    verified: bool,
+    retain_text: bool = False,
 ) -> dict[str, Any]:
-    """The durable outcome of one hover; recognized text only when ``keep_text``."""
+    """The durable outcome of one hover.
+
+    It always carries the target's own corpus text (lab-authored, or a KRDICT
+    headword) and structural facts. What was read from the screen -- the
+    selection, answer, recognized regions and dictionary queries -- is kept
+    only for a verified hover of a run that explicitly retains fixture text.
+    An unverified hover keeps no facts either: nothing read from it counts.
+    """
 
     target = placed.target
     lookup = seen.latest
@@ -389,15 +409,21 @@ def outcome_record(
         "ignored_foreign_events": seen.ignored,
         "events": seen.events,
     }
-    if keep_text and lookup is not None:
-        # Lab-authored text, read from pixels the lab sampled as its own.
-        record.update(
-            selected=result.get("selected"),
-            lemma=result.get("lemma"),
-            headword=result.get("headword"),
-            recognized=lookup.recognized,
-            queries=lookup.queries,
-        )
+    if not verified or lookup is None:
+        return record
+    read = {
+        "selected": result.get("selected"),
+        "lemma": result.get("lemma"),
+        "headword": result.get("headword"),
+        "recognized": lookup.recognized,
+        "queries": lookup.queries,
+    }
+    record["facts"] = derive_facts({**record, **read})
+    record["recognized_regions"] = len(lookup.recognized)
+    record["queries_tried"] = len(lookup.queries)
+    record["queries_found"] = sum(1 for _query, found in lookup.queries if found)
+    if retain_text:
+        record.update(read)
     return record
 
 

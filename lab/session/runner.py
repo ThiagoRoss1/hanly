@@ -50,6 +50,8 @@ class SessionOptions:
     seed: int = 7
     backend: str | None = None
     baseline: Path | None = None
+    #: Persist what verified tour hovers read (lab-authored text only).
+    retain_fixture_text: bool = False
 
 
 def recorded_runs() -> list[Path]:
@@ -266,7 +268,12 @@ def _start_tour(
     total = sum(len(p.placed) for p in page.pages)
     recorder.lab("tour_planned", pages=len(page.pages), targets=total)
     print(f"lab: tour of {total} hovers over {len(page.pages)} pages", flush=True)
-    driver = TourDriver(recorder, page, capture_hotkey=settings.capture_hotkey)
+    driver = TourDriver(
+        recorder,
+        page,
+        capture_hotkey=settings.capture_hotkey,
+        retain_fixture_text=options.retain_fixture_text,
+    )
     closers.append(page.close)
 
     def drive() -> None:
@@ -355,7 +362,8 @@ def _metadata(options: SessionOptions, runtime_config: Path, settings: AppConfig
         "dirty": bool(_git("status", "--porcelain")),
         "runtime_config": _display(runtime_config),
         "settings": settings.to_dict(),
-        "evidence_retained": options.mode == "tour",
+        # Evidence is read in memory during a tour; only this decides persistence.
+        "fixture_text_retained": options.mode == "tour" and options.retain_fixture_text,
         "options": {
             "words": options.words,
             "story_sizes": list(options.story_sizes),

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..session.recorder import is_content_field, is_lifecycle_line
 from ..session.scoring import PASS, RULE, UNSCORED, classify, summarize
 
 #: Waterfall segments in pipeline order. Colors follow this order in the report.
@@ -94,9 +95,15 @@ def build_model(run_dir: Path) -> dict[str, Any]:
         "episodes": [_episode_row(episode) for episode in fired],
         "moved_on": len(episodes) - len(fired),
         "lifecycle": lifecycle(events),
-        "tour": tour_summary(tour) if tour else None,
+        "tour": tour_summary(tour, include_read=_retained(metadata)) if tour else None,
         "diagnostics": [
-            {k: e.get(k) for k in ("t_ms", "subsystem", "level", "message")}
+            {
+                "t_ms": e.get("t_ms"),
+                "subsystem": e.get("subsystem"),
+                "level": e.get("level"),
+                # Older recordings mirrored every line; apply today's rule to them too.
+                "message": e.get("message") if is_lifecycle_line(e) else None,
+            }
             for e in events
             if e["event"] == "diagnostic"
         ][-200:],
@@ -256,7 +263,7 @@ def _episode_row(episode: Episode) -> dict[str, Any]:
             [
                 round(t - episode.start, 3),
                 name,
-                {k: v for k, v in f.items() if not k.endswith("_evidence")},
+                {k: v for k, v in f.items() if not is_content_field(k)},
             ]
             for t, name, f in episode.events
         ],
@@ -459,13 +466,47 @@ def startup(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def tour_summary(recorded: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Score every result under the current rule, keeping what was recorded at the time."""
+#: What a hover read from the screen. A report shows it only for a run that
+#: explicitly retained fixture text; any other recording is scored in memory.
+READ_FIELDS = ("selected", "lemma", "headword", "recognized", "queries")
+
+
+def _retained(metadata: Mapping[str, Any]) -> bool:
+    return metadata.get("fixture_text_retained") is True
+
+
+def _structural(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Counts a report may always show, from stored counts or in-memory text."""
+
+    queries = record.get("queries") or ()
+    return {
+        "recognized_regions": record.get(
+            "recognized_regions", len(record.get("recognized") or ())
+        ),
+        "queries_tried": record.get("queries_tried", len(queries)),
+        "queries_found": record.get(
+            "queries_found", sum(1 for item in queries if len(item) > 1 and item[1])
+        ),
+    }
+
+
+def tour_summary(
+    recorded: Sequence[Mapping[str, Any]], *, include_read: bool = False
+) -> dict[str, Any]:
+    """Score every result under the current rule, keeping what was recorded at the time.
+
+    Scoring may use recorded text in memory; the summary carries it only when
+    ``include_read``.
+    """
 
     results = []
     for record in recorded:
         current = classify(record)
-        results.append({**record, "verdict": current, "recorded_verdict": record.get("verdict")})
+        row = {**record, **_structural(record)}
+        if not include_read:
+            for name in READ_FIELDS:
+                row.pop(name, None)
+        results.append({**row, "verdict": current, "recorded_verdict": record.get("verdict")})
     changed = [
         {k: r.get(k) for k in ("target", "expected", "recorded_verdict", "verdict", "headword")}
         for r in results
@@ -524,6 +565,9 @@ def tour_summary(recorded: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 "headword",
                 "recognized",
                 "queries",
+                "recognized_regions",
+                "queries_tried",
+                "queries_found",
                 "confidence",
                 "font",
                 "font_px",
@@ -540,6 +584,7 @@ def tour_summary(recorded: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     recorded_rules = sorted({str(r.get("rule") or "strict-headword-v1") for r in recorded})
     return {
         "rule": RULE,
+        "text_included": include_read,
         "recorded_rules": recorded_rules,
         "rescored_changes": changed,
         **{k: v for k, v in summarize([r["verdict"] for r in results]).items() if k != "rule"},
@@ -579,6 +624,9 @@ def tour_summary(recorded: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                     "source",
                     "recognized",
                     "queries",
+                    "recognized_regions",
+                    "queries_tried",
+                    "queries_found",
                     "lookup_ids",
                 )
             }
@@ -606,7 +654,7 @@ def compare_tours(baseline_dir: Path, current: Mapping[str, Any]) -> dict[str, A
     tour = current.get("tour")
     if not recorded or not tour:
         return None
-    before = tour_summary(recorded)
+    before = tour_summary(recorded, include_read=_retained(metadata))
     after_by = {_comparable(row): row for row in tour["results"]}
     before_by = {_comparable(row): row for row in before["results"]}
     changed = [

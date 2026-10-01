@@ -34,6 +34,11 @@ def is_content_field(key: str) -> bool:
 
     return key in CONTENT_FIELDS or key.endswith("_evidence")
 
+#: Subsystems whose informational lines describe lifecycle, never what was read.
+_LIFECYCLE_SUBSYSTEMS = frozenset(
+    {"Startup", "Control Center", "Lookup engine", "Cleanup", "Capture", "Updates", "Resources"}
+)
+
 _STARTUP_PHASE = re.compile(r"^(?P<name>.+?): (?P<ms>\d+) ms \((?P<outcome>[^)]*)\)$")
 _STARTUP_MILESTONE = re.compile(r"^(?P<name>.+?) at (?P<ms>\d+) ms$")
 
@@ -105,12 +110,19 @@ class LabRecorder:
                 continue
 
 
+def is_lifecycle_line(record: Mapping[str, Any]) -> bool:
+    """Whether a mirrored diagnostic line may show its text."""
+
+    return record.get("level") == "info" and record.get("subsystem") in _LIFECYCLE_SUBSYSTEMS
+
+
 class LabDiagnosticLog(DiagnosticLog):
     """The session log, also mirrored into the lab timeline.
 
-    Startup phases become structured events so the report can draw them. Other
-    lines keep their subsystem and level, with the user's home directory and
-    secrets removed, as an exported diagnostics bundle would.
+    Startup phases become structured events so the report can draw them.
+    Informational lifecycle lines keep their text, with the user's home
+    directory and secrets removed; every other line keeps only its subsystem and
+    level. The session's own rotating log inside the run profile is unchanged.
     """
 
     def __init__(self, recorder: LabRecorder, log_file: Path) -> None:
@@ -136,12 +148,22 @@ class LabDiagnosticLog(DiagnosticLog):
                     "startup_milestone", name=milestone["name"], at_ms=int(milestone["ms"])
                 )
                 return
-        self._lab.lab(
-            "diagnostic",
-            subsystem=str(subsystem),
-            level=level,
-            message=sanitize_text(text)[:240],
-        )
+        if is_lifecycle_line({"level": level, "subsystem": subsystem}):
+            self._lab.lab(
+                "diagnostic",
+                subsystem=str(subsystem),
+                level=level,
+                message=sanitize_text(text)[:240],
+            )
+            return
+        # An error's text is an exception message the lab cannot vouch for.
+        self._lab.lab("diagnostic", subsystem=str(subsystem), level=level, message_withheld=True)
 
 
-__all__ = ["CONTENT_FIELDS", "LabDiagnosticLog", "LabRecorder", "is_content_field"]
+__all__ = [
+    "CONTENT_FIELDS",
+    "LabDiagnosticLog",
+    "LabRecorder",
+    "is_content_field",
+    "is_lifecycle_line",
+]

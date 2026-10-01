@@ -126,6 +126,17 @@ def system_map(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def _read(tour: dict[str, Any], row: dict[str, Any]) -> str:
+    """What was read, or only its counts when the run retained no text."""
+
+    if tour.get("text_included"):
+        return f"{row.get('headword')} | {' / '.join(row.get('recognized') or [])}"
+    return (
+        f"(not retained) | {row.get('recognized_regions') or 0} region(s), "
+        f"{row.get('queries_found') or 0}/{row.get('queries_tried') or 0} queries found"
+    )
+
+
 def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1%}"
 
@@ -207,7 +218,7 @@ def summary_markdown(model: dict[str, Any]) -> str:
         for row in comparison["changed"]:
             lines.append(
                 f"| {row['target']} | {row['expected']} | {row['before']} | {row['after']} | "
-                f"{row['before_answer']} | {row['after_answer']} |"
+                f"{row['before_answer'] or '–'} | {row['after_answer'] or '–'} |"
             )
     tour = model.get("tour")
     if tour:
@@ -238,8 +249,7 @@ def summary_markdown(model: dict[str, Any]) -> str:
             for row in tour["failures"][:80]:
                 lines.append(
                     f"| {row['target']} | {row['expected']} | {row['verdict']} | "
-                    f"{row['headword']} | {' / '.join(row['recognized'] or [])} | "
-                    f"{row['confidence']} | {row['font_px']} |"
+                    f"{_read(tour, row)} | {row['confidence']} | {row['font_px']} |"
                 )
     return "\n".join(lines) + "\n"
 

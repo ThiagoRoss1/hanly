@@ -146,7 +146,9 @@ def test_a_stale_lookup_from_another_hover_cannot_answer_this_one() -> None:
     stale_popup = ("popup_visible", {"lookup_request_id": 9, "result_status": "SUCCESS"})
     seen = _hovered(stale, stale_popup, *_answered(4, 10, "가다", "가다"))
 
-    record = outcome_record(_placed(), seen, 0, timed_out=False, keep_text=True)
+    record = outcome_record(
+        _placed(), seen, 0, timed_out=False, verified=True, retain_text=True
+    )
     assert (record["lookup_ids"], record["headword"]) == ([10], "가다")
     assert record["ignored_foreign_events"] == 2
     assert classify(record) == "correct"
@@ -156,17 +158,77 @@ def test_only_a_stale_answer_leaves_this_hover_without_a_result() -> None:
     stale = ("popup_visible", {"lookup_request_id": 9, "result_status": "SUCCESS"})
     seen = _hovered(("hover_stable_fire", {"hover_request_id": 4}), stale)
 
-    record = outcome_record(_placed(), seen, 0, timed_out=True, keep_text=True)
+    record = outcome_record(_placed(), seen, 0, timed_out=True, verified=True)
     assert seen.done.is_set() is False
     assert classify(record) == "no_hover"
 
 
-def test_a_discarded_hover_keeps_no_recognized_text() -> None:
-    seen = _hovered(*_answered(4, 10, "가다", "가다"))
-    record = outcome_record(_placed(), seen, 0, timed_out=False, keep_text=False)
-    assert not {"selected", "lemma", "headword", "recognized", "queries"} & set(record)
+_READ = {"selected", "lemma", "headword", "recognized", "queries"}
+_SENTINEL = "센티널읽음"
+
+
+def _answered_with(text: str) -> _Observation:
+    events = _answered(4, 10, text, text)
+    ocr = (
+        "lookup_stage_completed",
+        {"hover_request_id": 4, "lookup_request_id": 10, "stage": "ocr", "duration_ns": 1,
+         "ocr_evidence": json.dumps({"regions": [{"text": text}]})},
+    )
+    return _hovered(events[0], events[1], ocr, *events[2:])
+
+
+def test_a_verified_hover_keeps_facts_but_no_text_by_default() -> None:
+    record = outcome_record(
+        _placed(surface=_SENTINEL, line=_SENTINEL, headword=_SENTINEL, lemma=_SENTINEL),
+        _answered_with(_SENTINEL), 0, timed_out=False, verified=True,
+    )
+    assert not _READ & set(record)
+    assert record["facts"]["answer_matches_expected"] is True
+    assert (record["recognized_regions"], record["queries_tried"]) == (1, 0)
+    assert classify(record) == "correct"
+
+
+def test_fixture_text_is_kept_only_on_request() -> None:
+    record = outcome_record(
+        _placed(), _answered_with("가다"), 0, timed_out=False, verified=True, retain_text=True
+    )
+    assert record["recognized"] == ["가다"] and record["headword"] == "가다"
+
+
+def test_an_unverified_hover_keeps_neither_text_nor_facts() -> None:
+    seen = _answered_with(_SENTINEL)
+    record = outcome_record(
+        _placed(), seen, 0, timed_out=False, verified=False, retain_text=True
+    )
+    assert not _READ & set(record) and "facts" not in record
+    assert _SENTINEL not in json.dumps(record, ensure_ascii=False)
     record["unscored"] = "obscured_during_capture"
     assert classify(record) == "obscured_during_capture"
+
+
+def test_a_late_result_from_another_hover_leaves_no_trace() -> None:
+    late = (
+        "lookup_stage_completed",
+        {"hover_request_id": 3, "lookup_request_id": 9, "stage": "total_pipeline",
+         "outcome": "SUCCESS", "duration_ns": 1, "result_evidence": _result(_SENTINEL, _SENTINEL)},
+    )
+    seen = _hovered(late, *_answered(4, 10, "가다", "가다"))
+    record = outcome_record(
+        _placed(), seen, 0, timed_out=False, verified=True, retain_text=True
+    )
+    assert _SENTINEL not in json.dumps(record, ensure_ascii=False)
+
+
+def test_an_error_line_reaches_the_timeline_without_its_message(tmp_path: Path) -> None:
+    recorder = LabRecorder(tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False)
+    log = LabDiagnosticLog(recorder, tmp_path / "logs" / "hanly.log")
+    log.record("Lookup", f"failed on {_SENTINEL}", level="error")
+    log.record("Lookup engine", "ready")
+    recorder.close()
+
+    text = (tmp_path / "events.jsonl").read_text(encoding="utf-8")
+    assert _SENTINEL not in text and '"message_withheld":true' in text
+    assert '"message":"ready"' in text
 
 
 def _record(**fields: Any) -> dict[str, Any]:
@@ -478,6 +540,47 @@ def test_a_comparison_rescores_both_runs_and_leaves_the_baseline_untouched(
         ("correct", "wrong_lemma")
     ]
     assert sorted(path.name for path in (tmp_path / "before").iterdir()) == before_files
+
+
+def _with_older_recording(run: Path, sentinel: str) -> None:
+    """Make the session look like a tour recorded before text stopped being stored."""
+
+    events = run / "events.jsonl"
+    rows = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()]
+    rows[-1].update(selected=sentinel, headword=sentinel, lemma=sentinel,
+                    recognized=[sentinel], queries=[[sentinel, True]])
+    rows.insert(5, {"event": "lookup_stage_completed", "t_ms": 150, "hover_request_id": 2,
+                    "lookup_request_id": 7, "stage": "ocr", "duration_ns": 1,
+                    "ocr_evidence": sentinel, "ocr_boxes": sentinel})
+    rows.append({"event": "diagnostic", "t_ms": 170, "subsystem": "Lookup", "level": "error",
+                 "message": f"failed on {sentinel}"})
+    events.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_reports_show_read_text_only_for_a_run_that_retained_it(
+    tmp_path: Path, retained: bool
+) -> None:
+    sentinel = "센티널리포트"
+    run = tmp_path / "run"
+    _write_session(run)
+    _with_older_recording(run, sentinel)
+    (run / "metadata.json").write_text(
+        json.dumps({"mode": "tour", "fixture_text_retained": retained}), encoding="utf-8"
+    )
+
+    build_report(run)
+
+    outputs = {name: (run / name).read_text(encoding="utf-8")
+               for name in ("report.json", "report.html", "summary.md")}
+    for name, text in outputs.items():
+        # Evidence, geometry and error text never appear; read text only on request.
+        assert "ocr_boxes" not in text and f"failed on {sentinel}" not in text, name
+    assert (sentinel in outputs["report.json"]) is retained
+    assert (sentinel in outputs["summary.md"]) is retained
+    tour = json.loads(outputs["report.json"])["tour"]
+    # Scored from the recorded text in memory either way: the selection is not the word.
+    assert tour["verdicts"] == {"misread": 1}
 
 
 def test_the_report_cannot_be_broken_out_of_by_recorded_text(tmp_path: Path) -> None:
