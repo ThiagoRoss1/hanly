@@ -120,7 +120,7 @@ class _ProcessObserver:
             self.available = False
             return
         kinds = macos_registrations({p.pid for p in processes}) if self.observe_identity else None
-        if kinds is not None:
+        if kinds:
             self.identity_samples += 1
         live = {process.pid for process in processes}
         for pid in self.states.keys() - live:
@@ -257,7 +257,7 @@ def execute(
         observer.dropped,
         observer.identity_samples,
         survivors,
-        observer.available,
+        observer.available and bool(observer.owned),
         not reader.is_alive(),
         observer.cleanup_count,
     )
