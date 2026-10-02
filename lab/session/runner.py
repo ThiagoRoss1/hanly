@@ -34,12 +34,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNS_ROOT = REPO_ROOT / "artifacts" / "lab" / "runs"
 _DEV_RUNTIME = REPO_ROOT / "resources" / "dev" / "runtime-local.json"
 #: Lab sessions; the runs root also holds older campaign evidence.
-_SESSION_NAME = re.compile(r"^\d{8}-\d{6}-(run|tour)$")
+_SESSION_NAME = re.compile(r"^\d{8}-\d{6}-(run|tour|stress)$")
 
 
 @dataclass(frozen=True)
 class SessionOptions:
-    mode: str  # "run" (a person drives) or "tour" (the lab drives)
+    mode: str  # "run" (a person drives), "tour" or "stress" (the lab drives)
     runtime_config: Path | None = None
     duration: float | None = None
     hud: bool = False
@@ -52,6 +52,14 @@ class SessionOptions:
     baseline: Path | None = None
     #: Persist what verified tour hovers read (lab-authored text only).
     retain_fixture_text: bool = False
+    #: Keep the region a failing verified stress hover captured, for an offline replay.
+    retain_fixture_images: bool = False
+    #: At most this many hovers per stress family; ``None`` runs the whole plan.
+    per_family: int | None = None
+
+    @property
+    def drives(self) -> bool:
+        return self.mode in {"tour", "stress"}
 
 
 def recorded_runs() -> list[Path]:
@@ -79,8 +87,9 @@ def resolve_run(name: str | Path) -> Path:
 def run_session(options: SessionOptions) -> int:
     runtime_config = _runtime_config(options.runtime_config)
     user_settings = _read_user_settings()
-    if options.mode == "tour":
+    if options.drives:
         _require_tour_prerequisites(user_settings)
+    plan = _stress_plan(options, runtime_config) if options.mode == "stress" else None
 
     run_dir = RUNS_ROOT / f"{datetime.now():%Y%m%d-%H%M%S}-{options.mode}"
     profile = run_dir / "profile"
@@ -92,14 +101,16 @@ def run_session(options: SessionOptions) -> int:
     recorder = LabRecorder(
         run_dir / "events.jsonl",
         # Recognized text is retained only when every pixel hovered is the lab's.
-        retain_evidence=options.mode == "tour",
-        retain_geometry=options.mode == "tour",
+        retain_evidence=options.drives,
+        retain_geometry=options.drives,
     )
     diagnostics = LabDiagnosticLog(
         recorder, default_app_config_path().parent / "logs" / "hanly.log"
     )
     started = datetime.now().isoformat(timespec="seconds")
-    _write_json(run_dir / "metadata.json", _metadata(options, runtime_config, settings, started))
+    _write_json(
+        run_dir / "metadata.json", _metadata(options, runtime_config, settings, started, plan)
+    )
     print(f"lab: recording to {_display(run_dir)}", flush=True)
 
     from hanly_app.qt_bootstrap import ensure_qt_application
@@ -116,6 +127,8 @@ def run_session(options: SessionOptions) -> int:
         sinks.extend(_hud(application, runtime_config, closers))
     if options.mode == "tour":
         _start_tour(options, recorder, settings, runtime_config, closers)
+    elif plan is not None:
+        _start_stress(options, plan, recorder, settings, run_dir, closers)
     elif options.duration:
         _stop_after(options.duration, recorder)
 
@@ -141,7 +154,7 @@ def run_session(options: SessionOptions) -> int:
         _write_json(
             run_dir / "metadata.json",
             {
-                **_metadata(options, runtime_config, settings, started),
+                **_metadata(options, runtime_config, settings, started, plan),
                 "exit_code": exit_code,
                 "dropped_events": recorder.dropped_events,
                 "process_samples": sampler.samples,
@@ -156,6 +169,12 @@ def run_session(options: SessionOptions) -> int:
     score = _score_line(run_dir)
     if score:
         print(f"lab: {score}", flush=True)
+    if plan is not None:
+        from ..report.campaign import build_campaign
+
+        campaign = build_campaign(run_dir)
+        report = run_dir / "campaign.html"
+        print(f"lab: {_campaign_line(campaign)}; {_display(report)}", flush=True)
     if options.open_report:
         webbrowser.open(report.as_uri())
     return exit_code
@@ -249,7 +268,7 @@ def _lab_settings(user: AppConfig, options: SessionOptions) -> AppConfig:
         from hanly_app.config import OCRBackend
 
         settings = replace(settings, ocr_backend=OCRBackend(options.backend))
-    if options.mode == "tour":
+    if options.drives:
         # The lab cannot hold a chord while it glides the pointer.
         settings = replace(settings, hover_activation=HoverActivation.ALWAYS_ACTIVE)
     return settings
@@ -296,6 +315,80 @@ def _start_tour(
             _request_quit()
 
     threading.Thread(target=drive, name="lab-tour", daemon=True).start()
+
+
+def _stress_plan(options: SessionOptions, runtime_config: Path) -> list[Any]:
+    """The seeded campaign, trimmed per family when a short run was asked for."""
+
+    from .stress import stress_plan
+
+    plan = stress_plan(_krdict(runtime_config), seed=options.seed)
+    if options.per_family is None:
+        return plan
+    taken: dict[str, int] = {}
+    trimmed = []
+    for item in plan:
+        if taken.get(item.family, 0) < options.per_family:
+            taken[item.family] = taken.get(item.family, 0) + 1
+            trimmed.append(item)
+    # A repeat needs the hover it repeats.
+    kept = {item.target.id for item in trimmed}
+    return [item for item in trimmed if item.repeat_of is None or item.repeat_of in kept]
+
+
+def _start_stress(
+    options: SessionOptions,
+    plan: list[Any],
+    recorder: LabRecorder,
+    settings: AppConfig,
+    run_dir: Path,
+    closers: list[Any],
+) -> None:
+    from .stress_driver import StressDriver
+    from .stress_page import StressPage
+
+    page = StressPage()
+    uia = [item for item in plan if item.family in {"uia_korean", "uia_latin"}]
+    page.lay_out_plan(plan, options.seed)
+    total = sum(len(p.placed) for p in page.pages) + len(uia)
+    recorder.lab("tour_planned", pages=len(page.pages), targets=total)
+    print(f"lab: stress campaign of {total} hovers over {len(page.pages)} pages", flush=True)
+    driver = StressDriver(
+        recorder,
+        page,
+        uia,
+        capture_hotkey=settings.capture_hotkey,
+        run_dir=run_dir,
+        retain_fixture_text=options.retain_fixture_text,
+        retain_fixture_images=options.retain_fixture_images,
+    )
+    closers.append(page.close)
+
+    def drive() -> None:
+        try:
+            driver.run()
+        except Exception as error:
+            import traceback
+
+            traceback.print_exc()
+            recorder.lab("tour_aborted", reason=type(error).__name__)
+        finally:
+            _request_quit()
+
+    threading.Thread(target=drive, name="lab-stress", daemon=True).start()
+
+
+def _campaign_line(campaign: dict[str, Any]) -> str:
+    summary = campaign["summary"]
+    accuracy = summary["accuracy"]
+    return (
+        f"stress {summary['passed']}/{summary['scored']}"
+        + ("" if accuracy is None else f" ({accuracy:.1%})")
+        + f" under {campaign['rule']}; planned {campaign['planned_total']}, executed "
+        f"{summary['executed']}, unscored {summary['unscored']}; false positives "
+        f"{summary['false_positives']}/{summary['negatives_scored']}, missing or wrong "
+        f"{summary['missing_answers']}/{summary['positives_scored']}; ended {campaign['ended']}"
+    )
 
 
 def _stop_after(seconds: float, recorder: LabRecorder) -> None:
@@ -361,9 +454,22 @@ def _hud(application: Any, runtime_config: Path, closers: list[Any]) -> list[Any
 
 
 def _metadata(
-    options: SessionOptions, runtime_config: Path, settings: AppConfig, started: str
+    options: SessionOptions,
+    runtime_config: Path,
+    settings: AppConfig,
+    started: str,
+    plan: list[Any] | None = None,
 ) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    if plan is not None:
+        from .stress import summarize_plan
+
+        extra = {
+            "plan": summarize_plan(plan),
+            "fixture_images_retained": options.retain_fixture_images,
+        }
     return {
+        **extra,
         "schema_version": 1,
         "mode": options.mode,
         "started": started,
@@ -374,7 +480,7 @@ def _metadata(
         "runtime_config": _display(runtime_config),
         "settings": settings.to_dict(),
         # Evidence is read in memory during a tour; only this decides persistence.
-        "fixture_text_retained": options.mode == "tour" and options.retain_fixture_text,
+        "fixture_text_retained": options.drives and options.retain_fixture_text,
         "options": {
             "words": options.words,
             "story_sizes": list(options.story_sizes),
@@ -383,6 +489,7 @@ def _metadata(
             "duration": options.duration,
             "hud": options.hud,
             "baseline": None if options.baseline is None else options.baseline.name,
+            "per_family": options.per_family,
         },
     }
 

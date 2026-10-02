@@ -51,6 +51,8 @@ class _Lookup:
     queries: list[tuple[str, bool]] = field(default_factory=list)
     recognized: list[str] = field(default_factory=list)
     confidence: float | None = None
+    #: The text-presence gate's decision: ``rejected``, ``passed`` or unknown.
+    gate: str | None = None
 
 
 @dataclass
@@ -70,10 +72,24 @@ class _Observation:
     popup_ns: int | None = None
     delivered_ns: int | None = None
     done: threading.Event = field(default_factory=threading.Event)
+    #: Set when the driver moved away on purpose; later hovers belong to nobody.
+    departed_ns: int | None = None
+    #: Answers this hover's lookups presented after the pointer had left.
+    late_popups: int = 0
+    #: Answers presented for lookups no hover of this target submitted.
+    foreign_popups: int = 0
+    direct_text: str | None = None
+    cache_hits: int = 0
+    #: The screen rectangle the app captured: left, top, width, height.
+    region: tuple[int, int, int, int] | None = None
+    fires: list[int] = field(default_factory=list)
 
     @property
     def latest(self) -> _Lookup | None:
         return self.lookups[max(self.lookups)] if self.lookups else None
+
+    def fired_after(self, observed_ns: int) -> int:
+        return sum(1 for fired in self.fires if fired > observed_ns)
 
 
 class TourDriver:
@@ -156,7 +172,7 @@ class TourDriver:
         if foreign:
             # Another application covers the page here: reading it would retain
             # somebody else's text. Re-raise the page and skip this target.
-            self._page.show_page(page)
+            self._restore_page(page)
             self._finish(placed, _Observation(), 0, unscored="obscured", foreign=foreign)
             return True
         self._glide(x, y)
@@ -206,6 +222,11 @@ class TourDriver:
         )
         return True
 
+    def _restore_page(self, page: int) -> None:
+        """Bring the page back over whatever covered it."""
+
+        self._page.show_page(page)
+
     def _finish(
         self,
         placed: Placed,
@@ -246,8 +267,7 @@ class TourDriver:
         if observation is not None:
             observe(observation, name, observed_ns, fields)
 
-    @staticmethod
-    def _foreign_windows(x: int, y: int) -> list[str]:
+    def _foreign_windows(self, x: int, y: int) -> list[str]:
         """Probe points of the capture region not owned by this process, and by whom.
 
         An unknown owner counts as foreign: the check fails closed.
@@ -335,8 +355,10 @@ def observe(
     hover_id = fields.get("hover_request_id")
     lookup_id = fields.get("lookup_request_id")
     if isinstance(hover_id, int):
-        if name == "hover_stable_fire":
+        # After the driver left on purpose, a new hover is about the rest point.
+        if name == "hover_stable_fire" and observation.departed_ns is None:
             observation.hover_ids.add(hover_id)
+            observation.fires.append(observed_ns)
         if hover_id not in observation.hover_ids:
             if name not in _PRE_FIRE:
                 observation.ignored += 1
@@ -346,6 +368,8 @@ def observe(
     lookup = observation.lookups.get(lookup_id) if isinstance(lookup_id, int) else None
     if isinstance(lookup_id, int) and lookup is None:
         # A lookup none of this target's hovers submitted: stale earlier work.
+        if name == "popup_visible" and fields.get("result_status") == "SUCCESS":
+            observation.foreign_popups += 1
         observation.ignored += 1
         return
     if lookup_id is None and hover_id is None:
@@ -353,10 +377,14 @@ def observe(
     observation.events[name] = observation.events.get(name, 0) + 1
 
     if name == "hover_capture_completed":
-        width, height = fields.get("roi_width"), fields.get("roi_height")
-        if isinstance(width, int) and isinstance(height, int):
-            observation.roi = (width, height)
+        _capture(observation, fields)
+    elif name == "hover_direct_text":
+        observation.direct_text = str(fields.get("outcome"))
+    elif name == "lookup_cache_hit":
+        observation.cache_hits += 1
     elif name == "popup_visible" or name == "popup_suppressed":
+        if name == "popup_visible" and observation.departed_ns is not None:
+            observation.late_popups += 1
         observation.popup_status = str(fields.get("result_status") or name)
         observation.popup_ns = observed_ns
         observation.done.set()
@@ -373,9 +401,22 @@ def observe(
         observation.done.set()
 
 
+def _capture(observation: _Observation, fields: Mapping[str, Any]) -> None:
+    width, height = fields.get("roi_width"), fields.get("roi_height")
+    if isinstance(width, int) and isinstance(height, int):
+        observation.roi = (width, height)
+        left, top = fields.get("region_left"), fields.get("region_top")
+        if isinstance(left, int) and isinstance(top, int):
+            observation.region = (left, top, width, height)
+
+
 def _stage(lookup: _Lookup, fields: Mapping[str, Any]) -> None:
     stage = fields.get("stage")
     duration = fields.get("duration_ns")
+    if stage == "ocr" and fields.get("provider_skipped_reason") == "gate_rejected":
+        lookup.gate = "rejected"
+    elif stage == "ocr" and fields.get("gate_passed"):
+        lookup.gate = "passed"
     if stage == "ocr" and isinstance(duration, int):
         lookup.ocr_ms = duration / 1e6
         lookup.acquisition = lookup.acquisition or "ocr"

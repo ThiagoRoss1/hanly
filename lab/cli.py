@@ -1280,6 +1280,38 @@ def _session_parsers(subcommands: Any) -> None:
     report.add_argument("--no-open", action="store_true")
     report.set_defaults(handler=run_lab_report)
 
+    stress = subcommands.add_parser(
+        "stress",
+        help="a seeded text-acquisition stress campaign over lab-authored pages",
+        description=(
+            "A fixed plan of more than a thousand hovers with a known answer for each: "
+            "dictionary words across faces, sizes and themes, the story, cursor positions, "
+            "dense and mixed lines, raster images, negatives (blank, numbers, punctuation, "
+            "Latin, icons, illustrations), repeats, rapid moves, late answers, changing "
+            "content, a covering window, and real accessible text read through UI "
+            "Automation. Writes campaign.html beside the usual report."
+        ),
+    )
+    _common_session_arguments(stress)
+    stress.add_argument("--seed", type=int, default=11, help="campaign seed (default: 11)")
+    stress.add_argument(
+        "--per-family", type=int, help="at most N hovers per family, for a short check"
+    )
+    stress.add_argument(
+        "--retain-fixture-text",
+        action="store_true",
+        help="also save what verified hovers read from the lab's own pages",
+    )
+    stress.add_argument(
+        "--retain-fixture-images",
+        action="store_true",
+        help=(
+            "save the region a failing verified hover captured, re-grabbed from the lab's "
+            "own page, for an offline OCR replay"
+        ),
+    )
+    stress.set_defaults(handler=run_lab_session, mode="stress", hud=False)
+
 
 def _common_session_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -1322,6 +1354,8 @@ def run_lab_session(args: argparse.Namespace) -> int:
             word_sizes=getattr(args, "word_sizes", (16, 22, 30, 40)),
             seed=getattr(args, "seed", 7),
             backend=args.backend,
+            retain_fixture_images=getattr(args, "retain_fixture_images", False),
+            per_family=getattr(args, "per_family", None),
         )
     )
 

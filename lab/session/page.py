@@ -9,7 +9,8 @@ through the accessibility API and each hover exercises capture and OCR.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from PyQt6.QtCore import QPoint, QRect, Qt, pyqtSignal
@@ -57,6 +58,8 @@ class _Run:
     x: int
     y: int
     font: QFont
+    #: Its own colour, where a cell's theme differs from the page's.
+    ink: str | None = None
 
 
 @dataclass
@@ -66,6 +69,8 @@ class Page:
     placed: list[Placed]
     #: Where the pointer waits between targets: guaranteed free of text.
     rest: QPoint
+    #: Painted beneath the text: cell backgrounds, pictures, icons.
+    extras: list[Callable[[QPainter], None]] = field(default_factory=list)
 
 
 class TourPage(QWidget):
@@ -231,8 +236,11 @@ class TourPage(QWidget):
         painter.setFont(header)
         painter.drawText(_MARGIN, _MARGIN, f"{self.status}   (move the mouse yourself to stop)")
         if page is not None:
+            for extra in page.extras:
+                extra(painter)
             for run in page.runs:
                 painter.setFont(run.font)
+                painter.setPen(QColor(run.ink or ink))
                 painter.drawText(run.x, run.y, run.text)
         painter.end()
         self._painted.set()
