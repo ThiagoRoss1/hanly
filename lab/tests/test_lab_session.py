@@ -146,9 +146,7 @@ def test_a_stale_lookup_from_another_hover_cannot_answer_this_one() -> None:
     stale_popup = ("popup_visible", {"lookup_request_id": 9, "result_status": "SUCCESS"})
     seen = _hovered(stale, stale_popup, *_answered(4, 10, "가다", "가다"))
 
-    record = outcome_record(
-        _placed(), seen, 0, timed_out=False, verified=True, retain_text=True
-    )
+    record = outcome_record(_placed(), seen, 0, timed_out=False, verified=True, retain_text=True)
     assert (record["lookup_ids"], record["headword"]) == ([10], "가다")
     assert record["ignored_foreign_events"] == 2
     assert classify(record) == "correct"
@@ -171,8 +169,13 @@ def _answered_with(text: str) -> _Observation:
     events = _answered(4, 10, text, text)
     ocr = (
         "lookup_stage_completed",
-        {"hover_request_id": 4, "lookup_request_id": 10, "stage": "ocr", "duration_ns": 1,
-         "ocr_evidence": json.dumps({"regions": [{"text": text}]})},
+        {
+            "hover_request_id": 4,
+            "lookup_request_id": 10,
+            "stage": "ocr",
+            "duration_ns": 1,
+            "ocr_evidence": json.dumps({"regions": [{"text": text}]}),
+        },
     )
     return _hovered(events[0], events[1], ocr, *events[2:])
 
@@ -180,7 +183,10 @@ def _answered_with(text: str) -> _Observation:
 def test_a_verified_hover_keeps_facts_but_no_text_by_default() -> None:
     record = outcome_record(
         _placed(surface=_SENTINEL, line=_SENTINEL, headword=_SENTINEL, lemma=_SENTINEL),
-        _answered_with(_SENTINEL), 0, timed_out=False, verified=True,
+        _answered_with(_SENTINEL),
+        0,
+        timed_out=False,
+        verified=True,
     )
     assert not _READ & set(record)
     assert record["facts"]["answer_matches_expected"] is True
@@ -197,9 +203,7 @@ def test_fixture_text_is_kept_only_on_request() -> None:
 
 def test_an_unverified_hover_keeps_neither_text_nor_facts() -> None:
     seen = _answered_with(_SENTINEL)
-    record = outcome_record(
-        _placed(), seen, 0, timed_out=False, verified=False, retain_text=True
-    )
+    record = outcome_record(_placed(), seen, 0, timed_out=False, verified=False, retain_text=True)
     assert not _READ & set(record) and "facts" not in record
     assert _SENTINEL not in json.dumps(record, ensure_ascii=False)
     record["unscored"] = "obscured_during_capture"
@@ -209,13 +213,17 @@ def test_an_unverified_hover_keeps_neither_text_nor_facts() -> None:
 def test_a_late_result_from_another_hover_leaves_no_trace() -> None:
     late = (
         "lookup_stage_completed",
-        {"hover_request_id": 3, "lookup_request_id": 9, "stage": "total_pipeline",
-         "outcome": "SUCCESS", "duration_ns": 1, "result_evidence": _result(_SENTINEL, _SENTINEL)},
+        {
+            "hover_request_id": 3,
+            "lookup_request_id": 9,
+            "stage": "total_pipeline",
+            "outcome": "SUCCESS",
+            "duration_ns": 1,
+            "result_evidence": _result(_SENTINEL, _SENTINEL),
+        },
     )
     seen = _hovered(late, *_answered(4, 10, "가다", "가다"))
-    record = outcome_record(
-        _placed(), seen, 0, timed_out=False, verified=True, retain_text=True
-    )
+    record = outcome_record(_placed(), seen, 0, timed_out=False, verified=True, retain_text=True)
     assert _SENTINEL not in json.dumps(record, ensure_ascii=False)
 
 
@@ -547,13 +555,35 @@ def _with_older_recording(run: Path, sentinel: str) -> None:
 
     events = run / "events.jsonl"
     rows = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()]
-    rows[-1].update(selected=sentinel, headword=sentinel, lemma=sentinel,
-                    recognized=[sentinel], queries=[[sentinel, True]])
-    rows.insert(5, {"event": "lookup_stage_completed", "t_ms": 150, "hover_request_id": 2,
-                    "lookup_request_id": 7, "stage": "ocr", "duration_ns": 1,
-                    "ocr_evidence": sentinel, "ocr_boxes": sentinel})
-    rows.append({"event": "diagnostic", "t_ms": 170, "subsystem": "Lookup", "level": "error",
-                 "message": f"failed on {sentinel}"})
+    rows[-1].update(
+        selected=sentinel,
+        headword=sentinel,
+        lemma=sentinel,
+        recognized=[sentinel],
+        queries=[[sentinel, True]],
+    )
+    rows.insert(
+        5,
+        {
+            "event": "lookup_stage_completed",
+            "t_ms": 150,
+            "hover_request_id": 2,
+            "lookup_request_id": 7,
+            "stage": "ocr",
+            "duration_ns": 1,
+            "ocr_evidence": sentinel,
+            "ocr_boxes": sentinel,
+        },
+    )
+    rows.append(
+        {
+            "event": "diagnostic",
+            "t_ms": 170,
+            "subsystem": "Lookup",
+            "level": "error",
+            "message": f"failed on {sentinel}",
+        }
+    )
     events.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
 
 
@@ -571,8 +601,10 @@ def test_reports_show_read_text_only_for_a_run_that_retained_it(
 
     build_report(run)
 
-    outputs = {name: (run / name).read_text(encoding="utf-8")
-               for name in ("report.json", "report.html", "summary.md")}
+    outputs = {
+        name: (run / name).read_text(encoding="utf-8")
+        for name in ("report.json", "report.html", "summary.md")
+    }
     for name, text in outputs.items():
         # Evidence, geometry and error text never appear; read text only on request.
         assert "ocr_boxes" not in text and f"failed on {sentinel}" not in text, name
@@ -581,6 +613,33 @@ def test_reports_show_read_text_only_for_a_run_that_retained_it(
     tour = json.loads(outputs["report.json"])["tour"]
     # Scored from the recorded text in memory either way: the selection is not the word.
     assert tour["verdicts"] == {"misread": 1}
+
+
+@pytest.mark.parametrize(
+    ("last_event", "ended"),
+    [
+        ("tour_finished", "finished"),
+        ("tour_stopped_by_user", "stopped_by_user"),
+        (None, "interrupted"),
+    ],
+)
+def test_a_tour_says_whether_it_finished(
+    tmp_path: Path, last_event: str | None, ended: str
+) -> None:
+    run = tmp_path / "run"
+    _write_session(run)
+    events = run / "events.jsonl"
+    rows = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()]
+    rows.insert(0, {"event": "tour_planned", "t_ms": 0, "targets": 24})
+    if last_event:
+        rows.append({"event": last_event, "t_ms": 200})
+    events.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    model = build_model(run)
+
+    assert model["tour"]["completion"] == {"ended": ended, "planned": 24, "hovered": 1}
+    warned = any("did not finish" in finding["title"] for finding in model["findings"])
+    assert warned is (ended != "finished")
 
 
 def test_the_report_cannot_be_broken_out_of_by_recorded_text(tmp_path: Path) -> None:

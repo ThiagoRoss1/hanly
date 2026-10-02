@@ -167,9 +167,16 @@ def _score_line(run_dir: Path) -> str | None:
         return None
     if not tour or tour.get("accuracy") is None:
         return None
+    completion = tour.get("completion") or {}
+    ended = completion.get("ended")
+    partial = (
+        ""
+        if ended == "finished"
+        else f"; {ended} after {completion.get('hovered')} of {completion.get('planned')} planned"
+    )
     return (
         f"tour {tour['passed']}/{tour['scored']} ({tour['accuracy']:.1%}) under {tour['rule']}, "
-        f"{tour['unscored']} not scored"
+        f"{tour['unscored']} not scored{partial}"
     )
 
 

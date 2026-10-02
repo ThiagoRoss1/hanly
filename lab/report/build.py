@@ -137,6 +137,15 @@ def _read(tour: dict[str, Any], row: dict[str, Any]) -> str:
     )
 
 
+def _ended(tour: dict[str, Any]) -> str:
+    completion = tour.get("completion") or {}
+    ended = completion.get("ended", "unknown")
+    if ended == "finished":
+        return "finished"
+    hovered, planned = completion.get("hovered"), completion.get("planned")
+    return f"{ended} after {hovered} of {planned} planned hovers"
+
+
 def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1%}"
 
@@ -228,6 +237,7 @@ def summary_markdown(model: dict[str, Any]) -> str:
             "## Tour",
             "",
             f"- accuracy: {accuracy} over {tour['scored']} scored",
+            f"- ended: {_ended(tour)}",
             f"- verdicts: {tour['verdicts']}",
             "",
         ]

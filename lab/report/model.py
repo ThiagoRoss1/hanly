@@ -108,6 +108,8 @@ def build_model(run_dir: Path) -> dict[str, Any]:
             if e["event"] == "diagnostic"
         ][-200:],
     }
+    if model["tour"] is not None:
+        model["tour"]["completion"] = tour_completion(events)
     model["findings"] = findings(model)
     return model
 
@@ -490,6 +492,24 @@ def _structural(record: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def tour_completion(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """How the tour ended, and how much of what it planned it hovered."""
+
+    names = {event["event"] for event in events}
+    planned = next((e.get("targets") for e in events if e["event"] == "tour_planned"), None)
+    ended = (
+        "stopped_by_user" if "tour_stopped_by_user" in names
+        else "aborted" if "tour_aborted" in names
+        else "finished" if "tour_finished" in names
+        else "interrupted"
+    )
+    return {
+        "ended": ended,
+        "planned": planned,
+        "hovered": sum(1 for event in events if event["event"] == "tour_result"),
+    }
+
+
 def tour_summary(
     recorded: Sequence[Mapping[str, Any]], *, include_read: bool = False
 ) -> dict[str, Any]:
@@ -828,6 +848,16 @@ def findings(model: Mapping[str, Any]) -> list[dict[str, str]]:
         )
 
     tour = model.get("tour")
+    completion = (tour or {}).get("completion") or {}
+    if tour and completion.get("ended") != "finished":
+        add(
+            "warning",
+            f"The tour did not finish ({completion.get('ended')}): "
+            f"{completion.get('hovered')} of {completion.get('planned')} planned hovers",
+            "Its score covers only the hovers it reached, and is not comparable with a "
+            "finished tour.",
+            "",
+        )
     if tour and tour["scored"]:
         add(
             "insight" if tour["accuracy"] >= 0.9 else "warning",
