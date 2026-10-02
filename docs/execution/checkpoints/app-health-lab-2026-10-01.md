@@ -44,6 +44,29 @@
 - The Mac acceptance matrix and the exact meaning of "Mac complete" are in the [hardening handoff](../review-handoffs/lab-hardening-mac-2026-10-01.md#mac-completion-bundle-2026-10-01-later).
 - Still open: deletion of `artifacts/lab/runs/20261001-043306-tour` (needs human authorization, that path only). Windows continuation as listed in the handoff.
 
+## Windows Phase 1 (2026-10-02, complete at `d26831a`)
+
+- Machine: Windows 10 Enterprise 19045, i7-9700K, 16 GB, RTX 2060; two 1920×1080 displays at 100 % (primary at x=0, second at x=−1920). Mixed DPI not available without changing user display settings.
+- Interpreter `.venv` Python 3.13.11; editable `hanly`/`hanly-app` 1.0.0. The venv was aligned with `packaging/release-constraints.txt` before any evidence: PyQt6 6.10.2/Qt 6.10.2 → PyQt6 6.11.0, Qt 6.11.2, WebEngine 6.11.0, hooks-contrib 2026.7.
+- Baseline (on `65e4968`): portable 2,372 passed / 105 skipped; native 121 passed / 33 skipped (POSIX-only helpers, absent private captures); ruff clean. mypy is clean under `--platform linux|darwin` (CI's host); under win32 it reports 22 errors, all POSIX-only branches that already failed at `5c510e5` (main lineage), plus 6 lab ones this branch added (fixed in `f89f3c2`).
+- Lab defects fixed: `06b3792` (Windows quit killed the process: exit 2, no report; sampler double-attributed WebEngine helpers), `f89f3c2`, `7028aac` (`artifacts/benchmarks/` ignore restored).
+- `WIN-UPD-01` reproduced on an isolated real 0.9.0 (`e75ef4b`, build `84d4836e`) → public 1.0.0 (`9e44e38`, build `8bdae2ce`): check → plan → download → verify pass; **staging** fails with `'.hanly-manifest.json' is inside the updater's own working area`; the page returns to the offer with the reason only in the collapsed activity list. Same code in 1.0.0 and HEAD. Fixed `e8f51e0`, UI reason `7b61f19`.
+- `WIN-UPD-02`: the empty directory is `<install>\.hanly-update` (owner `WindowsFileStaging._open_transaction`), left by the staging failure, surviving quit, removed by the next launch's `settle_previous_update`. Fixed in `e8f51e0`. Separately, two portable tests leaked `%TEMP%\hanly-update.*`/`hanly-update-image.*` on every run (`536c94d`).
+- After the fix, the identical update through the production runner/coordinator from this checkout (driver `scratchpad/winupd/drive_update.py`): staged, helper claimed, 264 operations, 1.0.0 answered its challenge in ~1.8 s, committed; tree matches all 6,316 manifest entries; relaunched app says current; next launch settles transaction and recovery pointer. Cancel during preparation leaves nothing.
+- Reproducible as `python -m lab check windows-update --mode install|cancel|rollback` (`83d040b`): all three passed on real releases with the real helper; rollback restored 0.9.0 exactly after the helper's 600 s deadline.
+- Windows frozen launch identity (`05faed3`, `BUNDLE-LAUNCH-IDENTITY-WIN`): only Control Center instances ever hold a taskbar/Alt+Tab window; shell, lookup and helpers never; nothing outlives quit.
+- Tour fixes (`9fe7c41`): the tour toggled off the capture session the app started for always-active hover (every Windows tour scored 0); pointer intervention could be overwritten by the driver's own glide; metadata `started` was the end time.
+- Tours on Windows/EasyOCR: standard 408/453 then 409/453 with `--baseline` (all matched, only `no_hover` flips); quick 22/24; stop by mouse → `stopped_by_user after 6 of 24`; foreign covering window → 12 unscored, no read text on disk.
+- `check run` source scenarios 9/9; `lab run --duration` exit 0; real Ctrl+C exit 130 with report, no orphans.
+- Fresh build from clean `9fe7c415496075c33d6f74b497c914cbf029f3b3` (build `9dc5e5af`, CPython 3.13, Qt 6.11.2): packaged 5/5 on the tree and 5/5 on the reconstructed ZIP (6,834 manifest entries match), SHA required, skips forbidden; bundle checks 4/4. Old `cbdebc5` build moved to `dist/archive-cbdebc5-windows/`.
+- Gates on `9fe7c41` (+ docs): portable 2,381 passed / 105 skipped; native 121 / 33; ruff clean; mypy clean for linux and darwin, 22 pre-existing win32-only errors. Last TEMP leak fixed in `d26831a` (test-only).
+- Evidence and tables: [`../reports/lab-windows-validation-and-stress.md`](../reports/lab-windows-validation-and-stress.md).
+
+## Windows Phase 2 (2026-10-02, started)
+
+- Stress campaign under construction: `python -m lab stress` (seeded plan ≥1,000 hovers, positive/negative/behavioural families, UIA helper window, cover window, `campaign.html`). Next: integrate the modules, run, localize failures, fix within the approved architecture, rerun.
+- Friend's screenshot cases: no local copies exist in the repository; the human must attach them. Only a language-stage diagnosis of the named words is possible without them.
+
 ## Resume instructions
 
 1. Inspect branch, worktree, commits, interpreter and any newer artifacts. Preserve all existing changes; do not reset or replay work from this checkpoint.
