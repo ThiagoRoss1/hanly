@@ -1073,6 +1073,12 @@
       message.style.margin = "0";
       block.appendChild(message);
     }
+    // A failed install comes back here; without its reason it looks like nothing happened.
+    if (state.status === "failed" && state.message) {
+      const failure = el("p", "update-sub update-failure", state.message);
+      failure.setAttribute("role", "alert");
+      block.appendChild(failure);
+    }
 
     const actions = el("div", "update-actions");
     // "Install update" is the whole update. The notes are the one thing Hanly

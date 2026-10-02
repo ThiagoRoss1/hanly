@@ -59,3 +59,5 @@ def test_stage_motion_tracks_label_changes_not_progress(tmp_path: Path, reduced:
     assert len(steps[3]["starts"]) == 2, steps[3]
     if reduced:
         assert all(step["reduced"] for step in steps)
+    # A failed install returns to the offer, and must say why rather than look unchanged.
+    assert report["failed"] == {"mode": "available", "reason_shown": True, "install_offered": True}

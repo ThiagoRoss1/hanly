@@ -12,6 +12,7 @@ from hanly_app.control_center.bridge import ControlCenterBridge
 from hanly_app.control_center.host import ControlCenterHost
 
 REPORT_PREFIX = "APP_LAB_UI "
+_FAILURE = "Update failed: probe reason"
 
 
 class _ScriptedBridge(ControlCenterBridge):
@@ -31,6 +32,7 @@ class _ScriptedBridge(ControlCenterBridge):
                 "idle": "Ready",
                 "inspecting": "Checking installed files",
                 "downloading": "Downloading update",
+                "failed": _FAILURE,
             }[stage],
             "progress": {
                 "phase": stage,
@@ -38,8 +40,17 @@ class _ScriptedBridge(ControlCenterBridge):
                 "total": 100,
                 "fraction": completed / 100,
             },
-            "cancellable": True,
+            "cancellable": stage != "failed",
         }
+        if stage == "failed":
+            # A failed install returns to the offer it came from, as the coordinator does.
+            state["updates"]["progress"] = None
+            state["updates"]["application"] = {
+                "installable": True,
+                "current_version": "0.9.0",
+                "latest_version": "1.0.0",
+                "message": "Hanly 1.0.0 is available.",
+            }
         return state
 
     def change(self, stage: str, completed: int) -> None:
@@ -79,6 +90,20 @@ _MEASURE = """
   });
 })()
 """
+
+
+_FAILED = """
+(() => {
+  const panel = document.getElementById('update-panel');
+  const reason = panel.querySelector('.update-failure');
+  return JSON.stringify({
+    mode: panel.dataset.updateMode,
+    reason_shown: !!reason && reason.textContent === FAILURE
+      && reason.getBoundingClientRect().height > 0,
+    install_offered: !!panel.querySelector('.btn-primary')
+  });
+})()
+""".replace("FAILURE", json.dumps(_FAILURE))
 
 
 def main() -> None:
@@ -132,6 +157,9 @@ def main() -> None:
             report["idle_mode"] = host.evaluate(
                 "document.getElementById('update-panel').dataset.updateMode"
             )
+            bridge.change("failed", 0)
+            time.sleep(0.8)
+            report["failed"] = json.loads(host.evaluate(_FAILED))
         except Exception as error:
             report["errors"].append(type(error).__name__)
         finally:
