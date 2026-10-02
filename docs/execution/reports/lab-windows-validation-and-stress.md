@@ -161,4 +161,117 @@ the Cancel control stays present while cancellable. The real 0.9.0 → 1.0.0 run
 also showed "Checking installed files…" holding one label across ~30 progress
 refreshes. Passed with normal and reduced motion.
 
-<!-- PHASE1-CONTINUES -->
+## Phase 2 — text-acquisition stress and corrections
+
+### The campaign
+
+`python -m lab stress` (`f3e8329` and follow-ups), seed 11, the everyday runtime's
+KRDICT (`20260819-v1`), EasyOCR 1.7.2, hover delay 20 ms (the copied everyday
+setting), always-active hover, primary display 1920×1080 at 100 %. Faces used on
+this machine: Malgun Gothic, Batang, Gulim, Dotum, Gungsuh, Noto Sans KR; sizes
+14–44 px; themes light, dark, sepia, gray. Expectations come from the plan, set
+before running; none was changed after seeing output. Planned 1,158 hovers:
+873 positive-scored, 200 negative, 40 leave-early, 15 changing (evidence), 20
+covered (evidence/unscored), 10 UIA Latin negatives.
+
+### Defects found by the campaign and fixed (all lab, no shipped code)
+
+| Defect | Evidence | Fix |
+|---|---|---|
+| Hovers firing before the driver listened | `le016` "stale popup": `hover_stable_fire` 0.13 ms before the driver's `tour_target`; also the tours' intermittent `no_hover` | listen before the final glide (`b40e11d`), regression fails before / passes after |
+| A current answer counted as stale | `ra031`: a rapid sweep paused > 20 ms on a word (Windows `sleep(0.004)` ≈ 15 ms); its correct popup arrived 2 ms before the pointer left | stale only once the app invalidated the lookup (`ab7110c`) |
+| UIA segment never measured | Qt `QPlainTextEdit` answers `ElementFromPoint` with its viewport and its `RangeFromPoint` fails on the parent | measured InPrivate Edge window (`f3e8329`, `0f599dc`) |
+| Account dialog over the page | a fresh Edge profile showed Windows' implicit sign-in dialog (with the account e-mail) over the page | InPrivate, and every point must be `Chrome_RenderWidgetHostHWND` before hovering; the one scratch screenshot and three replay images from that smoke run were deleted unviewed |
+| Twelve-line windows refused | one point landed on a `Chrome_WidgetWin_1`, refused by the guard | six lines per window (`0f599dc`) |
+
+An ancestor walk for UIA text patterns was implemented, shown not to help any real
+control (Qt fails at `RangeFromPoint`; Edge already answers on the hit element),
+and reverted without a commit.
+
+### Before / after (same seed, same plan, same machine)
+
+| Run | Commit | Executed | Scored | Passed | False positives | Missing/wrong | Late/stale popups |
+|---|---|---|---|---|---|---|---|
+| `20261002-184134-stress` | `f3e8329` | 1,108 (UIA refused) | 1,073 | 948 | 0/200 | 125/873 | 1 (race) |
+| `20261002-185509-stress` | `b40e11d` | 1,108 (UIA refused) | 1,073 | 949 | 0/200 | 124/873 | 0 |
+| `20261002-191054-stress` | `0f599dc` | 1,158 | 1,123 | 996 | 0/210 | 127/913 | 1 (rapid, misclassified) |
+| **`20261002-192328-stress`** | **`ab7110c`** | **1,158** | **1,123** | **997 (88.8 %)** | **0/210** | **126/913** | **0** |
+
+Final run, by family: word 202/240, story 248/306 (incl. 18/18 Latin refused),
+cursor 80/90, dense 29/32, mixed Korean 20/25, raster text 35/40, repeat 57/60,
+rapid 38/40, UIA Korean 38/40, leave-early 40/40 withheld; every negative family
+(blank, number, punctuation, Latin, mixed Latin, icon, illustration, after-popup,
+UIA Latin) passed every hover. Changing content: 15/15 kept the first answer and
+fired no new hover (no polling, by design). Covered page: 9/20 refused by
+ownership, the rest outside the cover.
+
+Latency (hover → popup, live): p50 253.9 ms, p90 349.7 ms over 1,105 answered or
+declined hovers; word 200.9 / 274.0; dense 394.0 / 514.5; icon and illustration
+negatives about 336–350 p50 (the sensitive retry runs when the first pass reads
+nothing). Peak sampled RSS: lookup 1,088 MiB, Control Center 191 MiB, shell 143 MiB
+(includes the lab recorder; `shell.helper` 164 MiB is the lab's own Edge and cover
+processes). Sampled resident memory, not private memory or a precise peak.
+
+### Where the failures are
+
+- **124 OCR misreads.** Every one replays identically through the production lookup
+  worker from the saved region (`stress-replay`: 124/124 same as live, labelled
+  `lab_recapture_production_worker_replay`), so capture, geometry, gate, resolver,
+  cache and presentation are excluded. Rates by face: Batang 41/251, Malgun Gothic
+  37/251, Dotum 15/107, Gulim 13/107, Gungsuh 11/50, Noto Sans KR 5/49; worst at the
+  story's Batang 18 px. Confusions are EasyOCR's: 요→오, final ㄹ/ㅁ/ㅂ (차를→차름,
+  꽁꽁→공공), 았/었→앗/없, ㄷ/ㅁ initials (모르→도르). Raster degradation is not the
+  driver (5/40 misread). Not fixed: OCR tuning is out of this scope.
+- **2 morphology/dictionary:** 누군가는 → 누구 at two sizes; 누군가 is not in KRDICT
+  (known since the Mac handoff).
+- **UIA timing (not a scored failure).** On Edge, 22/40 Korean hovers were answered by
+  direct text; 10 hit the 40 ms direct-text budget and fell back to OCR (still
+  correct), 6 were `unsupported` (Chromium enabling accessibility on first contact).
+  Completed reads take 4–11 ms, and the same reads take 5–7 ms in isolation, but
+  the timed-out ones were delivered 44–146 ms after the hover fired with no native
+  duration, i.e. the job never ran within its deadline in the lab-hosted shell. Not
+  attributed: the lab hosts the shell with its recorder, sampler and driver in the
+  same process, and a plain `hanly` session was not instrumented.
+- **Repeats had no cache hits (0/60):** each repeat sits in a different cell, so its
+  pixels differ from the original's; this measures repeat correctness, not cache.
+
+### Friend's screenshot cases (investigation only)
+
+The original images are not on this machine and were not substituted. With the
+words given as correctly read text through the production language stage:
+
+| Word | Result with perfect recognition | Classification without the image |
+|---|---|---|
+| 백련성신 | NOT_FOUND; 백련, 성신 and the whole are absent from KRDICT | correct recognition would still give no usable dictionary entry (a name/coverage case) |
+| 출석체크 | the compound is not listed; 출석 or 체크 by cursor | answerable by component |
+| 갤러리 | SUCCESS 갤러리 | if no answer appeared, the failure is upstream: capture, gate, OCR or word selection |
+| 이벤트 | SUCCESS 이벤트 | same |
+
+Next action for the dedicated phase: attach the images, then run each through
+`stress-replay`-style production replay (or `live-hover` Freeze/Export) to name
+the first failing stage per word.
+
+### Phase 2 gates
+
+On clean `ab7110cd02b6a7cb7cdc66ef403d1e022d44728c`: portable 2,398 passed / 105
+skipped; native 121 / 33; ruff clean; mypy clean for linux and darwin (the same 22
+pre-existing win32-only errors); no TEMP leaks. No file under `packages/`,
+`packaging/` or `tools/` changed since `9fe7c41`, so that build and its packaged
+results stand; no rebuild was needed.
+
+## Remaining and deferred
+
+- **Stranded clients (needs a decision).** Installed 0.9.0 and 1.0.0 carry the
+  WIN-UPD-01 defect and cannot install any later differential update. Options: a
+  release whose Windows tree manifest omits `.hanly-manifest.json` for those
+  clients, or a documented manual replacement. Release tooling was not changed.
+- **OCR misreads** — revisit with an OCR-tuning bundle; the replay images under
+  `artifacts/lab/runs/20261002-192328-stress/replay/` are a ready offline corpus.
+- **UIA deadline in the shell** — instrument start delay versus native duration in a
+  plain `hanly` session before touching `DEFAULT_TIMEOUT_MS`.
+- **win32 mypy (22 pre-existing)** — narrow the POSIX-only branches by
+  `sys.platform` when a change already touches those modules.
+- **Mixed DPI, >100 % scaling** — untested on this hardware configuration.
+- **Single instance on Windows** — a second launch starts a second shell; product
+  decision.
+- **Screenshot cases** — need the original images.

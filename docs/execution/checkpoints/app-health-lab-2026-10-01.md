@@ -1,6 +1,6 @@
 # App health lab — continuation checkpoint
 
-**Updated:** 2026-10-01. **State:** Mac Phase A stopped at its [Review Handoff](../review-handoffs/app-health-lab-mac-2026-10-01.md). Windows implementation and human-assigned Phase B are not started.
+**Updated:** 2026-10-02. **State:** Mac and Windows implementation stopped at their Review Handoffs ([Mac](../review-handoffs/app-health-lab-mac-2026-10-01.md), [Windows](../review-handoffs/lab-windows-implementation-and-stress.md)). Human-assigned Phase B is not started.
 
 - Local branch: `lab/app-health`, created from `main` at `9e44e3857eedb8743ce967d9a9d262ac99c1dfef`. No push, merge, tag or release was performed for this lab.
 - Execution prompt and scope: [`../plans/app-health-lab-2026-10-01.md`](../plans/app-health-lab-2026-10-01.md). Read it in full, then inspect the live worktree; this checkpoint must never override actual code or test evidence.
@@ -62,7 +62,13 @@
 - Gates on `9fe7c41` (+ docs): portable 2,381 passed / 105 skipped; native 121 / 33; ruff clean; mypy clean for linux and darwin, 22 pre-existing win32-only errors. Last TEMP leak fixed in `d26831a` (test-only).
 - Evidence and tables: [`../reports/lab-windows-validation-and-stress.md`](../reports/lab-windows-validation-and-stress.md).
 
-## Windows Phase 2 (2026-10-02, started)
+## Windows Phase 2 (2026-10-02, complete at `ab7110c`; stopped at the Review Handoff)
+
+- Final: [Review Handoff](../review-handoffs/lab-windows-implementation-and-stress.md). Campaign `20261002-192328-stress` on clean `ab7110c`: planned/executed 1,158, scored 1,123, passed 997, false positives 0/210, missing or wrong 126/913 (124 OCR misreads replaying identically offline, 2 누군가), no late or stale popups; UIA on Edge 22/40 direct.
+- Gates on clean `ab7110c`: portable 2,398 / 105 skipped, native 121 / 33, ruff and mypy (linux, darwin) clean. No shipped code changed since the `9fe7c41` build.
+- Next: human-selected review; release decision for stranded 0.9.0/1.0.0 Windows clients; attach the screenshot images for the future phase.
+
+### Earlier mid-integration notes
 
 - **Stopped at the usage limit, mid-integration. Phase 2 work is uncommitted in the worktree:** `lab/session/{stress,stress_page,stress_driver,stress_scoring,browser_text,cover,uia_window}.py`, `lab/report/campaign.py`, `lab/tests/test_stress.py`, and edits to `lab/cli.py`, `lab/session/{driver,page,runner}.py`. Ruff, mypy (linux) and 16 stress tests passed before the last step.
 - Smoke `python -m lab stress --per-family 3 --retain-fixture-text --retain-fixture-images` (`20261002-165224-stress`): 60/60 executed, 50/53 passed, 0/27 false positives; leave-early answers withheld; cover refused; one real OCR misread (이층집 → 이름집, Gulim 22 px, replay image saved).

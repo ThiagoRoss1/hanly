@@ -120,6 +120,28 @@ between, and it fails closed where attribution is impossible (always, on Linux).
 Recordings made before this policy can still hold read text; rebuilding their
 reports no longer shows it.
 
+### `python -m lab stress` — the text-acquisition stress campaign
+
+A seeded plan (`--seed`, default 11) of 1,158 hovers whose expectations are set
+before anything runs (`session/stress.py`): KRDICT headwords across the installed
+Korean faces, five sizes and four themes; the story at two sizes; cursor at the
+beginning, middle and end; dense and mixed Latin/Korean lines; degraded raster
+images; negatives (blank, numbers, punctuation, Latin, icons, illustrations, the
+spot the previous popup occupied); repeats; rapid sweeps; leaving right after the
+lookup was submitted; content changing under a still pointer; a covering foreign
+window; and real accessible text read through UI Automation in an isolated
+InPrivate Edge window (Windows), whose points are checked to be page content.
+
+Rule `stress-v1` (`session/stress_scoring.py`): positives keep the tour's rule; a
+negative passes only when no answer was presented; an answer shown after the app
+dropped its lookup is `stale_popup`, and one shown after the pointer deliberately
+left is `late_popup`. Each failure names the stage it points at. The run writes
+`campaign.html`, `.md` and `.json` beside the usual report. `--per-family N` is a
+short check; `--retain-fixture-images` keeps the region a failing verified hover
+captured, re-grabbed from the lab's own page, and `python -m lab stress-replay
+<run>` feeds those through the production lookup worker, labelled as a lab
+re-capture replay.
+
 ### What a run records and reports
 
 Each run gets its own directory under gitignored `artifacts/lab/runs/` with its
