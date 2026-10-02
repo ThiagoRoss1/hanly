@@ -50,10 +50,12 @@ def _darwin_owner(x: float, y: float) -> int | None:
 
 
 def _windows_owner(x: float, y: float) -> int | None:
+    if sys.platform != "win32":
+        return None
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    user32 = ctypes.windll.user32
     handle = user32.WindowFromPoint(wintypes.POINT(int(x), int(y)))
     if not handle:
         return None

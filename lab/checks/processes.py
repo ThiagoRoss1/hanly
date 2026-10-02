@@ -220,7 +220,7 @@ def execute(
             observer.sample()
             if time.monotonic() >= deadline:
                 timed_out = True
-                if os.name == "posix":
+                if sys.platform != "win32":
                     try:
                         os.killpg(child.pid, signal.SIGTERM)
                     except ProcessLookupError:
@@ -233,14 +233,14 @@ def execute(
             try:
                 child.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                if os.name == "posix":
+                if sys.platform != "win32":
                     os.killpg(child.pid, signal.SIGKILL)
                 else:
                     child.kill()
         status = child.wait(timeout=5)
     finally:
         if child.poll() is None:
-            if os.name == "posix":
+            if sys.platform != "win32":
                 try:
                     os.killpg(child.pid, signal.SIGKILL)
                 except ProcessLookupError:
