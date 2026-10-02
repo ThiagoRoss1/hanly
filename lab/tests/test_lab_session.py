@@ -714,6 +714,34 @@ def test_the_lab_quits_through_the_shells_interrupt_handler() -> None:
     assert (child.returncode, child.stdout.split()) == (0, ["handled", "alive"])
 
 
+def test_a_tour_never_toggles_off_capture_the_app_already_started() -> None:
+    import threading
+
+    from lab.session.driver import ensure_capture
+
+    presses: list[str] = []
+    watching = threading.Event()
+    watching.set()
+    assert ensure_capture(watching, lambda: presses.append("key"), launch_grace=0) == (
+        "already_watching"
+    )
+    assert presses == []
+
+    idle = threading.Event()
+
+    def press() -> None:
+        presses.append("key")
+        idle.set()
+
+    assert ensure_capture(idle, press, launch_grace=0) == "shortcut"
+    assert presses == ["key"]
+
+    stuck = threading.Event()
+    assert (
+        ensure_capture(stuck, lambda: None, launch_grace=0, after_press=0) == "never_started"
+    )
+
+
 def test_a_helper_belongs_to_its_nearest_sampled_ancestor() -> None:
     from lab.session.sampler import nearest_owner
 

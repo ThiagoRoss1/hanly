@@ -404,6 +404,7 @@ def lifecycle(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         "executor_worker_construction_started": "Lookup engine loading",
         "executor_worker_ready": "Lookup engine ready",
         "tour_capture_requested": "Capture shortcut pressed",
+        "tour_capture": "Tour capture on",
         "tour_page": "Tour page",
         "tour_finished": "Tour finished",
         "tour_stopped_by_user": "Stopped by user",

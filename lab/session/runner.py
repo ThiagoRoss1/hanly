@@ -98,7 +98,8 @@ def run_session(options: SessionOptions) -> int:
     diagnostics = LabDiagnosticLog(
         recorder, default_app_config_path().parent / "logs" / "hanly.log"
     )
-    _write_json(run_dir / "metadata.json", _metadata(options, runtime_config, settings))
+    started = datetime.now().isoformat(timespec="seconds")
+    _write_json(run_dir / "metadata.json", _metadata(options, runtime_config, settings, started))
     print(f"lab: recording to {_display(run_dir)}", flush=True)
 
     from hanly_app.qt_bootstrap import ensure_qt_application
@@ -140,7 +141,7 @@ def run_session(options: SessionOptions) -> int:
         _write_json(
             run_dir / "metadata.json",
             {
-                **_metadata(options, runtime_config, settings),
+                **_metadata(options, runtime_config, settings, started),
                 "exit_code": exit_code,
                 "dropped_events": recorder.dropped_events,
                 "process_samples": sampler.samples,
@@ -359,11 +360,13 @@ def _hud(application: Any, runtime_config: Path, closers: list[Any]) -> list[Any
 # -- metadata --------------------------------------------------------------------
 
 
-def _metadata(options: SessionOptions, runtime_config: Path, settings: AppConfig) -> dict[str, Any]:
+def _metadata(
+    options: SessionOptions, runtime_config: Path, settings: AppConfig, started: str
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "mode": options.mode,
-        "started": datetime.now().isoformat(timespec="seconds"),
+        "started": started,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
         "python": platform.python_version(),
         "commit": _git("rev-parse", "HEAD"),

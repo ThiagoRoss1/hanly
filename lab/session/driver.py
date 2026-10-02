@@ -15,7 +15,7 @@ import multiprocessing
 import os
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -98,6 +98,7 @@ class TourDriver:
         self._lock = threading.Lock()
         self._active: _Observation | None = None
         self._ready = threading.Event()
+        self._observing = threading.Event()
         self._popup_hidden = threading.Event()
         self._expected: tuple[int, int] | None = None
         #: Captured images are in device pixels; the probe grid is in points.
@@ -121,8 +122,11 @@ class TourDriver:
             return
         self._page.show_page(0)
         time.sleep(0.4)
-        self._press_capture_hotkey()
-        self._recorder.lab("tour_capture_requested", hotkey=self._capture_hotkey)
+        how = ensure_capture(self._observing, self._press_capture_hotkey)
+        self._recorder.lab("tour_capture", how=how, hotkey=self._capture_hotkey)
+        if how == "never_started":
+            self._recorder.lab("tour_aborted", reason="capture_never_started")
+            return
         first = True
         for index, page in enumerate(self._page.pages):
             if not self._page.show_page(index):
@@ -132,18 +136,21 @@ class TourDriver:
             self._recorder.lab("tour_page", page=index, theme=page.theme, targets=len(page.placed))
             self._move_to(self._page.to_global(page.rest))
             for placed in page.placed:
-                if self._user_moved():
+                # Checked before the driver moves the pointer itself, which
+                # would otherwise overwrite the evidence of a person's move.
+                if self._user_moved() or not self._hover(placed, index, first):
                     self.stopped_by_user = True
                     self._recorder.lab("tour_stopped_by_user", completed=self.completed)
                     return
-                self._hover(placed, index, first)
                 first = False
                 self._move_to(self._page.to_global(page.rest))
                 self._popup_hidden.clear()
                 self._popup_hidden.wait(0.8)
         self._recorder.lab("tour_finished", completed=self.completed)
 
-    def _hover(self, placed: Placed, page: int, first: bool) -> None:
+    def _hover(self, placed: Placed, page: int, first: bool) -> bool:
+        """Hover one target; ``False`` when a person moved the pointer during it."""
+
         x, y = self._page.to_global(placed.point)
         foreign = self._foreign_windows(x, y)
         if foreign:
@@ -151,7 +158,7 @@ class TourDriver:
             # somebody else's text. Re-raise the page and skip this target.
             self._page.show_page(page)
             self._finish(placed, _Observation(), 0, unscored="obscured", foreign=foreign)
-            return
+            return True
         self._glide(x, y)
         arrived = time.perf_counter_ns()
         observation = _Observation()
@@ -176,6 +183,10 @@ class TourDriver:
             time.sleep(0.15)
         with self._lock:
             self._active = None
+        if self._user_moved():
+            # The pointer left the target under a person's hand: this hover
+            # did not measure the app, so it is not recorded at all.
+            return False
 
         # Ownership is sampled again after the answer. The probes cover a grid
         # of the region at two moments, not every pixel or the time between.
@@ -193,6 +204,7 @@ class TourDriver:
             foreign=foreign,
             timed_out=not observation.done.is_set(),
         )
+        return True
 
     def _finish(
         self,
@@ -225,6 +237,8 @@ class TourDriver:
     def _observe(self, name: str, observed_ns: int, fields: Mapping[str, Any]) -> None:
         if name == "startup_milestone" and fields.get("name") == "runtime ready":
             self._ready.set()
+        if name == "hover_observation_started":
+            self._observing.set()
         if name in {"retained_target_cleared", "popup_suppressed"}:
             self._popup_hidden.set()
         with self._lock:
@@ -291,6 +305,26 @@ class TourDriver:
             return False
         x, y = self._mouse.position
         return abs(x - self._expected[0]) + abs(y - self._expected[1]) > _INTERVENTION_PX
+
+
+def ensure_capture(
+    observing: threading.Event,
+    press: Callable[[], None],
+    *,
+    launch_grace: float = 10.0,
+    after_press: float = 120.0,
+) -> str:
+    """Leave the app watching the screen, and say how it got there.
+
+    The capture shortcut toggles, and a tour runs with hover always active,
+    which the app honours by starting capture at launch. Pressing blindly
+    would turn that session off, so the app's own trace decides.
+    """
+
+    if observing.wait(launch_grace):
+        return "already_watching"
+    press()
+    return "shortcut" if observing.wait(after_press) else "never_started"
 
 
 def observe(
@@ -448,4 +482,4 @@ def _float(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-__all__ = ["TourDriver", "observe", "outcome_record"]
+__all__ = ["TourDriver", "ensure_capture", "observe", "outcome_record"]
