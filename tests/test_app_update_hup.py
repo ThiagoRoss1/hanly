@@ -347,6 +347,120 @@ def test_staging_writes_only_the_changed_files_and_the_answer_it_will_accept(
     assert sorted(path.name for path in journal.payload_root.iterdir()) == ["0001", "0002"]
 
 
+def test_a_windows_update_replaces_the_installed_manifest_each_build_publishes(
+    tmp_path: Path,
+) -> None:
+    # A real Windows build carries its own .hanly-manifest.json, so every
+    # release changes it; staging used to refuse it as the updater's own file.
+    base = PublishedRelease(
+        tmp_path / "release-0.5.2",
+        WINDOWS,
+        version="0.5.2",
+        build_id="build-zero",
+        changes={".hanly-manifest.json": b'{"build": "zero"}'},
+    )
+    target = PublishedRelease(
+        tmp_path / "release-0.5.3",
+        WINDOWS,
+        version="0.5.3",
+        build_id="build-one",
+        changes={**TARGET_CHANGES, ".hanly-manifest.json": b'{"build": "one"}'},
+        previous=base,
+    )
+    channel = ReleaseChannel(base, target)
+    install = base.install(tmp_path / "install")
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    installer = _installer(tmp_path, base, channel, install=install, store=store)
+
+    staged = installer.stage(installer.prepare("0.5.3"))
+
+    journal = staged.transaction.journal
+    operations = {item.path: item for item in staged.transaction.transaction.operations}
+    assert sorted(operations) == [
+        ".hanly-manifest.json",
+        "_internal/added.dat",
+        "hanly-desktop.exe",
+    ]
+    control = operations[".hanly-manifest.json"]
+    assert journal.payload_for(control).read_bytes() == b'{"build": "one"}'
+
+
+@pytest.mark.parametrize("failure", ["error", "cancel"])
+def test_a_windows_update_that_stops_while_staging_leaves_no_working_area(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    import hanly_app.updates.installer as installer_module
+
+    base, _target, channel = _published(tmp_path)
+    install = base.install(tmp_path / "install")
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    runner = TreeUpdateRunner(
+        _installer(tmp_path, base, channel, install=install, store=store),
+        store=store,
+        recovery_root=tmp_path / "recovery",
+    )
+
+    def stop(*_args: object, **_kwargs: object) -> None:
+        if failure == "cancel":
+            raise UpdateCancelled("the update was cancelled")
+        raise DifferentialUpdateError("the payload could not be unpacked")
+
+    monkeypatch.setattr(installer_module, "_unpack_payload", stop)
+    prepared = runner.prepare("0.5.3")
+    with pytest.raises((DifferentialUpdateError, UpdateCancelled)):
+        runner.install(prepared)
+    # The coordinator abandons every failed or cancelled install.
+    runner.abandon()
+
+    assert not (install / ".hanly-update").exists()
+    assert sorted(path.name for path in install.iterdir()) == sorted(
+        path.name for path in base.build.iterdir()
+    )
+
+
+def test_settling_a_windows_update_removes_the_challenge_it_was_answered_through(
+    tmp_path: Path,
+) -> None:
+    from hanly_app.updates.journal import COMMITTED, acknowledgement_path
+    from hanly_app.updates.runner import settle_previous_update
+
+    base, _target, channel = _published(tmp_path)
+    install = base.install(tmp_path / "install")
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+    installer = _installer(tmp_path, base, channel, install=install, store=store)
+    staged = installer.stage(installer.prepare("0.5.3"))
+    transaction = staged.transaction
+    challenge = transaction.transaction.challenge_path
+    assert challenge is not None
+    acknowledgement_path(challenge).write_text(
+        transaction.challenge.expected(), encoding="utf-8"
+    )
+    transaction.journal.record(COMMITTED)
+    transaction.journal.write_result(COMMITTED, "Hanly 0.5.3 started.")
+    unrelated = store.directory / "challenge-someone-else.json"
+    unrelated.write_text("{}", encoding="utf-8")
+
+    settled = settle_previous_update(install, tmp_path / "recovery")
+
+    assert settled is not None and settled.outcome == COMMITTED
+    assert not challenge.exists()
+    assert not acknowledgement_path(challenge).exists()
+    assert unrelated.exists()
+    assert store.receipt_path.is_file()
+
+
+@pytest.mark.parametrize("path", [".hanly-update", ".hanly-update/t1/plan.json"])
+def test_an_update_still_never_writes_into_the_working_area(path: str) -> None:
+    from hanly_app.updates.journal import JournalError, JournalOperation
+    from hanly_app.updates.manifest import ManifestError
+
+    with pytest.raises((ManifestError, JournalError)):
+        JournalOperation(index=1, kind="add", path=path, target_sha256="0" * 64)
+
+
 def test_the_receipt_the_new_build_will_earn_is_staged_and_not_adopted(
     tmp_path: Path,
 ) -> None:

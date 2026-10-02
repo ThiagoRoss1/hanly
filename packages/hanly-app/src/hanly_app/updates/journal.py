@@ -25,7 +25,7 @@ from hanly_app.updates.manifest import (
     WORKING_DIRECTORY_NAME,
     BuildIdentity,
     ManifestError,
-    require_safe_relative_path,
+    require_installable_path,
 )
 from hanly_app.updates.plan import ADD, DELETE, REPLACE, TreePlan, UpdatePlan
 
@@ -79,7 +79,7 @@ class JournalOperation:
     def __post_init__(self) -> None:
         if self.kind not in (ADD, REPLACE, DELETE):
             raise JournalError(f"{self.kind!r} is not an operation this journal records")
-        require_safe_relative_path(self.path)
+        require_installable_path(self.path)
         if self.kind in (ADD, REPLACE) and not self.target_sha256:
             raise JournalError(f"{self.path} is written without a target digest")
 

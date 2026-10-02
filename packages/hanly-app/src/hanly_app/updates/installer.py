@@ -73,7 +73,7 @@ from hanly_app.updates.manifest import (
     TreeManifest,
     UpdateMetadata,
     parse_checksums,
-    require_safe_relative_path,
+    require_installable_path,
 )
 from hanly_app.updates.package import (
     FORMAT_DMG,
@@ -512,7 +512,7 @@ def _installed_path(name: str) -> str | None:
         return None
     relative = "/".join(parts)
     try:
-        require_safe_relative_path(relative)
+        require_installable_path(relative)
     except ManifestError:
         return None
     return relative

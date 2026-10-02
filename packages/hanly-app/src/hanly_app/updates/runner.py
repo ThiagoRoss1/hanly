@@ -8,6 +8,7 @@ current host's conditions.
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -52,6 +53,7 @@ from hanly_app.updates.journal import (
     InstallLock,
     JournalError,
     UpdateJournal,
+    acknowledgement_path,
     journals_in,
     unsettled_journals,
     working_root,
@@ -60,6 +62,9 @@ from hanly_app.updates.resource_service import ProgressCallback
 
 CancelHook = Callable[[], bool]
 Reporter = Callable[[str, str], None]
+
+#: The name installer staging gives a transaction's challenge.
+CHALLENGE_NAME = re.compile(r"challenge-t[a-z0-9_]+\.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +111,7 @@ def settle_previous_update(
                 detail=str(result.get("detail") or ""),
                 version=_version_of(journal),
             )
+        _remove_challenge(journal)
         _remove(journal.directory)
 
     clear_recovery_copy(recovery_root)
@@ -174,6 +180,26 @@ def _version_of(journal: UpdateJournal) -> str | None:
         return journal.read_plan().target.version
     except JournalError:
         return None
+
+
+def _remove_challenge(journal: UpdateJournal) -> None:
+    """Drop the challenge a settled transaction named, and its answer.
+
+    Only a file shaped like one this updater writes: the plan is read back
+    from inside the installation, and its word alone is not ownership.
+    """
+
+    try:
+        challenge = journal.read_plan().challenge_path
+    except JournalError:
+        return
+    if challenge is None or not CHALLENGE_NAME.fullmatch(challenge.name):
+        return
+    for path in (challenge, acknowledgement_path(challenge)):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _remove(path: Path) -> None:
@@ -281,6 +307,8 @@ class TreeUpdateRunner:
         self._staged = None
         if staged is not None:
             _discard_transaction(staged.transaction)
+        # Staging creates the working area before it can fail; empty, it is ours.
+        _remove_if_empty(working_root(self.install_root))
         clear_recovery_copy(self._recovery_root)
         clear_native_pending(self._store.directory)
         self._store.restore_previous()

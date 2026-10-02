@@ -456,6 +456,19 @@ def require_safe_relative_path(path: str) -> PurePosixPath:
     return PurePosixPath(path)
 
 
+def require_installable_path(path: str) -> PurePosixPath:
+    """Accept a path an in-place update may write.
+
+    The installed manifest is the one control file a Windows build publishes,
+    so an update replaces it like any product file. The working area stays
+    refused: nothing a release names may land inside a transaction.
+    """
+
+    if path == INSTALLED_MANIFEST_NAME:
+        return PurePosixPath(path)
+    return require_safe_relative_path(path)
+
+
 def _require_mapping(payload: Any, what: str) -> Mapping[str, Any]:
     if not isinstance(payload, Mapping):
         raise ManifestError(f"{what} must be a JSON object")
@@ -1177,6 +1190,7 @@ __all__ = [
     "content_fingerprint",
     "delta_asset_name",
     "parse_checksums",
+    "require_installable_path",
     "require_safe_relative_path",
     "require_tree_path",
     "tree_difference",
