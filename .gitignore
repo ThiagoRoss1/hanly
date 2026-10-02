@@ -13,6 +13,8 @@ resources/dev/models/
 resources/dev/runtime-local.json
 resources/dev/app-config.json
 artifacts/lab/
+# Evidence recorded before the lab moved its root to artifacts/lab/.
+artifacts/benchmarks/
 artifacts/investigation-2026-09-05
 data/source/
 data/generated/
