@@ -76,8 +76,9 @@ class _Observation:
     departed_ns: int | None = None
     #: Answers this hover's lookups presented after the pointer had left.
     late_popups: int = 0
-    #: Answers presented for lookups no hover of this target submitted.
+    #: Answers presented for other hovers' lookups after the app had dropped them.
     foreign_popups: int = 0
+    invalidated: set[int] = field(default_factory=set)
     direct_text: str | None = None
     cache_hits: int = 0
     #: The screen rectangle the app captured: left, top, width, height.
@@ -370,7 +371,14 @@ def observe(
     lookup = observation.lookups.get(lookup_id) if isinstance(lookup_id, int) else None
     if isinstance(lookup_id, int) and lookup is None:
         # A lookup none of this target's hovers submitted: stale earlier work.
-        if name == "popup_visible" and fields.get("result_status") == "SUCCESS":
+        # Presenting it is a fault only once the app itself had dropped it.
+        if name in {"lookup_invalidate", "hover_cancellation"}:
+            observation.invalidated.add(lookup_id)
+        elif (
+            name == "popup_visible"
+            and fields.get("result_status") == "SUCCESS"
+            and lookup_id in observation.invalidated
+        ):
             observation.foreign_popups += 1
         observation.ignored += 1
         return

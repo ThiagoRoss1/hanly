@@ -131,7 +131,11 @@ def test_after_leaving_new_hovers_bind_to_nobody_and_late_answers_are_counted() 
     observation.departed_ns = 5
     observe(observation, "hover_stable_fire", 6, {"hover_request_id": 8})
     observe(observation, "popup_visible", 9, {"lookup_request_id": 3, "result_status": "SUCCESS"})
-    observe(observation, "popup_visible", 10, {"lookup_request_id": 99, "result_status": "SUCCESS"})
+    # Another hover's answer shown while it was still current is not stale ...
+    observe(observation, "popup_visible", 10, {"lookup_request_id": 98, "result_status": "SUCCESS"})
+    # ... one shown after the app had invalidated it is.
+    observe(observation, "lookup_invalidate", 11, {"lookup_request_id": 99})
+    observe(observation, "popup_visible", 12, {"lookup_request_id": 99, "result_status": "SUCCESS"})
 
     assert observation.hover_ids == {7}
     assert observation.late_popups == 1
