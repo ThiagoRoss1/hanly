@@ -37,7 +37,7 @@ _SUBMIT_WAIT = 2.0
 _LATE_WINDOW = 1.5
 _RAPID_STEP_S = 0.004
 #: Lines per browser window: every capture region around them stays inside it.
-_UIA_LINES = 12
+_UIA_LINES = 6
 
 
 class StressDriver(TourDriver):

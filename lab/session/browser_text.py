@@ -114,8 +114,10 @@ class BrowserText:
                     points = [(x0 + x, y0 + y) for x, y in measured]
                     # A dialog or overlay of the browser's own would pass the owner
                     # check, so every point must be the page itself.
-                    self.refusal = [_class_at(x, y) for x, y in points]
-                    if all(name == _CONTENT_CLASS for name in self.refusal):
+                    self.refusal = [
+                        f"{index}:{_class_at(x, y)}" for index, (x, y) in enumerate(points)
+                    ]
+                    if all(name.endswith(":" + _CONTENT_CLASS) for name in self.refusal):
                         self.window_pid = pid
                         return points
             time.sleep(0.5)
