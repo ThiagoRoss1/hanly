@@ -25,7 +25,33 @@ Use `catalog.py` to see the scope, prerequisites and expected transitions.
 Evidence labels distinguish real source startup, real UI with injected services,
 real helpers with simulated builds, and a real frozen runtime. A scripted update
 state does **not** prove that an application update downloaded or installed.
-Human hover and the complete Windows update remain explicit coverage gaps.
+Human hover remains an explicit coverage gap.
+
+## A complete Windows update
+
+```powershell
+python -m lab check windows-update --from v0.9.0 --mode install   # or cancel, rollback
+```
+
+It downloads a published release's Windows archive, checks it against that
+release's `SHA256SUMS`, and unpacks it under its own run directory with its own
+profile and TEMP. It then updates that installation with **this checkout's**
+updater (`TreeUpdateRunner` and `UpdateCoordinator`, composed as the desktop
+composes them) against the real public release source, read only. The real
+PowerShell helper applies the update and relaunches the new build, which has to
+answer its challenge. The command then quits through the page, relaunches once
+to settle, and checks the tree against the published manifest. It also checks
+that the update is not offered again and lists what remains.
+
+`--mode cancel` stops during preparation. `--mode rollback` keeps the source
+build running so the helper waits, then replaces the staged new executable with
+bytes that cannot start. The helper must then wait out its deadline (ten
+minutes), restore every file and relaunch the previous build. Only processes
+running an executable inside the run's installation are ever stopped.
+
+The process hosting the coordinator is the lab, not the frozen shell. This
+proves the checkout's updater against real releases, not the updater shipped
+inside the source release.
 
 `passed` means all selected cases passed and observation/cleanup completed.
 A skipped prerequisite is `unavailable`, never a pass. A failed check, deadline,

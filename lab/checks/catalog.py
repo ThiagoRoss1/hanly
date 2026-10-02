@@ -185,10 +185,11 @@ SCENARIOS = (
     Scenario(
         "WINDOWS-UPDATE",
         "updater",
-        "Complete Windows application update",
+        "Complete Windows application update (`python -m lab check windows-update`)",
         (),
-        "not_implemented",
-        "Plan, download, helper, apply, relaunch, acknowledgement and cleanup.",
+        "real_release_real_helper_checkout_updater",
+        "Plan, download, helper, apply, relaunch, acknowledgement and cleanup; cancel and "
+        "rollback as separate modes. Network-bound, so it is its own command.",
         platforms=("win32",),
     ),
     Scenario(

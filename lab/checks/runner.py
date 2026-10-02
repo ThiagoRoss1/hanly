@@ -30,7 +30,7 @@ def _unavailable(scenario: Scenario, bundle: Path | None, commit: str | None) ->
     if scenario.platforms and sys.platform not in scenario.platforms:
         return "unsupported_platform"
     if not scenario.targets:
-        return "human_operated" if scenario.id == "LIVE-HOVER" else "windows_phase_pending"
+        return "human_operated" if scenario.id == "LIVE-HOVER" else "separate_command"
     if scenario.needs_bundle and (bundle is None or not bundle.is_dir()):
         return "bundle_not_supplied"
     if scenario.id == "BUNDLE-IDENTITY" and not commit:

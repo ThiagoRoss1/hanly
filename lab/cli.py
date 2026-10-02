@@ -940,6 +940,12 @@ def run_app_lab(args: argparse.Namespace) -> int:
     return 1 if any(item["outcome"] != "passed" for item in summary["results"]) else 0
 
 
+def _run_windows_update(args: argparse.Namespace) -> int:
+    from .checks.windows_update import run_windows_update
+
+    return run_windows_update(args.source_tag, args.mode)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m lab",
@@ -967,6 +973,21 @@ def _parser() -> argparse.ArgumentParser:
         "--expected-commit", help="complete source commit required by bundle identity"
     )
     lab_run.set_defaults(handler=run_app_lab)
+    windows_update = lab_actions.add_parser(
+        "windows-update",
+        help="update an owned, isolated Windows installation of a published release",
+        description=(
+            "Unpack a published release into its own run directory, profile and TEMP, then "
+            "update it with this checkout's updater against the real release source: "
+            "install (commit), cancel (during preparation) or rollback (a staged build "
+            "that cannot start)."
+        ),
+    )
+    windows_update.add_argument("--from", dest="source_tag", default="v0.9.0")
+    windows_update.add_argument(
+        "--mode", choices=("install", "cancel", "rollback"), default="install"
+    )
+    windows_update.set_defaults(handler=_run_windows_update)
 
     hud.add_argument(
         "--config",

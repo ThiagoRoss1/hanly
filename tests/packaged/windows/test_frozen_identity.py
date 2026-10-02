@@ -28,7 +28,7 @@ from typing import NamedTuple
 import psutil
 import pytest
 
-from tests.hanly_fixtures import devtools
+from lab import devtools
 from tests.hanly_fixtures.capabilities import require_display, unavailable
 from tests.packaged.shared.test_packaged_desktop import _require_bundle
 from tools.build_smoke_krdict import build_smoke_krdict
