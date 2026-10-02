@@ -312,8 +312,9 @@ _QUIT_REQUESTED = threading.Event()
 
 def _request_quit() -> None:
     # The shell's own SIGINT route: the same shutdown Ctrl+C in a terminal takes.
+    # Not os.kill: on Windows that is TerminateProcess, which skips the shutdown.
     _QUIT_REQUESTED.set()
-    os.kill(os.getpid(), signal.SIGINT)
+    signal.raise_signal(signal.SIGINT)
 
 
 def _krdict(runtime_config: Path) -> Path:

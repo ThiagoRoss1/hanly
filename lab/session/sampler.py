@@ -13,6 +13,7 @@ import multiprocessing
 import os
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,8 @@ class ProcessSampler:
             except psutil.Error:
                 continue
             for descendant in descendants:
-                if descendant.pid in owned:
+                # Recursion from the shell also reaches its children's helpers.
+                if descendant.pid in owned or nearest_owner(descendant, owned) != pid:
                     continue
                 handle = self._handle(descendant.pid, descendant)
                 if handle is not None:
@@ -111,6 +113,18 @@ class ProcessSampler:
         except psutil.Error:
             row["gone"] = True
         return row
+
+
+def nearest_owner(process: Any, owned: Mapping[int, str]) -> int | None:
+    """The closest ancestor of ``process`` that is a sampled Hanly process."""
+
+    try:
+        for ancestor in process.parents():
+            if ancestor.pid in owned:
+                return int(ancestor.pid)
+    except psutil.Error:
+        pass
+    return None
 
 
 def _name(process: psutil.Process) -> str:

@@ -691,6 +691,41 @@ def test_only_lab_sessions_are_discovered_by_start_time(
         runner.resolve_run("nothing-here")
 
 
+def test_the_lab_quits_through_the_shells_interrupt_handler() -> None:
+    # A child process, because the old route killed the caller outright on Windows.
+    import subprocess
+    import sys
+
+    script = (
+        "import signal\n"
+        "from lab.session import runner\n"
+        "signal.signal(signal.SIGINT, lambda *_: print('handled', flush=True))\n"
+        "runner._request_quit()\n"
+        "print('alive', flush=True)\n"
+    )
+    child = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert (child.returncode, child.stdout.split()) == (0, ["handled", "alive"])
+
+
+def test_a_helper_belongs_to_its_nearest_sampled_ancestor() -> None:
+    from lab.session.sampler import nearest_owner
+
+    shell, window = SimpleNamespace(pid=1), SimpleNamespace(pid=2)
+    webengine = SimpleNamespace(pid=3, parents=lambda: [window, shell])
+    stray = SimpleNamespace(pid=4, parents=lambda: [SimpleNamespace(pid=9)])
+    owned = {1: "shell", 2: "control_center"}
+
+    assert nearest_owner(webengine, owned) == 2
+    assert nearest_owner(stray, owned) is None
+
+
 def test_tour_options_parse() -> None:
     args = _parser().parse_args(
         ["tour", "--words", "500", "--story-sizes", "0", "--word-sizes", "14,18"]
