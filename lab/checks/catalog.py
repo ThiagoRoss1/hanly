@@ -172,6 +172,17 @@ SCENARIOS = (
         timeout_seconds=600,
     ),
     Scenario(
+        "BUNDLE-LAUNCH-IDENTITY-WIN",
+        "packaging",
+        "Normal frozen launch, capture, close, tray reopen and quit on Windows",
+        ("tests/packaged/windows/test_frozen_identity.py",),
+        "real_packaged_launch",
+        "Only the Control Center ever has a taskbar window; nothing outlives quitting.",
+        platforms=("win32",),
+        needs_bundle=True,
+        timeout_seconds=600,
+    ),
+    Scenario(
         "WINDOWS-UPDATE",
         "updater",
         "Complete Windows application update",
