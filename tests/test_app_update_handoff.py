@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -213,7 +214,12 @@ def test_a_posix_handoff_is_written_executable_without_a_bom(
         assert script.stat().st_mode & 0o700 == 0o700
 
 
-def test_the_script_is_written_outside_the_directory_it_removes(tmp_path: Path) -> None:
+def test_the_script_is_written_outside_the_directory_it_removes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The script's directory is made by tempfile; keep it out of the real TEMP.
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "temp"))
+    (tmp_path / "temp").mkdir()
     transaction = transaction_for(tmp_path / "install")
     spawned: list[tuple[list[str], Path]] = []
 
