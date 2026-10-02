@@ -175,11 +175,11 @@ class StressDriver(TourDriver):
             self._page.show_page(page)
             self._finish(placed, _Observation(), 0, unscored="obscured", foreign=foreign)
             return True
-        self._glide(x, y)
-        arrived = time.perf_counter_ns()
         observation = _Observation()
         with self._lock:
             self._active = observation
+        self._glide(x, y)
+        arrived = time.perf_counter_ns()
         self._target_event(placed, page, x, y)
         observed: dict[str, Any] = {}
         if behavior == "leave_early":

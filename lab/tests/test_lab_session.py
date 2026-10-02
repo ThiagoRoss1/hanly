@@ -742,6 +742,51 @@ def test_a_tour_never_toggles_off_capture_the_app_already_started() -> None:
     )
 
 
+def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path) -> None:
+    """With a 20 ms hover delay the app's hover can fire before the glide returns."""
+
+    import threading
+
+    from lab.session.driver import TourDriver
+
+    recorder = LabRecorder(tmp_path / "events.jsonl", retain_evidence=True, retain_geometry=True)
+    driver = TourDriver.__new__(TourDriver)
+    driver._recorder = recorder
+    driver._lock = threading.Lock()
+    driver._active = None
+    driver._settle_timeout = 0.2
+    driver._first_timeout = 0.2
+    driver._retain_fixture_text = False
+    driver._scale = 1.0
+    driver._expected = None
+    driver.completed = 0
+    setattr(driver, "_page", SimpleNamespace(to_global=lambda point: (point.x, point.y)))
+    driver._foreign_windows = lambda x, y: []  # type: ignore[method-assign]
+    mouse = SimpleNamespace(position=(0, 0))
+    setattr(driver, "_mouse", mouse)
+
+    def glide(x: int, y: int) -> None:
+        driver._expected = (x, y)
+        mouse.position = (x, y)
+        fields = {"hover_request_id": 9}
+        driver._observe("hover_stable_fire", 1, fields)
+        driver._observe("popup_visible", 2, {"lookup_request_id": 4, "result_status": "SUCCESS"})
+
+    driver._glide = glide  # type: ignore[method-assign]
+    target = TourTarget("w1", "words", "학교", 0, "학교", 1, "학교", "학교")
+    placed = SimpleNamespace(
+        target=target, point=SimpleNamespace(x=5, y=5), font_family="F", font_px=22, theme="light"
+    )
+
+    assert driver._hover(placed, 0, False)  # type: ignore[arg-type]
+    recorder.close()
+
+    lines = (tmp_path / "events.jsonl").read_text("utf-8").splitlines()
+    rows = [json.loads(line) for line in lines]
+    result = next(row for row in rows if row.get("event") == "tour_result")
+    assert result["hover_ids"] == [9]
+
+
 def test_a_helper_belongs_to_its_nearest_sampled_ancestor() -> None:
     from lab.session.sampler import nearest_owner
 

@@ -175,11 +175,13 @@ class TourDriver:
             self._restore_page(page)
             self._finish(placed, _Observation(), 0, unscored="obscured", foreign=foreign)
             return True
-        self._glide(x, y)
-        arrived = time.perf_counter_ns()
+        # Listening starts before the glide: with a short hover delay the app's
+        # hover can fire before the driver has recorded its own arrival.
         observation = _Observation()
         with self._lock:
             self._active = observation
+        self._glide(x, y)
+        arrived = time.perf_counter_ns()
         target = placed.target
         self._recorder.lab(
             "tour_target",

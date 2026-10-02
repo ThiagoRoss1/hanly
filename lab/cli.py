@@ -940,6 +940,18 @@ def run_app_lab(args: argparse.Namespace) -> int:
     return 1 if any(item["outcome"] != "passed" for item in summary["results"]) else 0
 
 
+def _run_stress_replay(args: argparse.Namespace) -> int:
+    from .session.runner import _runtime_config, resolve_run
+    from .session.stress_replay import replay_run
+
+    report = replay_run(resolve_run(args.run_dir), _runtime_config(args.config))
+    print(
+        f"lab: replayed {report['replayed']} regions; {report['same_as_live']} gave the live "
+        f"outcome again ({report['label']})"
+    )
+    return 0
+
+
 def _run_windows_update(args: argparse.Namespace) -> int:
     from .checks.windows_update import run_windows_update
 
@@ -1311,6 +1323,16 @@ def _session_parsers(subcommands: Any) -> None:
         ),
     )
     stress.set_defaults(handler=run_lab_session, mode="stress", hud=False)
+
+    replay = subcommands.add_parser(
+        "stress-replay",
+        help="replay a stress run's failing regions through the production lookup worker",
+    )
+    replay.add_argument("run_dir", help="stress run directory or name")
+    replay.add_argument(
+        "--config", type=Path, help="runtime configuration (default: the one `hanly` uses)"
+    )
+    replay.set_defaults(handler=_run_stress_replay)
 
 
 def _common_session_arguments(parser: argparse.ArgumentParser) -> None:
