@@ -64,7 +64,10 @@
 
 ## Windows Phase 2 (2026-10-02, started)
 
-- Stress campaign under construction: `python -m lab stress` (seeded plan ≥1,000 hovers, positive/negative/behavioural families, UIA helper window, cover window, `campaign.html`). Next: integrate the modules, run, localize failures, fix within the approved architecture, rerun.
+- **Stopped at the usage limit, mid-integration. Phase 2 work is uncommitted in the worktree:** `lab/session/{stress,stress_page,stress_driver,stress_scoring,browser_text,cover,uia_window}.py`, `lab/report/campaign.py`, `lab/tests/test_stress.py`, and edits to `lab/cli.py`, `lab/session/{driver,page,runner}.py`. Ruff, mypy (linux) and 16 stress tests passed before the last step.
+- Smoke `python -m lab stress --per-family 3 --retain-fixture-text --retain-fixture-images` (`20261002-165224-stress`): 60/60 executed, 50/53 passed, 0/27 false positives; leave-early answers withheld; cover refused; one real OCR misread (이층집 → 이름집, Gulim 22 px, replay image saved).
+- UIA finding: Qt `QPlainTextEdit` cannot serve as a UIA surface (its TextPattern lives on the parent and `RangeFromPoint` fails), so `uia_window.py` is being replaced by `browser_text.py` (isolated app-mode Edge, lab HTML, DevTools-measured points). Edge content **is** read by the existing adapter (Korean → DIRECT, Latin → NOT_KOREAN). An ancestor-walk change to `uia.py` was tried, not demonstrated, and reverted.
+- Next exact steps: (1) in `stress_driver._uia_segment`, replace the `uia_window` subprocess with `with BrowserText(lines, self._run_dir / "browser", (left, top, 900, 820)) as text:`, use `text.points`, allow `text.window_pid`; delete `uia_window.py` and `_read_points`. (2) `ruff`, `mypy --platform linux`, `pytest lab/tests`. (3) smoke with `--per-family 3`, then the full `python -m lab stress --no-open --retain-fixture-text --retain-fixture-images`. (4) Replay failing `replay/*.png` through the production EasyOCR provider to separate OCR from capture; fix demonstrated defects; rerun; commit; write the Phase 2 report section and `review-handoffs/lab-windows-implementation-and-stress.md`.
 - Friend's screenshot cases: no local copies exist in the repository; the human must attach them. Only a language-stage diagnosis of the named words is possible without them.
 
 ## Resume instructions
