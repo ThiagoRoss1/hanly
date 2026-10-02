@@ -89,8 +89,9 @@ class TourPage(QWidget):
         self.status = ""
         self._current: Page | None = None
         self._painted = threading.Event()
-        # Queued: show_page is called from the driver thread, painting belongs to Qt.
-        self._requested.connect(self._show, Qt.ConnectionType.QueuedConnection)  # type: ignore[call-arg]
+        # show_page emits from the driver thread; Qt's automatic connection queues
+        # that onto this widget's thread, where painting belongs.
+        self._requested.connect(self._show)
 
     # -- layout ---------------------------------------------------------------
 
