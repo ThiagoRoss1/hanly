@@ -23,3 +23,6 @@ packages/hanly-app/src/hanly_app/assets/easyocr_models/
 # Written by the release build before each freeze; it names one build.
 packages/hanly-app/src/hanly_app/assets/hanly-build.json
 data/reports/
+
+# macOS Finder view settings
+.DS_Store
