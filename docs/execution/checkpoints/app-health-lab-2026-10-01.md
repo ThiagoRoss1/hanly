@@ -35,6 +35,15 @@
 - Local artifact to remove by hand: `artifacts/lab/runs/20261001-043306-tour` holds real screen text from before the ownership guard existed.
 - Next safe boundary: the Windows continuation (tour ownership via `WindowFromPoint`, then `WIN-UPD-01`/`WIN-UPD-02`). Deferred lookup/OCR/capture items are listed in the hardening handoff.
 
+## Mac completion bundle (2026-10-01, latest)
+
+- Commits `b88ba79` (timeout scoring, rule v3), `d7f598e` (read text out of recordings unless `--retain-fixture-text`), `c29702a` + `9485fac` (frozen launch-identity check, `BUNDLE-LAUNCH-IDENTITY`), `5434009` (unfinished-tour reporting), plus the docs commit that records this.
+- Gates: portable 2,475 passed / 2 skipped, native 125, ruff and mypy clean on 326 files. Packaged 5/5 on the ZIP and DMG reconstructions of `bd7527b` with that SHA required. `check` 11/11 source scenarios and 4/4 bundle scenarios on each reconstruction.
+- Frozen normal-launch identity is now observed: the shell is Foreground; no child is ever Foreground; all exit on quit.
+- Standard tour `20261001-210808-tour`: 446/453 under v3, 0 changed verdicts against `20261001-171914-tour`.
+- The Mac acceptance matrix and the exact meaning of "Mac complete" are in the [hardening handoff](../review-handoffs/lab-hardening-mac-2026-10-01.md#mac-completion-bundle-2026-10-01-later).
+- Still open: deletion of `artifacts/lab/runs/20261001-043306-tour` (needs human authorization, that path only). Windows continuation as listed in the handoff.
+
 ## Resume instructions
 
 1. Inspect branch, worktree, commits, interpreter and any newer artifacts. Preserve all existing changes; do not reset or replay work from this checkpoint.

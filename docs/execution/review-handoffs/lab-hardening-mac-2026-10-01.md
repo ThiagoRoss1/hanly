@@ -92,6 +92,94 @@
 - `language_pipeline._without_particles`: trailing-token ordering when Kiwi reports overlapping spans.
 - Whether the 하다 probe should also cover an `XR`/`NNG` root that Kiwi leaves unjoined in other inputs.
 
+## Mac completion bundle (2026-10-01, later)
+
+A second, bounded correction and validation pass on the same branch. The
+sections above describe `c8db0a6`..`aa570e2` as they were written; where this
+section corrects them, it says so.
+
+### Confirmed defects and corrections
+
+- **Timeout scoring** (`b88ba79`, rule `strict-headword-v3`). `classify` passed a timed-out hover as `correct` (with a successful partial result) or `refused` (with a declined one), which contradicted the documented rule. Completion means the app's own popup decision for the bound lookup arrived before the driver's deadline. A hover without it is now `timed_out`, a failure, whatever partial result it carried.
+  - `no_hover` (no lookup ever bound) and `error` keep precedence.
+  - Six regressions failed before the fix and pass after.
+  - Neither recorded tour contains a timed-out hover, so under v3 the baseline still scores 443/453 and `20261001-171914-tour` still scores 446/453.
+- **Privacy claim** (`d7f598e`). The previous section's "recordings never contain recognized text" was **false**: `tour_result` persisted the selected word, answer, recognized regions and dictionary queries. The policy now enforced:
+  - A tour result keeps the target's own corpus text (story surface and expected form, or the sampled KRDICT headword) and structural facts only: verdict, status, timings, region and query counts, and six text-free booleans.
+  - Scoring is computed from those booleans, so every rule since v2 can re-score a run that kept no text.
+  - What the hover read is persisted only with `--retain-fixture-text`, only for verified hovers, recorded as `fixture_text_retained` in `metadata.json`.
+  - Unverified, stale, oversized-region and foreign captures keep neither text nor facts.
+  - Reports (JSON, HTML, Markdown) show read text only for runs that opted in, so rebuilding an older recording no longer re-propagates its text.
+  - The diagnostics mirror keeps text only for informational lifecycle lines; other lines keep subsystem and level, with `message_withheld`.
+  - Sentinel tests cover the default, opted-in, unverified and late-result paths, rebuilt reports in all three formats, and withheld diagnostics.
+  - Live check: `20261001-210808-tour` holds 0 evidence fields and no read-text keys.
+- **Unfinished tours** (`5434009`). A tour stopped by the user scored "6/6 (100%)" with no sign it had stopped. Reports, summaries and the score line now state how the tour ended and how many planned hovers it reached, and add a finding that the score is not comparable.
+- **Frozen identity check** (`c29702a`, `9485fac`). Added `tests/packaged/macos/test_frozen_identity.py` and catalog scenario `BUNDLE-LAUNCH-IDENTITY`. `9485fac` fixes a mypy error that `c29702a` was committed with: a `;` instead of `&&` hid the failing gate. Corrected, not amended.
+
+### Frozen launch identity (the open gap from the earlier handoffs)
+
+- **Method:** the `bd7527b` bundle launched through LaunchServices (`open -n` with an isolated `LOCALAPPDATA`/`XDG_CONFIG_HOME`/`HOME`, a smoke KRDICT, and update checks off). Owned processes were sampled about every 100 ms with `lsappinfo` and `psutil`. The test then: closes the Control Center with its own Accessibility close button; reactivates with a second `open`; reopens from the menu bar item "Open Control Center"; sends SIGINT to the shell only.
+- **Observed:**
+  - The shell is Foreground throughout.
+  - Both Control Center children (initial, and tray-reopened) go unregistered → UIElement and are never Foreground.
+  - WebEngine helpers and the multiprocessing resource tracker never register.
+  - Every owned child exits within the 15 s grace after quit.
+- **Results:** passed 4/4 runs directly (3 ZIP, 1 DMG reconstruction), and through `lab check` on both reconstructions with the SHA required.
+- **Not defects:**
+  - The first attempt "failed" to reopen on reactivation. That is approved behaviour (`application._install_reopen_route`): activation never resurrects a window the user closed on purpose; the tray is the documented route.
+  - The absent "Window N is closed" log line after a user close is by design; only a shell-initiated close logs it.
+  - A "survivor" in the first attempt was a child still winding down; it was already terminated when inspected.
+- **Limit:** a registration shorter than the ~100 ms sampling interval cannot be excluded.
+
+### Mac acceptance matrix (all on macOS 26 arm64, this display, `aa570e2`..`5434009`)
+
+| Flow | Evidence | Result |
+|---|---|---|
+| `python -m lab --duration 20` | real source session | exit 0; report + summary; 0 evidence fields; no owned survivor |
+| `python -m lab` interrupted by SIGINT at 14 s | real source session | exit 130 (user interrupt); report + summary; no owned survivor |
+| `python -m lab tour --quick` | real driven hovers | 23/24, finished |
+| Quick tour stopped by moving the mouse | real driven hovers | `stopped_by_user` after 6/24, exit 0, partial report, no survivor |
+| `python -m lab tour --baseline 20261001-171914-tour` | real driven hovers | 446/453, 453 matched, 0 changed verdicts |
+| `report <run>`, `report --list`, newest discovery, `--baseline` | rebuild from recordings | working; baseline directories never written |
+| `check`: APP-STARTUP, CC-LIFECYCLE, CC-CONTROLS, CC-UPDATE-STAGE, CAPTURE-CHOICE, HOVER-POPUP, SETTINGS, UPDATE-COORDINATOR, UPDATE-APPLY-POSIX, MAC-IDENTITY, RESOURCE-DELIVERY | mixed real UI / injected / simulated, as labelled in the catalog | 11/11 passed (run `e8c959e8`) |
+| `check`: BUNDLE-IDENTITY, -WINDOW, -WORKER, -LAUNCH-IDENTITY on ZIP and DMG reconstructions, SHA `bd7527b…` required | real frozen bundle | 4/4 passed on each |
+| `pytest --suite packaged` on both reconstructions, SHA required, skips forbidden | real frozen bundle | 5/5 on each; `codesign --verify --deep --strict` on each |
+| WINDOWS-UPDATE | not implemented | not run (Windows) |
+| LIVE-HOVER on private screens | human-operated | not run; tours cover lab-authored pages only |
+
+Fixed updater-helper checks (`UPDATE-APPLY-POSIX`, `UPDATE-COORDINATOR`) use simulated builds and delivery; they do **not** prove a complete real-release update.
+
+### Tour comparison (same rule, same corpus)
+
+- `20261001-210808-tour` on `5434009` vs `20261001-171914-tour` on `39e0bab`, both under `strict-headword-v3`, with seed 7, story at 22 px, 300 words at 16/22/30/40 px, Vision, this display and default dwell. The corpus is identical (the eligible word set has been unchanged since `c8db0a6`).
+- Score: 446/453 → 446/453 (98.5%), 0 unscored, all 453 targets matched, **0 changed verdicts**. The OCR churn seen between the earlier pair (교사, 대응, 흥미) did not move this time; one rerun does not establish its rate.
+- Popup median 148.4 → 150.5 ms, p90 172.7 ms. Medians: OCR 31.7 ms, capture 33.6 ms, dictionary 1.4 ms, pipeline 25.2 ms.
+- Peak RSS: lookup 706 MiB, Control Center 303 MiB, shell 234 MiB. The shell figure includes the lab's in-process recorder.
+- 98.5% is a score on this controlled corpus under this rule. It is not general OCR or translation accuracy.
+
+### Gates
+
+- `pytest --suite portable` → 2,475 passed, 2 skipped. `pytest --suite native` → 125 passed. `ruff check packages packaging tests tools lab` and `mypy packages packaging tests tools lab` → clean, 326 files. All exit 0.
+- No file under `packages/`, `packaging/` or `tools/` changed since `bd7527b`, so its build remains the shipped code's build and no new build was made. It was never relabeled.
+
+### What "Mac complete" covers
+
+- **Covered:** every lab command on macOS; the fixed source checks listed above, each under its own evidence label; the frozen bundle's inventory, commit identity, window, worker and normal-launch identity on ZIP and DMG reconstructions; and the lab's own privacy, scoring and stop behaviour.
+- **Not covered:**
+  - a complete real-release update on any platform;
+  - hover over private real-world screens, which needs a person;
+  - Retina scaling of the tour's ownership probe;
+  - sub-100 ms identity transients.
+
+### Remaining work
+
+- **Human cleanup item, still open:** `artifacts/lab/runs/20261001-043306-tour` was reported to hold private screen text from before the ownership guard. It was not opened, printed or deleted. Deleting it needs your authorization, and that authorization covers only that exact path.
+- **Windows:**
+  - the tour's `WindowFromPoint` ownership path and pointer driving;
+  - a Windows counterpart of the launch-identity check;
+  - `WIN-UPD-01` / `WIN-UPD-02` on an isolated real installation.
+- **Deferred items above are unchanged:** capture threading, small-text OCR, startup prewarm, KRDICT cross-references, homograph context, and the 깊이 resolver miss.
+
 ## Review assignment
 
 Human-selected after implementation. Not started.

@@ -148,6 +148,10 @@ recorder hosted in the same process.
 (repeat the flag). These orchestrate fixed repository tests on disposable
 profiles — startup, Control Center, settings, updater and packaged checks — and
 label real and simulated evidence separately. See [checks/README.md](checks/README.md).
+On macOS, `BUNDLE-LAUNCH-IDENTITY` launches a frozen bundle through LaunchServices
+on an isolated profile and checks that only the shell is ever a Dock application
+(`--bundle PATH --expected-commit FULL_SHA`). Updater checks use simulated builds;
+none of them proves a complete real-release update.
 
 ---
 
