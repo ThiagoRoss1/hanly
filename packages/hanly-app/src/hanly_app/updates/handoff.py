@@ -31,7 +31,7 @@ SWAP_ATTEMPTS = 30
 #: could roll back a working build during model and Qt initialization.
 READY_WAIT_SECONDS = 600
 
-Spawn = Callable[[list[str], Path], None]
+Spawn = Callable[[list[str], Path], object]
 
 
 class HandoffError(RuntimeError):
@@ -119,7 +119,7 @@ def render_handoff_script(*, executable: str, platform: str = sys.platform) -> s
     )
 
 
-def spawn_detached(command: list[str], directory: Path) -> None:
+def spawn_detached(command: list[str], directory: Path) -> subprocess.Popen[bytes]:
     """Start a helper that outlives the parent process it is waiting for.
 
     On Windows, use NEW_PROCESS_GROUP to isolate console signals and CREATE_NO_WINDOW.
@@ -131,9 +131,8 @@ def spawn_detached(command: list[str], directory: Path) -> None:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
             subprocess, "CREATE_NO_WINDOW", 0
         )
-        subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
-        return
-    subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
+        return subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
+    return subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
 
 
 def _write_handoff_script(body: str, *, platform: str, directory: Path) -> Path:

@@ -330,8 +330,8 @@ class TreeUpdateRunner:
             start_native_helper(transaction.helper_path, transaction.descriptor_path)
             await_native_claim(transaction.lock_path)
             return
-        start_helper(transaction.journal, self._recovery_root)
-        await_claim(transaction.journal)
+        process = start_helper(transaction.journal, self._recovery_root)
+        await_claim(transaction.journal, process=process)
 
     def _acquire(self) -> None:
         try:
