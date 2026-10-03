@@ -737,9 +737,7 @@ def test_a_tour_never_toggles_off_capture_the_app_already_started() -> None:
     assert presses == ["key"]
 
     stuck = threading.Event()
-    assert (
-        ensure_capture(stuck, lambda: None, launch_grace=0, after_press=0) == "never_started"
-    )
+    assert ensure_capture(stuck, lambda: None, launch_grace=0, after_press=0) == "never_started"
 
 
 def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path) -> None:
@@ -804,3 +802,31 @@ def test_tour_options_parse() -> None:
         ["tour", "--words", "500", "--story-sizes", "0", "--word-sizes", "14,18"]
     )
     assert (args.mode, args.words, args.story_sizes, args.word_sizes) == ("tour", 500, (), (14, 18))
+
+
+def test_the_sampler_measures_the_shell_from_outside_it(tmp_path: Path) -> None:
+    """Sampling runs in its own process, so it cannot hold the shell's interpreter lock."""
+
+    import os
+    import time
+
+    from lab.session.sampler import ProcessSampler
+
+    path = tmp_path / "processes.jsonl"
+    sampler = ProcessSampler(path, time.perf_counter_ns(), interval=0.05)
+    sampler.start()
+    deadline = time.monotonic() + 30
+    while (
+        time.monotonic() < deadline
+        and len(path.read_text("utf-8").splitlines() if path.exists() else []) < 3
+    ):
+        time.sleep(0.05)
+    sampler.stop()
+
+    rows = [json.loads(line) for line in path.read_text("utf-8").splitlines()]
+    assert sampler.samples == len(rows) >= 3
+    shell = rows[-1]["processes"][0]
+    assert (shell["pid"], shell["role"]) == (os.getpid(), "shell") and shell["rss"] > 0
+    # Neither the sampler nor a launcher in front of it is measured as the shell's helper.
+    assert all(row["role"] == "shell" for sample in rows for row in sample["processes"])
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["processes.jsonl"]

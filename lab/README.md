@@ -151,7 +151,7 @@ profile; the runtime configuration, dictionary and models are reused read-only):
 | File | |
 |---|---|
 | `events.jsonl` | every trace event from the shell and the lookup child (content fields removed), startup phases, lifecycle diagnostics, and the lab's own driver events, including each tour result as described above |
-| `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms; roles are exact, not inferred |
+| `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms, sampled from a separate process so it cannot stall the shell; roles are exact, not inferred |
 | `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
 | `report.json`, `summary.md` | the same model for scripts and agents |
 
