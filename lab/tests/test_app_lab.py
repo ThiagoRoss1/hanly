@@ -169,7 +169,8 @@ def test_output_is_bounded_and_private_text_is_not_returned(tmp_path: Path) -> N
     result = execute(
         [sys.executable, "-c", "print('PRIVATE 초대받았어요 ' * 20000); print('3 passed in 0.1s')"],
         cwd=str(tmp_path),
-        environment=os.environ,
+        # A Windows pipe otherwise encodes in the ANSI code page, which has no Hangul.
+        environment={**os.environ, "PYTHONIOENCODING": "utf-8"},
         timeout_seconds=10,
     )
     assert result.exit_code == 0 and result.counts == {"passed": 3}
