@@ -633,6 +633,34 @@ def test_the_legacy_control_file_is_a_windows_entry_and_nothing_else() -> None:
         )
 
 
+@pytest.mark.parametrize("platform", ["windows", "macos"])
+@pytest.mark.parametrize("path", [".HANLY-UPDATE/t1/plan.json", ".Hanly-Update/x"])
+def test_the_working_area_is_refused_in_any_case_a_folding_filesystem_ignores(
+    path: str, platform: str
+) -> None:
+    with pytest.raises(ManifestError, match="working area"):
+        require_tree_path(path, platform)
+    with pytest.raises(ManifestError, match="working area"):
+        require_safe_relative_path(path)
+
+
+def test_only_the_exact_control_file_name_is_installable() -> None:
+    from hanly_app.updates.manifest import require_installable_path
+
+    assert str(require_installable_path(INSTALLED_MANIFEST_NAME)) == INSTALLED_MANIFEST_NAME
+    for path in (".HANLY-MANIFEST.JSON", ".Hanly-Manifest.json"):
+        with pytest.raises(ManifestError):
+            require_installable_path(path)
+    identity = _bundle_identity("windows", "x86_64")
+    layout = TreeLayout(root="hanly-desktop", executable="hanly-desktop.exe")
+    entries = [
+        TreeEntry(path="hanly-desktop.exe", kind=KIND_FILE, sha256="a" * 64, size=1),
+        TreeEntry(path=".Hanly-Manifest.json", kind=KIND_FILE, sha256="b" * 64, size=1),
+    ]
+    with pytest.raises(ManifestError, match="control-file name"):
+        TreeManifest.from_entries(identity, layout, entries)
+
+
 def test_a_manifest_must_describe_the_executable_its_layout_names() -> None:
     entries = [item for item in _bundle_entries() if item.path != "Contents/MacOS/hanly-desktop"]
 
