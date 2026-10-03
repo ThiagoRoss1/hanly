@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -270,7 +271,11 @@ def _install(run: _Run, application: Path, *, rollback: bool) -> dict[str, Any]:
     updater.coordinator.install_application_update(False)
     staged = _settle(run, updater, 1800)
     if staged["status"] != "restart":
-        return {"passed": False, "reason": f"staging ended {staged['status']}"}
+        return {
+            "passed": False,
+            "reason": f"staging ended {staged['status']}",
+            "message": public_message(staged.get("message")),
+        }
 
     transaction = _transaction(application)
     if rollback:
@@ -320,6 +325,22 @@ def _install(run: _Run, application: Path, *, rollback: bool) -> dict[str, Any]:
         and not outcome["relaunched_page_offers_update"]
     )
     return outcome
+
+
+# A path runs to whitespace or a quote; sentence punctuation after it stays text.
+_ABSOLUTE_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)(?:[^\s'\";,]*[^\s'\";,.])?")
+
+
+def public_message(message: object) -> str | None:
+    """The coordinator's failure text with every absolute path removed.
+
+    The updater's own wording names the failing step; the paths it may quote are
+    the run's or the user's, and neither belongs in a summary.
+    """
+
+    if not isinstance(message, str):
+        return None
+    return _ABSOLUTE_PATH.sub("<path>", message)
 
 
 def _transaction(application: Path) -> Path:

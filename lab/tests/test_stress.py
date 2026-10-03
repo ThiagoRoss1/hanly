@@ -155,6 +155,26 @@ def test_a_direct_text_refusal_finishes_the_hover_it_belongs_to() -> None:
     assert stress_verdict(record) == "quiet"
 
 
+def test_a_replay_that_picks_the_same_word_from_different_lines_is_told_apart() -> None:
+    from types import SimpleNamespace
+
+    from lab.session.stress_replay import _compare
+
+    live = {"target": "m007", "status": "SUCCESS", "selected": "대외새", "recognized": ["대외새"]}
+    outcome = SimpleNamespace(
+        status=SimpleNamespace(name="SUCCESS"),
+        context=SimpleNamespace(
+            text="대외새",
+            ocr_results=[SimpleNamespace(text="대외새"), SimpleNamespace(text="대이")],
+        ),
+        entries=(),
+    )
+
+    row = _compare(live, outcome)
+
+    assert row["same_as_live"] and not row["same_recognition"]
+
+
 def test_a_campaign_rebuilds_from_its_recording(tmp_path: Path) -> None:
     run = tmp_path / "20261002-120000-stress"
     run.mkdir()

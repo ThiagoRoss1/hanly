@@ -52,11 +52,17 @@ def replay_run(run_dir: Path, runtime_config: Path) -> dict[str, Any]:
             rows.append(_compare(row, outcome))
     finally:
         worker.close()
+    from .runner import _git
+
     report = {
         "label": REPLAY_LABEL,
         "run": run_dir.name,
+        # The code that replayed, which need not be the code that recorded the run.
+        "commit": _git("rev-parse", "HEAD"),
+        "dirty": bool(_git("status", "--porcelain")),
         "rows": rows,
         "same_as_live": sum(1 for row in rows if row["same_as_live"]),
+        "same_recognition": sum(1 for row in rows if row["same_recognition"]),
         "replayed": len(rows),
     }
     (run_dir / "replay.json").write_text(
@@ -104,6 +110,8 @@ def _compare(row: dict[str, Any], outcome: Any) -> dict[str, Any]:
         },
         # Same selection and status: the pixels alone produce the live outcome.
         "same_as_live": status == row.get("status") and selected == row.get("selected"),
+        # Stricter: the recognizer read the same lines, not only the same word.
+        "same_recognition": sorted(recognized) == sorted(row.get("recognized") or []),
         "replay_correct": headword is not None and headword == row.get("expected"),
     }
 
