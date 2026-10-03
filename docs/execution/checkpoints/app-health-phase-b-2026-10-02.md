@@ -1,5 +1,11 @@
 # Checkpoint — Phase B review of `lab/app-health` (paused 2026-10-02)
 
+> **Resolved 2026-10-03.** Phase B resumed and finished: every pending item below
+> was completed or recorded as a deferral. The outcome is in
+> [`../review-handoffs/lab-windows-implementation-and-stress.md`](../review-handoffs/lab-windows-implementation-and-stress.md#phase-b-outcome)
+> and the evidence in the report's Phase B section. The text below is the paused
+> state, kept as history. The helper-claim finding was resolved by `0046cbc`.
+
 Phase B (deep review, explicitly authorized) of the Windows lab, updater and
 stress work. **Paused by the human mid-validation; not finished.** No verdict has
 been recorded yet. The Phase B outcome has **not** been appended to

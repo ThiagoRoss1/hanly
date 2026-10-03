@@ -214,10 +214,13 @@ processes). Sampled resident memory, not private memory or a precise peak.
 
 ### Where the failures are
 
-- **124 OCR misreads.** Every one replays identically through the production lookup
-  worker from the saved region (`stress-replay`: 124/124 same as live, labelled
-  `lab_recapture_production_worker_replay`), so capture, geometry, gate, resolver,
-  cache and presentation are excluded. Rates by face: Batang 41/251, Malgun Gothic
+- **124 OCR misreads.** Every one replays to the same status and selection through
+  the production lookup worker from the saved region (`stress-replay`: 124/124,
+  labelled `lab_recapture_production_worker_replay`; the recognized lines themselves
+  are identical for 123/124, and `m007-ko` adds one extra line on replay), so capture,
+  geometry, gate, resolver, cache and presentation are excluded. Phase B checked each
+  one at the OCR stage: neither the live nor the replayed normalized recognition
+  contains the target surface. Rates by face: Batang 41/251, Malgun Gothic
   37/251, Dotum 15/107, Gulim 13/107, Gungsuh 11/50, Noto Sans KR 5/49; worst at the
   story's Batang 18 px. Confusions are EasyOCR's: 요→오, final ㄹ/ㅁ/ㅂ (차를→차름,
   꽁꽁→공공), 았/었→앗/없, ㄷ/ㅁ initials (모르→도르). Raster degradation is not the
@@ -227,13 +230,18 @@ processes). Sampled resident memory, not private memory or a precise peak.
 - **UIA timing (not a scored failure).** On Edge, 22/40 Korean hovers were answered by
   direct text; 10 hit the 40 ms direct-text budget and fell back to OCR (still
   correct), 6 were `unsupported` (Chromium enabling accessibility on first contact).
-  Completed reads take 4–11 ms, and the same reads take 5–7 ms in isolation, but
-  the timed-out ones were delivered 44–146 ms after the hover fired with no native
-  duration, i.e. the job never ran within its deadline in the lab-hosted shell. Not
-  attributed: the lab hosts the shell with its recorder, sampler and driver in the
-  same process, and a plain `hanly` session was not instrumented.
+  **Attributed in Phase B to the lab:** its psutil sampler ran on a thread of the
+  lab-hosted shell and held the interpreter lock (short campaigns: 79 and 111
+  direct-text timeouts with it, 6 and 1 with it stubbed out, 0 and 0 once it moved to
+  its own process in `24ac332`). Not product behaviour; `DEFAULT_TIMEOUT_MS` unchanged.
 - **Repeats had no cache hits (0/60):** each repeat sits in a different cell, so its
   pixels differ from the original's; this measures repeat correctness, not cache.
+  (1,318 cache hits happened outside scored windows; 5 inside, all `after_popup`.)
+- **The 35 unscored hovers** are 9 covered-page hovers under the cover (6 `obscured`,
+  3 `obscured_during_capture`), 11 covered-page hovers outside it kept as evidence
+  (9 correct, 1 wrong, 1 NOT_FOUND) and the 15 changing-content hovers. The 7
+  "timed out" UIA Latin negatives were a lab defect (fixed in `7704dc8`): a
+  `not_korean` direct-text refusal is final and emits no popup event.
 
 ### Friend's screenshot cases (investigation only)
 
@@ -257,21 +265,146 @@ On clean `ab7110cd02b6a7cb7cdc66ef403d1e022d44728c`: portable 2,398 passed / 105
 skipped; native 121 / 33; ruff clean; mypy clean for linux and darwin (the same 22
 pre-existing win32-only errors); no TEMP leaks. No file under `packages/`,
 `packaging/` or `tools/` changed since `9fe7c41`, so that build and its packaged
-results stand; no rebuild was needed.
+results stood at the end of Phase 2. *Superseded by Phase B, which changed shipped
+code and rebuilt at `16dde15` (below).*
+
+## Phase B — deep review (2026-10-02/03)
+
+### Defects found and fixed
+
+| Commit | Defect | Evidence |
+|---|---|---|
+| `deb72a6` | Settling deleted any `challenge-*.json` a plan pointed at, wherever it was | the plan is read back from inside the installation; a tampered plan's file outside the receipt directory was deleted (test fails before, passes after) |
+| `938fa6c` | 22 win32-only mypy errors | `sys.platform` branches, no ignores or config changes; mypy clean for win32, linux and darwin |
+| `7704dc8` | (lab) UIA Latin negatives recorded as timed out | a `not_korean` direct-text refusal is final and emits no popup decision |
+| `8594257` | (lab) bounded-output test failed without `PYTHONUTF8` | cp1252 cannot encode Hangul; the child's stdout is pinned to UTF-8 |
+| `24ac332` | (lab) UIA direct-text deadline misses | the sampler held the GIL in the lab-hosted shell: 79/111 timeouts with it, 6/1 stubbed, 0/0 out of process |
+| `12b052c` | Reserved updater names matched case-sensitively | `.HANLY-UPDATE/...` resolves into the working area on Windows and macOS (5 tests fail before) |
+| `0046cbc` | Windows helper waits outlasted the processes they waited on | see below |
+| `38d9203` | (lab) failure reasons and replay provenance missing | summaries now record the path-free failure message; replays record commit, dirty state and line-level agreement |
+| `16dde15` | A release-server outage told first-time updaters to install by hand | see below |
+| `762c1c4` | (lab) first Edge hovers captured an undrawn window | waits until the targets are drawn; records `painted_ms` |
+
+**Windows helper waits (`0046cbc`).** One isolated rollback failed with "the update
+helper did not start". A timeline injected into the helper showed the PowerShell
+process created at 0.1 s but its first script line running at 8.0 s (3.2 s in a
+second run; a third had claimed at 25.6 s); parsing the plan and writing the claim
+took 0.26 s. The same helper starts in 0.2 s on a quiet machine, also after writing
+650 MB of novel files and with an empty profile, so this is a slow PowerShell cold
+start under load (the lab's running 0.9.0 and a second run; the helper used about
+12 % of a core), not a hang, Defender, or this branch: the helper and its 30 s claim
+wait are byte-identical in 0.9.0, 1.0.0 and before Phase B. Two fixes:
+
+- the shell watches the helper process it started: an exit without a claim fails at
+  once; a live helper is given 120 s;
+- the helper stopped waiting the full 600 s `READY_WAIT_SECONDS` behind its progress
+  window when the new build could not launch or had exited; it now rolls back as
+  soon as the build is gone. Native tests running the shipped PowerShell against
+  compiled builds: rollback took 35 s and 28 s (the whole shortened window) before,
+  and passes under half of it after. The isolated rollback check went from about 25
+  to 7.9 minutes.
+
+These help only updates started by a build that contains them: the helper script
+is written by the running app.
+
+**Release outage (`16dde15`).** During a live GitHub 502/503, the isolated install
+failed with "Hanly cannot confirm that this installation is the published 0.9.0
+build … Install the new version by hand". The tagged-release lookup that every
+receipt-less (manually installed) client uses on its first update swallowed network
+errors as absence. An unreachable server (no connection, 5xx, other non-404 statuses)
+now fails retryably and changes nothing; a 404/410 for the tag still cannot be
+confirmed.
+
+**Native helper instead of PowerShell?** Considered and not done. The Mac/Linux
+helper is compiled C (`packaging/updater/hanly-update-posix.c`); a Windows
+equivalent would add a compiler to every Windows build and CI job, a new signed
+binary, and a second recovery path, and installed clients would keep writing the
+PowerShell helper anyway. The measured problems were the two waits, not
+PowerShell's correctness; revisit if a Windows helper start is ever seen to exceed
+120 s, or PowerShell becomes unavailable by policy.
+
+### Legacy clients and release manifests
+
+- Affected installed Windows versions: 0.5.3 (`4f9547b`), 0.9.0 (`e75ef4b`), 1.0.0
+  (`9e44e38`); all have schema-2 tree staging and the journal's
+  `require_safe_relative_path`. 0.5.2 has no tree staging.
+- Simulated against the legacy rule (both call sites patched back): the release as
+  today fails; **omitting `.hanly-manifest.json` fails** (the base owns it, so the
+  plan deletes it); **a full download fails** (same staging and journal); only a
+  byte-identical control file stages, and that would leave the installed V1
+  inventory describing the old build, which the next update reads as its base, so it
+  breaks integrity and future updates.
+- No release-manifest change rescues these clients safely. **Recommendation:** a
+  one-time manual replacement for 0.5.3/0.9.0/1.0.0 Windows installs (replace the
+  folder with the new ZIP; settings and the dictionary are in the profile),
+  announced in the release notes. Those clients fail with a "working area" message
+  and change nothing. Needs a human decision; release tooling is unchanged.
+- The isolated 0.9.0 → 1.0.0 check proves this branch's updater against real
+  releases, not the updater embedded in installed builds.
+
+### Gates and builds (Phase B)
+
+- At `16dde15e4aaed14d2f0023938f850099dac4a026` (the last shipped change; `762c1c4`
+  after it is lab-only: lab tests 326 passed / 18 skipped, ruff and mypy clean): portable 2,415
+  passed / 105 skipped; native 123 / 33 (including 9/9 shipped-PowerShell helper
+  cases); ruff clean; mypy clean for `--platform` win32, linux and darwin.
+- Fresh build at `16dde15` (build `0b5c0920-a362-4498-a7fe-7b27e33261d5`, 1.0.0,
+  CPython 3.13 venv); earlier products moved to `dist/archive-{9fe7c41,12b052c,38d9203}-windows/`.
+  ZIP sha256 `7fe65ee6ff31326c37d31ea29f973c7ca867e23070f80f0a94d6c7e9c1042055`,
+  reconstructed into `dist/reconstructed-16dde15/`: all 6,834 manifest entries match by
+  size and hash, nothing undescribed or missing. `pytest --suite packaged` with the
+  full SHA and `HANLY_REQUIRE_PACKAGED=1`: 5/5 on the build, 5/5 on the
+  reconstruction. BUNDLE-IDENTITY, -WINDOW, -WORKER, -LAUNCH-IDENTITY-WIN: 4/4. No
+  `lab` or `tests` module among the 6,302 frozen modules.
+- `lab check windows-update` at `16dde15`, unmodified: install passed (8.1 min),
+  cancel passed (2.3 min), rollback passed twice (7.9 min each; restored, manifest
+  matches, re-offered). Remnants after install/rollback are the published 1.0.0's or
+  restored 0.9.0's own challenge files, since those builds do the settling.
+- Campaign at HEAD: `20261003-202512-stress` (seed 11, same plan and machine, code `762c1c4`,
+  only docs uncommitted): **998/1,123 (88.9 %)**, 0/210 false positives, 125/913
+  missing or wrong (123 OCR misreads, 2 morphology), 0 stale or late popups; 1,158
+  planned = executed, the same 35 unscored. UIA Korean 39/40, 32 answered by direct
+  text (22 before), direct-text timeouts across the campaign 2 (303 before). Replay:
+  123/123 same outcome, 122/123 same recognized lines (`m007-ko`), every misread
+  confirmed at the OCR stage. Lab-hosted latency fell once the sampler left the
+  shell: all hovers p50 254 → 135 ms, p90 349 → 337 ms; word p50 199 → 129 ms, p90
+  273 → 141 ms. These are lab-hosted measurements on this machine, not general app
+  latency; the Phase 2 latency figures above were inflated by the lab itself.
+  An intermediate run (`20261003-201036`, 995/1,123) exposed a lab race fixed in
+  `762c1c4`: the first three Edge hovers captured a fresh window before it was drawn
+  (pure white frames, `no_text`).
+
+### Privacy and packaging
+
+- `main...HEAD` adds no images, binaries, run artifacts or dist files; machine-path
+  matches in added lines are environment-variable names and test fixtures.
+- The user-visible "Update failed: {error}" text (pre-existing, `coordinator.py`) can
+  quote a local path from an `OSError`; shown only on the user's own screen, not
+  persisted. Not changed (product behaviour); see deferrals.
 
 ## Remaining and deferred
 
-- **Stranded clients (needs a decision).** Installed 0.9.0 and 1.0.0 carry the
-  WIN-UPD-01 defect and cannot install any later differential update. Options: a
-  release whose Windows tree manifest omits `.hanly-manifest.json` for those
-  clients, or a documented manual replacement. Release tooling was not changed.
+- **Stranded clients (needs a decision).** Installed **0.5.3, 0.9.0 and 1.0.0**
+  carry the WIN-UPD-01 defect and cannot install any later update in place, delta
+  or full. Phase B showed that omitting `.hanly-manifest.json` from a release does
+  not help (see Phase B). Recommendation: a documented one-time manual
+  replacement. Release tooling was not changed.
 - **OCR misreads** — revisit with an OCR-tuning bundle; the replay images under
   `artifacts/lab/runs/20261002-192328-stress/replay/` are a ready offline corpus.
-- **UIA deadline in the shell** — instrument start delay versus native duration in a
-  plain `hanly` session before touching `DEFAULT_TIMEOUT_MS`.
-- **win32 mypy (22 pre-existing)** — narrow the POSIX-only branches by
-  `sys.platform` when a change already touches those modules.
 - **Mixed DPI, >100 % scaling** — untested on this hardware configuration.
 - **Single instance on Windows** — a second launch starts a second shell; product
   decision.
 - **Screenshot cases** — need the original images.
+- **Update failure text may quote a local path** — `Update failed: {error}` shows an
+  `OSError` as-is on the user's own screen (not persisted). Changing it changes
+  product wording; revisit with any error-presentation work.
+- **Fixed cleanup and helper waits in a real update** — proven by tests and the
+  lab-driven updater; a released build containing them has not yet performed a
+  real update. Revisit with the first release cut from this branch.
+- **A crashing new build on Mac/Linux** — the C helper fails fast only when the
+  program cannot be executed; one that starts and exits waits out
+  `READY_WAIT_SECONDS`. Same class as `0046cbc`; revisit with the next Mac helper change.
+- **Mac checks** — need a Mac: `UPDATE-APPLY-POSIX`,
+  `tests/native/shared/test_update_posix_native.py`, `MAC-IDENTITY`, packaged
+  `test_frozen_identity`, the Control Center stage-animation probe, and one real Mac
+  update over `deb72a6`/`12b052c` (receipt-directory check, APFS case folding).

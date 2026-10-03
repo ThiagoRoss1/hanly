@@ -74,11 +74,11 @@ Phase 2 (lab only):
 
 - The fixed updater ran in a lab-hosted coordinator against real releases, not inside
   a released frozen build clicking Install update; installed 0.9.0/1.0.0 cannot
-  receive the fix differentially (release decision needed).
+  receive the fix by any update (0.5.3 is affected too; release decision needed).
 - One machine, two displays at 100 %; mixed DPI and scaling untested.
-- OCR misreads (124) are characterized, not fixed. UIA direct-text timeouts in the
-  lab-hosted shell are measured, not attributed.
-- 22 pre-existing win32-only mypy errors remain.
+- OCR misreads (124) are characterized, not fixed. UIA direct-text timeouts were
+  attributed to the lab sampler in Phase B (`24ac332`).
+- The 22 win32-only mypy errors were fixed in Phase B (`938fa6c`).
 - Friend's screenshot images were not available; only a language-stage diagnosis was run.
 
 ## Suggested review targets
@@ -92,4 +92,85 @@ Phase 2 (lab only):
 
 ## Review assignment
 
-Human-selected after implementation. Not started.
+Human-selected after implementation: Phase B by Claude Code (Opus 5.5), authorized
+2026-10-02, paused once and resumed 2026-10-03. Outcome below.
+
+## Phase B outcome
+
+**Verdict: accepted as review-ready, not shipping- or migration-ready.** The Windows
+implementation, updater corrections and stress evidence hold up after independent
+checking and ten fixes. Acceptance does not resolve the release blockers: stranded
+0.5.3/0.9.0/1.0.0 Windows clients (needs your decision) and the Mac checks that
+need a Mac.
+
+### Verified claims
+
+- WIN-UPD-01 reproduces on pre-fix code and the fix admits only the exact control
+  file; traversal, absolute/UNC, drive/stream, reserved device and working-area
+  paths stay refused (now in any letter case on Windows and macOS).
+- Manifest, hash and acknowledgement trust are unchanged; cleanup is ownership-based
+  (challenge files only in this installation's own receipt directory); abandon,
+  cancel and rollback leave no working area.
+- Relaunch reaches the intended build and the update is not re-offered (isolated
+  install); rollback restores the base build and re-offers (twice).
+- Stress counts recomputed from `events.jsonl`: 1,158 planned = executed, no
+  duplicate IDs; verdict totals as reported; the 35 unscored and the 124 OCR
+  misreads explained at the OCR stage.
+- Lab code is not in the bundle; the branch diff carries no images, artifacts or
+  credentials.
+
+### Defects found and fixed
+
+`deb72a6` challenge cleanup ownership · `938fa6c` win32 typing · `7704dc8` (lab)
+direct-text refusal completion · `8594257` (lab) Hangul in the bounded-output test
+· `24ac332` (lab) sampler starved the shell → UIA deadline misses · `12b052c`
+reserved names in any case · `0046cbc` Windows helper claim and startup waits ·
+`38d9203` (lab) failure reasons and replay provenance · `16dde15` release outage
+misreported as "install by hand" · `762c1c4` (lab) Edge hovered before it drew. Details and before/after evidence: the report's
+Phase B section.
+
+### Dismissed concerns
+
+- "PowerShell freezes": measured as slow cold start under load (3–25 s), with the
+  helper unchanged since 0.9.0; not a hang, Defender, profile or branch regression.
+  The run seen as "over an hour" was still preparing (no transaction existed) and
+  was interrupted; rollback runs took ~25 min because of the 600 s startup wait,
+  now fixed.
+- Replacing the PowerShell helper with a native one: not justified by the evidence
+  (see report); revisit if a helper start exceeds 120 s or PowerShell is blocked by
+  policy.
+- UIA deadline as a product issue: a lab artifact; `DEFAULT_TIMEOUT_MS` unchanged.
+- Omitting `.hanly-manifest.json` from releases: does not help legacy clients and
+  would break integrity; not done.
+
+### Deferrals (with revisit triggers)
+
+Update failure text quoting local paths (error-presentation work) · real-release
+proof of the fixed cleanup/helper waits (first release from this branch) · fail-fast
+for a crashing build in the POSIX helper (next Mac helper change) · OCR misreads
+(OCR-tuning bundle) · mixed DPI/scaling (other hardware) · Windows single instance
+(product decision) · 누군가 missing from KRDICT · screenshot cases (original images).
+
+### Exact outcomes
+
+- Portable 2,415 passed / 105 skipped; native 123 / 33; ruff clean; mypy clean for
+  win32, linux, darwin (at `16dde15`).
+- Build `0b5c0920` from `16dde15`: packaged 5/5 on build and reconstructed ZIP
+  (6,834 entries match); bundle checks 4/4.
+- `windows-update` at `16dde15`: install, cancel, rollback ×2 all passed unmodified.
+- Campaign `20261003-202512-stress` at `762c1c4`: 998/1,123 (88.9 %), 0/210 false
+  positives, 125/913 missing or wrong, 0 stale/late; UIA Korean 39/40; replay
+  123/123 (122/123 identical lines). Lab-hosted latency p50 135 ms (was 254 ms with
+  the in-shell sampler).
+
+### Legacy migration — human decision needed
+
+Installed Windows 0.5.3/0.9.0/1.0.0 cannot update in place by any release-side
+change that keeps integrity. Recommended: announce a one-time manual replacement
+with the next release. Nothing about releases, tags or endpoints was changed.
+
+### Mac checks still required
+
+`UPDATE-APPLY-POSIX`, `tests/native/shared/test_update_posix_native.py`,
+`MAC-IDENTITY`, packaged Mac `test_frozen_identity`, the stage-animation probe, and
+one real Mac update exercising `deb72a6` and `12b052c`.

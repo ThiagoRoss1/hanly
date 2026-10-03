@@ -1,5 +1,9 @@
 # App health lab — continuation checkpoint
 
+> Phase B (deep review) followed and is complete; see
+> [`app-health-phase-b-2026-10-02.md`](app-health-phase-b-2026-10-02.md) and the
+> review handoff's Phase B outcome.
+
 **Updated:** 2026-10-02. **State:** Mac and Windows implementation stopped at their Review Handoffs ([Mac](../review-handoffs/app-health-lab-mac-2026-10-01.md), [Windows](../review-handoffs/lab-windows-implementation-and-stress.md)). Human-assigned Phase B is not started.
 
 - Local branch: `lab/app-health`, created from `main` at `9e44e3857eedb8743ce967d9a9d262ac99c1dfef`. No push, merge, tag or release was performed for this lab.
