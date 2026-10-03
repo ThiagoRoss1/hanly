@@ -251,7 +251,10 @@ class StressDriver(TourDriver):
                         )
                         return True
                     self._allowed.add(text.window_pid)
-                    self._recorder.lab("uia_segment", targets=len(text.points))
+                    painted_ms = self._await_painted(text.points, text.window_pid)
+                    self._recorder.lab(
+                        "uia_segment", targets=len(text.points), painted_ms=painted_ms
+                    )
                     try:
                         if not self._hover_points(chunk, text.points, rest):
                             return False
@@ -261,6 +264,30 @@ class StressDriver(TourDriver):
         finally:
             self._rest_override = None
             self._stress_page.set_shown(True)
+
+    def _await_painted(
+        self, points: list[tuple[int, int]], owner: int, *, deadline_s: float = 10.0
+    ) -> float | None:
+        """Milliseconds until the browser has drawn its lines, or None if it never did.
+
+        DevTools can measure text that a fresh window has not presented yet; a
+        hover then captures a blank frame. Pixels are read in memory only.
+        """
+
+        import mss
+
+        started = time.monotonic()
+        with mss.mss() as screen:
+            while time.monotonic() - started < deadline_s:
+                boxes = [
+                    {"left": x - 30, "top": y - 12, "width": 60, "height": 24}
+                    for x, y in points
+                    if owner_at(x, y) == owner
+                ]
+                if boxes and all(is_drawn(screen.grab(box).rgb) for box in boxes):
+                    return round((time.monotonic() - started) * 1000, 1)
+                time.sleep(0.1)
+        return None
 
     def _hover_points(
         self, items: list[StressItem], points: list[tuple[int, int]], rest: tuple[int, int]
@@ -421,6 +448,12 @@ class StressDriver(TourDriver):
 
 #: Failures whose cause may be OCR, which an offline replay can separate from capture.
 _REPLAYED = frozenset({"ocr_no_text", "ocr_misread", "resolver", "ocr_false_text"})
+
+
+def is_drawn(rgb: bytes) -> bool:
+    """Whether a captured box shows anything but one flat colour."""
+
+    return any(rgb[index : index + 3] != rgb[:3] for index in range(3, len(rgb), 3))
 
 
 def _stop(process: subprocess.Popen[Any]) -> None:
