@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import sys
 import tempfile
 import time
 import zipfile
@@ -1736,6 +1737,9 @@ def _preserved_bytes(install_root: Path, paths: tuple[str, ...]) -> int:
 
 
 def _is_read_only(path: Path) -> bool:
+    if sys.platform == "win32":
+        # No statvfs there; a read-only volume fails later, when staging writes.
+        return False
     try:
         return bool(os.statvfs(path).f_flag & os.ST_RDONLY)
     except (OSError, AttributeError):

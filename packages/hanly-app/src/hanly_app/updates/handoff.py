@@ -593,6 +593,8 @@ def launch_mode(platform: str = sys.platform) -> str:
 def write_descriptor(path: Path, transaction: NativeTransaction) -> Path:
     """Write the descriptor privately, and make it durable before it is used."""
 
+    if sys.platform == "win32":
+        raise HandoffError("the native update descriptor exists only on macOS and Linux")
     payload = transaction.to_bytes()
     try:
         handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -759,6 +761,8 @@ def _lock_is_free(path: Path) -> bool:
     does not exist.
     """
 
+    if sys.platform == "win32":
+        raise HandoffError("advisory installation locks exist only on macOS and Linux")
     import fcntl
 
     try:

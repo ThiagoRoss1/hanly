@@ -8,6 +8,7 @@ installation while the application is open.
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import os
 import stat
@@ -414,6 +415,8 @@ def read_xattr(path: Path, name: str) -> bytes:
         import hanly_app.updates.xattr_macos as app_xattr_darwin
 
         return app_xattr_darwin.read_value(path, name)
+    if sys.platform == "win32":
+        raise OSError(errno.ENOTSUP, "extended attributes do not exist on Windows")
     return os.getxattr(path, name, follow_symlinks=False)
 
 
@@ -425,6 +428,8 @@ def write_xattr(path: Path, name: str, value: bytes) -> None:
 
         app_xattr_darwin.write_value(path, name, value)
         return
+    if sys.platform == "win32":
+        raise OSError(errno.ENOTSUP, "extended attributes do not exist on Windows")
     os.setxattr(path, name, value, follow_symlinks=False)
 
 

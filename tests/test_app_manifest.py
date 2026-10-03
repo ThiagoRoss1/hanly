@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import zipfile
 from dataclasses import MISSING, fields
 from pathlib import Path
@@ -714,6 +715,8 @@ def test_the_updater_s_own_working_directory_is_never_part_of_a_tree(tmp_path: P
 
 
 def test_a_tree_carrying_something_a_manifest_cannot_describe_says_so(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        pytest.skip("named pipes in a directory tree are POSIX")
     root = write_tree(tmp_path / "build", LINUX)
     os.mkfifo(root / "pipe")
 

@@ -356,10 +356,11 @@ def test_a_result_the_helper_never_wrote_reads_as_no_result(tmp_path: Path) -> N
     assert read_native_result(result) == ("committed", "Hanly 0.5.3 started.")
 
 
-@pytest.mark.skipif(sys.platform.startswith("win32"), reason="POSIX advisory locking")
 def test_the_shell_waits_until_the_helper_genuinely_holds_the_lock(
     tmp_path: Path,
 ) -> None:
+    if sys.platform == "win32":
+        pytest.skip("POSIX advisory locking")
     import fcntl
 
     lock = tmp_path / "native-lock"
@@ -374,13 +375,14 @@ def test_the_shell_waits_until_the_helper_genuinely_holds_the_lock(
         await_native_claim(lock, timeout=0.5)
 
 
-@pytest.mark.skipif(sys.platform.startswith("win32"), reason="POSIX advisory locking")
 def test_a_live_helper_is_observed_through_the_lock_it_actually_holds(
     tmp_path: Path,
 ) -> None:
     """Settlement asks this before starting a recovery helper, so it has to
     answer from the lock itself rather than from anything a helper wrote."""
 
+    if sys.platform == "win32":
+        pytest.skip("POSIX advisory locking")
     import fcntl
 
     lock = tmp_path / "native-lock"

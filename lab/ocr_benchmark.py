@@ -165,11 +165,13 @@ def peak_rss() -> int | None:
     elsewhere; the same unit correction the process sampler applies.
     """
 
-    try:
-        import resource
-        import sys
-    except ImportError:
+    import sys
+
+    if sys.platform == "win32":
+        # The resource module does not exist there; the peak is unavailable.
         return None
+    import resource
+
     try:
         usage = resource.getrusage(resource.RUSAGE_SELF)
     except (OSError, ValueError):
