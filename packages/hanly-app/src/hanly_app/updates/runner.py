@@ -8,6 +8,7 @@ current host's conditions.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from collections.abc import Callable
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from hanly_app.updates.build_identity import ReceiptStore
+from hanly_app.updates.build_identity import ReceiptStore, receipt_store
 from hanly_app.updates.handoff import (
     NATIVE_HELPER_NAME,
     HandoffError,
@@ -111,7 +112,7 @@ def settle_previous_update(
                 detail=str(result.get("detail") or ""),
                 version=_version_of(journal),
             )
-        _remove_challenge(journal)
+        _remove_challenge(journal, install_root)
         _remove(journal.directory)
 
     clear_recovery_copy(recovery_root)
@@ -182,11 +183,12 @@ def _version_of(journal: UpdateJournal) -> str | None:
         return None
 
 
-def _remove_challenge(journal: UpdateJournal) -> None:
+def _remove_challenge(journal: UpdateJournal, install_root: Path) -> None:
     """Drop the challenge a settled transaction named, and its answer.
 
-    Only a file shaped like one this updater writes: the plan is read back
-    from inside the installation, and its word alone is not ownership.
+    Only a file shaped like one this updater writes, in this installation's own
+    update directory: the plan is read back from inside the installation, and
+    its word alone is not ownership.
     """
 
     try:
@@ -194,6 +196,11 @@ def _remove_challenge(journal: UpdateJournal) -> None:
     except JournalError:
         return
     if challenge is None or not CHALLENGE_NAME.fullmatch(challenge.name):
+        return
+    owned = receipt_store(install_root).directory
+    if os.path.normcase(os.path.abspath(challenge.parent)) != os.path.normcase(
+        os.path.abspath(owned)
+    ):
         return
     for path in (challenge, acknowledgement_path(challenge)):
         try:

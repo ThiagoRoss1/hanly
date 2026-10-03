@@ -421,14 +421,17 @@ def test_a_windows_update_that_stops_while_staging_leaves_no_working_area(
 
 
 def test_settling_a_windows_update_removes_the_challenge_it_was_answered_through(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from hanly_app.updates.build_identity import receipt_store
     from hanly_app.updates.journal import COMMITTED, acknowledgement_path
     from hanly_app.updates.runner import settle_previous_update
 
+    # The installation's own update directory, as the desktop composes it.
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     base, _target, channel = _published(tmp_path)
     install = base.install(tmp_path / "install")
-    store = ReceiptStore(tmp_path / "state")
+    store = receipt_store(install)
     _with_receipt(store, install, base)
     installer = _installer(tmp_path, base, channel, install=install, store=store)
     staged = installer.stage(installer.prepare("0.5.3"))
@@ -450,6 +453,41 @@ def test_settling_a_windows_update_removes_the_challenge_it_was_answered_through
     assert not acknowledgement_path(challenge).exists()
     assert unrelated.exists()
     assert store.receipt_path.is_file()
+
+
+def test_settling_never_deletes_a_challenge_outside_this_installations_own_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The plan is read back from inside the installation; its word is not ownership."""
+
+    import json
+
+    from hanly_app.updates.journal import COMMITTED
+    from hanly_app.updates.runner import settle_previous_update
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    base, _target, channel = _published(tmp_path)
+    install = base.install(tmp_path / "install")
+    from hanly_app.updates.build_identity import receipt_store
+
+    store = receipt_store(install)
+    _with_receipt(store, install, base)
+    installer = _installer(tmp_path, base, channel, install=install, store=store)
+    staged = installer.stage(installer.prepare("0.5.3"))
+    journal = staged.transaction.journal
+    elsewhere = tmp_path / "someone-else" / "challenge-tabc12345.json"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("{}", encoding="utf-8")
+    plan_path = journal.directory / "plan.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["challenge"] = str(elsewhere)
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    journal.record(COMMITTED)
+    journal.write_result(COMMITTED, "Hanly 0.5.3 started.")
+
+    settle_previous_update(install, tmp_path / "recovery")
+
+    assert elsewhere.exists()
 
 
 @pytest.mark.parametrize("path", [".hanly-update", ".hanly-update/t1/plan.json"])
