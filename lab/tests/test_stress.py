@@ -142,6 +142,19 @@ def test_after_leaving_new_hovers_bind_to_nobody_and_late_answers_are_counted() 
     assert observation.foreign_popups == 1
 
 
+def test_a_direct_text_refusal_finishes_the_hover_it_belongs_to() -> None:
+    """Non-Korean text under the pointer is a final outcome: no lookup, no popup event."""
+
+    observation = _Observation()
+    observe(observation, "hover_stable_fire", 1, {"hover_request_id": 5})
+    observe(observation, "hover_direct_text", 2, {"hover_request_id": 5, "outcome": "not_korean"})
+
+    assert observation.done.is_set()
+    assert observation.popup_status == "NOT_KOREAN"
+    record = _record("uia_latin", refuse=True, status=None, popup="NOT_KOREAN", lookup_ids=[])
+    assert stress_verdict(record) == "quiet"
+
+
 def test_a_campaign_rebuilds_from_its_recording(tmp_path: Path) -> None:
     run = tmp_path / "20261002-120000-stress"
     run.mkdir()

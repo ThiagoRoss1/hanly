@@ -390,6 +390,11 @@ def observe(
         _capture(observation, fields)
     elif name == "hover_direct_text":
         observation.direct_text = str(fields.get("outcome"))
+        if observation.direct_text == "not_korean":
+            # A final refusal with no lookup and no popup decision: the hover is over.
+            observation.popup_status = "NOT_KOREAN"
+            observation.popup_ns = observed_ns
+            observation.done.set()
     elif name == "lookup_cache_hit":
         observation.cache_hits += 1
     elif name == "popup_visible" or name == "popup_suppressed":
