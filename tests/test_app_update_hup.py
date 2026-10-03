@@ -8,8 +8,10 @@ it is gets established rather than assumed.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from hanly_app.updates.build_identity import ReceiptStore, receipt_for
@@ -170,6 +172,54 @@ def test_an_installation_whose_own_release_published_no_package_is_not_adopted(
         _installer(
             tmp_path, base, channel, install=install, store=store, tagged=False
         ).prepare("0.5.3")
+
+
+def _unreachable_tag(code: int | None) -> Callable[[str], Mapping[str, Any]]:
+    """A tagged release source that fails the way urllib reports it."""
+
+    import urllib.error
+
+    from hanly_app.updates.resource_service import RemoteManifestError
+
+    def fetch(_tag: str) -> Mapping[str, Any]:
+        cause: OSError = (
+            urllib.error.URLError("connection refused")
+            if code is None
+            else urllib.error.HTTPError("https://example.invalid", code, "status", {}, None)  # type: ignore[arg-type]
+        )
+        raise RemoteManifestError(f"could not read remote metadata: {cause}") from cause
+
+    return fetch
+
+
+@pytest.mark.parametrize("code", [None, 502, 503])
+def test_a_release_server_that_cannot_be_reached_is_not_a_reason_to_install_by_hand(
+    tmp_path: Path, code: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An outage says nothing about this installation; the user should retry, not reinstall."""
+
+    base, _target, channel = _published(tmp_path)
+    install = base.install(tmp_path / "install")
+    store = ReceiptStore(tmp_path / "state")
+    monkeypatch.setattr(channel, "tagged_release_source", _unreachable_tag(code))
+
+    with pytest.raises(DifferentialUpdateError, match="could not reach") as raised:
+        _installer(tmp_path, base, channel, install=install, store=store).prepare("0.5.3")
+
+    assert not isinstance(raised.value, OwnershipUnknown)
+    assert "by hand" not in str(raised.value)
+
+
+def test_a_tag_the_server_says_does_not_exist_still_cannot_be_confirmed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, _target, channel = _published(tmp_path)
+    install = base.install(tmp_path / "install")
+    store = ReceiptStore(tmp_path / "state")
+    monkeypatch.setattr(channel, "tagged_release_source", _unreachable_tag(404))
+
+    with pytest.raises(OwnershipUnknown, match="cannot confirm"):
+        _installer(tmp_path, base, channel, install=install, store=store).prepare("0.5.3")
 
 
 def test_extra_files_a_person_added_do_not_stop_a_bootstrap(tmp_path: Path) -> None:
