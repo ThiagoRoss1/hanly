@@ -219,4 +219,10 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-__all__ = ["BrowserText"]
+def is_drawn(rgb: bytes) -> bool:
+    """Whether a captured box shows anything but one flat colour."""
+
+    return any(rgb[index : index + 3] != rgb[:3] for index in range(3, len(rgb), 3))
+
+
+__all__ = ["BrowserText", "is_drawn"]

@@ -176,7 +176,7 @@ def test_a_replay_that_picks_the_same_word_from_different_lines_is_told_apart() 
 
 
 def test_a_browser_box_counts_as_drawn_only_once_it_has_more_than_one_colour() -> None:
-    from lab.session.stress_driver import is_drawn
+    from lab.session.browser_text import is_drawn
 
     white = bytes([255, 255, 255]) * 40
     assert not is_drawn(white)

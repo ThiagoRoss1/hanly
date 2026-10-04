@@ -23,7 +23,7 @@ from typing import Any
 
 from PyQt6.QtCore import QPoint, QRect
 
-from .browser_text import BrowserText
+from .browser_text import BrowserText, is_drawn
 from .driver import TourDriver, _Observation, outcome_record
 from .ownership import owner_at
 from .recorder import LabRecorder
@@ -448,12 +448,6 @@ class StressDriver(TourDriver):
 
 #: Failures whose cause may be OCR, which an offline replay can separate from capture.
 _REPLAYED = frozenset({"ocr_no_text", "ocr_misread", "resolver", "ocr_false_text"})
-
-
-def is_drawn(rgb: bytes) -> bool:
-    """Whether a captured box shows anything but one flat colour."""
-
-    return any(rgb[index : index + 3] != rgb[:3] for index in range(3, len(rgb), 3))
 
 
 def _stop(process: subprocess.Popen[Any]) -> None:

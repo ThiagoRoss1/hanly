@@ -170,7 +170,10 @@ def peak_rss() -> int | None:
     if sys.platform == "win32":
         # The resource module does not exist there; the peak is unavailable.
         return None
-    import resource
+    try:
+        import resource
+    except ImportError:
+        return None
 
     try:
         usage = resource.getrusage(resource.RUSAGE_SELF)
