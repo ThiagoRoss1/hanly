@@ -174,3 +174,89 @@ with the next release. Nothing about releases, tags or endpoints was changed.
 `UPDATE-APPLY-POSIX`, `tests/native/shared/test_update_posix_native.py`,
 `MAC-IDENTITY`, packaged Mac `test_frozen_identity`, the stage-animation probe, and
 one real Mac update exercising `deb72a6` and `12b052c`.
+
+## Mac verification outcome (2026-10-05)
+
+Claude Code (Opus 5.5) on macOS 26 arm64, `.venv` CPython 3.13.11, starting
+from the recorded head `352e4ee` (verified live, clean). Evidence:
+[`../reports/lab-mac-final-verification.md`](../reports/lab-mac-final-verification.md).
+
+**Verdict: accepted with deferred findings, for the scope below. Not yet
+accepted for normal frozen launch identity or the lab tours.** Those need an
+unlocked desktop session, which this run lost to idle sleep and the lock screen.
+
+### Accepted scope
+
+- The shared Windows/Phase B changes cause no Mac regression. `deb72a6` is
+  unreachable from a Mac transaction. `12b052c` only refuses more, and real Mac
+  manifests still stage. `16dde15`'s confirmation path works against the real
+  public release. The other changes are win32 branches.
+- Gates: portable 2,519 passed / 2 skipped; native 125 passed / 0 skipped
+  (Mac Control Center identity, both stage-animation probes, lifecycle, startup,
+  25 POSIX helper cases); lab tests 345; ruff and mypy clean on 340 files.
+  `lab check` UPDATE-APPLY-POSIX, UPDATE-COORDINATOR and RESOURCE-DELIVERY pass.
+- Fresh build `f0c50a0b` from `352e4eef06cedc6c7b19a879527b7f7cff5e5b11` (shipped
+  paths identical to `16dde15`). The build, its ZIP reconstruction and its DMG
+  copy each match all 7,342 manifest entries and pass strict `codesign`. The DMG
+  opens onto exactly `Hanly.app`. The packaged suite, with the SHA required, gives
+  4 passed on each; `lab check` BUNDLE-IDENTITY/-WINDOW/-WORKER gives 3/3 on each
+  reconstruction.
+- Real isolated update. This checkout's updater upgraded an isolated published
+  **0.9.0** Mac app to the **fresh HEAD build**, served with a real delta from a
+  local release directory; identity was confirmed against the real public v0.9.0.
+  The real C helper committed, the HEAD build acknowledged, the next launch settled,
+  the tree matched 7,342 entries, and the update was not re-offered. Cancel left
+  nothing. Rollback restored 0.9.0 exactly and re-offered it. The everyday
+  profile and `/Applications/Hanly.app` were untouched. This proves the
+  branch's updater and the HEAD build's acknowledgement, **not** the updater
+  embedded in released 0.9.0/1.0.0.
+
+### Confirmed findings and fixes
+
+- `1fcd2c3` (lab): a terminal Ctrl+C killed the out-of-process sampler, leaving
+  `process_samples: 0` beside a full `processes.jsonl` and a traceback. Fixed and
+  regression-tested; the real group interrupt was rerun (89 = 89).
+- No shipped-code defect found; no shipped code changed in this pass.
+
+### Could not confirm (and where checked)
+
+- **Normal frozen launch identity**: `tests/packaged/macos/test_frozen_identity.py`
+  skipped on all three bundles (Accessibility -1719 with
+  `CGSSessionScreenIsLocked = True`); `BUNDLE-LAUNCH-IDENTITY` not run. The last
+  pass is on `bd7527b`. No launch-path or activation-policy code changed since,
+  but that is reasoning, not evidence.
+- **Lab tours**: the standard controlled tour, quick tour, mouse interruption,
+  and report discovery/baseline were not run, since a locked screen is not a
+  screen the lab may capture. A new standard tour must not be compared with
+  `20261001-210808-tour` as an unqualified baseline: that run used the in-shell
+  sampler that `24ac332` removed.
+- The updater embedded in a released app performing a Mac update: not attempted.
+
+### Deferrals (revisit triggers)
+
+- Mac update leaves `challenge-<id>.json` (+ `.ack`, or a pending receipt after
+  rollback) in the per-user store. Pre-existing, about 0.5 KB per update. Revisit
+  with the next POSIX helper or settling change, using `deb72a6`'s ownership guard.
+- Crashing new build waits the full 600 s on Mac. Real-release confirmation:
+  602.9 s. Revisit with the next Mac helper change (already deferred in Phase B).
+- Helper counts a zombie parent as alive. Seen only through a harness pipe.
+  Revisit if a supported launcher keeps Hanly's output pipe open.
+
+### Human decision recorded
+
+The human approved a **one-time manual replacement** for affected installed
+Windows clients (0.5.3, 0.9.0, 1.0.0) to reach the corrected release. Manifests
+and release tooling stay unchanged. Release announcements and publishing remain
+human actions.
+
+### Remaining before shipping
+
+1. On an unlocked Mac session, run:
+   `HANLY_PACKAGED_APP=$PWD/dist/reconstructed-352e4ee/Hanly.app HANLY_REQUIRE_PACKAGED=1 HANLY_REQUIRE_NATIVE=1 HANLY_EXPECTED_SOURCE_COMMIT=352e4eef06cedc6c7b19a879527b7f7cff5e5b11 python -m pytest tests/packaged/macos/test_frozen_identity.py`
+   (and the DMG copy).
+2. Run `python -m lab check run --scenario BUNDLE-LAUNCH-IDENTITY --bundle … --expected-commit 352e4ee…`.
+3. Run `python -m lab tour` (standard, Vision, default dwell), `--quick`, a
+   mouse-interrupted quick tour, and `report --list`/`--baseline`.
+4. Push, CI (portable matrix, native jobs, build), the human's final Windows code
+   review, then the release with the announced manual replacement. No push,
+   merge, tag or release was done here.
