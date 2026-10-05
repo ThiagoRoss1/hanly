@@ -181,9 +181,11 @@ Claude Code (Opus 5.5) on macOS 26 arm64, `.venv` CPython 3.13.11, starting
 from the recorded head `352e4ee` (verified live, clean). Evidence:
 [`../reports/lab-mac-final-verification.md`](../reports/lab-mac-final-verification.md).
 
-**Verdict: accepted with deferred findings, for the scope below. Not yet
-accepted for normal frozen launch identity or the lab tours.** Those need an
-unlocked desktop session, which this run lost to idle sleep and the lock screen.
+**Final verdict: accepted with deferred findings.** The first pass lost its
+desktop session to idle sleep and the lock screen; the GUI checks it could not
+run were completed later the same day on an unlocked session (see "GUI acceptance
+completed" below), and all passed. Acceptance covers the scope listed here; it is
+not a claim that the Mac app is free of defects.
 
 ### Accepted scope
 
@@ -220,16 +222,9 @@ unlocked desktop session, which this run lost to idle sleep and the lock screen.
 
 ### Could not confirm (and where checked)
 
-- **Normal frozen launch identity**: `tests/packaged/macos/test_frozen_identity.py`
-  skipped on all three bundles (Accessibility -1719 with
-  `CGSSessionScreenIsLocked = True`); `BUNDLE-LAUNCH-IDENTITY` not run. The last
-  pass is on `bd7527b`. No launch-path or activation-policy code changed since,
-  but that is reasoning, not evidence.
-- **Lab tours**: the standard controlled tour, quick tour, mouse interruption,
-  and report discovery/baseline were not run, since a locked screen is not a
-  screen the lab may capture. A new standard tour must not be compared with
-  `20261001-210808-tour` as an unqualified baseline: that run used the in-shell
-  sampler that `24ac332` removed.
+- Frozen launch identity and the tours were first blocked by the lock screen;
+  both were completed later (below). Pre-`24ac332` tours such as
+  `20261001-210808-tour` remain unusable as timing baselines.
 - The updater embedded in a released app performing a Mac update: not attempted.
 
 ### Deferrals (revisit triggers)
@@ -249,14 +244,37 @@ Windows clients (0.5.3, 0.9.0, 1.0.0) to reach the corrected release. Manifests
 and release tooling stay unchanged. Release announcements and publishing remain
 human actions.
 
+### GUI acceptance completed (2026-10-05, unlocked session)
+
+On clean `6c3cf75` (shipped code still that of build `f0c50a0b`), Mac kept
+awake with a temporary `caffeinate` only:
+
+- `tests/packaged/macos/test_frozen_identity.py`, with `HANLY_REQUIRE_PACKAGED=1`,
+  `HANLY_REQUIRE_NATIVE=1` and SHA `352e4eef06cedc6c7b19a879527b7f7cff5e5b11`:
+  1 passed on the ZIP reconstruction, 1 passed on the DMG copy. The earlier
+  skips are superseded.
+- `lab check run --scenario BUNDLE-LAUNCH-IDENTITY` with that SHA: passed on
+  both (`4e17104d`, `9d470ed5`).
+- Standard Vision tour (seed 7, story 22 px, 300 words at 16/22/30/40 px,
+  default dwell, built-in Retina 2408×1506, one display). No Mac standard tour
+  existed after `24ac332`, so `20261005-053512-tour` was run as the comparable
+  out-of-process-sampler baseline: 446/453 (98.5 %), 0 not scored.
+  `20261005-053840-tour --baseline` it: 446/453, 453 matched, **0 changed
+  verdicts**, popup median 142.8 → 141.3 ms.
+- Quick tour `20261005-054216-tour`: 23/24, finished.
+- Interrupted quick tour `20261005-054246-tour`: real Quartz pointer moves at
+  15 s; `stopped_by_user after 20 of 24 planned`, exit 0, partial report with the
+  not-comparable warning, no owned process left.
+- `report --list`, rebuild by name, newest discovery, and rebuild with
+  `--baseline`: all exit 0; the baseline's `summary.md`/`report.json` hashes were
+  unchanged.
+- Privacy: the four new recordings hold 950 tour results and 0 read-text keys;
+  `fixture_text_retained` is false.
+- No regression found; no code changed.
+
 ### Remaining before shipping
 
-1. On an unlocked Mac session, run:
-   `HANLY_PACKAGED_APP=$PWD/dist/reconstructed-352e4ee/Hanly.app HANLY_REQUIRE_PACKAGED=1 HANLY_REQUIRE_NATIVE=1 HANLY_EXPECTED_SOURCE_COMMIT=352e4eef06cedc6c7b19a879527b7f7cff5e5b11 python -m pytest tests/packaged/macos/test_frozen_identity.py`
-   (and the DMG copy).
-2. Run `python -m lab check run --scenario BUNDLE-LAUNCH-IDENTITY --bundle … --expected-commit 352e4ee…`.
-3. Run `python -m lab tour` (standard, Vision, default dwell), `--quick`, a
-   mouse-interrupted quick tour, and `report --list`/`--baseline`.
-4. Push, CI (portable matrix, native jobs, build), the human's final Windows code
-   review, then the release with the announced manual replacement. No push,
-   merge, tag or release was done here.
+1. Push, CI (portable matrix, native jobs, build), the human's final Windows
+   code review, then the release with the announced one-time Windows manual
+   replacement. No push, merge, tag or release was done here.
+2. Deferrals above stay open with their triggers.

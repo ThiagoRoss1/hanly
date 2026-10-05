@@ -78,7 +78,8 @@ below remains current.
   Center … window 1 … invalid index (-1719)". The session was locked
   (`CGSSessionScreenIsLocked = True` since about 04:14, after idle sleep). This is a
   host restriction, not a pass and not a product defect. `HANLY_REQUIRE_PACKAGED`
-  does not cover this native-capability skip.
+  does not cover this native-capability skip. Superseded: with
+  `HANLY_REQUIRE_NATIVE=1` on an unlocked session it passed on both copies (§6).
 - `lab check` BUNDLE-IDENTITY, BUNDLE-WINDOW, BUNDLE-WORKER with the SHA
   required: 3/3 on each reconstruction (`6e048e61`, `6c9c0138`). No `lab` or
   `tests` package inside the bundle.
@@ -155,6 +156,16 @@ that code.
 |---|---|
 | `python -m lab --duration 120`, real group Ctrl+C at 25 s (before/after `1fcd2c3`) | exit 130, report and summary, no survivors (sampler, resource tracker, both spawned children, WebEngine helper all gone); sample count correct after the fix |
 | External sampler lifecycle | separate `lab.session.sampler` process in the session's group; stops on input close or shell exit; ignores SIGINT after `1fcd2c3`; no orphan in either run |
-| Standard / quick tour, mouse-interrupted tour, report rebuild and baseline | **not run — session locked** (see the handoff) |
+| Standard Vision tour `20261005-053512-tour` (post-`24ac332` baseline) | 446/453 (98.5 %), 0 not scored; popup median 150 ms; uncached medians: capture 28.6 ms, OCR 29.5 ms; lookup peak 510 MiB, shell 217 MiB (includes the lab recorder) |
+| Standard Vision tour `20261005-053840-tour --baseline` the above | 446/453, 453 matched, 0 changed verdicts; popup median 142.8 → 141.3 ms; lookup peak 548 MiB, shell 219 MiB |
+| Quick tour `20261005-054216-tour` | 23/24, finished |
+| Quick tour interrupted by real pointer moves `20261005-054246-tour` | `stopped_by_user after 20 of 24 planned`, exit 0, partial report marked not comparable, no survivors |
+| `report --list`, rebuild, newest, `--baseline` | exit 0; baseline files byte-identical afterwards |
+| Packaged `test_frozen_identity.py` (both copies), `BUNDLE-LAUNCH-IDENTITY` (both) | passed, SHA and native capability required |
+
+Tours: built-in Retina 2408×1506, one display, Vision, seed 7, default dwell,
+clean `6c3cf75`. These are lab-hosted measurements; the only comparable
+baseline is the first of the two runs, because earlier Mac tours used the
+in-shell sampler.
 
 Privacy and scoring guarantees were not changed by any commit in this pass.

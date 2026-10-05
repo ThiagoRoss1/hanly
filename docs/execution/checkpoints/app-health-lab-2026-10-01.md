@@ -85,7 +85,7 @@
 - Verdict and evidence: the Windows handoff's [Mac verification outcome](../review-handoffs/lab-windows-implementation-and-stress.md#mac-verification-outcome-2026-10-05) and [`../reports/lab-mac-final-verification.md`](../reports/lab-mac-final-verification.md).
 - Accepted with deferred findings for review, gates, build, packaged checks and a real isolated update (published 0.9.0 → fresh HEAD build `f0c50a0b` from `352e4ee`, this checkout's updater, real C helper; install, cancel and rollback all passed).
 - Fixed: `1fcd2c3` (lab sampler survives a terminal Ctrl+C). No shipped code changed; `dist/macos` and both reconstructions (`dist/reconstructed-352e4ee`, `dist/reconstructed-dmg-352e4ee`) are the current build. `bd7527b` products were moved to `dist/archive-bd7527b/`.
-- **Open because the session locked (not a product result):** packaged `test_frozen_identity` (skipped -1719), `BUNDLE-LAUNCH-IDENTITY`, the standard/quick/interrupted tours and report baseline. Exact commands: the handoff's "Remaining before shipping".
+- GUI acceptance, first blocked by the lock screen, completed on an unlocked session: frozen identity 1/1 on ZIP and DMG copies, `BUNDLE-LAUNCH-IDENTITY` passed on both, standard tours 446/453 twice with 0 changed verdicts (new post-`24ac332` baseline `20261005-053512-tour`), quick 23/24, interrupted `stopped_by_user` 20/24, report list/rebuild/baseline working. **Final Mac verdict: accepted with deferred findings.** Next: push, CI, the human's final Windows review, release.
 - Real-update driver used: scratchpad only (not committed); evidence under `artifacts/lab/runs/20261005-mac-update/`. The old private-content run `20261001-043306-tour` is untouched.
 
 ## Resume instructions
