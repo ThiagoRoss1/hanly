@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -210,6 +211,9 @@ def _roles(path: Path) -> dict[int, str] | None:
 def main(argv: list[str]) -> None:
     """Sample until the shell closes this process's input, then write a summary."""
 
+    # A terminal's Ctrl+C reaches this process too; ending the run is the shell's
+    # decision, and it closes our input once it has made it.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     shell, out, roles_path, summary, origin, interval = argv
     shell_pid, origin_ns, period = int(shell), int(origin), float(interval)
     stopped = threading.Event()

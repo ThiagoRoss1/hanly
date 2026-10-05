@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -830,3 +831,34 @@ def test_the_sampler_measures_the_shell_from_outside_it(tmp_path: Path) -> None:
     # Neither the sampler nor a launcher in front of it is measured as the shell's helper.
     assert all(row["role"] == "shell" for sample in rows for row in sample["processes"])
     assert sorted(item.name for item in tmp_path.iterdir()) == ["processes.jsonl"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a terminal's Ctrl+C reaches a POSIX group")
+def test_the_sampler_outlives_a_terminal_interrupt(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl+C reaches the whole foreground group; ending the run stays the shell's job."""
+
+    import os
+    import signal
+    import time
+
+    from lab.session.sampler import ProcessSampler
+
+    path = tmp_path / "processes.jsonl"
+    sampler = ProcessSampler(path, time.perf_counter_ns(), interval=0.05)
+    sampler.start()
+    deadline = time.monotonic() + 30
+    while (
+        time.monotonic() < deadline
+        and len(path.read_text("utf-8").splitlines() if path.exists() else []) < 3
+    ):
+        time.sleep(0.05)
+    assert sampler._process is not None
+    os.kill(sampler._process.pid, signal.SIGINT)
+    time.sleep(0.5)
+    sampler.stop()
+
+    rows = path.read_text("utf-8").splitlines()
+    assert sampler.samples == len(rows) >= 3
+    assert "KeyboardInterrupt" not in capfd.readouterr().err
