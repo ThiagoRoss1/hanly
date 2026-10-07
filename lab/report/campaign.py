@@ -231,7 +231,8 @@ def _ended(run_dir: Path) -> str:
     ):
         if name in names:
             return label
-    return "unknown"
+    # The driver never recorded an end: the session stopped under it.
+    return "interrupted"
 
 
 def _latency(rows: list[dict[str, Any]]) -> dict[str, Any]:
