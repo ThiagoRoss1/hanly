@@ -18,6 +18,7 @@ import queue
 import sys
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from importlib import metadata as importlib_metadata
@@ -579,6 +580,8 @@ def run_corpus_inventory(args: argparse.Namespace) -> int:
 
     from .corpus import inventory, load_corpus
 
+    if args.fonts:
+        return _font_inventory()
     corpus = load_corpus(args.manifest, require_assets=not args.skip_assets)
     print(json.dumps(inventory(corpus), ensure_ascii=False, indent=2, sort_keys=True))
     for case in corpus.cases:
@@ -586,9 +589,30 @@ def run_corpus_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _font_inventory() -> int:
+    """Installed faces and the scripts each proves it can draw; nothing is installed."""
+
+    from .synthetic_ocr import SCRIPT_PROBES, discover_faces
+
+    faces = discover_faces(scripts=())
+    for script in SCRIPT_PROBES:
+        print(f"{script:7} {sum(script in face.scripts for face in faces)} faces")
+    for face in faces:
+        if "hangul" in face.scripts:
+            print(
+                f"  {face.family} {face.style} [{face.file}#{face.index}] "
+                f"sha256 {face.sha256[:12]} scripts {','.join(face.scripts)} licence unknown"
+            )
+    return 0
+
+
 def run_corpus_generate(args: argparse.Namespace) -> int:
     """Render the synthetic corpus, or say exactly why it cannot be rendered."""
 
+    if args.profile is not None:
+        return _generate_profile(args)
+
+    from .corpus import SCHEMA_VERSION
     from .synthetic_ocr import (
         SyntheticFontError,
         corpus_entry,
@@ -616,7 +640,7 @@ def run_corpus_generate(args: argparse.Namespace) -> int:
         )
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "distribution": "committed" if resolved.redistributable else "local",
         "description": (
             f"Synthetic Korean samples rendered from {font.name} ({font.licence})."
@@ -634,6 +658,31 @@ def run_corpus_generate(args: argparse.Namespace) -> int:
             "local_synthetic cases and cannot enter a committed manifest"
         )
     return 0
+
+
+def _generate_profile(args: argparse.Namespace) -> int:
+    from .synthetic_profiles import OUTPUT_ROOT, generate
+
+    destination = args.output_dir or OUTPUT_ROOT / f"{args.profile}-seed{args.seed}"
+    if (destination / "manifest.json").exists():
+        print(f"refused: {destination} already holds a corpus; pass another --output-dir")
+        return 2
+    result = generate(
+        args.profile,
+        destination,
+        seed=args.seed,
+        max_cases=args.max_cases,
+        max_bytes=args.max_bytes,
+    )
+    cases = result.manifest["cases"]
+    families = Counter(str(case.get("family", "unstated")) for case in cases)
+    print(
+        f"rendered {len(cases)} cases ({dict(families)}) into {destination}, "
+        f"{result.bytes_written / 2**20:.1f} MiB; {len(result.omitted)} omitted"
+    )
+    for omitted in result.omitted[:20]:
+        print(f"  omitted {omitted['case']}: {omitted['reason']}")
+    return 0 if cases else 2
 
 
 def run_package(args: argparse.Namespace) -> int:
@@ -1185,6 +1234,11 @@ def _parser() -> argparse.ArgumentParser:
         "--manifest", type=Path, default=Path("lab/fixtures/ocr/manifest.json")
     )
     corpus.add_argument(
+        "--fonts",
+        action="store_true",
+        help="list installed faces and the scripts each can draw, instead of a corpus",
+    )
+    corpus.add_argument(
         "--skip-assets",
         action="store_true",
         help="validate the manifest without requiring its images to be present",
@@ -1205,6 +1259,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     generate.add_argument(
         "--output", type=Path, default=Path("lab/fixtures/ocr/manifest.json")
+    )
+    generate.add_argument(
+        "--profile",
+        choices=("golden", "smoke", "balanced", "difficult"),
+        help=(
+            "render a named profile from installed faces into gitignored local output "
+            "instead of the committed generator description"
+        ),
+    )
+    generate.add_argument("--seed", type=int, default=0, help="profile seed (default: 0)")
+    generate.add_argument("--max-cases", type=int, help="case budget (default: per profile)")
+    generate.add_argument(
+        "--max-bytes", type=int, default=64 * 2**20, help="image byte budget (default: 64 MiB)"
+    )
+    generate.add_argument(
+        "--output-dir", type=Path, help="profile output (default: artifacts/lab/corpus/...)"
     )
     generate.set_defaults(handler=run_corpus_generate)
 

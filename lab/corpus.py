@@ -3,16 +3,28 @@
 Committed fixtures must be licensed or generated. Private captures stay local;
 committed manifests cannot quote their text, name absolute/private paths, or
 load from outside the repository fixture tree.
+
+Schema 2 adds, per case, an explicit ``truth`` (is there text, is it Korean,
+what should the pointer select, are the regions fully annotated), the
+``generation`` identity that reproduces a synthetic image, and its ``family``.
+Schema 1 manifests still load; their cases simply carry no stated truth.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+#: Every schema this module still reads.
+SCHEMA_VERSIONS = frozenset({1, 2})
+#: What the pointer is annotated to find: a Korean word, provably no Korean, or nothing stated.
+TARGETS = frozenset({"surface", "no_korean", "none"})
+FAMILIES = frozenset({"positive", "negative", "mixed"})
 
 #: Where a case may be referenced from. ``local_*`` cases exist only on the
 #: machine that produced them.
@@ -48,6 +60,20 @@ TAGS = frozenset(
         "raster",
         "real",
         "synthetic",
+        "golden",
+        "seeded",
+        "difficult",
+        "blank",
+        "latin",
+        "number",
+        "icon",
+        "border",
+        "texture",
+        "noise",
+        "supersampled",
+        "low_contrast",
+        "kana",
+        "han",
     }
 )
 
@@ -63,8 +89,12 @@ _CASE_FIELDS = frozenset(
         "expected_regions",
         "source",
         "notes",
+        "truth",
+        "generation",
+        "family",
     }
 )
+_TRUTH_FIELDS = frozenset({"text_present", "korean_present", "target", "regions"})
 _REGION_FIELDS = frozenset({"text", "left", "top", "right", "bottom"})
 _MANIFEST_FIELDS = frozenset({"schema_version", "distribution", "description", "cases"})
 
@@ -89,6 +119,28 @@ class ExpectedRegion:
 
 
 @dataclass(frozen=True)
+class CaseTruth:
+    """Ground truth stated by whoever made the image, never inferred from OCR."""
+
+    text_present: bool
+    korean_present: bool
+    #: ``surface``: the pointer should select ``expected_surface``;
+    #: ``no_korean``: nothing Korean is there to select; ``none``: not stated.
+    target: str
+    #: ``complete`` when ``expected_regions`` lists every text region (none for
+    #: text-free images); ``missing`` when regions were not annotated.
+    regions: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "text_present": self.text_present,
+            "korean_present": self.korean_present,
+            "target": self.target,
+            "regions": self.regions,
+        }
+
+
+@dataclass(frozen=True)
 class CorpusCase:
     """One scoreable image and whatever ground truth is actually known for it.
 
@@ -108,6 +160,10 @@ class CorpusCase:
     expected_regions: tuple[ExpectedRegion, ...] = ()
     source: dict[str, Any] = field(default_factory=dict)
     notes: str | None = None
+    #: Schema 2: what is true of the image; ``None`` when a manifest never said.
+    truth: CaseTruth | None = None
+    generation: dict[str, Any] = field(default_factory=dict)
+    family: str | None = None
 
     @property
     def is_committed(self) -> bool:
@@ -182,10 +238,11 @@ def build_corpus(
         raise CorpusError("a corpus manifest must be a JSON object")
     _reject_unknown(payload, _MANIFEST_FIELDS, "manifest")
 
-    if payload.get("schema_version") != SCHEMA_VERSION:
+    schema = payload.get("schema_version")
+    if schema not in SCHEMA_VERSIONS:
         raise CorpusError(
-            f"unsupported corpus schema_version {payload.get('schema_version')!r}; "
-            f"expected {SCHEMA_VERSION}"
+            f"unsupported corpus schema_version {schema!r}; expected one of "
+            f"{sorted(SCHEMA_VERSIONS)}"
         )
     distribution = payload.get("distribution")
     if distribution not in DISTRIBUTIONS:
@@ -200,12 +257,12 @@ def build_corpus(
 
     root = manifest_path.parent
     cases = [
-        _build_case(entry, root, distribution, require_assets=require_assets)
+        _build_case(entry, root, distribution, int(schema), require_assets=require_assets)
         for entry in raw_cases
     ]
     _reject_duplicates(cases)
     return Corpus(
-        schema_version=SCHEMA_VERSION,
+        schema_version=int(schema),
         distribution=str(distribution),
         manifest_path=manifest_path,
         # Sorted by identifier so two runs over one manifest score the same
@@ -216,11 +273,13 @@ def build_corpus(
 
 
 def _build_case(
-    entry: Any, root: Path, distribution: str, *, require_assets: bool
+    entry: Any, root: Path, distribution: str, schema: int, *, require_assets: bool
 ) -> CorpusCase:
     if not isinstance(entry, dict):
         raise CorpusError("each corpus case must be a JSON object")
     _reject_unknown(entry, _CASE_FIELDS, "case")
+    if schema == 1 and {"truth", "generation", "family"} & set(entry):
+        raise CorpusError("truth, generation and family need corpus schema_version 2")
 
     case_id = entry.get("id")
     if not isinstance(case_id, str) or not case_id.strip():
@@ -253,7 +312,7 @@ def _build_case(
             "and under what licence"
         )
 
-    return CorpusCase(
+    case = CorpusCase(
         case_id=case_id,
         image=image,
         relative_image=str(entry.get("image")),
@@ -265,7 +324,57 @@ def _build_case(
         expected_regions=regions,
         source=dict(source),
         notes=_optional_text(entry.get("notes"), "notes"),
+        truth=_case_truth(case_id, entry.get("truth")),
+        generation=_case_mapping(case_id, entry.get("generation"), "generation"),
+        family=_case_family(case_id, entry.get("family")),
     )
+    _require_consistent_truth(case)
+    return case
+
+
+def _case_truth(case_id: str, raw: Any) -> CaseTruth | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != _TRUTH_FIELDS:
+        raise CorpusError(f"case {case_id!r} truth must state exactly {sorted(_TRUTH_FIELDS)}")
+    if not isinstance(raw["text_present"], bool) or not isinstance(raw["korean_present"], bool):
+        raise CorpusError(f"case {case_id!r} truth presence values must be booleans")
+    if raw["target"] not in TARGETS or raw["regions"] not in {"complete", "missing"}:
+        raise CorpusError(f"case {case_id!r} truth has an unknown target or region state")
+    return CaseTruth(raw["text_present"], raw["korean_present"], raw["target"], raw["regions"])
+
+
+def _case_mapping(case_id: str, raw: Any, name: str) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise CorpusError(f"case {case_id!r} {name} must be an object")
+    return dict(raw)
+
+
+def _case_family(case_id: str, raw: Any) -> str | None:
+    if raw is not None and raw not in FAMILIES:
+        raise CorpusError(f"case {case_id!r} family must be one of {sorted(FAMILIES)}")
+    return raw
+
+
+def _require_consistent_truth(case: CorpusCase) -> None:
+    """A stated truth must agree with the case's own expectations."""
+
+    truth = case.truth
+    if truth is None:
+        return
+    problems = []
+    if not truth.text_present and (truth.korean_present or case.expected_text):
+        problems.append("an image without text cannot expect text or Korean")
+    if truth.target == "surface" and (not case.expected_surface or case.expected_target is None):
+        problems.append("a surface target needs expected_surface and expected_target")
+    if truth.target == "surface" and not truth.korean_present:
+        problems.append("a Korean surface target needs Korean in the image")
+    if truth.regions == "complete" and truth.text_present and not case.expected_regions:
+        problems.append("complete region annotation needs the regions")
+    if problems:
+        raise CorpusError(f"case {case.case_id!r} truth is inconsistent: {'; '.join(problems)}")
 
 
 def _case_image(
@@ -418,7 +527,26 @@ def inventory(corpus: Corpus) -> dict[str, Any]:
         "annotated_text": sum(case.expected_text is not None for case in corpus.cases),
         "annotated_target": sum(case.expected_target is not None for case in corpus.cases),
         "annotated_regions": sum(bool(case.expected_regions) for case in corpus.cases),
+        "stated_truth": sum(case.truth is not None for case in corpus.cases),
+        "by_family": dict(
+            sorted(Counter(case.family or "unstated" for case in corpus.cases).items())
+        ),
+        "fingerprint": fingerprint(corpus),
     }
+
+
+def fingerprint(corpus: Corpus) -> str | None:
+    """The exact images and truths a run scored; ``None`` if an image is missing."""
+
+    digest = hashlib.sha256()
+    for case in corpus.cases:
+        try:
+            image = hashlib.sha256(case.image.read_bytes()).hexdigest()
+        except OSError:
+            return None
+        truth = None if case.truth is None else case.truth.as_dict()
+        digest.update(json.dumps([case.case_id, image, truth], sort_keys=True).encode("utf-8"))
+    return "sha256:" + digest.hexdigest()[:16]
 
 
 def _reject_duplicates(cases: list[CorpusCase]) -> None:
@@ -448,13 +576,18 @@ __all__ = [
     "DISTRIBUTIONS",
     "LOCAL_PROVENANCE",
     "PROVENANCE",
+    "FAMILIES",
     "SCHEMA_VERSION",
+    "SCHEMA_VERSIONS",
     "TAGS",
+    "TARGETS",
+    "CaseTruth",
     "Corpus",
     "CorpusCase",
     "CorpusError",
     "ExpectedRegion",
     "build_corpus",
+    "fingerprint",
     "inventory",
     "load_corpus",
     "validate_case_geometry",
