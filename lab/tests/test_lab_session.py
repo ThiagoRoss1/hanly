@@ -760,7 +760,7 @@ def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path)
     driver._expected = None
     driver.completed = 0
     setattr(driver, "_page", SimpleNamespace(to_global=lambda point: (point.x, point.y)))
-    driver._foreign_windows = lambda x, y: []  # type: ignore[method-assign]
+    setattr(driver, "_foreign_windows", lambda x, y: [])
     mouse = SimpleNamespace(position=(0, 0))
     setattr(driver, "_mouse", mouse)
 
@@ -771,13 +771,13 @@ def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path)
         driver._observe("hover_stable_fire", 1, fields)
         driver._observe("popup_visible", 2, {"lookup_request_id": 4, "result_status": "SUCCESS"})
 
-    driver._glide = glide  # type: ignore[method-assign]
+    setattr(driver, "_glide", glide)
     target = TourTarget("w1", "words", "학교", 0, "학교", 1, "학교", "학교")
-    placed = SimpleNamespace(
+    placed: Any = SimpleNamespace(
         target=target, point=SimpleNamespace(x=5, y=5), font_family="F", font_px=22, theme="light"
     )
 
-    assert driver._hover(placed, 0, False)  # type: ignore[arg-type]
+    assert driver._hover(placed, 0, False)
     recorder.close()
 
     lines = (tmp_path / "events.jsonl").read_text("utf-8").splitlines()

@@ -691,7 +691,7 @@ def render_annotated_png(
 
     try:
         from PIL import Image, ImageDraw
-    except ImportError as error:  # pragma: no cover - depends on optional dev extra
+    except ImportError as error:
         raise RuntimeError("Pillow is required to render diagnostic PNGs") from error
 
     if isinstance(source, (str, Path)):

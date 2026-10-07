@@ -8,7 +8,9 @@ forbids redistribution must never end up in a committed manifest.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -50,15 +52,11 @@ def _requires_local_face() -> FontSpec:
     return _LOCAL_FACE
 
 
-def _sample(**overrides: object) -> SampleSpec:
-    defaults: dict[str, object] = {
-        "case_id": "sample",
-        "text": "책을 읽습니다.",
-        "font": _requires_local_face(),
-        "font_size": 20,
-    }
-    defaults.update(overrides)
-    return SampleSpec(**defaults)  # type: ignore[arg-type]
+def _sample(**overrides: Any) -> SampleSpec:
+    base = SampleSpec(
+        case_id="sample", text="책을 읽습니다.", font=_requires_local_face(), font_size=20
+    )
+    return replace(base, **overrides)
 
 
 # --- Refusals ---------------------------------------------------------------

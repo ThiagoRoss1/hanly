@@ -134,7 +134,7 @@ def prepare_roi(
 
     try:
         from PIL import Image
-    except ImportError as error:  # pragma: no cover - optional benchmark extra
+    except ImportError as error:
         raise RuntimeError("Pillow is required for real benchmark campaigns") from error
 
     with Image.open(image_path) as source_file:
@@ -1790,9 +1790,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("--warmup and --samples must be non-negative")
     return int(args.handler(args))
 
-
-if __name__ == "__main__":  # pragma: no cover - exercised as a module
-    raise SystemExit(main())
 
 
 __all__ = [

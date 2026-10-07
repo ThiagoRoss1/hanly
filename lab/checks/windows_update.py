@@ -213,16 +213,17 @@ def _updater(application: Path) -> _Updater:
         strategy=_staging_strategy(stamp, application, store),
         tagged_release_source=fetcher.fetch_release_by_tag,
     )
-    runner = TreeUpdateRunner(installer, store=store, recovery_root=default_recovery_directory())
     prepared: list[Any] = []
-    prepare = runner.prepare
 
-    def recording_prepare(*args: Any, **kwargs: Any) -> Any:
-        result = prepare(*args, **kwargs)
-        prepared.append(result)
-        return result
+    class _RecordingRunner(TreeUpdateRunner):
+        """The production runner, keeping each prepared update for the check to inspect."""
 
-    runner.prepare = recording_prepare  # type: ignore[method-assign]
+        def prepare(self, *args: Any, **kwargs: Any) -> Any:
+            result = super().prepare(*args, **kwargs)
+            prepared.append(result)
+            return result
+
+    runner = _RecordingRunner(installer, store=store, recovery_root=default_recovery_directory())
 
     class _NoResources:
         """The resource half is not under test; it reports nothing to install."""

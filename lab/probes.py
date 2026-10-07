@@ -22,7 +22,7 @@ from typing import Any, TextIO, TypeVar, cast
 _resource: Any
 try:
     import resource as _resource
-except ImportError:  # pragma: no cover - Windows has no resource module.
+except ImportError:  # Windows has no resource module.
     _resource = None
 
 

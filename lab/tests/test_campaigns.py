@@ -153,9 +153,9 @@ def test_the_observed_resolver_keeps_the_pointer_offset_production_uses(
 
     with RunStore(tmp_path / "run", metadata, fsync=False) as store:
         pipeline = ObservedLookupPipeline(_OCR(), _Morphology(), _Dictionary(), store=store)
-        observed = pipeline._pipeline._word_resolver.resolve_target_detail(  # type: ignore[attr-defined]
-            [region], pointer
-        )
+        detailed = pipeline.resolver.resolve_target_detail
+        assert detailed is not None
+        observed = detailed([region], pointer)
         stages = [sample["stage"] for sample in store.read_samples()]
 
     production = WordResolver().resolve_target_detail([region], pointer)

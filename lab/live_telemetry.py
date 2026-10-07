@@ -209,12 +209,12 @@ class LiveTraceRecorder:
         stream: TextIO | None = None
         close_stream = False
         try:
-            if hasattr(self.output, "write"):
-                stream = self.output  # type: ignore[assignment]
-            else:
+            if isinstance(self.output, (str, os.PathLike)):
                 stream = Path(self.output).open("a", encoding="utf-8", newline="\n")
                 close_stream = True
-        except Exception as exc:  # pragma: no cover - platform/file-system dependent
+            else:
+                stream = self.output
+        except Exception as exc:
             self._record_write_error(exc)
             return
 
@@ -228,13 +228,13 @@ class LiveTraceRecorder:
                 try:
                     stream.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
                     stream.flush()
-                except Exception as exc:  # pragma: no cover - platform/file-system dependent
+                except Exception as exc:
                     self._record_write_error(exc)
         finally:
             if close_stream and stream is not None:
                 try:
                     stream.close()
-                except Exception as exc:  # pragma: no cover - platform/file-system dependent
+                except Exception as exc:
                     self._record_write_error(exc)
 
     def _record_write_error(self, error: BaseException) -> None:
@@ -357,13 +357,13 @@ class LiveResourceSampler:
     def _open(self) -> None:
         if self._stream is not None:
             return
-        if hasattr(self.output, "write"):
-            self._stream = self.output  # type: ignore[assignment]
-        else:
+        if isinstance(self.output, (str, os.PathLike)):
             path = Path(self.output)
             path.parent.mkdir(parents=True, exist_ok=True)
             self._stream = path.open("w", encoding="utf-8", newline="")
             self._close_stream = True
+        else:
+            self._stream = self.output
         stream = self._stream
         if stream is None:
             raise OSError("could not open resource sampler output")

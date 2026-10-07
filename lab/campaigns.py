@@ -178,12 +178,13 @@ class ObservedLookupPipeline:
         self._context = _SampleContext()
         self._sink = _StoreSink(store, self._context)
         self.last_results: dict[str, Any] = {}
-        resolver = word_resolver or WordResolver()
+        #: The resolver seam as the pipeline sees it, measured like the others.
+        self.resolver = _ObservedResolver(word_resolver or WordResolver(), self)
         self._pipeline = LookupPipeline(
             _ObservedOCR(ocr_provider, self),
             _ObservedMorphology(morphology_provider, self),
             _ObservedDictionary(dictionary_provider, self),
-            _ObservedResolver(resolver, self),
+            self.resolver,
             confidence_threshold=confidence_threshold,
         )
 
