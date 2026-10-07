@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -47,6 +48,9 @@ MODES = ("install", "cancel", "rollback")
 #: What a run directory holds only as working material: an unpacked release,
 #: the downloaded archive, and the isolated profile and TEMP it ran in.
 DISPOSABLE = ("install", "release", "profile", "temp")
+#: Working copies that can hold the app's, helper's or updater's own logs.
+_LOG_SOURCES = ("profile", "temp")
+_LOG_LIMIT = 8 * 2**20
 #: Words the update panel shows once a check has answered.
 _SETTLED_PAGE = ("Install update", "are current", "is current", "up to date")
 _MAIN_TEXT = "(() => { const m = document.querySelector('main'); return m ? m.innerText : ''; })()"
@@ -104,14 +108,19 @@ def run_windows_update(source_tag: str, mode: str) -> int:
         _stop_owned(run)
         outcome["remnants"] = _remnants(run)
         outcome["events"] = run.events
+        retained = _retain_logs(run.root)
         outcome["lab_provenance"] = provenance(
             "update_check",
             source,
             source_at_end=source_identity(REPO_ROOT),
             started=started,
-            # Working copies the check recreates on demand; summary.json keeps
-            # the outcome, the events and the remnants that explain the run.
-            disposable=list(DISPOSABLE),
+            retained_logs=retained,
+            # Working copies the check recreates on demand. summary.json keeps the
+            # outcome, events and remnants, and logs/ the logs that were inside
+            # them; a working copy whose logs could not be kept is not offered.
+            disposable=[
+                name for name in DISPOSABLE if name not in _LOG_SOURCES or retained is not None
+            ],
         )
         (root / "summary.json").write_text(
             json.dumps(outcome, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -500,6 +509,26 @@ def _await(condition: Callable[[], bool], seconds: float) -> bool:
             return True
         time.sleep(0.5)
     return condition()
+
+
+def _retain_logs(root: Path) -> list[str] | None:
+    """Copy every log out of the profile and TEMP into ``logs/``; ``None`` if one failed."""
+
+    target = root / "logs"
+    kept: list[str] = []
+    try:
+        for name in _LOG_SOURCES:
+            for log in sorted((root / name).rglob("*.log")):
+                if log.is_symlink() or not log.is_file() or log.stat().st_size > _LOG_LIMIT:
+                    continue
+                relative = log.relative_to(root)
+                destination = target / "__".join(relative.parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(log, destination)
+                kept.append(relative.as_posix())
+    except OSError:
+        return None
+    return kept
 
 
 def _remnants(run: _Run) -> dict[str, Any]:

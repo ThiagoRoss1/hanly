@@ -23,7 +23,7 @@ from typing import Any
 
 from PyQt6.QtCore import QPoint, QRect
 
-from .browser_text import BrowserText, is_drawn
+from .browser_text import FOLDER, BrowserText, is_drawn
 from .driver import TourDriver, _Observation, outcome_record
 from .ownership import owner_at
 from .recorder import LabRecorder
@@ -242,7 +242,7 @@ class StressDriver(TourDriver):
             for offset in range(0, len(self._uia_items), _UIA_LINES):
                 chunk = self._uia_items[offset : offset + _UIA_LINES]
                 lines = [item.target.surface for item in chunk]
-                with BrowserText(lines, self._run_dir / "browser", window) as text:
+                with BrowserText(lines, self._run_dir / FOLDER, window) as text:
                     if not text.points or text.window_pid is None:
                         self._recorder.lab(
                             "uia_segment_unavailable",

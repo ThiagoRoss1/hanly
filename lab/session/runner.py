@@ -30,6 +30,7 @@ from hanly_app.paths import default_app_config_path, default_runtime_config_path
 
 from ..identity import RUNS_ROOT, fingerprint
 from ..metadata import SESSION_MEASUREMENT_PROTOCOL, provenance, source_identity
+from .browser_text import FOLDER as BROWSER_FOLDER
 from .recorder import LabDiagnosticLog, LabRecorder
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -550,6 +551,7 @@ def _metadata(
             source_at_end=source_at_end,
             measurement_protocol=SESSION_MEASUREMENT_PROTOCOL,
             configured_backend=settings.ocr_backend.value,
+            disposable=[BROWSER_FOLDER] if options.mode == "stress" else [],
         ),
     }
 

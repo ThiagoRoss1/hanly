@@ -28,6 +28,10 @@ import psutil
 
 from .. import devtools
 
+#: The run subdirectory the helper window works in: the page it shows and Edge's
+#: profile. Rebuilt from the plan on every run, so it is disposable afterwards.
+FOLDER = "browser"
+
 _EDGE_PATHS = (
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",

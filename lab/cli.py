@@ -1327,6 +1327,27 @@ def _session_parsers(subcommands: Any) -> None:
     unpin.add_argument("run")
     unpin.set_defaults(handler=run_lab_pin, unpin=True)
 
+    storage = subcommands.add_parser(
+        "storage", help="show where Lab, packaging and unknown material use disk (read only)"
+    )
+    storage.add_argument("--json", action="store_true", help="print the full inventory as JSON")
+    storage.add_argument("--top", type=int, default=15, help="largest entries to list")
+    storage.set_defaults(handler=run_lab_storage)
+
+    gc = subcommands.add_parser(
+        "gc",
+        help="preview (default) or apply removal of declared disposable working copies",
+        description=(
+            "Only subtrees a run's own writer declared disposable are eligible: an update "
+            "check's unpacked installation, a stress run's browser profile. Run roots, "
+            "recordings, reports, replay material and pinned, active or unknown runs are "
+            "never touched, and dist/ is never collected."
+        ),
+    )
+    gc.add_argument("--apply", action="store_true", help="delete exactly the given preview")
+    gc.add_argument("--plan", type=Path, help="the plan file a preview wrote")
+    gc.set_defaults(handler=run_lab_gc)
+
     stress = subcommands.add_parser(
         "stress",
         help="a seeded text-acquisition stress campaign over lab-authored pages",
@@ -1544,6 +1565,63 @@ def run_lab_baseline(args: argparse.Namespace) -> int:
         where = "MISSING" if row.get("dangling") else row["key"]
         print(f"{row['run']:38} {where}  -- {row['reason']}")
     return 0
+
+
+def run_lab_storage(args: argparse.Namespace) -> int:
+    """Where the disk goes: Lab, packaging and unknown material, read only."""
+
+    from .storage import inventory
+
+    report = inventory()
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+    for name, bucket in report["totals"].items():
+        print(f"{name:24} {_gib(bucket['bytes']):>9}  {bucket['entries']} entries")
+    print(f"{'total':24} {_gib(report['total_bytes']):>9}")
+    print()
+    largest = sorted(report["entries"], key=lambda entry: entry["size"]["bytes"], reverse=True)
+    for entry in largest[: args.top]:
+        protection = ",".join(entry["protection"]) or "-"
+        print(
+            f"{_gib(entry['size']['bytes']):>9}  {entry['ownership']:9} {entry['kind']:14} "
+            f"{protection:16} {entry['path']}"
+        )
+    for name in report["dangling_pins"]:
+        print(f"pinned but missing: {name}")
+    print(f"\n{report['note']}; `python -m lab gc` previews what may be reclaimed")
+    return 0
+
+
+def run_lab_gc(args: argparse.Namespace) -> int:
+    """Preview, or apply exactly, the removal of declared disposable working copies."""
+
+    from .storage import StorageError, apply, preview, write_plan
+
+    try:
+        if not args.apply:
+            plan = preview()
+            for target in plan["targets"]:
+                print(f"reclaim {_gib(target['bytes']):>9}  {target['run']}/{target['subtree']}")
+            for kept in plan["kept"]:
+                print(f"keep               {kept['run']}/{kept['subtree']}: {kept['reason']}")
+            print(f"\n{_gib(plan['reclaimable_bytes'])} reclaimable; nothing was deleted.")
+            if plan["targets"]:
+                path = write_plan(plan)
+                print(f"To delete exactly this: python -m lab gc --apply --plan {path}")
+            return 0
+        if args.plan is None:
+            raise StorageError("--apply needs the --plan a preview wrote")
+        result = apply(args.plan)
+    except StorageError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(result, indent=2))
+    return 0 if result["status"] == "complete" else 1
+
+
+def _gib(size: int) -> str:
+    return f"{size / 2**30:.2f} GiB" if size >= 2**30 else f"{size / 2**20:.1f} MiB"
 
 
 def run_lab_pin(args: argparse.Namespace) -> int:
