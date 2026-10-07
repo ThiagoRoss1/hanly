@@ -16,6 +16,13 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
+#: Version of the ``lab_provenance`` block every current writer adds beside its
+#: own payload. Records without the block were written before it existed.
+PROVENANCE_VERSION = 1
+#: How a session measures time and memory. Bumped when a change makes numbers
+#: from before and after it incomparable (``24ac332`` moved the sampler out of
+#: the shell, which is why older sessions record no protocol at all).
+SESSION_MEASUREMENT_PROTOCOL = "session-external-sampler-250ms-v1"
 _SECRET_KEY = re.compile(r"(?:pass(?:word)?|secret|token|api[_-]?key|auth(?:orization)?)", re.I)
 _WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _REQUIRED_FIELDS = ("schema_version", "run_id", "timestamp", "commit", "config", "scenario")
@@ -35,6 +42,8 @@ def build_metadata(
     environment: Mapping[str, Any] | None = None,
     repo_root: str | Path | None = None,
     timestamp: datetime | str | None = None,
+    kind: str | None = None,
+    source: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-safe, self-contained metadata dictionary for one run.
 
@@ -43,6 +52,9 @@ def build_metadata(
     absolute paths are redacted before they enter the dictionary.
     """
 
+    resolved_source = dict(source) if source is not None else source_identity(repo_root)
+    if commit is not None:
+        resolved_source["commit"] = commit
     resolved_run_id = run_id or str(uuid.uuid4())
     if not isinstance(resolved_run_id, str) or not resolved_run_id.strip():
         raise MetadataError("run_id must be a non-empty string")
@@ -51,7 +63,7 @@ def build_metadata(
         "schema_version": SCHEMA_VERSION,
         "run_id": resolved_run_id,
         "timestamp": _timestamp_value(timestamp),
-        "commit": commit if commit is not None else _git_commit(repo_root),
+        "commit": resolved_source["commit"],
         "platform": {
             "system": platform.system(),
             "release": platform.release(),
@@ -74,8 +86,68 @@ def build_metadata(
 
     if environment is not None:
         metadata["environment"] = environment
+    if kind is not None:
+        metadata["lab_provenance"] = provenance(kind, resolved_source)
 
     return _json_safe(metadata)
+
+
+def source_identity(repo_root: str | Path | None = None) -> dict[str, Any]:
+    """The checkout a run is recorded from, read once when it starts.
+
+    ``dirty`` is ``None`` and ``state`` is ``unknown`` when Git cannot answer;
+    an unreadable checkout is never reported as clean.
+    """
+
+    cwd = Path(repo_root) if repo_root is not None else Path.cwd()
+    commit = _git(cwd, "rev-parse", "HEAD")
+    status = _git(cwd, "status", "--porcelain")
+    dirty = None if status is None else bool(status.strip())
+    return {
+        "commit": commit.strip() if commit and commit.strip() else "unknown",
+        "dirty": dirty,
+        "state": "unknown" if dirty is None else "dirty" if dirty else "clean",
+    }
+
+
+def provenance(
+    kind: str,
+    source: Mapping[str, Any],
+    *,
+    source_at_end: Mapping[str, Any] | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
+    """The additive ``lab_provenance`` block: who wrote the run, from what, where.
+
+    ``source`` is the identity captured at the start. A checkout that changed
+    while the run executed is recorded beside it, never in its place.
+    """
+
+    block: dict[str, Any] = {
+        "version": PROVENANCE_VERSION,
+        "kind": kind,
+        "source": dict(source),
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+    }
+    if source_at_end is not None:
+        block["source_at_end"] = dict(source_at_end)
+        block["source_changed"] = _changed(source, source_at_end)
+    block.update(fields)
+    return block
+
+
+def _changed(start: Mapping[str, Any], end: Mapping[str, Any]) -> bool | None:
+    if "unknown" in (start.get("state"), end.get("state")):
+        return None
+    # Two dirty states with one commit may still differ; without a diff hash
+    # that is undecidable, so it is reported as unknown rather than unchanged.
+    if start.get("commit") != end.get("commit") or start.get("state") != end.get("state"):
+        return True
+    return False if start.get("state") == "clean" else None
 
 
 def validate_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -147,21 +219,19 @@ def _timestamp_value(value: datetime | str | None) -> str:
     raise MetadataError("timestamp must be a datetime or non-empty string")
 
 
-def _git_commit(repo_root: str | Path | None) -> str:
-    cwd = Path(repo_root) if repo_root is not None else Path.cwd()
+def _git(cwd: Path, *args: str) -> str | None:
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", *args],
             cwd=cwd,
             check=True,
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    commit = result.stdout.strip()
-    return commit or "unknown"
+        return None
+    return result.stdout
 
 
 def _total_memory_bytes() -> int | None:

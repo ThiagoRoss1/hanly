@@ -17,6 +17,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..identity import REPO_ROOT
+from ..metadata import provenance, source_identity
+
 REPLAY_LABEL = "lab_recapture_production_worker_replay"
 
 
@@ -28,6 +31,8 @@ def replay_run(run_dir: Path, runtime_config: Path) -> dict[str, Any]:
     from hanly_app.runtime import load_runtime
     from PIL import Image
 
+    # The code that replays, which need not be the code that recorded the run.
+    replaying = source_identity(REPO_ROOT)
     results, points = _recorded(run_dir)
     runtime = load_runtime(runtime_config)
     worker = runtime.create_worker_factory()()
@@ -52,14 +57,12 @@ def replay_run(run_dir: Path, runtime_config: Path) -> dict[str, Any]:
             rows.append(_compare(row, outcome))
     finally:
         worker.close()
-    from .runner import _git
-
     report = {
         "label": REPLAY_LABEL,
         "run": run_dir.name,
-        # The code that replayed, which need not be the code that recorded the run.
-        "commit": _git("rev-parse", "HEAD"),
-        "dirty": bool(_git("status", "--porcelain")),
+        "commit": replaying["commit"],
+        "dirty": replaying["dirty"],
+        "lab_provenance": provenance("stress_replay", replaying),
         "rows": rows,
         "same_as_live": sum(1 for row in rows if row["same_as_live"]),
         "same_recognition": sum(1 for row in rows if row["same_recognition"]),

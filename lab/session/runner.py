@@ -16,10 +16,10 @@ import os
 import platform
 import re
 import signal
-import subprocess
 import sys
 import threading
 import webbrowser
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -28,10 +28,11 @@ from typing import Any
 from hanly_app.config import AppConfig, ConfigManager, HoverActivation
 from hanly_app.paths import default_app_config_path, default_runtime_config_path
 
+from ..identity import RUNS_ROOT, fingerprint
+from ..metadata import SESSION_MEASUREMENT_PROTOCOL, provenance, source_identity
 from .recorder import LabDiagnosticLog, LabRecorder
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNS_ROOT = REPO_ROOT / "artifacts" / "lab" / "runs"
 _DEV_RUNTIME = REPO_ROOT / "resources" / "dev" / "runtime-local.json"
 #: Lab sessions; the runs root also holds older campaign evidence.
 _SESSION_NAME = re.compile(r"^\d{8}-\d{6}-(run|tour|stress)$")
@@ -108,8 +109,10 @@ def run_session(options: SessionOptions) -> int:
         recorder, default_app_config_path().parent / "logs" / "hanly.log"
     )
     started = datetime.now().isoformat(timespec="seconds")
+    source = source_identity(REPO_ROOT)
     _write_json(
-        run_dir / "metadata.json", _metadata(options, runtime_config, settings, started, plan)
+        run_dir / "metadata.json",
+        _metadata(options, runtime_config, settings, started, source, plan),
     )
     print(f"lab: recording to {_display(run_dir)}", flush=True)
 
@@ -154,7 +157,15 @@ def run_session(options: SessionOptions) -> int:
         _write_json(
             run_dir / "metadata.json",
             {
-                **_metadata(options, runtime_config, settings, started, plan),
+                **_metadata(
+                    options,
+                    runtime_config,
+                    settings,
+                    started,
+                    source,
+                    plan,
+                    source_at_end=source_identity(REPO_ROOT),
+                ),
                 "exit_code": exit_code,
                 "dropped_events": recorder.dropped_events,
                 "process_samples": sampler.samples,
@@ -293,7 +304,12 @@ def _start_tour(
     page = TourPage()
     page.lay_out(story, words, list(options.story_sizes), list(options.word_sizes))
     total = sum(len(p.placed) for p in page.pages)
-    recorder.lab("tour_planned", pages=len(page.pages), targets=total)
+    recorder.lab(
+        "tour_planned",
+        pages=len(page.pages),
+        targets=total,
+        plan_fingerprint=plan_fingerprint(page.pages),
+    )
     print(f"lab: tour of {total} hovers over {len(page.pages)} pages", flush=True)
     driver = TourDriver(
         recorder,
@@ -351,7 +367,12 @@ def _start_stress(
     uia = [item for item in plan if item.family in {"uia_korean", "uia_latin"}]
     page.lay_out_plan(plan, options.seed)
     total = sum(len(p.placed) for p in page.pages) + len(uia)
-    recorder.lab("tour_planned", pages=len(page.pages), targets=total)
+    recorder.lab(
+        "tour_planned",
+        pages=len(page.pages),
+        targets=total,
+        plan_fingerprint=plan_fingerprint(page.pages, uia),
+    )
     print(f"lab: stress campaign of {total} hovers over {len(page.pages)} pages", flush=True)
     driver = StressDriver(
         recorder,
@@ -389,6 +410,31 @@ def _campaign_line(campaign: dict[str, Any]) -> str:
         f"{summary['false_positives']}/{summary['negatives_scored']}, missing or wrong "
         f"{summary['missing_answers']}/{summary['positives_scored']}; ended {campaign['ended']}"
     )
+
+
+def plan_fingerprint(pages: Sequence[Any], unplaced: Sequence[Any] = ()) -> str:
+    """Every hover as rendered on this machine: target, face, size, theme, family."""
+
+    def item_fields(item: Any) -> list[Any]:
+        if item is None:
+            return []
+        return [item.family, item.behavior, item.raster, item.graphic, item.replacement]
+
+    rows = [
+        [
+            placed.target.id,
+            placed.target.surface,
+            placed.target.cursor,
+            placed.font_family,
+            placed.font_px,
+            placed.theme,
+            *item_fields(getattr(placed, "item", None)),
+        ]
+        for page in pages
+        for placed in page.placed
+    ]
+    rows += [[item.target.id, item.target.surface, *item_fields(item)] for item in unplaced]
+    return fingerprint(rows)
 
 
 def _stop_after(seconds: float, recorder: LabRecorder) -> None:
@@ -458,7 +504,10 @@ def _metadata(
     runtime_config: Path,
     settings: AppConfig,
     started: str,
+    source: dict[str, Any],
     plan: list[Any] | None = None,
+    *,
+    source_at_end: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     extra: dict[str, Any] = {}
     if plan is not None:
@@ -475,8 +524,9 @@ def _metadata(
         "started": started,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
         "python": platform.python_version(),
-        "commit": _git("rev-parse", "HEAD"),
-        "dirty": bool(_git("status", "--porcelain")),
+        # Kept for older readers; ``lab_provenance`` is the authoritative block.
+        "commit": source["commit"],
+        "dirty": source["dirty"],
         "runtime_config": _display(runtime_config),
         "settings": settings.to_dict(),
         # Evidence is read in memory during a tour; only this decides persistence.
@@ -490,17 +540,16 @@ def _metadata(
             "hud": options.hud,
             "baseline": None if options.baseline is None else options.baseline.name,
             "per_family": options.per_family,
+            "backend": options.backend,
         },
+        "lab_provenance": provenance(
+            options.mode,
+            source,
+            source_at_end=source_at_end,
+            measurement_protocol=SESSION_MEASUREMENT_PROTOCOL,
+            configured_backend=settings.ocr_backend.value,
+        ),
     }
-
-
-def _git(*args: str) -> str:
-    try:
-        return subprocess.run(
-            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
 
 
 def _display(path: Path) -> str:

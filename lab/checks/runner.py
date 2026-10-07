@@ -6,7 +6,6 @@ import html
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import time
@@ -17,7 +16,7 @@ from typing import Any
 from tools.build_smoke_krdict import build_smoke_krdict
 from tools.smoke_packaged_runtime import isolated_environment
 
-from ..metadata import build_metadata
+from ..metadata import build_metadata, provenance, source_identity
 from ..run_store import RunStore
 from .catalog import SCENARIOS, Scenario, select_scenarios
 from .processes import Execution, execute
@@ -154,7 +153,10 @@ def run_scenarios(
     artifact_root = REPO_ROOT / "artifacts" / "lab" / "runs"
     if artifact_root.resolve() != artifact_root:
         raise ValueError("the artifact root must not redirect outside the repository")
-    metadata = build_metadata(repo_root=REPO_ROOT, scenario={"app_lab": list(ids)})
+    source = source_identity(REPO_ROOT)
+    metadata = build_metadata(
+        repo_root=REPO_ROOT, scenario={"app_lab": list(ids)}, kind="check", source=source
+    )
     run_dir = artifact_root / metadata["run_id"]
     results = []
     with RunStore(run_dir, metadata, fsync=False) as store:
@@ -172,22 +174,17 @@ def run_scenarios(
                 reason=result["reason"],
             )
     outcomes = {item["id"]: item for item in results}
-    try:
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            timeout=5,
-        )
-        dirty = bool(status.stdout) if status.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired):
-        dirty = None
+    # The checkout as the checks started; a change while they ran is kept apart.
+    dirty = source["dirty"]
     summary = {
         "schema_version": 1,
         "run_id": metadata["run_id"],
         "commit": metadata["commit"],
         "platform": sys.platform,
         "source_dirty": dirty,
+        "lab_provenance": provenance(
+            "check", source, source_at_end=source_identity(REPO_ROOT)
+        ),
         "results": results,
         "coverage": [
             outcomes.get(

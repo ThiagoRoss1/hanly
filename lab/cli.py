@@ -54,6 +54,7 @@ from .diagnostics import (
     write_diagnostic_json,
 )
 from .hover_rate import hover_invocation_matrix
+from .identity import KINDS
 from .metadata import build_metadata
 from .package_composition import write_package_report
 from .probes import ProcessSampler
@@ -325,6 +326,7 @@ def run_real_lookup(args: argparse.Namespace) -> int:
     }
     metadata = build_metadata(
         repo_root=Path.cwd(),
+        kind="real_lookup",
         config=config_metadata,
         scenario={
             "name": scenario,
@@ -532,6 +534,7 @@ def run_ocr_campaign(args: argparse.Namespace) -> int:
     backend, provider_factory, reader_factory = _ocr_provider_factory(args)
     metadata = build_metadata(
         repo_root=Path.cwd(),
+        kind="ocr_campaign",
         config={
             "mode": args.mode,
             "backend": backend,
@@ -704,6 +707,7 @@ def run_real_hover(args: argparse.Namespace) -> int:
     scenario = f"real_hover_roi_{image.width}x{image.height}"
     metadata = build_metadata(
         repo_root=Path.cwd(),
+        kind="real_hover",
         config={
             "runtime_config": args.config,
             "dwell_ms": args.dwell_ms,
@@ -1285,12 +1289,47 @@ def _session_parsers(subcommands: Any) -> None:
         nargs="?",
         help="run directory or name under artifacts/lab/runs (default: newest)",
     )
-    report.add_argument("--list", action="store_true", help="list recent runs and exit")
+    report.add_argument("--list", action="store_true", help="list recorded runs and exit")
+    report.add_argument(
+        "--kind",
+        choices=KINDS,
+        help="with --list, only runs of this kind",
+    )
+    report.add_argument(
+        "--limit", type=int, default=0, help="with --list, only the newest N (default: all)"
+    )
     report.add_argument(
         "--baseline", help="earlier tour (directory or name) to compare with under the current rule"
     )
     report.add_argument("--no-open", action="store_true")
     report.set_defaults(handler=run_lab_report)
+
+    baseline = subcommands.add_parser(
+        "baseline", help="list the registered baselines, or set or unset one"
+    )
+    baseline.set_defaults(handler=run_lab_baseline, baseline_action=None)
+    baseline_actions = baseline.add_subparsers(dest="baseline_action")
+    baseline_set = baseline_actions.add_parser(
+        "set", help="make a finished, fully attributed run the baseline for its kind"
+    )
+    baseline_set.add_argument("run", help="run name under artifacts/lab/runs")
+    baseline_set.add_argument("--reason", required=True)
+    baseline_set.add_argument(
+        "--allow-dirty", action="store_true", help="accept a run from a modified checkout"
+    )
+    baseline_set.add_argument(
+        "--replace", action="store_true", help="replace the current baseline for the same key"
+    )
+    baseline_unset = baseline_actions.add_parser("unset", help="remove one run's baseline role")
+    baseline_unset.add_argument("run")
+
+    pin = subcommands.add_parser("pin", help="keep a run out of any clean-up")
+    pin.add_argument("run")
+    pin.add_argument("--reason", required=True)
+    pin.set_defaults(handler=run_lab_pin, unpin=False)
+    unpin = subcommands.add_parser("unpin", help="stop keeping a run (its files stay)")
+    unpin.add_argument("run")
+    unpin.set_defaults(handler=run_lab_pin, unpin=True)
 
     stress = subcommands.add_parser(
         "stress",
@@ -1383,7 +1422,7 @@ def run_lab_session(args: argparse.Namespace) -> int:
 
 
 def run_lab_report(args: argparse.Namespace) -> int:
-    """Rebuild one run's report from what it recorded."""
+    """Rebuild one session's report from what it recorded, or list every run."""
 
     import webbrowser
 
@@ -1391,9 +1430,7 @@ def run_lab_report(args: argparse.Namespace) -> int:
     from .session.runner import RUNS_ROOT, recorded_runs, resolve_run
 
     if args.list:
-        for run in recorded_runs()[-15:]:
-            print(run.name)
-        return 0
+        return _list_runs(args.kind, args.limit)
     if args.run_dir is None:
         runs = recorded_runs()
         if not runs:
@@ -1402,12 +1439,102 @@ def run_lab_report(args: argparse.Namespace) -> int:
             )
         run_dir = runs[-1]
     else:
-        run_dir = resolve_run(args.run_dir)
+        run_dir = _session_or_explain(args.run_dir)
     baseline = None if args.baseline is None else resolve_run(args.baseline)
     report = build_report(run_dir, baseline=baseline)
     print(f"lab: report {report}")
     if not args.no_open:
         webbrowser.open(report.resolve().as_uri())
+    return 0
+
+
+def _session_or_explain(name: str) -> Path:
+    """A session to rebuild; any other kind is pointed at the summary it already wrote."""
+
+    from .identity import resolve_name, run_identity
+    from .session.runner import resolve_run
+
+    try:
+        identity = run_identity(resolve_name(name))
+    except ValueError:
+        return resolve_run(name)
+    if identity.kind in {"run", "tour", "stress"}:
+        return identity.path
+    written = [file for file, present in identity.evidence.items() if present]
+    raise SystemExit(
+        f"lab: {identity.name} is kind {identity.kind}, not a session; its own evidence is "
+        f"{', '.join(written) or 'missing'} (nothing to rebuild)"
+    )
+
+
+def _list_runs(kind: str | None, limit: int) -> int:
+    from .identity import identities
+    from .pins import load
+
+    registry = load()
+    # Start times order every kind; a run that records none sorts first by name.
+    rows = sorted(
+        (identity for identity in identities() if kind is None or identity.kind == kind),
+        key=lambda identity: (identity.started != "unknown", identity.started[:19], identity.name),
+    )
+    for identity in rows[-limit:] if limit else rows:
+        roles = ",".join(sorted(registry.roles(identity.name)))
+        print(
+            f"{identity.name:38} {identity.kind:12} {identity.commit[:8]:8} "
+            f"{identity.source_state:7} {identity.system}-{identity.machine:7} "
+            f"{identity.backend:14} {identity.completion:15} {roles}"
+        )
+    return 0
+
+
+def run_lab_baseline(args: argparse.Namespace) -> int:
+    """List, register or remove baselines in the local registry."""
+
+    from . import pins
+
+    try:
+        registry = pins.load()
+        if args.baseline_action == "set":
+            _, identity, replaced = pins.set_baseline(
+                registry,
+                args.run,
+                args.reason,
+                allow_dirty=args.allow_dirty,
+                replace=args.replace,
+            )
+            print(f"lab: {identity.name} is the baseline for {identity.compatibility_key}")
+            if replaced is not None:
+                print(f"lab: it replaces {replaced.run} (that run's files are untouched)")
+            return 0
+        if args.baseline_action == "unset":
+            pins.remove(registry, args.run, "baseline")
+            print(f"lab: {args.run} is no longer a baseline; its files are untouched")
+            return 0
+    except pins.PinError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    for row in pins.describe(registry, registry.baselines()):
+        where = "MISSING" if row.get("dangling") else row["key"]
+        print(f"{row['run']:38} {where}  -- {row['reason']}")
+    return 0
+
+
+def run_lab_pin(args: argparse.Namespace) -> int:
+    """Keep a run out of any clean-up, or stop keeping it."""
+
+    from . import pins
+
+    try:
+        registry = pins.load()
+        if args.unpin:
+            pins.remove(registry, args.run, "keep")
+            print(f"lab: {args.run} is no longer kept; its files are untouched")
+        else:
+            pins.keep(registry, args.run, args.reason or "")
+            print(f"lab: keeping {args.run}")
+    except pins.PinError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
     return 0
 
 

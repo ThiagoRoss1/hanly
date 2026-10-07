@@ -34,6 +34,7 @@ from typing import Any
 import psutil
 
 from .. import devtools
+from ..metadata import provenance, source_identity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNS_ROOT = REPO_ROOT / "artifacts" / "lab" / "runs"
@@ -43,6 +44,9 @@ _EXECUTABLE = "hanly-desktop.exe"
 #: The helper's own ceiling for a new build to answer, plus room to restore.
 _HELPER_DEADLINE = 600 + 120
 MODES = ("install", "cancel", "rollback")
+#: What a run directory holds only as working material: an unpacked release,
+#: the downloaded archive, and the isolated profile and TEMP it ran in.
+DISPOSABLE = ("install", "release", "profile", "temp")
 #: Words the update panel shows once a check has answered.
 _SETTLED_PAGE = ("Install update", "are current", "is current", "up to date")
 _MAIN_TEXT = "(() => { const m = document.querySelector('main'); return m ? m.innerText : ''; })()"
@@ -86,6 +90,8 @@ def run_windows_update(source_tag: str, mode: str) -> int:
         directory.mkdir(parents=True)
     _isolate(run)
 
+    source = source_identity(REPO_ROOT)
+    started = datetime.now().isoformat(timespec="seconds")
     outcome: dict[str, Any] = {"mode": mode, "source_tag": source_tag}
     try:
         application = _download_release(run, source_tag)
@@ -98,6 +104,15 @@ def run_windows_update(source_tag: str, mode: str) -> int:
         _stop_owned(run)
         outcome["remnants"] = _remnants(run)
         outcome["events"] = run.events
+        outcome["lab_provenance"] = provenance(
+            "update_check",
+            source,
+            source_at_end=source_identity(REPO_ROOT),
+            started=started,
+            # Working copies the check recreates on demand; summary.json keeps
+            # the outcome, the events and the remnants that explain the run.
+            disposable=list(DISPOSABLE),
+        )
         (root / "summary.json").write_text(
             json.dumps(outcome, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )

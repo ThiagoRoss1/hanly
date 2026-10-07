@@ -519,6 +519,7 @@ def run_live_hover(args: Any) -> int:
     phases = ScenarioPhaseController()
     metadata = build_metadata(
         repo_root=Path.cwd(),
+        kind="live_hover",
         config={
             "runtime_config": args.config,
             "duration_seconds": args.duration,
