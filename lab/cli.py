@@ -531,6 +531,8 @@ def run_ocr_campaign(args: argparse.Namespace) -> int:
             "for why the committed corpus can be empty and how to populate it"
         )
         return 2
+    if args.compare_backends is not None:
+        return _run_differential(args)
 
     backend, provider_factory, reader_factory = _ocr_provider_factory(args)
     metadata = build_metadata(
@@ -573,6 +575,36 @@ def run_ocr_campaign(args: argparse.Namespace) -> int:
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     print(f"evidence: {run_dir}")
     return 0
+
+
+def _run_differential(args: argparse.Namespace) -> int:
+    """Each backend in its own process over identical inputs; nothing is ranked."""
+
+    from .differential import BACKENDS, default_backends, run_differential
+
+    if args.mode != "ocr-only":
+        raise SystemExit("--compare-backends compares production ocr-only output only")
+    requested = (
+        default_backends()
+        if args.compare_backends == "available"
+        else tuple(name.strip() for name in args.compare_backends.split(",") if name.strip())
+    )
+    unknown = sorted(set(requested) - set(BACKENDS))
+    if unknown:
+        raise SystemExit(f"unknown backend(s) {unknown}; one of {list(BACKENDS)}")
+    run_dir, report = run_differential(
+        args.manifest,
+        requested,
+        output_root=Path(args.output_root),
+        warmup=args.warmup,
+        samples=args.samples,
+        config=args.config,
+        cpu_threads=args.cpu_threads,
+    )
+    print((run_dir / "differential.md").read_text(encoding="utf-8"))
+    print(f"evidence: {run_dir}")
+    ran = sum(1 for entry in report["backends"].values() if entry["state"] == "ran")
+    return 0 if report["status"] == "complete" and ran else 1
 
 
 def run_corpus_inventory(args: argparse.Namespace) -> int:
@@ -1228,6 +1260,16 @@ def _parser() -> argparse.ArgumentParser:
         help="warm repetitions per case; stability is summarized over these (default: 3)",
     )
     ocr.add_argument("--iou-threshold", type=float, default=0.5)
+    ocr.add_argument(
+        "--compare-backends",
+        nargs="?",
+        const="available",
+        metavar="LIST",
+        help=(
+            "run the corpus through each backend in a fresh process (comma separated; alone, "
+            "every backend this platform may have) and compare what each recorded"
+        ),
+    )
     ocr.add_argument("--cpu-threads", type=_parse_cpu_threads)
     ocr.add_argument(
         "--output-root", type=Path, default=Path("artifacts/lab/runs")

@@ -37,6 +37,7 @@ KINDS = (
     "stress",
     "check",
     "ocr_campaign",
+    "ocr_differential",
     "real_lookup",
     "real_hover",
     "live_hover",
@@ -474,6 +475,9 @@ def _campaign_kind(
         scenarios = sorted(str(item) for item in scenario.get("app_lab") or ())
         return "check", ",".join(scenarios) or UNKNOWN, {"scenarios": scenarios}
     name = str(scenario.get("name") or "")
+    if name == "ocr_differential":
+        options = {key: _normalized(config.get(key)) for key in ("backends", "warmup", "samples")}
+        return "ocr_differential", "ocr-only", options
     if name.startswith("ocr_") and (run_dir / "corpus-inventory.json").exists():
         options = {
             key: _normalized(config.get(key))
