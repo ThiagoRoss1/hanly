@@ -43,6 +43,12 @@ answer its challenge. The command then quits through the page, relaunches once
 to settle, and checks the tree against the published manifest. It also checks
 that the update is not offered again and lists what remains.
 
+`summary.json` holds the outcome, events and remnants; the logs found in the
+run's profile and TEMP are copied to `logs/`. Only then does the run declare
+`install/`, `release/`, `profile/` and `temp/` disposable, which is what lets
+`python -m lab gc` offer them (a working copy whose logs could not be copied is
+not offered).
+
 `--mode cancel` stops during preparation. `--mode rollback` keeps the source
 build running so the helper waits, then replaces the staged new executable with
 bytes that cannot start. The helper must then wait out its deadline (ten

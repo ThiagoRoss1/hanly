@@ -32,6 +32,11 @@ Samples rendered from a non-redistributable face are still usable locally: they
 become `local_synthetic` cases, which corpus validation refuses to accept in a
 committed manifest.
 
+Larger generated corpora come from installed faces and stay local:
+`python -m lab ocr-corpus-generate --profile golden|smoke|balanced|difficult`
+writes under the gitignored `artifacts/lab/corpus/`. `lab/README.md` describes
+the profiles and the schema 2 truth and identity each case records.
+
 ## Private cases
 
 Real frozen captures are somebody's screen. They stay in a `local` manifest

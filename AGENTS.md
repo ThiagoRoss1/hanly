@@ -71,6 +71,15 @@ launch writes the per-user `runtime.json` and provisions `krdict` from
 `HANLY_KRDICT_DB` or `data/generated/krdict.sqlite3` (see `data/README.md`).
 `resources/dev/` is benchmark-only configuration for `--runtime-config`.
 
+To use Lab evidence, read the compact summary first (`summary.md` or
+`campaign.md`), then check its provenance (start-time commit, clean or dirty,
+observed backend), the baseline (`python -m lab baseline`) and the
+comparison's compatibility before trusting any explanation. Open
+`report.json` or `events.jsonl` only when the summary is not enough. Reports are
+rebuilt under the current scoring rules, so a rebuilt verdict can differ from
+the recorded one; the recording itself never changes. `lab/README.md` has the
+details.
+
 ## Runtime rules that are easy to break
 
 - **One entry point:** `hanly_app.cli:main`. The `hanly` script,

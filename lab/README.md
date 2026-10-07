@@ -29,8 +29,8 @@ python -m lab tour            # the lab uses Hanly itself and scores every answe
 python -m lab report          # reopen the newest report
 ```
 
-Everything else is optional. `python -m lab report --list` shows recent runs,
-and `python -m lab report <run-name>` reopens one.
+Everything else is optional. `python -m lab report --list` shows every recorded
+run of every kind, and `python -m lab report <run-name>` reopens one.
 
 ### `python -m lab` (`run`) — you drive
 
@@ -142,6 +142,17 @@ captured, re-grabbed from the lab's own page, and `python -m lab stress-replay
 <run>` feeds those through the production lookup worker, labelled as a lab
 re-capture replay.
 
+`--corpus <manifest> --repeats N` hovers a controlled-image corpus (below)
+instead of the seeded plan: each image is painted pixel for pixel on the lab's
+page, one per row, and hovered at its annotated point in N rounds, under the
+same ownership checks. Rule `corpus-surface-v1` judges these: a surface target
+passes when the selected word is the target, whatever the dictionary then
+answered (reported apart as the language outcome); a no-Korean target passes
+only when nothing was presented. `campaign.md` adds desktop stage facts and
+each case's stability over the rounds. A repeat may be answered from the
+lookup cache; `cache_hits` per hover says when. Negatives that time out or
+error are counted apart from false presentations.
+
 ### What a run records and reports
 
 Each run gets its own directory under gitignored `artifacts/lab/runs/` with its
@@ -163,6 +174,82 @@ Measurement limits: child timestamps share the shell's clock (`perf_counter`
 is system-wide on every supported OS). RSS is resident, not private, memory and
 is sampled, so short spikes can be missed. The shell's numbers include the lab
 recorder hosted in the same process.
+
+## Evidence: identity, baselines, comparison, storage
+
+Read a run's compact summary first: `summary.md` (sessions) or `campaign.md`
+(stress). Each opens with **Provenance**: recording commit and whether the
+checkout was clean, dirty or unknown when the run *started*, configured and
+observed OCR backend, the rule recorded and the rule shown, how the run ended,
+the code that rebuilt the report, and a reproduction command marked exact only
+when nothing in it is unresolved. `report.json` is the full model (megabytes);
+open it, or `events.jsonl`, only when the summary is not enough. Reports are
+rebuilt under the current rules; recorded evidence is never rewritten.
+
+```bash
+python -m lab report --list [--kind tour|stress|check|ocr_campaign|...]
+python -m lab baseline                       # registered baselines
+python -m lab baseline set <run> --reason "..." [--replace] [--allow-dirty]
+python -m lab baseline unset <run>
+python -m lab pin <run> --reason "..."       # keep any run out of clean-up
+python -m lab unpin <run>
+python -m lab tour --baseline                # compare with the registered baseline
+python -m lab report <run> --baseline <other-run>
+python -m lab storage [--json]
+python -m lab gc                             # preview; deletes nothing
+python -m lab gc --apply --plan <the plan the preview wrote>
+```
+
+**Identity** (`identity.py`) recognizes every run from its contents (session,
+stress, check set, OCR campaign, backend differential, measurement campaign,
+update check) and leaves anything else `unknown`. Every writer adds a
+`lab_provenance` block (version 1): start-time source, a separate end-of-run
+reading when the checkout changed during the run, platform, host (OS release,
+CPU count, memory), the measurement protocol and, where it has any, the working
+subtrees it declares disposable. Runs recorded before the block say their
+source was read at shutdown.
+
+**Baselines** live in the gitignored `artifacts/lab/pins.json`, which holds
+only run names, roles (`baseline` or `keep`) and reasons; everything else is
+read from the run. One baseline is active per compatibility key (kind,
+platform and architecture, observed backend, and the options that decide what
+is hovered). A baseline must have finished, with a known commit, checkout state
+and backend; a dirty one needs `--allow-dirty`. Anything can still be kept with
+`pin`.
+
+**Comparison** (`comparison.py`) first decides compatibility: `comparable`,
+`not_comparable` or `insufficient_evidence`, with reasons. Different commits
+never block it. Occurrences are matched by target *and* rendering (face, size,
+theme). Correctness needs the same kind, platform, backend, options and
+rendered plan; latency and memory also need both runs finished under one known
+measurement protocol on an identical host description, so runs recorded before
+provenance compare correctness only. An incompatible pair is shown as a raw
+comparison only. Otherwise the summary adds fixed explanations beside the raw
+numbers: correctness (`unchanged|improved|regressed|mixed|unavailable`), the
+failure set (retained, introduced, resolved), process roles, and performance
+under the named policy `indicative-bands-v1`:
+
+| measure | band |
+|---|---|
+| popup p50 | max(5 % of the baseline, 5 ms) |
+| sampled peak RSS per role | max(5 % of the baseline, 32 MiB) |
+
+These bands are not calibrated against Hanly's run-to-run variance, not
+significance tests and not release gates; they only label a raw delta, and
+repeatability evidence may change them. Two identical quick Mac tours already
+differed by 92 MiB of sampled lookup RSS.
+
+**Storage** reports `artifacts/lab` and `dist/` by owner: the Lab (a writer it
+recognizes), packaging (names `tools/build_package.py` writes) or unknown.
+`gc` only ever proposes subtrees a run's own writer declared disposable after
+keeping what explains the run: an update check's `install/`, `release/`,
+`profile/` and `temp/` once their logs are copied to `logs/`, and a stress run's
+`browser/`. It never touches a run root, recordings, reports, replay material,
+frozen exports, a pinned, active, unfinished or unrecognized run, or `dist/`.
+`--apply` deletes exactly the saved preview after re-checking eligibility,
+directory identity and contents; one stale target refuses the whole plan, and a
+deletion stopped midway reports what was deleted, what was partial and what was
+never attempted.
 
 ## `check` — fixed regression scenarios
 
@@ -355,8 +442,26 @@ python -m lab ocr-corpus --manifest lab/fixtures/ocr/manifest.json
 | `recognition-only` | detected crops through the recognizer; detection still runs to find them but is excluded from the reported total |
 | `frozen-replay` | a frozen ROI at its recorded configuration, labelled as replay |
 
-Every run writes `metadata.json`, `corpus-inventory.json`, `samples.jsonl` (one
-raw record per pass, so any summary can be regenerated) and `summary.json`.
+Every run writes `metadata.json`, `corpus-inventory.json` (with the corpus
+fingerprint), `samples.jsonl` (one raw record per pass, so any summary can be
+regenerated) and `summary.json`.
+
+For cases that state their truth (schema 2), each pass also records stage facts,
+`observed_true`, `observed_false` or `unavailable`, and the first stage
+observed to go wrong (`stage_evidence.py`): exact target-surface correctness
+through the engine's own resolver, a detector response on an empty image (only
+in EasyOCR's staged modes, where the detector ran alone; Vision's normalized
+regions are not detector internals), false Hangul, and false Korean target
+selection. `--repeats N` sets the warm repetitions, and the summary classifies
+each case as stable or varying apart from correct or wrong, so a consistently
+wrong answer is never mistaken for reliability.
+
+`--compare-backends [easyocr,vision]` runs the same corpus through each backend
+in a fresh `ocr-only` process and writes `differential.md` and `.json`: whether
+every child saw identical input hashes, each backend's initialization, memory
+and errors, and per case whether all passed, all failed at the same or
+different stages, or only some passed. A backend this machine lacks is
+`unavailable`; no winner is chosen, and staged EasyOCR replay is never mixed in.
 
 The first pass of each case is `cold`, then `--warmup` passes, then `--samples`
 warm ones. Only warm passes are scored; percentiles are nearest-rank over the
@@ -382,6 +487,29 @@ turns every measurement into a measurement of something else — and it refuses
 text the chosen face has no glyphs for. Samples from a face whose licence
 forbids redistribution are marked `local_synthetic`, which a committed manifest
 then refuses.
+
+### Generated corpora
+
+`ocr-corpus-generate --profile golden|smoke|balanced|difficult [--seed N]
+[--max-cases N] [--max-bytes N]` renders from faces installed on this machine
+into gitignored `artifacts/lab/corpus/<profile>-seed<N>/` (`manifest.json`,
+`generation.json` with every recipe and omission, `images/`). `golden` is a
+fixed set covering each family and condition once; `smoke` and `balanced` are
+seeded and split evenly across positive, negative and mixed cases; `difficult`
+draws only small, low-contrast, blurred, compressed, noisy or scaled-down text.
+Positives use the minibook's Korean lines and hand-set target words; negatives
+are Latin, numbers, punctuation, blank areas, icons, borders and textures;
+Japanese and Chinese cases appear only when a face proves those glyphs.
+`ocr-corpus --fonts` lists the installed faces and the scripts each can draw.
+
+Schema 2 states each case's truth (text present, Korean present, a surface or
+no-Korean target, complete or missing regions), its family and its generation
+identity: seed, generator and renderer versions, face hash, style and index,
+layout, colours, supersampling (rendered large and reduced once) apart from
+post-render display scaling, blur, JPEG, seeded noise and the final pixel hash.
+A missing face or glyph is an omission with its reason, never a substitute;
+discovered faces have unknown licences, so their cases stay `local_synthetic`.
+Schema 1 manifests still load, without stated truth.
 
 ## Tests
 
