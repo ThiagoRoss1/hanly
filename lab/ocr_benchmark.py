@@ -9,6 +9,7 @@ recognition total.
 from __future__ import annotations
 
 import time
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,7 +19,8 @@ from hanly import OCRProvider, OCRResult, PixelFormat, Point, Quad, ROIImage
 
 from .corpus import Corpus, CorpusCase, validate_case_geometry
 from .easyocr_stages import STAGED_DIAGNOSTIC, run_staged_easyocr
-from .ocr_metrics import Metric, Region, aggregate, score_case
+from .ocr_metrics import Metric, Region, aggregate, normalize, score_case
+from .stage_evidence import evaluable, fact_counts, ocr_facts, stability
 
 #: What a run can be asked to do.
 OCR_ONLY = "ocr-only"
@@ -61,10 +63,22 @@ class CaseResult:
     metrics: tuple[Metric, ...] = ()
     unavailable: tuple[str, ...] = ()
     error: str | None = None
+    #: Stage facts against the case's stated truth; see ``lab.stage_evidence``.
+    facts: dict[str, str] = field(default_factory=dict)
+    #: The first stage observed to go wrong in this pass, if any.
+    stage: str | None = None
 
     @property
     def text(self) -> str:
         return " ".join(region.text for region in self.regions)
+
+    @property
+    def ok(self) -> bool | None:
+        """Whether this pass met the case's truth, or ``None`` when it cannot be judged."""
+
+        if self.error is not None or not evaluable(self.facts):
+            return None
+        return self.stage is None
 
 
 @dataclass(frozen=True)
@@ -140,8 +154,32 @@ class CampaignReport:
                 "warm": _latency(warm),
             },
             "metrics": aggregate([metric for result in warm for metric in result.metrics]),
+            "stage_evidence": fact_counts(result.facts for result in warm),
+            "first_bad_stage": dict(
+                Counter(result.stage for result in warm if result.stage).most_common()
+            ),
+            "stability": self.stability(),
             "memory": None if self.memory is None else self.memory.as_dict(),
             "notes": list(self.notes),
+        }
+
+    def stability(self) -> dict[str, Any]:
+        """Per-case behaviour over the warm repetitions, and how many cases each kind."""
+
+        by_case: dict[str, list[dict[str, Any]]] = {}
+        for result in self.results:
+            if result.condition == "warm":
+                by_case.setdefault(result.case_id, []).append(
+                    {
+                        "output": normalize(result.text),
+                        "ok": result.ok,
+                        "error": result.error is not None,
+                    }
+                )
+        cases = {case: stability(observations) for case, observations in sorted(by_case.items())}
+        return {
+            "classes": dict(Counter(row["classification"] for row in cases.values()).most_common()),
+            "cases": cases,
         }
 
 
@@ -298,6 +336,16 @@ def _run_one(
             mode, provider, reader, image, started
         )
     except Exception as error:
+        facts, stage = ocr_facts(
+            case,
+            mode=mode,
+            texts=(),
+            region_count=0,
+            transcribes=False,
+            resolved=None,
+            resolved_ran=False,
+            error=True,
+        )
         return CaseResult(
             case_id=case.case_id,
             mode=mode,
@@ -307,14 +355,28 @@ def _run_one(
             regions=(),
             timings=StageTimings(total_ns=time.perf_counter_ns() - started),
             error=f"{type(error).__name__}: {error}",
+            facts=facts,
+            stage=stage,
         )
 
+    # A mode that drops the text cannot be scored on it. Passing the
+    # expectations through anyway would report a perfect error rate for a
+    # transcription this mode never attempted.
+    transcribes = "transcription" not in unavailable
+    resolve = resolve_target and transcribes and case.expected_target is not None
+    resolved = _resolved_surface(case, regions) if resolve else None
+    facts, stage = ocr_facts(
+        case,
+        mode=mode,
+        texts=tuple(region.text for region in regions),
+        region_count=len(regions),
+        transcribes=transcribes,
+        resolved=resolved,
+        resolved_ran=resolve,
+        error=False,
+    )
     metrics: tuple[Metric, ...] = ()
     if condition == "warm":
-        # A mode that drops the text cannot be scored on it. Passing the
-        # expectations through anyway would report a perfect error rate for a
-        # transcription this mode never attempted.
-        transcribes = "transcription" not in unavailable
         metrics = score_case(
             expected_text=case.expected_text if transcribes else None,
             expected_surface=case.expected_surface if transcribes else None,
@@ -324,9 +386,7 @@ def _run_one(
                 for region in case.expected_regions
             ),
             actual_regions=tuple(_as_region(region) for region in regions),
-            resolved_surface=(
-                _resolved_surface(case, regions) if resolve_target and transcribes else None
-            ),
+            resolved_surface=resolved,
             repeats=repeats if transcribes else (),
             iou_threshold=iou_threshold,
         )
@@ -340,6 +400,8 @@ def _run_one(
         timings=timings,
         metrics=metrics,
         unavailable=unavailable,
+        facts=facts,
+        stage=stage,
     )
 
 
@@ -463,6 +525,8 @@ def write_samples(report: CampaignReport, destination: Path) -> Path:
                         "text": result.text,
                         "metrics": [metric.as_dict() for metric in result.metrics],
                         "unavailable": list(result.unavailable),
+                        "facts": result.facts,
+                        "first_bad_stage": result.stage,
                         "error": result.error,
                     },
                     ensure_ascii=False,

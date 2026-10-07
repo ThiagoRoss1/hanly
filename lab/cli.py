@@ -1219,7 +1219,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     ocr.add_argument("--config", type=Path, help="runtime config supplying EasyOCR options")
     ocr.add_argument("--warmup", type=int, default=1)
-    ocr.add_argument("--samples", type=int, default=3)
+    ocr.add_argument(
+        "--samples",
+        "--repeats",
+        dest="samples",
+        type=int,
+        default=3,
+        help="warm repetitions per case; stability is summarized over these (default: 3)",
+    )
     ocr.add_argument("--iou-threshold", type=float, default=0.5)
     ocr.add_argument("--cpu-threads", type=_parse_cpu_threads)
     ocr.add_argument(
