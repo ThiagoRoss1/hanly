@@ -66,13 +66,15 @@ def resolve_baseline(
     return found.path, None
 
 
-def provenance_model(identity: RunIdentity, metadata: dict[str, Any]) -> dict[str, Any]:
+def provenance_model(
+    identity: RunIdentity, metadata: dict[str, Any], current_rule: str = RULE
+) -> dict[str, Any]:
     """Who recorded the run, from what, and with which code this report was rebuilt."""
 
     return {
         "identity": identity.as_dict(),
         "recorded_rules": list(identity.rules),
-        "current_rule": RULE,
+        "current_rule": current_rule,
         "rebuilt_with": source_identity(REPO_ROOT),
         "reproduce": reproduction(identity, metadata),
     }

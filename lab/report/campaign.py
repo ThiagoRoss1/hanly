@@ -59,7 +59,7 @@ def build_campaign(run_dir: Path, *, baseline: Path | str | None = None) -> dict
     chosen, note = resolve_baseline(identity, baseline)
     model: dict[str, Any] = {
         "run": run_dir.name,
-        "rule": RULE,
+        "rule": _rules(rows),
         "commit": metadata.get("commit"),
         "dirty": metadata.get("dirty"),
         "platform": metadata.get("platform"),
@@ -77,7 +77,7 @@ def build_campaign(run_dir: Path, *, baseline: Path | str | None = None) -> dict
         "failures": _failures(rows, bool(metadata.get("fixture_text_retained"))),
         "acquisition": _acquisition(rows),
         "informational": _informational(rows),
-        "provenance": provenance_model(identity, metadata),
+        "provenance": provenance_model(identity, metadata, current_rule=_rules(rows)),
         "comparison_note": note,
         "corpus": corpus_summary(rows),
     }
@@ -115,7 +115,7 @@ def compare_campaigns(
     after_rss = current["processes"].get("peak_rss_mib", {})
     return {
         "baseline": baseline_dir.name,
-        "rule": RULE,
+        "rule": current["rule"],
         "compatibility": compat,
         "before": summarize(before_rows),
         "after": current["summary"],
@@ -197,6 +197,13 @@ def _fact(
         verdict = row.get("verdict")
         counts[TRUE if verdict == true else FALSE if verdict in false else UNAVAILABLE] += 1
     return dict(counts)
+
+
+def _rules(rows: list[dict[str, Any]]) -> str:
+    """The rules this campaign's hovers are judged under, now."""
+
+    rules = {CORPUS_RULE if row.get("family") == "corpus" else RULE for row in rows}
+    return ", ".join(sorted(rules)) or RULE
 
 
 def _scored(run_dir: Path) -> list[dict[str, Any]]:
