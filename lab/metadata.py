@@ -132,6 +132,12 @@ def provenance(
             "release": platform.release(),
             "machine": platform.machine(),
         },
+        # What decides whether two machines' timings are comparable; no names.
+        "host": {
+            "release": platform.release(),
+            "cpu_count": os.cpu_count(),
+            "ram_bytes": _total_memory_bytes(),
+        },
     }
     if source_at_end is not None:
         block["source_at_end"] = dict(source_at_end)

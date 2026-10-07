@@ -17,6 +17,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..comparison import (
+    POLICY,
+    compare_outcomes,
+    compatibility,
+    occurrences,
+    performance,
+    process_roles,
+    tour_occurrence,
+)
+from ..identity import run_identity
 from ..session.recorder import is_content_field, is_lifecycle_line
 from ..session.scoring import PASS, RULE, UNSCORED, classify, summarize
 
@@ -656,55 +666,82 @@ def tour_summary(
     }
 
 
-def _comparable(row: Mapping[str, Any]) -> str:
-    """Story targets by ID; words by surface, since their IDs follow sampling order."""
+def compare_tours(
+    baseline_dir: Path, current: Mapping[str, Any], current_dir: Path
+) -> dict[str, Any] | None:
+    """Both runs' tour results under the current rule, matched occurrence by occurrence.
 
-    if row.get("source") == "words":
-        return f"words:{row.get('surface')}"
-    return str(row.get("target"))
-
-
-def compare_tours(baseline_dir: Path, current: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Both runs' tour results under the current rule, matched by target.
-
-    Reads the baseline's raw recording only; nothing is written beside it.
+    Reads the baseline's raw recording only; nothing is written beside it. The
+    explanations are derived only as far as the two runs' compatibility allows.
     """
 
-    events, _, metadata = load(baseline_dir)
+    events, processes, metadata = load(baseline_dir)
     recorded = [event for event in events if event["event"] == "tour_result"]
     tour = current.get("tour")
     if not recorded or not tour:
         return None
     before = tour_summary(recorded, include_read=_retained(metadata))
-    after_by = {_comparable(row): row for row in tour["results"]}
-    before_by = {_comparable(row): row for row in before["results"]}
-    changed = [
-        {
-            "target": after_by[target].get("target"),
-            "expected": after_by[target].get("expected"),
-            "before": before_by[target]["verdict"],
-            "after": after_by[target]["verdict"],
-            "before_answer": before_by[target].get("headword"),
-            "after_answer": after_by[target].get("headword"),
-        }
-        for target in sorted(set(before_by) & set(after_by))
-        if before_by[target]["verdict"] != after_by[target]["verdict"]
-    ]
+    compat = compatibility(run_identity(baseline_dir), run_identity(current_dir))
+    eligible = compat["eligible"]
+    outcomes = compare_outcomes(
+        before["results"],
+        tour["results"],
+        key=tour_occurrence,
+        passes=PASS,
+        unscored=UNSCORED,
+        eligible=eligible["correctness"],
+    )
+    old = occurrences(before["results"], tour_occurrence)
+    new = occurrences(tour["results"], tour_occurrence)
+    before_processes = process_profile(processes, events)["summary"]
+    after_processes = current["processes"]["summary"]
     keys = ("scored", "unscored", "passed", "accuracy")
     return {
         "baseline": baseline_dir.name,
         "rule": RULE,
-        "baseline_settings": {
-            k: metadata.get(k) for k in ("commit", "options")
-        },
+        "baseline_settings": {k: metadata.get(k) for k in ("commit", "options")},
+        "compatibility": compat,
         "before": {k: before[k] for k in keys},
         "after": {k: tour[k] for k in keys},
-        "matched": len(set(before_by) & set(after_by)),
-        "only_before": len(set(before_by) - set(after_by)),
-        "only_after": len(set(after_by) - set(before_by)),
-        "changed": changed,
+        "matched": outcomes["matched"],
+        "only_before": outcomes["only_before"],
+        "only_after": outcomes["only_after"],
+        "outcomes": outcomes,
+        "changed": [
+            {
+                "occurrence": row["occurrence"],
+                "target": new[row["occurrence"]].get("target"),
+                "expected": new[row["occurrence"]].get("expected"),
+                "before": row["before"],
+                "after": row["after"],
+                "before_answer": old[row["occurrence"]].get("headword"),
+                "after_answer": new[row["occurrence"]].get("headword"),
+            }
+            for row in outcomes["changed"]
+        ],
         "before_popup_ms": before["popup_ms"],
         "after_popup_ms": tour["popup_ms"],
+        "process_roles": process_roles(before_processes, after_processes),
+        "performance": [
+            performance(
+                "popup p50",
+                before["popup_ms"].get("p50"),
+                tour["popup_ms"].get("p50"),
+                POLICY.popup_p50,
+                eligible=eligible["latency"],
+                samples=(before["popup_ms"].get("n"), tour["popup_ms"].get("n")),
+            ),
+            *(
+                performance(
+                    f"{role} peak sampled RSS",
+                    (before_processes.get(role) or {}).get("rss_mib"),
+                    (after_processes.get(role) or {}).get("rss_mib"),
+                    POLICY.sampled_rss,
+                    eligible=eligible["memory"],
+                )
+                for role in ("lookup", "shell")
+            ),
+        ],
     }
 
 

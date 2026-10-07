@@ -94,6 +94,8 @@ class RunIdentity:
     completion: str
     evidence: dict[str, bool]
     provenance_version: int | None
+    #: OS release, CPU count and memory, when the writer recorded them.
+    host: dict[str, Any] = field(default_factory=dict)
     conflicts: tuple[str, ...] = ()
     notes: tuple[str, ...] = field(default=())
 
@@ -206,6 +208,75 @@ def fingerprint(rows: Iterable[Any]) -> str:
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def reproduction(identity: RunIdentity, metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """The command that would record this run again, and what it cannot pin down.
+
+    ``exact`` means every part of the command and checkout is known. Data the
+    command reads from this machine -- the dictionary, the installed faces --
+    is listed under ``prerequisites`` either way, never assumed equal.
+    """
+
+    raw = metadata.get("options")
+    options: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    if identity.kind == "run":
+        return {
+            "command": "python -m lab run",
+            "exact": False,
+            "missing": ["a person drove this session; their input is not recorded"],
+            "prerequisites": [],
+        }
+    if identity.kind not in {"tour", "stress"}:
+        return {
+            "command": None,
+            "exact": False,
+            "missing": [f"{identity.kind} is not a session"],
+            "prerequisites": [],
+        }
+
+    required: tuple[str, ...] = ("seed",)
+    if identity.kind == "tour":
+        required = ("words", "story_sizes", "word_sizes", "seed")
+    missing = [f"option {name} was not recorded" for name in required if options.get(name) is None]
+    words = ["python", "-m", "lab", identity.kind]
+    if identity.kind == "tour":
+        words += ["--words", str(options.get("words"))]
+        words += ["--story-sizes", _sizes(options.get("story_sizes"))]
+        words += ["--word-sizes", _sizes(options.get("word_sizes"))]
+    if options.get("per_family") is not None:
+        words += ["--per-family", str(options["per_family"])]
+    words += ["--seed", str(options.get("seed"))]
+    if identity.backend in {"vision", "easyocr"}:
+        words += ["--backend", identity.backend]
+    else:
+        missing.append("which OCR backend ran is not on record")
+    if metadata.get("fixture_text_retained"):
+        words.append("--retain-fixture-text")
+    if metadata.get("fixture_images_retained"):
+        words.append("--retain-fixture-images")
+    if identity.commit == UNKNOWN:
+        missing.append("the recording commit is unknown")
+    if identity.source_state != "clean":
+        missing.append(f"the checkout was {identity.source_state}; its changes are not recorded")
+    elif identity.provenance_version is None:
+        missing.append("the checkout was read at shutdown, so its state at the start is unproven")
+    checkout = f"git checkout {identity.commit} && " if identity.commit != UNKNOWN else ""
+    return {
+        "command": checkout + " ".join(words),
+        "exact": not missing,
+        "missing": missing,
+        "prerequisites": [
+            "the same KRDICT database (it decides the sampled words)",
+            "the same installed Korean faces (they decide each rendering)",
+        ],
+    }
+
+
+def _sizes(value: Any) -> str:
+    if isinstance(value, list | tuple):
+        return ",".join(str(size) for size in value) or "0"
+    return "0" if value is None else str(value)
+
+
 # -- sessions ---------------------------------------------------------------------------
 
 
@@ -260,6 +331,7 @@ def _session(run_dir: Path, metadata: dict[str, Any], notes: list[str]) -> RunId
         completion=_session_completion(mode, metadata, events),
         evidence=evidence,
         provenance_version=_version(block),
+        host=_host(block),
         conflicts=conflicts,
         notes=tuple(notes),
     )
@@ -509,6 +581,11 @@ def _provenance(record: Mapping[str, Any]) -> dict[str, Any] | None:
     return block if isinstance(block, dict) else None
 
 
+def _host(block: Mapping[str, Any] | None) -> dict[str, Any]:
+    host = (block or {}).get("host")
+    return dict(host) if isinstance(host, Mapping) else {}
+
+
 def _version(block: Mapping[str, Any] | None) -> int | None:
     value = (block or {}).get("version")
     return value if isinstance(value, int) else None
@@ -576,6 +653,7 @@ __all__ = [
     "fingerprint",
     "identities",
     "recorded_runs",
+    "reproduction",
     "resolve_name",
     "run_identity",
     "run_name",

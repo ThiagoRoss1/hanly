@@ -14,8 +14,25 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from ..comparison import (
+    POLICY,
+    compare_outcomes,
+    compatibility,
+    performance,
+    process_roles,
+    stress_occurrence,
+)
+from ..identity import run_identity
+from ..session.scoring import UNSCORED
 from ..session.stress import NEGATIVE
-from ..session.stress_scoring import PASS, RULE, failing_stage, stress_verdict, summarize
+from ..session.stress_scoring import (
+    INFORMATION,
+    PASS,
+    RULE,
+    failing_stage,
+    stress_verdict,
+    summarize,
+)
 
 _ORDER = (
     "word", "story", "cursor", "dense", "mixed_korean", "image_text", "repeat", "rapid",
@@ -24,20 +41,20 @@ _ORDER = (
 )
 
 
-def build_campaign(run_dir: Path) -> dict[str, Any]:
-    """Score every recorded hover under the current rule and write all three files."""
+def build_campaign(run_dir: Path, *, baseline: Path | str | None = None) -> dict[str, Any]:
+    """Score every recorded hover under the current rule and write all three files.
+
+    ``baseline`` adds a comparison with an earlier campaign, re-scored under
+    the same rule; nothing is written beside it.
+    """
+
+    from .build import provenance_model, resolve_baseline
 
     metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
-    rows = [
-        event
-        for event in _events(run_dir)
-        if event.get("event") == "stress_result"
-    ]
-    recorded = Counter(str(row.get("verdict")) for row in rows)
-    for row in rows:
-        row["recorded_verdict"] = row.get("verdict")
-        row["verdict"] = stress_verdict(row)
-        row["stage"] = failing_stage(row)
+    rows = _scored(run_dir)
+    recorded = Counter(str(row.get("recorded_verdict")) for row in rows)
+    identity = run_identity(run_dir)
+    chosen, note = resolve_baseline(identity, baseline)
     model: dict[str, Any] = {
         "run": run_dir.name,
         "rule": RULE,
@@ -58,13 +75,81 @@ def build_campaign(run_dir: Path) -> dict[str, Any]:
         "failures": _failures(rows, bool(metadata.get("fixture_text_retained"))),
         "acquisition": _acquisition(rows),
         "informational": _informational(rows),
+        "provenance": provenance_model(identity, metadata),
+        "comparison_note": note,
     }
+    model["comparison"] = (
+        None if chosen is None else compare_campaigns(chosen, model, rows, run_dir)
+    )
     (run_dir / "campaign.json").write_text(
         json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (run_dir / "campaign.md").write_text(_markdown(model), encoding="utf-8")
     (run_dir / "campaign.html").write_text(_html(model), encoding="utf-8")
     return model
+
+
+def compare_campaigns(
+    baseline_dir: Path, current: dict[str, Any], rows: list[dict[str, Any]], run_dir: Path
+) -> dict[str, Any]:
+    """The current campaign against an earlier one, occurrence by occurrence."""
+
+    before_rows = _scored(baseline_dir)
+    compat = compatibility(run_identity(baseline_dir), run_identity(run_dir))
+    eligible = compat["eligible"]
+    outcomes = compare_outcomes(
+        before_rows,
+        rows,
+        key=stress_occurrence,
+        passes=PASS,
+        unscored=UNSCORED,
+        informational=INFORMATION | {"observed"},
+        eligible=eligible["correctness"],
+    )
+    before_latency = _latency(before_rows)["all"]
+    after_latency = current["latency"]["all"]
+    before_rss = _processes(baseline_dir).get("peak_rss_mib", {})
+    after_rss = current["processes"].get("peak_rss_mib", {})
+    return {
+        "baseline": baseline_dir.name,
+        "rule": RULE,
+        "compatibility": compat,
+        "before": summarize(before_rows),
+        "after": current["summary"],
+        "outcomes": outcomes,
+        "process_roles": process_roles(before_rss or None, after_rss or None),
+        "performance": [
+            performance(
+                "popup p50",
+                before_latency["p50"],
+                after_latency["p50"],
+                POLICY.popup_p50,
+                eligible=eligible["latency"],
+                samples=(before_latency["n"], after_latency["n"]),
+            ),
+            *(
+                performance(
+                    f"{role} peak sampled RSS",
+                    before_rss.get(role),
+                    after_rss.get(role),
+                    POLICY.sampled_rss,
+                    eligible=eligible["memory"],
+                )
+                for role in ("lookup", "shell")
+            ),
+        ],
+    }
+
+
+def _scored(run_dir: Path) -> list[dict[str, Any]]:
+    """Every recorded hover re-scored under the current rule; the recording is untouched."""
+
+    rows = [event for event in _events(run_dir) if event.get("event") == "stress_result"]
+    for row in rows:
+        row["recorded_verdict"] = row.get("verdict")
+        row["verdict"] = stress_verdict(row)
+        row["stage"] = failing_stage(row)
+    return rows
 
 
 def _events(run_dir: Path) -> list[dict[str, Any]]:
@@ -168,18 +253,25 @@ def _informational(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _markdown(model: dict[str, Any]) -> str:
+    from .build import comparison_lines, provenance_lines
+
     summary = model["summary"]
     lines = [
         f"# Stress campaign - {model['run']}",
         "",
-        f"- commit {str(model['commit'])[:12]} (dirty: {model['dirty']}), {model['platform']}",
+        *provenance_lines(model["provenance"]),
+        *comparison_lines(model.get("comparison"), model.get("comparison_note")),
+        "",
+        "## Campaign",
+        "",
         f"- rule {model['rule']}; ended: {model['ended']}",
         f"- planned {model['planned_total']}, executed {summary['executed']}, "
         f"scored {summary['scored']}, unscored {summary['unscored']}",
         f"- passed {summary['passed']} of {summary['scored']}"
         + (f" ({summary['accuracy']:.1%})" if summary["accuracy"] is not None else ""),
-        f"- false positives {summary['false_positives']} of {summary['negatives_scored']} "
-        f"negatives; missing or wrong answers {summary['missing_answers']} of "
+        f"- false presentations {summary['false_positives']} of {summary['negatives_scored']} "
+        f"negatives ({summary['negatives_failed_otherwise']} more timed out or errored); "
+        f"missing or wrong answers {summary['missing_answers']} of "
         f"{summary['positives_scored']} positives",
         "",
         "## Families",
@@ -312,9 +404,10 @@ def _html(model: dict[str, Any]) -> str:
             _kpi("scored / unscored", f"{summary['scored']} / {summary['unscored']}"),
             _kpi("passed", f"{summary['passed']}{accuracy}"),
             _kpi(
-                "false positives",
+                "false presentations",
                 f"{summary['false_positives']} / {summary['negatives_scored']}",
             ),
+            _kpi("negatives timed out or errored", str(summary["negatives_failed_otherwise"])),
             _kpi(
                 "missing or wrong answers",
                 f"{summary['missing_answers']} / {summary['positives_scored']}",

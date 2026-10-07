@@ -7,17 +7,31 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..comparison import headline
+from ..identity import REPO_ROOT, RunIdentity, reproduction, run_identity
+from ..metadata import source_identity
+from ..session.scoring import RULE
 from .model import SEGMENTS, build_model, compare_tours
 
 _TEMPLATE = Path(__file__).with_name("template.html")
+#: ``--baseline`` given without a run: the registered baseline for this run's key.
+REGISTERED = "registered"
 
 
-def build_report(run_dir: Path, *, baseline: Path | None = None) -> Path:
-    """Write the run's reports; ``baseline`` adds a same-rule before/after comparison."""
+def build_report(run_dir: Path, *, baseline: Path | str | None = None) -> Path:
+    """Write the run's reports; ``baseline`` adds a same-rule before/after comparison.
+
+    ``REGISTERED`` picks the baseline the local registry holds for this run's
+    compatibility key. Nothing is written beside the baseline.
+    """
 
     run_dir = Path(run_dir)
     model = build_model(run_dir)
-    model["comparison"] = None if baseline is None else compare_tours(Path(baseline), model)
+    identity = run_identity(run_dir)
+    model["provenance"] = provenance_model(identity, model["metadata"])
+    chosen, note = resolve_baseline(identity, baseline)
+    model["comparison"] = None if chosen is None else compare_tours(chosen, model, run_dir)
+    model["comparison_note"] = note
     model["run"] = run_dir.name
     model["segments"] = [list(pair) for pair in SEGMENTS]
     model["map"] = system_map(model)
@@ -30,6 +44,98 @@ def build_report(run_dir: Path, *, baseline: Path | None = None) -> Path:
     path = run_dir / "report.html"
     path.write_text(html, encoding="utf-8")
     return path
+
+
+def resolve_baseline(
+    identity: RunIdentity, baseline: Path | str | None
+) -> tuple[Path | None, str | None]:
+    """The baseline directory to compare with, or why there is none."""
+
+    if baseline is None:
+        return None, None
+    if str(baseline) != REGISTERED:
+        return Path(baseline), None
+    from ..pins import PinError, load
+
+    try:
+        found = load().baseline_for(identity)
+    except PinError as error:
+        return None, f"the pin registry is unreadable: {error}"
+    if found is None:
+        return None, f"no registered baseline for {identity.compatibility_key}"
+    return found.path, None
+
+
+def provenance_model(identity: RunIdentity, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Who recorded the run, from what, and with which code this report was rebuilt."""
+
+    return {
+        "identity": identity.as_dict(),
+        "recorded_rules": list(identity.rules),
+        "current_rule": RULE,
+        "rebuilt_with": source_identity(REPO_ROOT),
+        "reproduce": reproduction(identity, metadata),
+    }
+
+
+def provenance_lines(provenance: dict[str, Any]) -> list[str]:
+    """The compact report's provenance block, shared by sessions and campaigns."""
+
+    identity = provenance["identity"]
+    rebuilt = provenance["rebuilt_with"]
+    reproduce = provenance["reproduce"]
+    lines = [
+        "## Provenance",
+        "",
+        f"- recorded from commit {identity['commit'][:12]}, checkout {identity['source_state']}"
+        f" (changed during the run: {identity['source_changed']})",
+        f"- platform {identity['system']} {identity['machine']}; OCR backend configured "
+        f"{identity['configured_backend']}, observed "
+        f"{', '.join(identity['observed_backends']) or 'none'}",
+        f"- rule recorded {', '.join(provenance['recorded_rules']) or 'none'}; "
+        f"shown under {provenance['current_rule']}",
+        f"- ended: {identity['completion']}; measurement protocol "
+        f"{identity['measurement_protocol']}",
+        f"- this report was rebuilt with commit {rebuilt['commit'][:12]} ({rebuilt['state']})",
+    ]
+    for conflict in identity["conflicts"]:
+        lines.append(f"- conflict: {conflict}")
+    if reproduce["command"]:
+        label = "exact" if reproduce["exact"] else "not exact"
+        lines.append(f"- reproduce ({label}): `{reproduce['command']}`")
+    for item in reproduce["missing"]:
+        lines.append(f"  - unresolved: {item}")
+    for item in reproduce["prerequisites"]:
+        lines.append(f"  - needs: {item}")
+    return lines
+
+
+def comparison_lines(comparison: dict[str, Any] | None, note: str | None) -> list[str]:
+    """Compatibility and the derived explanation lines, before any raw table."""
+
+    if comparison is None:
+        return [] if note is None else ["", "## Baseline", "", f"- {note}"]
+    compat = comparison["compatibility"]
+    lines = [
+        "",
+        f"## Compared with {comparison['baseline']} (both under {comparison['rule']})",
+        "",
+        f"- compatibility: {compat['status']}",
+    ]
+    lines += [f"  - reason: {reason}" for reason in compat["reasons"]]
+    lines += [f"  - warning: {warning}" for warning in compat["warnings"]]
+    lines += [f"  - performance not compared: {reason}" for reason in compat["performance_reasons"]]
+    lines += [f"- {line}" for line in headline(comparison)]
+    outcome = comparison["outcomes"]
+    lines.append(
+        f"- coverage: {outcome['matched']} matched occurrences, {outcome['only_before']} only "
+        f"before, {outcome['only_after']} only after; {outcome['counts']}"
+    )
+    failures = outcome["failure_set"]
+    for label in ("introduced", "resolved"):
+        if failures[label]:
+            lines.append(f"- {label}: {', '.join(failures[label][:40])}")
+    return lines
 
 
 def system_map(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -160,11 +266,13 @@ def summary_markdown(model: dict[str, Any]) -> str:
     lines = [
         f"# Hanly Lab - {model['run']}",
         "",
-        f"- mode: {meta.get('mode')}  commit: {str(meta.get('commit', ''))[:12]}"
-        f"{' (dirty)' if meta.get('dirty') else ''}  platform: {meta.get('platform')}",
-        f"- duration: {model['duration_ms'] / 1000:.1f} s"
+        f"- mode: {meta.get('mode')}"
+        f"  duration: {model['duration_ms'] / 1000:.1f} s"
         f"  events: {sum(model['event_counts'].values())}"
         f"  dropped: {meta.get('dropped_events', 0)}",
+        "",
+        *provenance_lines(model["provenance"]),
+        *comparison_lines(model.get("comparison"), model.get("comparison_note")),
         "",
         "## Findings",
         "",
@@ -208,25 +316,26 @@ def summary_markdown(model: dict[str, Any]) -> str:
     comparison = model.get("comparison")
     if comparison:
         before, after = comparison["before"], comparison["after"]
+        raw = "" if comparison["compatibility"]["status"] == "comparable" else " (raw only)"
         lines += [
             "",
-            f"## Compared with {comparison['baseline']} (both under {comparison['rule']})",
+            f"## Raw comparison with {comparison['baseline']}{raw}",
             "",
             f"- before: {before['passed']}/{before['scored']} scored "
             f"({_pct(before['accuracy'])}), {before['unscored']} unscored",
             f"- after: {after['passed']}/{after['scored']} scored "
             f"({_pct(after['accuracy'])}), {after['unscored']} unscored",
-            f"- matched targets: {comparison['matched']}  only before: "
+            f"- matched occurrences: {comparison['matched']}  only before: "
             f"{comparison['only_before']}  only after: {comparison['only_after']}",
             f"- popup median: {comparison['before_popup_ms'].get('p50')} -> "
             f"{comparison['after_popup_ms'].get('p50')} ms",
             "",
-            "| target | expected | before | after | answer before | answer after |",
+            "| occurrence | expected | before | after | answer before | answer after |",
             "|---|---|---|---|---|---|",
         ]
         for row in comparison["changed"]:
             lines.append(
-                f"| {row['target']} | {row['expected']} | {row['before']} | {row['after']} | "
+                f"| {row['occurrence']} | {row['expected']} | {row['before']} | {row['after']} | "
                 f"{row['before_answer'] or '–'} | {row['after_answer'] or '–'} |"
             )
     tour = model.get("tour")

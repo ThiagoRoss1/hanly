@@ -23,6 +23,8 @@ from .stress import INFORMATIONAL, NEGATIVE
 RULE = "stress-v1"
 
 PASS = frozenset({"correct", "refused", "quiet", "withheld"})
+#: An answer was presented where none should have been.
+FALSE_PRESENTATION = frozenset({"false_answer", "stale_popup"})
 INFORMATION = frozenset({"answered_before_leaving", "observed", "not_submitted"})
 
 
@@ -121,7 +123,16 @@ def summarize(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "unscored": len(rows) - len(scored),
         "passed": passed,
         "accuracy": passed / len(scored) if scored else None,
-        "false_positives": sum(1 for row in negatives if row.get("verdict") not in PASS),
+        # Only a presented answer is a false positive; a negative that timed out
+        # or errored failed differently and is counted on its own.
+        "false_positives": sum(
+            1 for row in negatives if row.get("verdict") in FALSE_PRESENTATION
+        ),
+        "negatives_failed_otherwise": sum(
+            1
+            for row in negatives
+            if row.get("verdict") not in PASS and row.get("verdict") not in FALSE_PRESENTATION
+        ),
         "negatives_scored": len(negatives),
         "missing_answers": sum(1 for row in positives if row.get("verdict") not in PASS),
         "positives_scored": len(positives),
@@ -130,4 +141,12 @@ def summarize(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-__all__ = ["INFORMATION", "PASS", "RULE", "failing_stage", "stress_verdict", "summarize"]
+__all__ = [
+    "FALSE_PRESENTATION",
+    "INFORMATION",
+    "PASS",
+    "RULE",
+    "failing_stage",
+    "stress_verdict",
+    "summarize",
+]

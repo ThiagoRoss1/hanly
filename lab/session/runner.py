@@ -50,7 +50,8 @@ class SessionOptions:
     word_sizes: tuple[int, ...] = (16, 22, 30, 40)
     seed: int = 7
     backend: str | None = None
-    baseline: Path | None = None
+    #: An earlier run, or ``"registered"`` for the registry's baseline for this run's key.
+    baseline: Path | str | None = None
     #: Persist what verified tour hovers read (lab-authored text only).
     retain_fixture_text: bool = False
     #: Keep the region a failing verified stress hover captured, for an offline replay.
@@ -183,7 +184,7 @@ def run_session(options: SessionOptions) -> int:
     if plan is not None:
         from ..report.campaign import build_campaign
 
-        campaign = build_campaign(run_dir)
+        campaign = build_campaign(run_dir, baseline=options.baseline)
         report = run_dir / "campaign.html"
         print(f"lab: {_campaign_line(campaign)}; {_display(report)}", flush=True)
     if options.open_report:
@@ -406,8 +407,9 @@ def _campaign_line(campaign: dict[str, Any]) -> str:
         f"stress {summary['passed']}/{summary['scored']}"
         + ("" if accuracy is None else f" ({accuracy:.1%})")
         + f" under {campaign['rule']}; planned {campaign['planned_total']}, executed "
-        f"{summary['executed']}, unscored {summary['unscored']}; false positives "
-        f"{summary['false_positives']}/{summary['negatives_scored']}, missing or wrong "
+        f"{summary['executed']}, unscored {summary['unscored']}; false presentations "
+        f"{summary['false_positives']}/{summary['negatives_scored']} (and "
+        f"{summary['negatives_failed_otherwise']} timed out or errored), missing or wrong "
         f"{summary['missing_answers']}/{summary['positives_scored']}; ended {campaign['ended']}"
     )
 
@@ -538,7 +540,7 @@ def _metadata(
             "seed": options.seed,
             "duration": options.duration,
             "hud": options.hud,
-            "baseline": None if options.baseline is None else options.baseline.name,
+            "baseline": None if options.baseline is None else Path(options.baseline).name,
             "per_family": options.per_family,
             "backend": options.backend,
         },

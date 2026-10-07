@@ -1258,9 +1258,7 @@ def _session_parsers(subcommands: Any) -> None:
     tour.add_argument(
         "--quick", action="store_true", help="a short smoke tour: 24 words, no story"
     )
-    tour.add_argument(
-        "--baseline", help="earlier tour (directory or name) to compare this one with"
-    )
+    _baseline_option(tour, "tour")
     tour.add_argument(
         "--retain-fixture-text",
         action="store_true",
@@ -1298,9 +1296,7 @@ def _session_parsers(subcommands: Any) -> None:
     report.add_argument(
         "--limit", type=int, default=0, help="with --list, only the newest N (default: all)"
     )
-    report.add_argument(
-        "--baseline", help="earlier tour (directory or name) to compare with under the current rule"
-    )
+    _baseline_option(report, "session")
     report.add_argument("--no-open", action="store_true")
     report.set_defaults(handler=run_lab_report)
 
@@ -1345,6 +1341,7 @@ def _session_parsers(subcommands: Any) -> None:
     )
     _common_session_arguments(stress)
     stress.add_argument("--seed", type=int, default=11, help="campaign seed (default: 11)")
+    _baseline_option(stress, "stress campaign")
     stress.add_argument(
         "--per-family", type=int, help="at most N hovers per family, for a short check"
     )
@@ -1374,6 +1371,19 @@ def _session_parsers(subcommands: Any) -> None:
     replay.set_defaults(handler=_run_stress_replay)
 
 
+def _baseline_option(parser: argparse.ArgumentParser, kind: str) -> None:
+    parser.add_argument(
+        "--baseline",
+        nargs="?",
+        const="registered",
+        metavar="RUN",
+        help=(
+            f"earlier {kind} (directory or name) to compare with under the current rule; "
+            "alone, the registered baseline for this run's kind and settings"
+        ),
+    )
+
+
 def _common_session_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config", type=Path, help="runtime configuration (default: the one `hanly` uses)"
@@ -1397,14 +1407,13 @@ def _parse_sizes(value: str) -> tuple[int, ...]:
 def run_lab_session(args: argparse.Namespace) -> int:
     """Run the real desktop under observation, driven by a person or by the lab."""
 
-    from .session.runner import SessionOptions, resolve_run, run_session
+    from .session.runner import SessionOptions, run_session
 
     quick = getattr(args, "quick", False)
-    baseline = getattr(args, "baseline", None)
     return run_session(
         SessionOptions(
             mode=args.mode,
-            baseline=None if baseline is None else resolve_run(baseline),
+            baseline=_baseline_argument(getattr(args, "baseline", None)),
             retain_fixture_text=getattr(args, "retain_fixture_text", False),
             runtime_config=args.config,
             duration=getattr(args, "duration", None),
@@ -1426,8 +1435,9 @@ def run_lab_report(args: argparse.Namespace) -> int:
 
     import webbrowser
 
+    from .identity import run_identity
     from .report.build import build_report
-    from .session.runner import RUNS_ROOT, recorded_runs, resolve_run
+    from .session.runner import RUNS_ROOT, recorded_runs
 
     if args.list:
         return _list_runs(args.kind, args.limit)
@@ -1440,12 +1450,29 @@ def run_lab_report(args: argparse.Namespace) -> int:
         run_dir = runs[-1]
     else:
         run_dir = _session_or_explain(args.run_dir)
-    baseline = None if args.baseline is None else resolve_run(args.baseline)
+    baseline = _baseline_argument(args.baseline)
     report = build_report(run_dir, baseline=baseline)
     print(f"lab: report {report}")
+    if run_identity(run_dir).kind == "stress":
+        from .report.campaign import build_campaign
+
+        build_campaign(run_dir, baseline=baseline)
+        report = run_dir / "campaign.html"
+        print(f"lab: campaign {report}")
     if not args.no_open:
         webbrowser.open(report.resolve().as_uri())
     return 0
+
+
+def _baseline_argument(value: str | None) -> Path | str | None:
+    """A named earlier session, or the registered baseline when the flag stood alone."""
+
+    from .report.build import REGISTERED
+    from .session.runner import resolve_run
+
+    if value is None or value == REGISTERED:
+        return value
+    return resolve_run(value)
 
 
 def _session_or_explain(name: str) -> Path:
