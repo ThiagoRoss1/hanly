@@ -29,7 +29,7 @@ from .ownership import owner_at
 from .recorder import LabRecorder
 from .stress import StressItem
 from .stress_page import StressPage, StressPlaced
-from .stress_scoring import RULE, failing_stage, stress_verdict
+from .stress_scoring import CORPUS_RULE, RULE, failing_stage, stress_verdict
 
 #: How long a ``leave_early`` hover waits for its lookup to be submitted.
 _SUBMIT_WAIT = 2.0
@@ -365,9 +365,11 @@ class StressDriver(TourDriver):
             region=list(seen.region) if seen.region else None,
             observed=observed or {},
         )
+        if item is not None and item.family == "corpus":
+            record.update(case=item.case, truth_target=item.truth_target)
         record["verdict"] = stress_verdict(record)
         record["stage"] = failing_stage(record)
-        record["rule"] = RULE
+        record["rule"] = CORPUS_RULE if record["family"] == "corpus" else RULE
         if self._retain_images and unscored is None and record["stage"] in _REPLAYED:
             record["replay_image"] = self._recapture(record)
         self._recorder.lab("stress_result", **record)

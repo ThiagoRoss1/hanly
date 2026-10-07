@@ -59,6 +59,10 @@ class SessionOptions:
     retain_fixture_images: bool = False
     #: At most this many hovers per stress family; ``None`` runs the whole plan.
     per_family: int | None = None
+    #: A controlled-image corpus manifest to hover instead of the seeded plan.
+    corpus: Path | None = None
+    #: Rounds over the corpus.
+    repeats: int = 1
 
     @property
     def drives(self) -> bool:
@@ -338,7 +342,15 @@ def _start_tour(
 def _stress_plan(options: SessionOptions, runtime_config: Path) -> list[Any]:
     """The seeded campaign, trimmed per family when a short run was asked for."""
 
-    from .stress import stress_plan
+    from .stress import corpus_plan, stress_plan
+
+    if options.corpus is not None:
+        items, omitted = corpus_plan(options.corpus, options.repeats)
+        for entry in omitted:
+            print(f"lab: corpus case {entry['case']} omitted: {entry['reason']}", flush=True)
+        if not items:
+            raise SystemExit("lab: the corpus holds no case with a stated target and pointer")
+        return items
 
     plan = stress_plan(_krdict(runtime_config), seed=options.seed)
     if options.per_family is None:
@@ -368,6 +380,8 @@ def _start_stress(
     page = StressPage()
     uia = [item for item in plan if item.family in {"uia_korean", "uia_latin"}]
     page.lay_out_plan(plan, options.seed)
+    for omitted in page.omitted:
+        recorder.lab("tour_target_omitted", **omitted)
     total = sum(len(p.placed) for p in page.pages) + len(uia)
     recorder.lab(
         "tour_planned",
@@ -544,6 +558,9 @@ def _metadata(
             "baseline": None if options.baseline is None else Path(options.baseline).name,
             "per_family": options.per_family,
             "backend": options.backend,
+            "corpus": _corpus_identity(options.corpus),
+            "corpus_manifest": None if options.corpus is None else _display(options.corpus),
+            "repeats": options.repeats if options.corpus is not None else None,
         },
         "lab_provenance": provenance(
             options.mode,
@@ -554,6 +571,16 @@ def _metadata(
             disposable=[BROWSER_FOLDER] if options.mode == "stress" else [],
         ),
     }
+
+
+def _corpus_identity(manifest: Path | None) -> str | None:
+    """The corpus by content, so two runs over the same images compare."""
+
+    if manifest is None:
+        return None
+    from ..corpus import fingerprint, load_corpus
+
+    return fingerprint(load_corpus(manifest))
 
 
 def _display(path: Path) -> str:

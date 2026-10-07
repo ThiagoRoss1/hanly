@@ -21,8 +21,10 @@ from .scoring import UNSCORED, classify
 from .stress import INFORMATIONAL, NEGATIVE
 
 RULE = "stress-v1"
+#: Controlled-image hovers: judged on the selected surface, not the dictionary answer.
+CORPUS_RULE = "corpus-surface-v1"
 
-PASS = frozenset({"correct", "refused", "quiet", "withheld"})
+PASS = frozenset({"correct", "refused", "quiet", "withheld", "target_selected"})
 #: An answer was presented where none should have been.
 FALSE_PRESENTATION = frozenset({"false_answer", "stale_popup"})
 INFORMATION = frozenset({"answered_before_leaving", "observed", "not_submitted"})
@@ -35,6 +37,8 @@ def stress_verdict(record: Mapping[str, Any]) -> str:
     if isinstance(unscored, str) and unscored in UNSCORED:
         return unscored
     family = str(record.get("family") or "word")
+    if family == "corpus":
+        return corpus_verdict(record)
     if family in INFORMATIONAL:
         return "observed"
     if record.get("foreign_popups"):
@@ -44,6 +48,43 @@ def stress_verdict(record: Mapping[str, Any]) -> str:
     if family in NEGATIVE:
         return _negative(record)
     return classify(record)
+
+
+def corpus_verdict(record: Mapping[str, Any]) -> str:
+    """``corpus-surface-v1``: did the hover select the stated surface, or stay quiet?
+
+    A surface target passes when the selection is the target word, whatever the
+    dictionary then answered: a correct read followed by a dictionary miss is a
+    language outcome, never an OCR error. A ``no_korean`` target passes only
+    when no answer was presented.
+    """
+
+    if record.get("error"):
+        return "error"
+    if record.get("foreign_popups"):
+        return "stale_popup"
+    status = record.get("status")
+    if status is None and not record.get("lookup_ids"):
+        return "no_hover"
+    if record.get("timed_out"):
+        return "timed_out"
+    if record.get("truth_target") == "no_korean":
+        return "false_answer" if record.get("popup") == "SUCCESS" else "quiet"
+    if status is None:
+        return "no_result"
+    stored = record.get("facts")
+    facts: Mapping[str, Any] = stored if isinstance(stored, Mapping) else {}
+
+    def fact(name: str) -> bool:
+        return facts.get(name) is True
+
+    if fact("selection_is_target"):
+        return "target_selected"
+    if not fact("has_selection"):
+        if not fact("has_recognized_text"):
+            return "no_text"
+        return "unresolved" if fact("surface_was_read") else "misread"
+    return "wrong_word" if fact("surface_was_read") else "misread"
 
 
 def _negative(record: Mapping[str, Any]) -> str:
@@ -97,6 +138,12 @@ def failing_stage(record: Mapping[str, Any]) -> str | None:
     return "unknown"
 
 
+def is_negative(record: Mapping[str, Any]) -> bool:
+    """A hover whose only correct outcome is that no answer is presented."""
+
+    return str(record.get("family")) in NEGATIVE or record.get("truth_target") == "no_korean"
+
+
 def summarize(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """Counts per family, verdict and stage; accuracy over scored hovers only."""
 
@@ -114,8 +161,8 @@ def summarize(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         and row.get("verdict") != "observed"
     ]
     passed = sum(1 for row in scored if row.get("verdict") in PASS)
-    positives = [row for row in scored if str(row.get("family")) not in NEGATIVE]
-    negatives = [row for row in scored if str(row.get("family")) in NEGATIVE]
+    positives = [row for row in scored if not is_negative(row)]
+    negatives = [row for row in scored if is_negative(row)]
     return {
         "rule": RULE,
         "executed": len(rows),
@@ -142,11 +189,14 @@ def summarize(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 __all__ = [
+    "CORPUS_RULE",
     "FALSE_PRESENTATION",
     "INFORMATION",
     "PASS",
     "RULE",
+    "corpus_verdict",
     "failing_stage",
+    "is_negative",
     "stress_verdict",
     "summarize",
 ]

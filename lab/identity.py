@@ -55,7 +55,15 @@ _EVIDENCE = {
 }
 
 #: Options that change what a session hovers; everything else is presentation.
-_SESSION_OPTIONS = ("words", "story_sizes", "word_sizes", "seed", "per_family")
+_SESSION_OPTIONS = (
+    "words",
+    "story_sizes",
+    "word_sizes",
+    "seed",
+    "per_family",
+    "corpus",
+    "repeats",
+)
 #: Lines of ``events.jsonl`` worth decoding; the rest are skipped unparsed.
 _EVENT_MARKERS = (
     '"ocr_backend"',
@@ -244,6 +252,20 @@ def reproduction(identity: RunIdentity, metadata: Mapping[str, Any]) -> dict[str
         words += ["--word-sizes", _sizes(options.get("word_sizes"))]
     if options.get("per_family") is not None:
         words += ["--per-family", str(options["per_family"])]
+    prerequisites = [
+        "the same KRDICT database (it decides the sampled words)",
+        "the same installed Korean faces (they decide each rendering)",
+    ]
+    if options.get("corpus"):
+        words += [
+            "--corpus",
+            str(options.get("corpus_manifest")),
+            "--repeats",
+            str(options.get("repeats")),
+        ]
+        prerequisites = [f"the same corpus images (fingerprint {options['corpus']})"]
+        if not options.get("corpus_manifest"):
+            missing.append("the corpus manifest path was not recorded")
     words += ["--seed", str(options.get("seed"))]
     if identity.backend in {"vision", "easyocr"}:
         words += ["--backend", identity.backend]
@@ -264,10 +286,7 @@ def reproduction(identity: RunIdentity, metadata: Mapping[str, Any]) -> dict[str
         "command": checkout + " ".join(words),
         "exact": not missing,
         "missing": missing,
-        "prerequisites": [
-            "the same KRDICT database (it decides the sampled words)",
-            "the same installed Korean faces (they decide each rendering)",
-        ],
+        "prerequisites": prerequisites,
     }
 
 

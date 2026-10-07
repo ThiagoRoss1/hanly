@@ -1444,6 +1444,17 @@ def _session_parsers(subcommands: Any) -> None:
         "--per-family", type=int, help="at most N hovers per family, for a short check"
     )
     stress.add_argument(
+        "--corpus",
+        type=Path,
+        help=(
+            "hover a controlled-image corpus manifest instead of the seeded plan, judged "
+            "under corpus-surface-v1 (the selected word, not the dictionary answer)"
+        ),
+    )
+    stress.add_argument(
+        "--repeats", type=int, default=1, help="rounds over the corpus (default: 1)"
+    )
+    stress.add_argument(
         "--retain-fixture-text",
         action="store_true",
         help="also save what verified hovers read from the lab's own pages",
@@ -1524,6 +1535,8 @@ def run_lab_session(args: argparse.Namespace) -> int:
             backend=args.backend,
             retain_fixture_images=getattr(args, "retain_fixture_images", False),
             per_family=getattr(args, "per_family", None),
+            corpus=getattr(args, "corpus", None),
+            repeats=getattr(args, "repeats", 1),
         )
     )
 

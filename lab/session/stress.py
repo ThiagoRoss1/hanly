@@ -16,6 +16,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from ..corpus import CorpusCase, load_corpus
 from .corpus import TourTarget, story_targets, word_targets
 
 #: Families whose only correct outcome is that no answer is presented.
@@ -95,6 +96,12 @@ class StressItem:
     replacement: str | None = None
     #: For repeats: the item this one hovers again.
     repeat_of: str | None = None
+    #: For ``corpus``: the controlled image painted 1:1, the pointer's pixel in it,
+    #: the case's stated target (``surface`` or ``no_korean``) and its case ID.
+    image: str | None = None
+    image_target: tuple[float, float] | None = None
+    truth_target: str | None = None
+    case: str | None = None
 
     @property
     def negative(self) -> bool:
@@ -122,6 +129,53 @@ def stress_plan(database: Path, *, seed: int = 11) -> list[StressItem]:
     items += _behaviors(spare, words, generator)
     items += _uia(multi[127:167])
     return items
+
+
+def corpus_plan(manifest: Path, repeats: int) -> tuple[list[StressItem], list[dict[str, str]]]:
+    """Every case with stated truth and a pointer, ``repeats`` rounds over the whole corpus.
+
+    Rounds rather than back-to-back repeats, so a repeat is less likely to be
+    answered from the cache the previous hover just filled. Cases that cannot be
+    judged on the desktop are returned as omitted with the reason.
+    """
+
+    corpus = load_corpus(manifest)
+    usable: list[tuple[CorpusCase, str, tuple[float, float]]] = []
+    omitted = []
+    for case in corpus.cases:
+        if case.truth is None or case.truth.target == "none":
+            omitted.append({"case": case.case_id, "reason": "no stated target truth"})
+        elif case.expected_target is None:
+            omitted.append({"case": case.case_id, "reason": "no annotated pointer"})
+        else:
+            usable.append((case, case.truth.target, case.expected_target))
+    items = []
+    for round_index in range(1, repeats + 1):
+        for case, truth_target, point in usable:
+            surface = case.expected_surface or ""
+            target = TourTarget(
+                id=f"{case.case_id}#{round_index}",
+                source="corpus",
+                line=surface,
+                start=0,
+                surface=surface,
+                cursor=0,
+                lemma=None,
+                headword=None,
+                refuse=truth_target != "surface",
+            )
+            items.append(
+                StressItem(
+                    target,
+                    "corpus",
+                    image=str(case.image),
+                    image_target=point,
+                    truth_target=truth_target,
+                    case=case.case_id,
+                    repeat_of=None if round_index == 1 else f"{case.case_id}#1",
+                )
+            )
+    return items, omitted
 
 
 def summarize_plan(items: list[StressItem]) -> dict[str, int]:
@@ -367,6 +421,7 @@ __all__ = [
     "INFORMATIONAL",
     "NEGATIVE",
     "StressItem",
+    "corpus_plan",
     "stress_plan",
     "summarize_plan",
 ]

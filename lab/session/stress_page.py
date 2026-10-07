@@ -44,6 +44,10 @@ _CELL = (300, 150)
 #: Families laid out one per cell, in plan order, row by row.
 _STORY = "story"
 _DENSE = "dense"
+_CORPUS = "corpus"
+#: Vertical space between corpus images: more than half the capture region,
+#: so a capture around one image never reaches the next.
+_CORPUS_GAP = 110
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,8 @@ class StressPage(TourPage):
     def __init__(self) -> None:
         super().__init__()
         self._settled = threading.Event()
+        #: Plan items the page could not show, with why.
+        self.omitted: list[dict[str, str]] = []
         self._swap.connect(self._apply_swap)
         self._visibility.connect(self._apply_visibility)
 
@@ -81,13 +87,15 @@ class StressPage(TourPage):
         cells = [
             item
             for item in items
-            if item.family not in {_STORY, _DENSE, "uia_korean", "uia_latin", "covered"}
+            if item.family
+            not in {_STORY, _DENSE, _CORPUS, "uia_korean", "uia_latin", "covered"}
         ]
         covered = [item for item in items if item.family == "covered"]
         for size in sorted({item.size for item in story}):
             group = [item for item in story if item.size == size]
             pages += self._story_lines(group, faces)
         pages += self._dense_block(dense, faces)
+        pages += self._corpus_rows([item for item in items if item.family == _CORPUS])
         pages += self._cells(cells, faces, generator)
         self.covered_page = len(pages)
         pages += self._cells(covered, faces, generator)
@@ -168,6 +176,44 @@ class StressPage(TourPage):
                 placed = self._cell(page, item, cell, faces, generator, centres)
                 centres.append(placed.point)
                 page.placed.append(placed)
+            pages.append(page)
+        return pages
+
+    def _corpus_rows(self, items: list[StressItem]) -> list[Page]:
+        """One controlled image per row, painted pixel for pixel on the physical screen.
+
+        The image is not rescaled: its device pixel ratio is the screen's, so
+        each image pixel is one screen pixel and the annotated pointer lands
+        where the corpus says. An image wider or taller than the page is
+        skipped and listed in ``omitted``.
+        """
+
+        if not items:
+            return []
+        ratio = self.devicePixelRatioF()
+        area = self._area()
+        pages: list[Page] = []
+        page, y = self._blank_page("light"), area.top()
+        for item in items:
+            image = QImage(str(item.image))
+            image.setDevicePixelRatio(ratio)
+            width, height = image.width() / ratio, image.height() / ratio
+            if image.isNull() or width > area.width() or height > area.height():
+                self.omitted.append({"target": item.target.id, "reason": "image does not fit"})
+                continue
+            if y + height > area.bottom():
+                pages.append(page)
+                page, y = self._blank_page("light"), area.top()
+            origin = QPoint(area.left(), y)
+            page.extras.append(_image(image, origin))
+            x, py = item.image_target or (0.0, 0.0)
+            point = QPoint(round(origin.x() + x / ratio), round(origin.y() + py / ratio))
+            word = QRect(origin.x(), origin.y(), math.ceil(width), math.ceil(height))
+            page.placed.append(
+                StressPlaced(item.target, word, point, "corpus", 0, "corpus", item=item)
+            )
+            y += math.ceil(height) + _CORPUS_GAP
+        if page.placed:
             pages.append(page)
         return pages
 

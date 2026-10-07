@@ -26,6 +26,7 @@ from ..identity import run_identity
 from ..session.scoring import UNSCORED
 from ..session.stress import NEGATIVE
 from ..session.stress_scoring import (
+    CORPUS_RULE,
     INFORMATION,
     PASS,
     RULE,
@@ -33,6 +34,7 @@ from ..session.stress_scoring import (
     stress_verdict,
     summarize,
 )
+from ..stage_evidence import FALSE, TRUE, UNAVAILABLE, stability
 
 _ORDER = (
     "word", "story", "cursor", "dense", "mixed_korean", "image_text", "repeat", "rapid",
@@ -77,6 +79,7 @@ def build_campaign(run_dir: Path, *, baseline: Path | str | None = None) -> dict
         "informational": _informational(rows),
         "provenance": provenance_model(identity, metadata),
         "comparison_note": note,
+        "corpus": corpus_summary(rows),
     }
     model["comparison"] = (
         None if chosen is None else compare_campaigns(chosen, model, rows, run_dir)
@@ -139,6 +142,61 @@ def compare_campaigns(
             ),
         ],
     }
+
+
+def corpus_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Controlled-image hovers: desktop stage facts and per-case stability over rounds."""
+
+    corpus = [row for row in rows if row.get("family") == "corpus"]
+    if not corpus:
+        return None
+    surface = [row for row in corpus if row.get("truth_target") == "surface"]
+    quiet = [row for row in corpus if row.get("truth_target") == "no_korean"]
+    by_case: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in corpus:
+        verdict = str(row.get("verdict"))
+        judged = verdict not in UNSCORED and verdict not in INFORMATION
+        ok = verdict in PASS if judged else None
+        by_case[str(row.get("case"))].append(
+            {"output": verdict, "ok": ok, "error": verdict == "error"}
+        )
+    cases = {case: stability(observations) for case, observations in sorted(by_case.items())}
+    selected = [row for row in surface if row.get("verdict") == "target_selected"]
+    unjudged = UNSCORED | {"timed_out", "error", "no_hover", "no_result"}
+    return {
+        "rule": CORPUS_RULE,
+        "hovers": len(corpus),
+        "verdicts": dict(Counter(str(row.get("verdict")) for row in corpus).most_common()),
+        "facts": {
+            "target_surface_correct": _fact(surface, "target_selected", _SURFACE_FAILURES),
+            "false_presentation": _fact(quiet, "false_answer", {"quiet"}),
+            "stale_presentation": _fact(corpus, "stale_popup", _PRESENTED_OR_QUIET),
+        },
+        # A selected target the dictionary then missed is a language outcome only.
+        "language_after_selection": dict(Counter(str(row.get("status")) for row in selected)),
+        "not_judged": dict(
+            Counter(str(row.get("verdict")) for row in corpus if row.get("verdict") in unjudged)
+        ),
+        "first_bad_stage": dict(Counter(str(row["stage"]) for row in corpus if row.get("stage"))),
+        "stability": {
+            "classes": dict(Counter(row["classification"] for row in cases.values())),
+            "cases": cases,
+        },
+    }
+
+
+_SURFACE_FAILURES = frozenset({"no_text", "unresolved", "misread", "wrong_word"})
+_PRESENTED_OR_QUIET = frozenset({"target_selected", "quiet", "false_answer"}) | _SURFACE_FAILURES
+
+
+def _fact(
+    rows: list[dict[str, Any]], true: str, false: frozenset[str] | set[str]
+) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in rows:
+        verdict = row.get("verdict")
+        counts[TRUE if verdict == true else FALSE if verdict in false else UNAVAILABLE] += 1
+    return dict(counts)
 
 
 def _scored(run_dir: Path) -> list[dict[str, Any]]:
@@ -284,6 +342,19 @@ def _markdown(model: dict[str, Any]) -> str:
             f"{name} {count}" for name, count in sorted(summary["families"].get(family, {}).items())
         )
         lines.append(f"| {family} | {model['planned'].get(family, '')} | {verdicts} |")
+    corpus = model.get("corpus")
+    if corpus:
+        lines += [
+            "",
+            f"## Controlled images ({corpus['rule']})",
+            "",
+            f"- hovers {corpus['hovers']}; verdicts {corpus['verdicts']}",
+            *(f"- {name}: {counts}" for name, counts in corpus["facts"].items()),
+            "- after a selected target the dictionary answered: "
+            f"{corpus['language_after_selection']}",
+            f"- not judged: {corpus['not_judged'] or 'none'}",
+            f"- stability over rounds: {corpus['stability']['classes']}",
+        ]
     lines += ["", "## Failing stages", ""]
     lines += [f"- {stage}: {count}" for stage, count in summary["stages"].items()] or ["- none"]
     latency = model["latency"]["all"]
