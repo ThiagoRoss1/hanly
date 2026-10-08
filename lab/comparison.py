@@ -94,6 +94,13 @@ def compatibility(before: RunIdentity, after: RunIdentity) -> dict[str, Any]:
         )
     elif before.fingerprint != after.fingerprint:
         blocking.append("rendered plan differs (faces, sizes, themes or targets)")
+    if None in (before.display_scale, after.display_scale):
+        warnings.append("the display scale is not on record for both runs")
+    elif before.display_scale != after.display_scale:
+        blocking.append(
+            f"display scale differs ({before.display_scale} / {after.display_scale}); "
+            "the same page reaches the capture at a different pixel density"
+        )
     for identity in (before, after):
         if identity.conflicts:
             missing.append(f"{identity.name}: {'; '.join(identity.conflicts)}")

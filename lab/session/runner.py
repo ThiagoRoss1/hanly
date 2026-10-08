@@ -315,6 +315,7 @@ def _start_tour(
         pages=len(page.pages),
         targets=total,
         plan_fingerprint=plan_fingerprint(page.pages),
+        display_scale=page.devicePixelRatioF(),
     )
     print(f"lab: tour of {total} hovers over {len(page.pages)} pages", flush=True)
     driver = TourDriver(
@@ -388,6 +389,8 @@ def _start_stress(
         pages=len(page.pages),
         targets=total,
         plan_fingerprint=plan_fingerprint(page.pages, uia),
+        # Physical pixels per point of the page: what a 1:1 painted image is drawn at.
+        display_scale=page.devicePixelRatioF(),
     )
     print(f"lab: stress campaign of {total} hovers over {len(page.pages)} pages", flush=True)
     driver = StressDriver(

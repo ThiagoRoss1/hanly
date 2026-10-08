@@ -84,6 +84,8 @@ def build_campaign(run_dir: Path, *, baseline: Path | str | None = None) -> dict
     model["comparison"] = (
         None if chosen is None else compare_campaigns(chosen, model, rows, run_dir)
     )
+    if model["corpus"] is not None:
+        model["corpus"]["capture"] = _capture_density(run_dir, identity.display_scale)
     (run_dir / "campaign.json").write_text(
         json.dumps(model, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
@@ -188,6 +190,20 @@ def corpus_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             "cases": cases,
         },
     }
+
+
+def _capture_density(run_dir: Path, display_scale: float | None) -> dict[str, Any]:
+    """The page's display scale beside the pixel sizes the app actually captured.
+
+    Corpus images are painted one image pixel per physical pixel; whether the
+    capture keeps that density is the app's choice, shown here, not inferred.
+    """
+
+    sizes: Counter[str] = Counter()
+    for event in _events(run_dir):
+        if event.get("event") == "hover_capture_completed":
+            sizes[f"{event.get('roi_width')}x{event.get('roi_height')}"] += 1
+    return {"display_scale": display_scale, "captured_roi_pixels": dict(sizes.most_common())}
 
 
 _SURFACE_FAILURES = frozenset({"no_text", "unresolved", "misread", "wrong_word"})
@@ -382,6 +398,8 @@ def _markdown(model: dict[str, Any]) -> str:
             f"{corpus['language_after_selection']}",
             f"- not judged: {corpus['not_judged'] or 'none'}",
             f"- stability over rounds: {corpus['stability']['classes']}",
+            f"- painted 1:1 at display scale {corpus['capture']['display_scale']}; the app "
+            f"captured regions of {corpus['capture']['captured_roi_pixels']} pixels",
         ]
     lines += ["", "## Failing stages", ""]
     lines += [f"- {stage}: {count}" for stage, count in summary["stages"].items()] or ["- none"]

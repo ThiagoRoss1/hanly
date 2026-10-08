@@ -487,3 +487,52 @@ def test_two_registered_baselines_for_one_key_are_ambiguous_not_first_wins(
     model = json.loads((runs / "new" / "report.json").read_text("utf-8"))
     assert model["comparison"] is None
     assert "one, two" in model["comparison_note"]
+
+
+def test_a_different_display_scale_is_not_comparable_and_an_unknown_one_warns(
+    tmp_path: Path,
+) -> None:
+    def scaled(run: Path, scale: float | None) -> Any:
+        events = run / "events.jsonl"
+        rows = [json.loads(line) for line in events.read_text("utf-8").splitlines()]
+        if scale is not None:
+            rows[0]["display_scale"] = scale
+        events.write_text("\n".join(json.dumps(row) for row in rows) + "\n", "utf-8")
+        return run_identity(run)
+
+    retina = scaled(_tour(tmp_path / "a", [_tour_row("w1", "correct")]), 2.0)
+    plain = scaled(_tour(tmp_path / "b", [_tour_row("w1", "correct")]), 1.0)
+    unknown = scaled(_tour(tmp_path / "c", [_tour_row("w1", "correct")]), None)
+
+    differing = compatibility(retina, plain)
+    assert differing["status"] == "not_comparable"
+    assert any("display scale differs" in reason for reason in differing["reasons"])
+    unstated = compatibility(retina, unknown)
+    assert unstated["status"] == "comparable"
+    assert any("display scale" in warning for warning in unstated["warnings"])
+
+
+def test_a_corpus_campaign_shows_the_display_scale_and_captured_pixels(tmp_path: Path) -> None:
+    run = _stress(
+        tmp_path / "corpus",
+        [
+            {
+                **_stress_row("c1#1", "corpus", {"status": "EMPTY"}),
+                "case": "c1",
+                "truth_target": "no_korean",
+            }
+        ],
+    )
+    events = run / "events.jsonl"
+    rows = [json.loads(line) for line in events.read_text("utf-8").splitlines()]
+    rows[0]["display_scale"] = 2.0
+    rows.insert(1, {"event": "hover_capture_completed", "roi_width": 200, "roi_height": 100})
+    events.write_text("\n".join(json.dumps(row) for row in rows) + "\n", "utf-8")
+
+    model = build_campaign(run)
+
+    assert model["corpus"]["capture"] == {
+        "display_scale": 2.0,
+        "captured_roi_pixels": {"200x100": 1},
+    }
+    assert "display scale 2.0" in (run / "campaign.md").read_text("utf-8")

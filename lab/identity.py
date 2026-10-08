@@ -104,6 +104,8 @@ class RunIdentity:
     completion: str
     evidence: dict[str, bool]
     provenance_version: int | None
+    #: Physical pixels per point of the lab's page, for sessions that recorded it.
+    display_scale: float | None = None
     #: OS release, CPU count and memory, when the writer recorded them.
     host: dict[str, Any] = field(default_factory=dict)
     conflicts: tuple[str, ...] = ()
@@ -367,6 +369,7 @@ def _session(run_dir: Path, metadata: dict[str, Any], notes: list[str]) -> RunId
         completion=_session_completion(mode, metadata, events),
         evidence=evidence,
         provenance_version=_version(block),
+        display_scale=events["display_scale"],
         host=_host(block),
         conflicts=conflicts,
         notes=tuple(notes),
@@ -381,6 +384,7 @@ def _session_events(path: Path) -> dict[str, Any]:
         "rules": set(),
         "names": set(),
         "fingerprint": UNKNOWN,
+        "display_scale": None,
         "results": 0,
         "exit_code": None,
     }
@@ -408,8 +412,11 @@ def _session_events(path: Path) -> dict[str, Any]:
                 rule = event.get("rule")
                 # The first tours stored no rule; which one judged them is not on record.
                 found["rules"].add(rule if isinstance(rule, str) else UNKNOWN)
-            elif name == "tour_planned" and isinstance(event.get("plan_fingerprint"), str):
-                found["fingerprint"] = event["plan_fingerprint"]
+            elif name == "tour_planned":
+                if isinstance(event.get("plan_fingerprint"), str):
+                    found["fingerprint"] = event["plan_fingerprint"]
+                if isinstance(event.get("display_scale"), (int, float)):
+                    found["display_scale"] = float(event["display_scale"])
             elif name == "session_ended":
                 found["exit_code"] = event.get("exit_code")
     return found
