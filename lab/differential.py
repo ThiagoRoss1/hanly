@@ -1,7 +1,7 @@
 """Run one controlled corpus through each available OCR backend, each in its own process.
 
 Every backend gets a fresh ``python -m lab ocr-campaign --mode ocr-only`` child,
-so initialization, memory and failures belong to that backend alone, and each
+so start-up, memory and failures belong to that backend alone, and each
 child scores the same corpus by its own production provider. The parent only
 compares what the children recorded: whether both saw identical inputs, which
 cases every backend handled alike, and which only one got right. It does not
@@ -15,6 +15,7 @@ internals, and is not mixed into this report.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -27,6 +28,7 @@ from .metadata import build_metadata
 BACKENDS = ("easyocr", "vision")
 CHILD_TIMEOUT_SECONDS = 1800
 _UNAVAILABLE_MARKERS = ("provides no Apple Vision recognizer", "No module named")
+_EXCEPTION_NAME = re.compile(r"(?:[A-Za-z_]\w*\.)*[A-Z]\w*(?:Error|Exception|Exit|Interrupt)")
 
 
 def default_backends() -> tuple[str, ...]:
@@ -129,14 +131,20 @@ def _child(
     runs = sorted(path for path in root.iterdir() if path.is_dir()) if root.is_dir() else []
     if finished.returncode != 0 or len(runs) != 1:
         unavailable = any(marker in finished.stderr for marker in _UNAVAILABLE_MARKERS)
-        # Only the exception type reaches the report; raw output stays out of it.
-        last = finished.stderr.strip().splitlines()[-1:] or [""]
         return {
             "state": "unavailable" if unavailable else "initialization_failed",
             "exit_code": finished.returncode,
-            "error_type": last[0].split(":", 1)[0][:80],
+            "error_type": _error_type(finished.stderr),
         }
     return {"state": "ran", "run": runs[0].relative_to(run_dir).as_posix(), "dir": runs[0]}
+
+
+def _error_type(stderr: str) -> str:
+    """The failing exception's type name, or ``unknown``; never the message itself."""
+
+    last = (stderr.strip().splitlines() or [""])[-1]
+    name = last.split(":", 1)[0].strip()
+    return name if _EXCEPTION_NAME.fullmatch(name) else "unknown"
 
 
 def compare(children: dict[str, dict[str, Any]], expected: str | None) -> dict[str, Any]:
@@ -151,7 +159,9 @@ def compare(children: dict[str, dict[str, Any]], expected: str | None) -> dict[s
             summary, inventory, _ = loaded[name]
             entry.update(
                 identical_inputs=inventory.get("fingerprint") == expected and expected is not None,
-                initialization=summary.get("latency", {}).get("cold"),
+                # Each case's first pass, including its first inference; the
+                # provider's construction is untimed and lives under memory.
+                cold_passes=summary.get("latency", {}).get("cold"),
                 memory=summary.get("memory"),
                 errors=summary.get("errors"),
                 stability=summary.get("stability", {}).get("classes"),

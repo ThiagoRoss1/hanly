@@ -151,3 +151,26 @@ def test_an_interrupted_differential_keeps_what_finished(
 
     assert report["status"] == "interrupted"
     assert set(report["backends"]) == {"easyocr"}
+
+
+def test_a_child_message_without_an_exception_type_never_reaches_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _differential(
+        tmp_path,
+        monkeypatch,
+        {"easyocr": "lab: no runtime configuration at /Users/someone/private.json"},
+    )
+
+    entry = report["backends"]["easyocr"]
+    assert entry["state"] == "initialization_failed" and entry["error_type"] == "unknown"
+    assert "someone" not in json.dumps(report)
+
+
+def test_first_passes_are_not_called_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _differential(tmp_path, monkeypatch, {"easyocr": {"classes": {"a": "stable_correct"}}})
+
+    entry = report["backends"]["easyocr"]
+    assert "initialization" not in entry and "cold_passes" in entry
