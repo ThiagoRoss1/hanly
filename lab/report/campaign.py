@@ -111,8 +111,10 @@ def compare_campaigns(
     )
     before_latency = _latency(before_rows)["all"]
     after_latency = current["latency"]["all"]
-    before_rss = _processes(baseline_dir).get("peak_rss_mib", {})
+    before_processes = _processes(baseline_dir)
+    before_rss = before_processes.get("peak_rss_mib", {})
     after_rss = current["processes"].get("peak_rss_mib", {})
+    rss_samples = (before_processes.get("samples"), current["processes"].get("samples"))
     return {
         "baseline": baseline_dir.name,
         "rule": current["rule"],
@@ -137,6 +139,7 @@ def compare_campaigns(
                     after_rss.get(role),
                     POLICY.sampled_rss,
                     eligible=eligible["memory"],
+                    samples=rss_samples,
                 )
                 for role in ("lookup", "shell")
             ),
@@ -274,17 +277,20 @@ def _percentiles(values: list[float]) -> dict[str, float | int | None]:
 
 def _processes(run_dir: Path) -> dict[str, Any]:
     peaks: dict[str, float] = {}
+    samples = 0
     path = run_dir / "processes.jsonl"
     if not path.is_file():
         return {}
     with path.open(encoding="utf-8") as stream:
         for line in stream:
+            samples += 1
             for row in json.loads(line).get("processes", []):
                 if isinstance(row.get("rss"), int):
                     role = str(row.get("role"))
                     peaks[role] = max(peaks.get(role, 0.0), row["rss"] / 2**20)
     return {
         "peak_rss_mib": {role: round(value, 1) for role, value in sorted(peaks.items())},
+        "samples": samples,
         "note": "sampled resident memory every 250 ms; not private memory, not a precise peak",
     }
 

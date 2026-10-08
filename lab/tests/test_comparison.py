@@ -309,6 +309,8 @@ def test_a_tour_report_explains_the_comparison_and_leaves_the_baseline_identical
     summary = (current / "summary.md").read_text("utf-8")
     assert "## Provenance" in summary and "- correctness: mixed" in summary
     assert "band ±" in summary and "indicative-bands-v1" in summary
+    # Process samples are counted, so memory lines carry their sample counts too.
+    assert "lookup peak sampled RSS: higher (500.0 -> 900.0 MiB, n=1/1" in summary
 
 
 def test_an_incompatible_pair_is_shown_raw_and_never_explained(tmp_path: Path) -> None:

@@ -693,8 +693,10 @@ def compare_tours(
     )
     old = occurrences(before["results"], tour_occurrence)
     new = occurrences(tour["results"], tour_occurrence)
-    before_processes = process_profile(processes, events)["summary"]
+    before_profile = process_profile(processes, events)
+    before_processes = before_profile["summary"]
     after_processes = current["processes"]["summary"]
+    rss_samples = (before_profile["samples"], current["processes"]["samples"])
     keys = ("scored", "unscored", "passed", "accuracy")
     return {
         "baseline": baseline_dir.name,
@@ -738,6 +740,7 @@ def compare_tours(
                     (after_processes.get(role) or {}).get("rss_mib"),
                     POLICY.sampled_rss,
                     eligible=eligible["memory"],
+                    samples=rss_samples,
                 )
                 for role in ("lookup", "shell")
             ),
