@@ -326,3 +326,25 @@ unreadable directory under one is kept; `REPLAY`-style case variants are never
 proposed on NTFS; corpus campaigns record the Windows display scale and captured
 region sizes; and `gc` lists exactly the new update-check run's working copies.
 Real GC application still needs the human's separate approval.
+
+### CI after the review (2026-10-08)
+
+- **Linux `--suite portable`: 2 Lab test failures, fixed in `d39b757`.** The
+  session identity fixture stamped the host's platform, so it passed only on
+  Darwin arm64; `storage.preview`, `apply` and `inventory` bound their default
+  roots at import, so a relocated runs root was ignored and `gc` passed only
+  where the real `artifacts/lab/runs` existed. Reproduced on this Mac by
+  reporting the host as Linux x86_64 with no real runs root; 80 passed after
+  the fix. Portable here: 2656 passed, 2 skipped.
+- **Windows `--suite native`: `test_lookup_process_spawn` fails, not fixed.**
+  The real lookup child reached `ready` and then died on its first Korean lookup
+  ("the lookup engine stopped") with empty stderr, which points to a native
+  crash or a kill rather than a Python exception. No Lab commit touches the
+  product or this test, and it passes in this Mac's native suite. One unproven
+  hypothesis: the OCR runtime is unpinned (`easyocr>=1.7,<2` pulls torch), and
+  torch 2.14.1 (2026-09-30, with a cp310 Windows wheel) is newer than the 2.13.0
+  this Mac was validated with. Revisit on the Windows machine: run
+  `python -m pytest tests/native/shared/test_lookup_process_spawn.py -q`, note
+  `pip show torch kiwipiepy easyocr`, and if torch is 2.14.x retry with
+  `pip install "torch<2.14" "torchvision<0.29"` before changing any code. Pin
+  nothing until a version is shown to be the cause.
