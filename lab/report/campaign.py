@@ -155,7 +155,8 @@ def corpus_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     by_case: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in corpus:
         verdict = str(row.get("verdict"))
-        judged = verdict not in UNSCORED and verdict not in INFORMATION
+        # A cached answer repeats an earlier recognition; it is not a fresh one.
+        judged = verdict not in UNSCORED and verdict not in INFORMATION and not _cached(row)
         ok = verdict in PASS if judged else None
         by_case[str(row.get("case"))].append(
             {"output": verdict, "ok": ok, "error": verdict == "error"}
@@ -166,6 +167,7 @@ def corpus_summary(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return {
         "rule": CORPUS_RULE,
         "hovers": len(corpus),
+        "cached_hovers": sum(1 for row in corpus if _cached(row)),
         "verdicts": dict(Counter(str(row.get("verdict")) for row in corpus).most_common()),
         "facts": {
             "target_surface_correct": _fact(surface, "target_selected", _SURFACE_FAILURES),
@@ -236,16 +238,28 @@ def _ended(run_dir: Path) -> str:
 
 
 def _latency(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Popup latency of fresh answers; answers from the lookup cache are kept apart."""
+
     by_family: dict[str, list[float]] = defaultdict(list)
+    cached: list[float] = []
     for row in rows:
         value = row.get("hover_to_popup_ms")
         if isinstance(value, (int, float)) and row.get("popup"):
-            by_family[str(row.get("family"))].append(float(value))
+            if _cached(row):
+                cached.append(float(value))
+            else:
+                by_family[str(row.get("family"))].append(float(value))
     every = sorted(value for values in by_family.values() for value in values)
     return {
         "all": _percentiles(every),
+        "cached": _percentiles(sorted(cached)),
         "families": {name: _percentiles(sorted(values)) for name, values in by_family.items()},
     }
+
+
+def _cached(row: dict[str, Any]) -> bool:
+    hits = row.get("cache_hits")
+    return isinstance(hits, int) and not isinstance(hits, bool) and hits > 0
 
 
 def _percentiles(values: list[float]) -> dict[str, float | int | None]:
@@ -368,7 +382,8 @@ def _markdown(model: dict[str, Any]) -> str:
     latency = model["latency"]["all"]
     lines += [
         "",
-        f"Hover to popup: n={latency['n']} p50={latency['p50']} ms p90={latency['p90']} ms",
+        f"Hover to popup (fresh answers): n={latency['n']} p50={latency['p50']} ms "
+        f"p90={latency['p90']} ms; answered from the cache: n={model['latency']['cached']['n']}",
         "",
         "Peak sampled RSS (MiB): "
         + ", ".join(f"{k} {v}" for k, v in model["processes"].get("peak_rss_mib", {}).items()),

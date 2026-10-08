@@ -153,3 +153,29 @@ def test_the_corpus_summary_keeps_language_outcomes_and_stability_apart() -> Non
     assert cases["pos"]["classification"] == "stable_correct"
     assert cases["neg"]["classification"] == "stable_wrong"
     assert cases["odd"]["classification"] == "unavailable"
+
+
+def test_a_cached_repeat_is_not_counted_as_a_fresh_recognition() -> None:
+    rows = [
+        {"case": "pos", "truth_target": "surface", "verdict": "target_selected", "cache_hits": 0},
+        {"case": "pos", "truth_target": "surface", "verdict": "target_selected", "cache_hits": 1},
+    ]
+
+    summary = corpus_summary([{**row, "family": "corpus"} for row in rows])
+
+    assert summary is not None and summary["cached_hovers"] == 1
+    assert summary["stability"]["cases"]["pos"]["judged"] == 1
+
+
+def test_stress_latency_keeps_cached_answers_apart() -> None:
+    from lab.report.campaign import _latency
+
+    rows = [
+        {"family": "repeat", "popup": "SUCCESS", "hover_to_popup_ms": 40.0, "cache_hits": 1},
+        {"family": "word", "popup": "SUCCESS", "hover_to_popup_ms": 150.0, "cache_hits": 0},
+    ]
+
+    latency = _latency(rows)
+
+    assert latency["all"]["n"] == 1 and latency["all"]["p50"] == 150.0
+    assert latency["cached"]["n"] == 1
