@@ -1649,9 +1649,13 @@ def _session_or_explain(name: str) -> Path:
 
 def _list_runs(kind: str | None, limit: int) -> int:
     from .identity import identities
-    from .pins import load
+    from .pins import PinError, load
 
-    registry = load()
+    try:
+        registry = load()
+    except PinError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
     # Start times order every kind; a run that records none sorts first by name.
     rows = sorted(
         (identity for identity in identities() if kind is None or identity.kind == kind),
@@ -1702,9 +1706,14 @@ def run_lab_baseline(args: argparse.Namespace) -> int:
 def run_lab_storage(args: argparse.Namespace) -> int:
     """Where the disk goes: Lab, packaging and unknown material, read only."""
 
+    from .pins import PinError
     from .storage import inventory
 
-    report = inventory()
+    try:
+        report = inventory()
+    except PinError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return 0
@@ -1728,6 +1737,7 @@ def run_lab_storage(args: argparse.Namespace) -> int:
 def run_lab_gc(args: argparse.Namespace) -> int:
     """Preview, or apply exactly, the removal of declared disposable working copies."""
 
+    from .pins import PinError
     from .storage import StorageError, apply, preview, write_plan
 
     try:
@@ -1745,7 +1755,7 @@ def run_lab_gc(args: argparse.Namespace) -> int:
         if args.plan is None:
             raise StorageError("--apply needs the --plan a preview wrote")
         result = apply(args.plan)
-    except StorageError as error:
+    except (StorageError, PinError) as error:
         print(f"lab: {error}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2))

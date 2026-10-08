@@ -66,16 +66,26 @@ class Registry:
         return tuple(pin for pin in self.pins if not (self.runs_root / pin.run).is_dir())
 
     def baseline_for(self, identity: RunIdentity) -> RunIdentity | None:
-        """The registered baseline sharing ``identity``'s compatibility key."""
+        """The registered baseline sharing ``identity``'s compatibility key.
 
+        Keys are derived, so code that derives them differently can leave two
+        baselines on one key; that is refused rather than settled by order.
+        """
+
+        matches = []
         for pin in self.baselines():
             path = self.runs_root / pin.run
             if pin.run == identity.name or not path.is_dir():
                 continue
             candidate = run_identity(path)
             if candidate.compatibility_key == identity.compatibility_key:
-                return candidate
-        return None
+                matches.append(candidate)
+        if len(matches) > 1:
+            names = ", ".join(sorted(match.name for match in matches))
+            raise PinError(
+                f"{names} are all baselines for {identity.compatibility_key}; unset all but one"
+            )
+        return matches[0] if matches else None
 
 
 def load(path: Path | None = None, runs_root: Path | None = None) -> Registry:

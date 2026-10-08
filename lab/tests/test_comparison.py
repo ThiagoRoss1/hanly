@@ -446,3 +446,42 @@ def test_a_stress_campaign_compares_with_its_baseline_without_reading_text(
     ]
     for name in ("campaign.json", "campaign.md", "campaign.html"):
         assert sentinel not in (current / name).read_text("utf-8"), name
+
+
+def test_an_ineligible_measure_still_shows_its_raw_values_and_samples(tmp_path: Path) -> None:
+    baseline = _tour(tmp_path / "base", [_tour_row("w1", "correct")])
+    current = _tour(tmp_path / "new", [_tour_row("w1", "correct", popup_ms=300.0)], finished=False)
+
+    build_report(current, baseline=baseline)
+
+    summary = (current / "summary.md").read_text("utf-8")
+    line = next(row for row in summary.splitlines() if row.startswith("- popup p50:"))
+    assert "unavailable" in line and "150.0 -> 300.0 ms" in line and "n=1/1" in line
+
+
+def test_two_registered_baselines_for_one_key_are_ambiguous_not_first_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = tmp_path / "runs"
+    for name in ("one", "two", "new"):
+        _tour(runs / name, [_tour_row("w1", "correct")])
+    (tmp_path / "pins.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "pins": [
+                    {"run": "one", "role": "baseline", "reason": "older code"},
+                    {"run": "two", "role": "baseline", "reason": "newer code"},
+                ],
+            }
+        ),
+        "utf-8",
+    )
+    monkeypatch.setattr(pins, "PINS_PATH", tmp_path / "pins.json")
+    monkeypatch.setattr(pins, "RUNS_ROOT", runs)
+
+    build_report(runs / "new", baseline=REGISTERED)
+
+    model = json.loads((runs / "new" / "report.json").read_text("utf-8"))
+    assert model["comparison"] is None
+    assert "one, two" in model["comparison_note"]

@@ -60,7 +60,7 @@ def resolve_baseline(
     try:
         found = load().baseline_for(identity)
     except PinError as error:
-        return None, f"the pin registry is unreadable: {error}"
+        return None, f"no registered baseline was used: {error}"
     if found is None:
         return None, f"no registered baseline for {identity.compatibility_key}"
     return found.path, None

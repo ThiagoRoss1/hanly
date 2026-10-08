@@ -399,3 +399,25 @@ def test_writers_add_provenance_without_touching_their_own_payload(tmp_path: Pat
     assert written["lab_provenance"]["kind"] == "real_hover"
     assert written["lab_provenance"]["source"] == CLEAN
     assert "lab_provenance" not in build_metadata(scenario={"name": "x"}, source=CLEAN)
+
+
+@pytest.mark.parametrize("command", [["report", "--list"], ["storage"], ["gc"], ["baseline"]])
+def test_a_corrupt_registry_is_a_clear_refusal_not_a_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: list[str],
+) -> None:
+    from lab import cli, identity, storage
+
+    runs = tmp_path / "repo" / "artifacts" / "lab" / "runs"
+    runs.mkdir(parents=True)
+    (tmp_path / "pins.json").write_text("{broken", "utf-8")
+    monkeypatch.setattr(identity, "RUNS_ROOT", runs)
+    monkeypatch.setattr(storage, "RUNS_ROOT", runs)
+    monkeypatch.setattr(storage, "REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(pins, "PINS_PATH", tmp_path / "pins.json")
+    monkeypatch.setattr(pins, "RUNS_ROOT", runs)
+
+    assert cli.main(command) == 2
+    assert "unreadable" in capsys.readouterr().err

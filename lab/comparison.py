@@ -306,14 +306,18 @@ def headline(comparison: Mapping[str, Any]) -> list[str]:
         f"process roles: {comparison['process_roles']['status']}",
     ]
     for row in comparison["performance"]:
-        if row["verdict"] == "unavailable":
-            lines.append(f"{row['measure']}: unavailable")
-        else:
-            lines.append(
-                f"{row['measure']}: {row['verdict']} ({row['before']} -> {row['after']} "
-                f"{row['unit']}, band ±{row['band']} under {row['policy']})"
-            )
+        lines.append(_performance_line(row))
     return lines
+
+
+def _performance_line(row: Mapping[str, Any]) -> str:
+    """The raw values and sample counts first; the band's label only when eligible."""
+
+    samples = "/".join("?" if count is None else str(count) for count in row["samples"])
+    raw = f"{row['before']} -> {row['after']} {row['unit']}, n={samples}"
+    if row["verdict"] == "unavailable":
+        return f"{row['measure']}: unavailable ({raw})"
+    return f"{row['measure']}: {row['verdict']} ({raw}, band ±{row['band']} under {row['policy']})"
 
 
 __all__ = [
