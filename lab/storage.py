@@ -195,8 +195,12 @@ def _relative(path: Path, root: Path) -> str:
         return path.name
 
 
-def measure(root: Path) -> Size:
-    """Sizes without following any link; a link counts as itself, never its target."""
+def measure(root: Path, *, strict: bool = False) -> Size:
+    """Sizes without following any link; a link counts as itself, never its target.
+
+    ``strict`` raises on anything unreadable instead of skipping it, which is
+    what deciding a deletion needs: an unread directory is an unknown one.
+    """
 
     try:
         info = os.lstat(root)
@@ -205,10 +209,12 @@ def measure(root: Path) -> Size:
     if _is_link(info) or not stat.S_ISDIR(info.st_mode):
         return Size(info.st_size, 1, int(_is_link(info)), info.st_mtime)
     total = Size(0, 0, 0, info.st_mtime)
-    for entry in _walk(root):
+    for entry in _walk(root, strict=strict):
         try:
             entry_info = entry.stat(follow_symlinks=False)
         except OSError:
+            if strict:
+                raise
             continue
         if _is_link(entry_info):
             total += Size(0, 0, 1, entry_info.st_mtime)
@@ -219,7 +225,7 @@ def measure(root: Path) -> Size:
     return total
 
 
-def _walk(root: Path) -> Iterator[os.DirEntry[str]]:
+def _walk(root: Path, *, strict: bool = False) -> Iterator[os.DirEntry[str]]:
     stack = [root]
     while stack:
         current = stack.pop()
@@ -232,6 +238,8 @@ def _walk(root: Path) -> Iterator[os.DirEntry[str]]:
                     ):
                         stack.append(Path(entry.path))
         except OSError:
+            if strict:
+                raise
             continue
 
 
@@ -258,12 +266,14 @@ def _declared(identity: RunIdentity) -> list[str]:
     names = block.get("disposable")
     if not isinstance(names, list):
         return []
+    # Folded: macOS and Windows file systems are case-insensitive, so REPLAY is replay.
+    preserved = {name.casefold() for name in PRESERVED}
     return [
         name
         for name in names
         if isinstance(name, str)
-        and name not in PRESERVED
-        and not name.startswith("frozen-")
+        and name.casefold() not in preserved
+        and not name.casefold().startswith("frozen-")
         and len(Path(name).parts) == 1
         and name not in {".", ".."}
     ]
@@ -430,7 +440,11 @@ def _subtree_problem(subtree: Path) -> str | None:
         return "a link, which the Lab never follows"
     if not stat.S_ISDIR(info.st_mode):
         return "not a directory"
-    if measure(subtree).links:
+    try:
+        links = measure(subtree, strict=True).links
+    except OSError:
+        return "it cannot be read completely, so what it holds is unknown"
+    if links:
         return "holds a link, which the Lab never follows"
     return None
 
@@ -439,7 +453,7 @@ def content_fingerprint(root: Path) -> str:
     """Every path, size and modification time under ``root``, hashed."""
 
     rows = []
-    for entry in _walk(root):
+    for entry in _walk(root, strict=True):
         info = entry.stat(follow_symlinks=False)
         relative = Path(entry.path).relative_to(root).as_posix()
         rows.append(f"{relative}\0{info.st_size}\0{info.st_mtime_ns}")
@@ -450,7 +464,7 @@ def _delete_tree(root: Path) -> None:
     """Remove a validated subtree bottom-up, refusing any link met on the way."""
 
     directories = [root]
-    for entry in _walk(root):
+    for entry in _walk(root, strict=True):
         info = entry.stat(follow_symlinks=False)
         if _is_link(info):
             raise StorageError(f"a link appeared under {root}")

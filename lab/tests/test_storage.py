@@ -281,3 +281,33 @@ def test_an_update_check_keeps_its_logs_before_offering_the_working_copies(
     assert kept == ["profile/Hanly/logs/hanly.log", "temp/updater.log"]
     assert (root / "logs" / "profile__Hanly__logs__hanly.log").read_text("utf-8") == "app"
     assert (root / "logs" / "temp__updater.log").read_text("utf-8") == "helper"
+
+
+def test_a_subtree_that_cannot_be_read_completely_is_never_proposed(
+    tmp_path: Path, runs: Path
+) -> None:
+    run = _update_run(runs)
+    locked = run / "install" / "locked"
+    locked.mkdir()
+    (locked / "inside.bin").write_bytes(b"?")
+    locked.chmod(0)
+    try:
+        plan = storage.preview(runs, _registry(tmp_path), now=LATER)
+    finally:
+        locked.chmod(0o755)
+
+    reasons = {kept["subtree"]: kept["reason"] for kept in plan["kept"]}
+    assert "install" not in {target["subtree"] for target in plan["targets"]}
+    assert "cannot be read" in reasons["install"]
+    assert (run / "install" / "nested" / "payload.bin").exists()
+
+
+def test_a_case_variant_of_preserved_evidence_is_never_disposable(
+    tmp_path: Path, runs: Path
+) -> None:
+    run = _update_run(runs, disposable=["REPLAY", "Logs", "Frozen-2", "install"])
+    (run / "replay").mkdir()
+
+    plan = storage.preview(runs, _registry(tmp_path), now=LATER)
+
+    assert [target["subtree"] for target in plan["targets"]] == ["install"]
