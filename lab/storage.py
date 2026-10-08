@@ -102,13 +102,14 @@ class Entry:
 
 
 def inventory(
-    repo_root: Path = REPO_ROOT,
+    repo_root: Path | None = None,
     registry: Registry | None = None,
     *,
     now: float | None = None,
 ) -> dict[str, Any]:
     """Read-only accounting of every location the Lab and packaging write to."""
 
+    repo_root = REPO_ROOT if repo_root is None else repo_root
     lab_root = repo_root / "artifacts" / "lab"
     runs_root = lab_root / "runs"
     registry = load(runs_root=runs_root) if registry is None else registry
@@ -303,13 +304,15 @@ def _refusal(identity: RunIdentity, registry: Registry, now: float, runs_root: P
 
 
 def preview(
-    runs_root: Path = RUNS_ROOT,
+    runs_root: Path | None = None,
     registry: Registry | None = None,
     *,
     now: float | None = None,
 ) -> dict[str, Any]:
     """The deterministic plan: every eligible target and why everything else is kept."""
 
+    # Resolved per call, not at import, so a relocated root is the one honoured.
+    runs_root = RUNS_ROOT if runs_root is None else runs_root
     _require_canonical(runs_root)
     registry = load(runs_root=runs_root) if registry is None else registry
     now = time.time() if now is None else now
@@ -350,8 +353,8 @@ def preview(
     }
 
 
-def write_plan(plan: dict[str, Any], lab_root: Path = LAB_ROOT) -> Path:
-    path = lab_root / f".gc-plan-{plan['plan_id'][:16]}.json"
+def write_plan(plan: dict[str, Any], lab_root: Path | None = None) -> Path:
+    path = (LAB_ROOT if lab_root is None else lab_root) / f".gc-plan-{plan['plan_id'][:16]}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
     return path
@@ -359,7 +362,7 @@ def write_plan(plan: dict[str, Any], lab_root: Path = LAB_ROOT) -> Path:
 
 def apply(
     plan_path: Path,
-    runs_root: Path = RUNS_ROOT,
+    runs_root: Path | None = None,
     registry: Registry | None = None,
     *,
     now: float | None = None,
@@ -373,6 +376,7 @@ def apply(
     which were never attempted.
     """
 
+    runs_root = RUNS_ROOT if runs_root is None else runs_root
     _require_canonical(runs_root)
     plan = _load_plan(plan_path)
     registry = load(runs_root=runs_root) if registry is None else registry

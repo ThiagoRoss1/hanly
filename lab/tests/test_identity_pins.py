@@ -44,9 +44,10 @@ def _session(
         "options": options or {"words": 300, "story_sizes": [22], "seed": 7},
     }
     if source is not None:
-        metadata["lab_provenance"] = provenance(
-            mode, source, measurement_protocol="p1", configured_backend=configured
-        )
+        block = provenance(mode, source, measurement_protocol="p1", configured_backend=configured)
+        # Pinned rather than the host's own, so the fixture means the same on any CI runner.
+        block["platform"] = {"system": "Darwin", "release": "25.6.0", "machine": "arm64"}
+        metadata["lab_provenance"] = block
     _json(run / "metadata.json", metadata)
     events: list[dict[str, Any]] = [
         {"event": "tour_planned", "t_ms": 0, "targets": 1, "plan_fingerprint": "sha256:abc"}
