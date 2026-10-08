@@ -3,7 +3,7 @@
 Each fact is ``observed_true``, ``observed_false`` or ``unavailable``. A fact is
 available only when the case states the truth it needs and the mode actually
 produced the evidence: a detector response exists only where a detector ran on
-its own (EasyOCR's staged modes), never from Vision's normalized regions, and
+its own (EasyOCR's ``detection-only``), never from normalized results, and
 presentation exists only on the desktop. The first stage observed to go wrong
 is named; that is where a failure became visible, not a proven root cause.
 
@@ -24,8 +24,9 @@ TRUE = "observed_true"
 FALSE = "observed_false"
 UNAVAILABLE = "unavailable"
 
-#: Modes in which the detector ran as its own stage and its regions are its own.
-DETECTOR_MODES = frozenset({"detection-only", "recognition-only"})
+#: Modes whose regions are the detector's own. ``recognition-only`` returns
+#: normalized results, which can drop detector boxes, so it is not one of them.
+DETECTOR_MODES = frozenset({"detection-only"})
 FACTS = (
     "target_surface_correct",
     "detector_response_on_empty",

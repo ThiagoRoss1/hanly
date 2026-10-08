@@ -450,16 +450,17 @@ For cases that state their truth (schema 2), each pass also records stage facts,
 `observed_true`, `observed_false` or `unavailable`, and the first stage
 observed to go wrong (`stage_evidence.py`): exact target-surface correctness
 through the engine's own resolver, a detector response on an empty image (only
-in EasyOCR's staged modes, where the detector ran alone; Vision's normalized
-regions are not detector internals), false Hangul, and false Korean target
+in EasyOCR's `detection-only`, whose regions are the detector's own;
+`recognition-only` and Vision return normalized results, which are not detector
+internals), false Hangul, and false Korean target
 selection. `--repeats N` sets the warm repetitions, and the summary classifies
 each case as stable or varying apart from correct or wrong, so a consistently
 wrong answer is never mistaken for reliability.
 
 `--compare-backends [easyocr,vision]` runs the same corpus through each backend
 in a fresh `ocr-only` process and writes `differential.md` and `.json`: whether
-every child saw identical input hashes, each backend's initialization, memory
-and errors, and per case whether all passed, all failed at the same or
+every child saw identical input hashes, each backend's first passes (one per
+case, including its first inference), memory and errors, and per case whether all passed, all failed at the same or
 different stages, or only some passed. A backend this machine lacks is
 `unavailable`; no winner is chosen, and staged EasyOCR replay is never mixed in.
 

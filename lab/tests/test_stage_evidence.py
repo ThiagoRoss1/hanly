@@ -180,3 +180,22 @@ def test_stability_classes(oks: list[bool | None], outputs: list[str], expected:
     observations = [{"ok": ok, "output": out, "error": False} for ok, out in zip(oks, outputs)]
 
     assert stability(observations)["classification"] == expected
+
+
+def test_recognition_only_regions_are_normalized_output_not_detector_evidence(
+    tmp_path: Path,
+) -> None:
+    case = _corpus(tmp_path, EMPTY).cases[0]
+
+    facts, _ = ocr_facts(
+        case,
+        mode="recognition-only",
+        texts=(),
+        region_count=0,
+        transcribes=True,
+        resolved=None,
+        resolved_ran=True,
+        error=False,
+    )
+
+    assert facts["detector_response_on_empty"] == UNAVAILABLE
