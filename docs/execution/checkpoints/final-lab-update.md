@@ -28,9 +28,9 @@ portable 2656 passed / 2 skipped, native 126 passed.
 
 ## Validation
 
-ruff and mypy clean; `--suite portable` 2640 passed, 2 pre-existing skips;
-`--suite native` 126 passed. Real Mac runs and their results are listed in the
-handoff. Phase B has not started; nothing was pushed, merged, tagged or released.
+Phase A (at `2d82e8b`): ruff and mypy clean; `--suite portable` 2640 passed, 2
+pre-existing skips; `--suite native` 126 passed. Phase B results are above. Real
+Mac runs are listed in the handoff. Nothing was pushed, merged, tagged or released.
 
 ## Decisions worth keeping
 

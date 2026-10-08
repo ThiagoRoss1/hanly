@@ -8,8 +8,8 @@
 - Implementation ecosystem: Claude Code (Opus 5.5) on macOS 26 (Darwin 25.6.0,
   arm64), `.venv` Python 3.13.11 (code kept 3.10-compatible).
 - Branch `lab/app-health`, from `d05b8db` to `7236dc6` plus this handoff.
-- Date: 2026-10-07. Phase B has not started. Nothing was pushed, merged, tagged
-  or released.
+- Date: 2026-10-07. Phase B ran afterwards; see the outcome at the end. Nothing
+  was pushed, merged, tagged or released.
 
 ## Implemented
 
@@ -323,7 +323,6 @@ Each fix's regression test was shown failing before the correction.
 Run the "Windows continuation" checklist above, plus, for the review fixes: a
 junction inside a declared update-check subtree is kept with a reason; an
 unreadable directory under one is kept; `REPLAY`-style case variants are never
-proposed; corpus campaigns record the Windows display scale; and the update
-check's `summary.json` still records `cold_passes` nowhere (it is a differential
-field only) while `gc` lists exactly that run's working copies. Real GC
-application still needs the human's separate approval.
+proposed on NTFS; corpus campaigns record the Windows display scale and captured
+region sizes; and `gc` lists exactly the new update-check run's working copies.
+Real GC application still needs the human's separate approval.
