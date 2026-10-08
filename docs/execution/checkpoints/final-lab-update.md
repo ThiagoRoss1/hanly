@@ -19,6 +19,13 @@ Branch `lab/app-health`, from `d05b8db`. Phase A only.
 | Suppression cleanup | done | `28e25c3` |
 | 6 Real-run fixes, docs, handoff | done | `123693a`, `f0fdd7c`, `7236dc6`, handoff commit |
 
+## Phase B (macOS) review
+
+Done 2026-10-07: reviewed `d05b8db..2d82e8b`, corrected in `db0c823..ace1a7d`
+(8 fixes), outcome appended to the handoff. Verdict: accepted for macOS with
+corrections; Windows pending. Gates at `ace1a7d`: ruff and mypy clean,
+portable 2656 passed / 2 skipped, native 126 passed.
+
 ## Validation
 
 ruff and mypy clean; `--suite portable` 2640 passed, 2 pre-existing skips;
@@ -38,5 +45,5 @@ handoff. Phase B has not started; nothing was pushed, merged, tagged or released
 
 ## Continue (Windows)
 
-Follow "Windows continuation" in the handoff. Real GC application needs the
-human's separate approval.
+Follow "Windows continuation" and "Remaining Windows validation" in the
+handoff. Real GC application needs the human's separate approval.

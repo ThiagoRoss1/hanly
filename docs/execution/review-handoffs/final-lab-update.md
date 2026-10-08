@@ -204,4 +204,126 @@ On the Windows machine, after pulling `lab/app-health`:
 
 ## Review assignment
 
-Human-selected after implementation. Not started.
+Human-selected: Phase B general and macOS review, authorized 2026-10-07.
+
+## Post-Bundle Review Outcome
+
+- Reviewer: Claude Code (Opus 5.5), the same ecosystem and session that
+  implemented the bundle; not an independent cross-provider review.
+- Review ecosystem: macOS 26 (Darwin 25.6.0, arm64, display scale 2.0),
+  `.venv` Python 3.13.11.
+- Date: 2026-10-07. Reviewed range `d05b8db..2d82e8b` (13 commits, verified);
+  corrections `db0c823..ace1a7d` (8 commits).
+- Status: **accepted for macOS with corrections**; Windows validation pending.
+
+### Fixed now
+
+Each fix's regression test was shown failing before the correction.
+
+- **GC could partly delete a subtree it could not read** (`db0c823`). A
+  directory with mode 000 inside a declared `install/` was invisible to preview,
+  so `install/` was proposed and apply deleted `install/x/f` before failing.
+  Preview now keeps such a subtree ("cannot be read completely"), and the
+  deletion walk fails before touching anything unread.
+- **GC case-variant evidence** (`db0c823`). A declaration of `REPLAY` was
+  proposed although on macOS and Windows it *is* `replay/`; preserved names are
+  now compared case-folded.
+- **Raw stderr in the differential** (`5e9fd38`). A failing child whose last
+  line named no exception type put the text before its colon into the report;
+  only a real exception type name, or `unknown`, is kept now. The per-backend
+  `initialization` field was each case's first pass, not provider construction,
+  and is now `cold_passes`.
+- **Detector evidence from normalized output** (`0f4e8a3`). `recognition-only`
+  regions are normalized results that can drop detector boxes; a detector
+  response on an empty image is now claimed only from `detection-only`.
+- **Hidden raw values; ambiguous baselines; registry crash** (`95cf16d`). An
+  ineligible measure printed only "unavailable"; every line now leads with raw
+  before/after and sample counts. Two baselines sharing a derived key were
+  settled by registry order; the comparison now names both and uses neither.
+  A corrupt `pins.json` made `report --list`, `storage` and `gc` end in a
+  traceback; they now refuse with the registry's error (still failing closed).
+- **Cached answers counted as fresh** (`87ea2dd`). Popup latency and corpus
+  stability treated lookup-cache answers as fresh recognitions. The real seed-2
+  run `20261007-230556-stress` had 3 cached repeats; they are now reported apart
+  and excluded from judged repetitions (2 of 3 rounds judged for those cases).
+- **Memory lines without sample counts** (`5266517`): `n=?/?` became the
+  recorded process sample counts (`n=72/69` on the real tours).
+- **Listing order** (`f43e90c`). Sessions write naive local time and campaigns
+  UTC with an offset; sorting the strings misplaced runs by the local offset
+  (three hours here). Runs are now ordered by a normalized instant.
+- **Display scale unrecorded** (`ace1a7d`). On this 2.0 display a corpus image
+  painted 1:1 is captured by the app as 200x100 pixels for a 200x100-point
+  region, i.e. at half the painted density, while `ocr-campaign` reads it at
+  full density. Nothing recorded this. Sessions now log the page's display
+  scale; a known mismatch is not comparable, an unrecorded one is a warning; the
+  corpus section shows the scale beside the captured region sizes. No cause is
+  claimed.
+
+### Commands and results
+
+- `ruff check packages packaging tests tools lab` → clean.
+- `mypy packages packaging tests tools lab` → no issues in 355 files.
+- `pytest --suite portable` → 2656 passed, 2 skipped (opt-in EasyOCR model
+  inference; the non-macOS Vision path). The skips are not passes.
+- `pytest --suite native` → 126 passed.
+- Real macOS runs at `87ea2dd`–`ace1a7d` (isolated profiles, lab-authored pages):
+  - `ocr-corpus-generate --profile smoke --seed 2` → 24 cases (8/8/8), 0 omitted.
+  - `20261007-230556-stress` (seed 2, `--repeats 3 --baseline`) → 63/72,
+    0/39 false presentations; "no registered baseline" (different corpus and
+    rounds, correctly a different key); 3 cached hovers kept apart.
+  - `20261007-230700-stress` (seed 1, `--repeats 2 --baseline`) → comparable with
+    `-193757`, correctness unchanged, latency and memory within bands; baseline
+    `events.jsonl`, `metadata.json`, `processes.jsonl` unchanged (`shasum -c`).
+  - `20261007-230810-tour` (`--quick --baseline`) → comparable with
+    `-194130-tour`, unchanged, popup 131.2 → 126.2 ms (n=24/24), lookup RSS
+    457.7 → 468.1 MiB (n=72/69).
+  - `20261007-230934-tour`: pointer moved mid-tour from another process → stopped
+    by user after 3 of 24, identity `stopped_by_user`, no leftover sampler,
+    lookup, Control Center or WebEngine process. A SIGINT interruption was
+    covered in Phase A (`-194020-stress`).
+  - `report <tour> --baseline <tour>` rebuild → baseline files byte-identical;
+    `report --list` and `--kind unknown` correct; manual directories stay unknown.
+  - `ocr-campaign --compare-backends` on seed 2 (`3d46b5c5-…`) → identical
+    inputs for both; Vision 24/24 stable correct, EasyOCR 21/24; 3
+    backend-specific cases, all passed by Vision only.
+  - `20261007-231205-stress` (`--retain-fixture-images`) and `-231418-stress`
+    (display scale recorded: 2.0, regions 200x100 px).
+  - `lab storage` (31.62 GiB; 9.69 GiB unknown in runs, 16.75 GiB unknown and
+    5.03 GiB packaging in `dist/`) and `lab gc` (0 bytes; no plan written).
+  - GC apply exercised only on disposable fixtures. No real artifact was deleted.
+- Not rerun: packaged checks (no change affects frozen execution or packaging;
+  `packages/` still neither imports nor bundles `lab`).
+
+### Deferred considerations
+
+- **Capture density on Retina** - the app captured corpus regions at 1 pixel
+  per point on a 2.0 display; the 3 seed-2 cases Vision reads correctly offline
+  (`smoke-2-0000`, `-0015`, `-0021`) are stable misreads on the desktop. Revisit
+  in the OCR/capture branch, starting from `20261007-231418-stress` and the
+  retained regions in `-231205-stress/replay/`.
+- **Han read as Hangul; EasyOCR 을→올; backend-specific cases** (from Phase A) -
+  revisit when the OCR branch builds its evaluation corpus.
+- **Indicative bands uncalibrated** - Phase A saw a 92 MiB lookup RSS swing
+  between identical quick tours; this session's pair moved 10 MiB. Revisit after
+  a repeatability series of at least five identical tours.
+- **Vision provider construction reads 0 bytes** - the framework loads on first
+  use, so its cost lands in the first pass, not `provider_construction_bytes`.
+  Revisit if memory attribution between backends becomes a decision input.
+- **1:1 painting not independently verified at physical resolution** - the
+  page sets the image's device pixel ratio and the native test checks placement,
+  but no physical-resolution capture compared pixels (the lab re-grab is at
+  logical resolution). Revisit with the capture-density item.
+- **`report --list` reads every `events.jsonl`** - about 1 s for 70 runs here.
+  Revisit if a machine holds multi-gigabyte recordings.
+- **Same-session review** - the reviewer implemented the bundle. Revisit by
+  choosing a cross-provider reviewer for the Windows pass if independence matters.
+
+### Remaining Windows validation
+
+Run the "Windows continuation" checklist above, plus, for the review fixes: a
+junction inside a declared update-check subtree is kept with a reason; an
+unreadable directory under one is kept; `REPLAY`-style case variants are never
+proposed; corpus campaigns record the Windows display scale; and the update
+check's `summary.json` still records `cold_passes` nowhere (it is a differential
+field only) while `gc` lists exactly that run's working copies. Real GC
+application still needs the human's separate approval.
