@@ -18,6 +18,7 @@ import hashlib
 import json
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +120,21 @@ class RunIdentity:
         if self.configured_backend in {"vision", "easyocr"}:
             return self.configured_backend
         return self.configured_backend if self.configured_backend == NOT_APPLICABLE else UNKNOWN
+
+    @property
+    def started_at(self) -> datetime:
+        """The start as one comparable instant; an unknown start sorts first.
+
+        Sessions write naive local time and campaigns write UTC with an offset,
+        so their strings do not order; the runs are this machine's, so a naive
+        time is read in its local zone.
+        """
+
+        try:
+            moment = datetime.fromisoformat(self.started)
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        return moment.astimezone(timezone.utc)
 
     @property
     def complete(self) -> bool:

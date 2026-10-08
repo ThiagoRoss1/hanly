@@ -421,3 +421,33 @@ def test_a_corrupt_registry_is_a_clear_refusal_not_a_traceback(
 
     assert cli.main(command) == 2
     assert "unreadable" in capsys.readouterr().err
+
+
+def test_runs_order_by_the_instant_they_started_whatever_clock_they_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("the local time zone can only be pinned on POSIX")
+    monkeypatch.setenv("TZ", "America/Sao_Paulo")
+    time.tzset()
+    try:
+        # A session writes naive local time: 10:00 in UTC-3 is 13:00 UTC.
+        session = run_identity(_session(tmp_path / "session"))
+        campaign = tmp_path / "campaign"
+        _json(
+            campaign / "metadata.json",
+            build_metadata(
+                scenario={"name": "real_lookup_x"},
+                source=CLEAN,
+                timestamp="2026-10-07T12:30:00.000+00:00",
+            ),
+        )
+        ordered = sorted([session, run_identity(campaign)], key=lambda i: i.started_at)
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+    # 12:30 UTC came before 10:00 local (13:00 UTC), though "12:30" sorts after "10:00".
+    assert [identity.name for identity in ordered] == ["campaign", "session"]

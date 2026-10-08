@@ -1656,10 +1656,9 @@ def _list_runs(kind: str | None, limit: int) -> int:
     except PinError as error:
         print(f"lab: {error}", file=sys.stderr)
         return 2
-    # Start times order every kind; a run that records none sorts first by name.
     rows = sorted(
         (identity for identity in identities() if kind is None or identity.kind == kind),
-        key=lambda identity: (identity.started != "unknown", identity.started[:19], identity.name),
+        key=lambda identity: (identity.started_at, identity.name),
     )
     for identity in rows[-limit:] if limit else rows:
         roles = ",".join(sorted(registry.roles(identity.name)))
