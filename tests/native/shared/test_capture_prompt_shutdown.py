@@ -30,7 +30,8 @@ def test_quit_closes_the_open_choice_and_ends_the_loop(
     returned: list[CaptureSelection | None] = []
     open_at_quit: list[list[str]] = []
     after_return: list[list[str]] = []
-    timed_out: list[bool] = []
+    #: What was on screen when the deadlock guard fired, if it did.
+    timed_out: list[list[str]] = []
 
     def choose() -> None:
         returned.append(select_capture_area(Theme.DARK))
@@ -41,7 +42,7 @@ def test_quit_closes_the_open_choice_and_ends_the_loop(
         qt_application.quit()
 
     def give_up() -> None:
-        timed_out.append(True)
+        timed_out.append(_visible())
         for widget in QApplication.topLevelWidgets():
             widget.close()
         qt_application.quit()
@@ -68,7 +69,9 @@ def test_quit_closes_the_open_choice_and_ends_the_loop(
     shown = OnWindowShown()
     quit_on_last_window = qt_application.quitOnLastWindowClosed()
     qt_application.installEventFilter(shown)
-    watchdog.start(5000)
+    # A deadlock guard, not a performance bound: a hosted runner can take
+    # seconds to show its first native window of a session.
+    watchdog.start(15000)
     QTimer.singleShot(0, choose)
     try:
         qt_application.exec()
@@ -78,8 +81,10 @@ def test_quit_closes_the_open_choice_and_ends_the_loop(
         action_timer.stop()
         qt_application.removeEventFilter(shown)
 
-    assert not timed_out, f"{stage} did not close after Quit"
-    assert open_at_quit, f"Quit was not delivered while {stage} was open"
+    # Which failure it was matters: the choice never appearing in time, or Quit
+    # arriving and the choice staying open.
+    assert open_at_quit, f"Quit was never sent: {window} did not appear ({timed_out})"
+    assert not timed_out, f"{stage} did not close after Quit; still visible: {timed_out[0]}"
     assert window in open_at_quit[0]
     assert returned == [None]
     assert after_return == [[]]
