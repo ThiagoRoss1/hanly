@@ -261,6 +261,7 @@
     attr(select, "aria-hidden", "true");
 
     let active = -1;
+    let pointerAt = null;
 
     function options() { return Array.prototype.slice.call(select.options); }
     function isOpen() { return root.hasAttribute("data-open"); }
@@ -277,10 +278,24 @@
         attr(item, "aria-selected", index === select.selectedIndex ? "true" : "false");
         if (option.disabled) attr(item, "aria-disabled", "true");
         if (index === active) item.setAttribute("data-active", "");
-        item.addEventListener("mousemove", function () { highlight(index); });
+        item.addEventListener("mousemove", function (event) { follow(index, event); });
         item.addEventListener("click", function () { choose(index); });
         list.appendChild(item);
       });
+    }
+
+    // Chromium replays a mousemove at a resting pointer whenever the content
+    // under it changes (the list opening, a highlight scrolling into view), so
+    // only a pointer that has moved since the list opened may take the
+    // highlight from the keyboard.
+    function follow(index, event) {
+      const at = event.screenX + "," + event.screenY;
+      if (pointerAt === null || at === pointerAt) {
+        pointerAt = at;
+        return;
+      }
+      pointerAt = at;
+      highlight(index);
     }
 
     function highlight(index) {
@@ -312,6 +327,7 @@
       attr(root, "data-placement", below < 180 && rect.top > below ? "top" : null);
       root.setAttribute("data-open", "");
       attr(button, "aria-expanded", "true");
+      pointerAt = null;
       highlight(select.selectedIndex >= 0 ? select.selectedIndex : step(-1, 1));
     }
 

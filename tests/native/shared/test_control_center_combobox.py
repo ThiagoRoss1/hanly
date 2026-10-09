@@ -64,6 +64,15 @@ STATE = """
 }())
 """
 
+# A mousemove over the first option, as Chromium replays one at the resting
+# pointer whenever the content under it changes; (x, y) are screen coordinates.
+POINTER = """
+(function (x, y) {
+  var item = document.querySelector("#lookup-preload-combo .combo-list").children[0];
+  item.dispatchEvent(new MouseEvent("mousemove", {bubbles: true, screenX: x, screenY: y}));
+  return "ok";
+})"""
+
 KEY = """
 (function (key) {
   var button = document.querySelector("#lookup-preload-combo .combo-button");
@@ -97,6 +106,16 @@ def started():
         host.evaluate(KEY + '("Enter")')
         host.evaluate(KEY + '("Escape")')
         state("escaped")
+        host.evaluate(KEY + '("ArrowDown")')
+        host.evaluate(KEY + '("ArrowDown")')
+        host.evaluate(POINTER + "(40, 40)")
+        host.evaluate(KEY + '("Enter")')
+        state("pointer_resting")
+        host.evaluate(KEY + '("ArrowDown")')
+        host.evaluate(POINTER + "(40, 40)")
+        host.evaluate(POINTER + "(40, 44)")
+        host.evaluate(KEY + '("Enter")')
+        state("pointer_moved")
         host.evaluate('document.getElementById("lookup-preload").value = "on_demand"')
         state("set_by_page")
         host.evaluate('document.getElementById("lookup-preload").disabled = true')
@@ -164,6 +183,11 @@ def test_the_combobox_opens_chooses_and_dismisses_like_a_control(tmp_path: Path)
     escaped = steps["escaped"]
     assert escaped["open"] is False
     assert escaped["value"] == chosen["value"], "Escape chooses nothing"
+
+    # A pointer that has not moved since the list opened never takes the choice
+    # from the keyboard; one that moves still chooses what it is over.
+    assert steps["pointer_resting"]["value"] == "on_demand"
+    assert steps["pointer_moved"]["value"] == "when_capture_starts"
 
     # The page re-renders the persisted choice over a direct write; whichever
     # value the select ends up holding, the combobox shows exactly that one.
