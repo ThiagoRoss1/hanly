@@ -49,7 +49,17 @@ Mac runs are listed in the handoff. Nothing was pushed, merged, tagged or releas
 - Corpus stress is judged by `corpus-surface-v1` (selection, not dictionary).
 - 5A and 5B share a commit because stability is computed from the same facts.
 
-## Continue (Windows)
+## Phase B (Windows) review
 
-Follow "Windows continuation" and "Remaining Windows validation" in the
-handoff. Real GC application needs the human's separate approval.
+Done 2026-10-11 at `f3262a7`, corrected in `f2e9fa4..73882c5` (Windows tests
+for links and unreadable folders, GC reads a subtree whole before deleting,
+junctions never listed as runs, README peak RSS). Verdict: accepted for
+Windows with corrections. Gates at `73882c5`: ruff and mypy clean, portable
+2555 passed / 113 skipped; native at `cbf755a` 123 passed, 1 failed (updater
+helper rollback timing on a busy desktop, product, code unchanged since
+`d05b8db`, deferred). Details in the handoff's "Windows Phase B Review Outcome".
+
+## Continue
+
+Human decisions only: merge, and whether to apply the GC plan
+`artifacts/lab/.gc-plan-ac783efa3c6e64ce.json`.

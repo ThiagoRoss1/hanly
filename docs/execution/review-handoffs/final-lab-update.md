@@ -367,8 +367,170 @@ Real GC application still needs the human's separate approval.
   portable 2656 passed / 2 skipped, native 126 passed. Linux and macOS CI not
   yet seen green after this push.
 
+## Windows Phase B Review Outcome
+
+- Reviewer: Claude Code (Opus 5.5), a different session from the
+  implementation and the macOS review, same provider; not cross-provider.
+- Date: 2026-10-11. Reviewed `lab/app-health` at `f3262a7` (equal to origin;
+  nothing fetched or fast-forwarded), corrections `f2e9fa4..73882c5`.
+- Environment: Windows 10 Enterprise 10.0.19045 AMD64, `.venv` Python 3.13.11
+  (code kept 3.10-compatible), two 1920x1080 monitors at 96 DPI (display scale
+  1.0), 303 processes running. torch 2.13.0, torchvision 0.28.0, easyocr 1.7.2,
+  kiwipiepy 0.23.2, PyQt6 / WebEngine 6.11, Pillow 12.3.0 (FreeType 2.14.3).
+- CI: run 38122063816 at `f3262a7` passed all seven jobs, `native (windows)`
+  included. CI runs `--suite portable` on Linux only, which is why the Windows
+  portable failures below had never been seen.
+- Status: **accepted for Windows with corrections**.
+
+### Fixed now
+
+Each regression test was shown failing on this machine before its correction.
+
+- **Lab link and unreadable-folder tests never ran on Windows** (`f2e9fa4`).
+  Portable at `f3262a7` had 4 failures: three tests created symbolic links
+  (WinError 1314, no privilege) and one used `chmod(0)`, which leaves a Windows
+  folder listable. A `link_directory` fixture adds a junction case on Windows,
+  and `unreadable` denies the listing right through the folder's ACL; a
+  symbolic-link case is skipped only when the privilege is missing.
+- **The GC deletion walk deleted before it had read everything** (`9f5f693`).
+  `_delete_tree` unlinked files from a lazy walk, so a junction or an unreadable
+  folder appearing after revalidation was met only after shallower files were
+  gone (shown on Windows with a real junction and a real ACL deny). It now reads
+  the whole subtree first and refuses it whole. Nothing outside the subtree was
+  ever touched, before or after.
+- **A junction in the runs root was listed as a run** (`cbf755a`).
+  `recorded_runs` and `storage._children` recognized links only with
+  `Path.is_symlink`, so `report --list` and `lab storage` showed a run living
+  elsewhere that `resolve_name` then refused. One `identity.is_link` (symbolic
+  link or reparse point) is now used for listing, naming and revalidation. GC
+  was already safe here ("outside the canonical runs root").
+- **README claimed peak RSS is always available** (`73882c5`); it is `null` on
+  Windows, which has no `resource` module.
+
+### Commands and results
+
+Evidence is under gitignored `artifacts/lab/`; scratch output is not kept.
+
+- Gates at `73882c5`: `ruff check packages packaging tests tools lab` clean;
+  `mypy packages packaging tests tools lab` no issues in 356 files;
+  `pytest --suite portable` **2555 passed, 113 skipped** (at `f3262a7`: 4
+  failed, 2547 passed, 107 skipped). Skips are platform-bound with stated
+  reasons: 66 POSIX-tree cases, macOS frameworks, POSIX signals/locks, 6
+  symbolic-link cases without the privilege, opt-in EasyOCR inference, and 13
+  `test_synthetic_ocr` cases hard-wired to Apple SD Gothic Neo (see deferred).
+- `pytest --suite native` at `cbf755a` (after the last code change): **1
+  failed, 123 passed, 33 skipped**. The failure is
+  `test_update_helper_windows.py::test_a_build_that_exits_without_answering_is_rolled_back_without_waiting`,
+  reproduced 5/5 alone at 13.8-14.1 s against a 12.5 s bound; see deferred.
+  The updater helper, its test and fixture are identical to `d05b8db`.
+- Named regressions, alone and verbose: `test_lookup_process_spawn` passed
+  (18.7 s; the earlier CI failure does not reproduce here with torch 2.13.0);
+  `test_capture_prompt_shutdown` passed for both cases; the choice-list test
+  passed with keyboard selection under a resting pointer (`on_demand`) and
+  pointer selection after movement (`when_capture_starts`).
+- `report --list` (3.4 s, 70 runs): stress, tour, check and `update_check`
+  recognized; the 19 legacy `-windows-update` runs show commit and checkout
+  `unknown` (their `source_commit` is the release's and is not taken as the
+  recording commit) and sort first because their start is unknown.
+- Baselines: `baseline set 20261003-202512-stress` was **refused** because that
+  run was recorded from a dirty checkout; the checklist missed this. Registered
+  with `--allow-dirty` as documented. A same-key run without `--replace`, a
+  legacy update check, an interrupted tour and unset of an absent entry were
+  each refused with nothing written; two baselines on one key (throwaway
+  registry) are refused naming both. Registry now: `20261003-202512-stress`,
+  `20261011-054710-stress`, `20261011-055144-tour`.
+- `ocr-corpus --fonts`: 13 Hangul faces from `C:\Windows\Fonts` and the
+  per-user font folder, collections by index (Batang/Gungsuh, Gulim/Dotum),
+  Malgun Gothic Regular/Bold/Semilight, Noto Sans KR (variable, default
+  instance "Thin"), Moirai One. `ocr-corpus-generate --profile smoke --seed 1`
+  → 24 cases (8/8/8), 0 omitted, fingerprint `sha256:80c257dc7b924c6c`. Every
+  pixel hash, size, truth flag and target re-checked from the PNGs, and a
+  contact sheet showed each target on its word. A rerun and a different seed
+  into the same folder were refused, the folder byte-identical.
+- `20261011-054710-stress` (corpus, `--repeats 2`): clean at `cbf755a`, 48/48
+  scored, 40 passed, 0/24 false presentations (0 timed out or errored), 8
+  `ocr_misread` in 4 stable-wrong cases, dictionary answered all 16 selected
+  targets, 0 cache hits, display scale 1.0, captured regions 200x100.
+  Registered as baseline. `20261011-054819-stress --baseline` → comparable,
+  correctness unchanged, 8 retained / 0 introduced / 0 resolved, 48 matched
+  occurrences, popup p50 170.3 → 168.1 ms (n=48/48), lookup RSS 1065.6 → 1060.3
+  MiB (n=77/75), all within bands; baseline byte-identical (SHA-256, 11 files).
+- `20261011-054905-stress --per-family 14 --baseline 20261002-215759-stress` →
+  235/249, 0/122 false presentations; comparable for correctness only
+  (unchanged, 14 retained, 277 matched), performance "unavailable" with raw
+  values and sample counts (legacy: no host, no protocol, display scale not
+  recorded, dirty); legacy files byte-identical. An incompatible pair (corpus
+  vs per-family) → `not_comparable` with reasons, raw only.
+- Tours: `20261011-055144-tour` (22/24, baseline) and `-055208-tour --baseline`
+  → comparable, unchanged, popup 119.5 → 117.4 ms (n=24/24), lookup RSS 1053.6
+  → 1008.2 MiB (n=39/38). `-055312-tour`: pointer moved from another process
+  after 14 s → "15/17 … stopped_by_user after 17 of 24 planned", exit 0,
+  report written, no new Python, Hanly, WebEngine or Edge process left;
+  `-055239-tour` (stopped before its first hover) is `stopped_by_user` and
+  refused as a baseline. Rebuilding `-055208-tour --baseline -055144-tour` and
+  the corpus pair left recordings and both baselines byte-identical.
+- `ocr-campaign --compare-backends` (`e71ee6df-…`): requested `easyocr` only,
+  Vision never requested; identical inputs, `cold_passes` labelled derived,
+  0 errors, 20 stable correct / 4 stable wrong; peak RSS `null` on Windows.
+- `check windows-update --from v0.9.0 --mode rollback`
+  (`20261011-055508-windows-update`): passed; helper `prepared → applying →
+  awaiting-startup → rolling-back → restored`, after 0.9.0, manifest matches;
+  clean start and end source, `retained_logs` `profile/Hanly/logs/hanly.log`
+  (in `logs/`), `disposable` exactly `install, release, profile, temp`. The
+  everyday `%LOCALAPPDATA%\Hanly` was unchanged (7 files, times and sizes).
+- `lab storage`: 4.64 GiB (runs 2.42 GiB, `dist/` packaging 2.15 GiB, 77.2 MiB
+  legacy `artifacts/benchmarks`); no real reparse point exists under `dist/`
+  or `artifacts/`, so junction handling rests on fixtures. `lab gc` inside the
+  15-minute window kept everything ("active"); after it, the preview proposes
+  exactly the update check's four subtrees (1.96 GiB) and
+  `20261011-054905-stress/browser` (the lab's own 361-byte `lines.html`),
+  nothing else. Plan `artifacts/lab/.gc-plan-ac783efa3c6e64ce.json` written;
+  **not applied**.
+- GC on throwaway fixtures (real junctions and ACLs): a junction inside or at a
+  declared subtree, a junctioned run, a junctioned runs root, an ACL-denied
+  folder and `REPLAY`/`Logs`/`LOGS`/`Frozen-2` declarations are all kept with a
+  reason; the outside target was never touched.
+- Privacy: no `selected`, `recognized`, `regions`, `queries` or `text` field in
+  any `events.jsonl` recorded here; no image file in any new run.
+- Not run: packaged checks (no correction touches frozen execution or
+  packaging; `packages/` neither imports nor bundles `lab`).
+
+### Deferred considerations
+
+- **Windows updater rollback is slow on a busy desktop (product).** The helper
+  restored correctly but took ~10 s after the rejected build exited:
+  `Get-InstallProcesses` reads `.Path` for every process (2.56 s per walk with
+  303 processes) and the rollback walks several times beside 3 s of fixed
+  sleeps. The native bound (`TEST_READY_WAIT / 2`) fails here 5/5 and passes
+  on CI. Not weakened. Revisit in updater work: measure a rollback with ~300
+  processes, or filter by executable path before reading `.Path`.
+- **Desktop and offline also diverge at display scale 1.0.** Desktop stable
+  misreads `smoke-1-0003/0005/0006/0012`; offline EasyOCR fails `0003`, `0005`,
+  `0012` and `0009` (target selection). So the Retina divergence is not only
+  capture density. Revisit with that item, starting from
+  `20261011-054710-stress` and `e71ee6df-…`.
+- **`test_synthetic_ocr` never runs off macOS**: 13 cases require Apple SD
+  Gothic Neo and say "no Korean-capable face is installed" on Windows. Revisit
+  by choosing the face from discovery.
+- **`session/runner.recorded_runs`** (pre-update) still accepts a linked run
+  for the default newest report, and `windows_update._retain_logs` uses
+  `rglob`, which can enter a junction inside `profile/` or `temp/`. Neither
+  was observed. Revisit if a run or the app ever creates a junction there.
+- **Report wording**: the corpus line counts all session captures (96 for 48
+  hovers); an incompatible pair's heading says "both under" the current rule
+  while the warning names both rules; a tour stopped before its first hover
+  prints no closing line. Revisit with the next report change.
+- Display-scale mismatch blocking is unit-tested only; this machine has one
+  scale. Revisit on a mixed-scale machine if one becomes available.
+
+### Remaining blockers
+
+None for the Lab update. The native updater-helper timing failure on this
+machine is a product finding, outside this update. Real GC application of
+the plan above needs the human's separate approval.
+
 ## Next
 
-Only the Windows review remains: the "Windows continuation" checklist and
-"Remaining Windows validation" above, starting with the four gates. Real GC
-application needs the human's separate approval.
+Human decision: merge `lab/app-health`, approve (or not) applying
+`.gc-plan-ac783efa3c6e64ce.json`, and schedule the deferred updater-rollback
+timing investigation.
