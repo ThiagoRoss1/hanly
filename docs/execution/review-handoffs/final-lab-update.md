@@ -348,3 +348,27 @@ Real GC application still needs the human's separate approval.
   `pip show torch kiwipiepy easyocr`, and if torch is 2.14.x retry with
   `pip install "torch<2.14" "torchvision<0.29"` before changing any code. Pin
   nothing until a version is shown to be the cause.
+- **Windows native lookup spawn:** reported fixed by the human outside this
+  session; confirm it on the next Windows CI run.
+- **macOS `--suite native`: `test_capture_prompt_shutdown` timed out once in
+  CI** (passes locally, alone and in CI order). Its watchdog reported "did not
+  close after Quit" for any timeout, even when the prompt never appeared in
+  time. `8b93d50` gives each case its own message with the visible windows and
+  widens the deadlock guard from 5 to 15 s; pass conditions are unchanged.
+  Revisit if it fails again: the message now says which case it was.
+- **Linux `--suite native`: `test_control_center_combobox` failed, fixed in
+  `4c779e6` (product).** Choice-list options highlighted on any `mousemove`,
+  and Chromium replays one at a resting pointer when the content under it
+  changes, so under Xvfb the option under the pointer took the highlight from
+  the keyboard and Enter chose it. Reproduced by replaying a still-pointer
+  `mousemove` (same failure as CI), then fixed: only a pointer that has moved
+  since the list opened changes the highlight. Native coverage for a resting
+  and a moving pointer. Gates on macOS at `4c779e6`: ruff and mypy clean,
+  portable 2656 passed / 2 skipped, native 126 passed. Linux and macOS CI not
+  yet seen green after this push.
+
+## Next
+
+Only the Windows review remains: the "Windows continuation" checklist and
+"Remaining Windows validation" above, starting with the four gates. Real GC
+application needs the human's separate approval.

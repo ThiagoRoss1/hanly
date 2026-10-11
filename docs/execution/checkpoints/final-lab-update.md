@@ -26,6 +26,12 @@ Done 2026-10-07: reviewed `d05b8db..2d82e8b`, corrected in `db0c823..ace1a7d`
 corrections; Windows pending. Gates at `ace1a7d`: ruff and mypy clean,
 portable 2656 passed / 2 skipped, native 126 passed.
 
+## CI follow-up
+
+`d39b757` (Lab tests host-independent), `8b93d50` (capture-shutdown test
+diagnosis), `4c779e6` (choice list ignores a resting pointer). All pushed;
+details in the handoff's "CI after the review".
+
 ## Validation
 
 Phase A (at `2d82e8b`): ruff and mypy clean; `--suite portable` 2640 passed, 2
