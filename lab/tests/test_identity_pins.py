@@ -12,7 +12,7 @@ import pytest
 
 from lab import metadata as metadata_module
 from lab import pins
-from lab.identity import resolve_name, run_identity
+from lab.identity import identities, recorded_runs, resolve_name, run_identity
 from lab.metadata import build_metadata, provenance, source_identity
 
 CLEAN = {"commit": "a" * 40, "dirty": False, "state": "clean"}
@@ -241,6 +241,18 @@ def test_names_cannot_leave_the_runs_root(
     for name in ("../outside", str(tmp_path / "outside"), "link", ".."):
         with pytest.raises(ValueError):
             resolve_name(name, root)
+
+
+def test_a_linked_directory_is_never_listed_as_a_run(
+    tmp_path: Path, link_directory: Callable[[Path, Path], None]
+) -> None:
+    root = tmp_path / "runs"
+    _session(root / "real")
+    _session(tmp_path / "elsewhere" / "outside")
+    link_directory(root / "linked", tmp_path / "elsewhere" / "outside")
+
+    assert [path.name for path in recorded_runs(root)] == ["real"]
+    assert [identity.name for identity in identities(root)] == ["real"]
 
 
 # -- registry -----------------------------------------------------------------------------

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -28,6 +30,7 @@ RUNS_ROOT = LAB_ROOT / "runs"
 
 UNKNOWN = "unknown"
 NOT_APPLICABLE = "not_applicable"
+_REPARSE_POINT = 0x400
 
 #: Session modes, as ``metadata.json`` names them.
 SESSION_KINDS = frozenset({"run", "tour", "stress"})
@@ -185,7 +188,19 @@ def recorded_runs(root: Path | None = None) -> list[Path]:
     base = RUNS_ROOT if root is None else root
     if not base.is_dir():
         return []
-    return sorted(path for path in base.iterdir() if path.is_dir() and not path.is_symlink())
+    return sorted(path for path in base.iterdir() if path.is_dir() and not is_link(path))
+
+
+def is_link(path: Path) -> bool:
+    """A symbolic link or a Windows junction, which ``Path.is_symlink`` does not report."""
+
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & _REPARSE_POINT
+    )
 
 
 def identities(root: Path | None = None) -> Iterator[RunIdentity]:
@@ -204,8 +219,8 @@ def resolve_name(name: str | Path, root: Path | None = None) -> Path:
     candidate = Path(name)
     if not candidate.is_absolute():
         candidate = base / candidate if len(candidate.parts) == 1 else Path.cwd() / candidate
-    if candidate.is_symlink():
-        raise ValueError(f"{name} is a symbolic link; the lab names only real run directories")
+    if is_link(candidate):
+        raise ValueError(f"{name} is a link; the lab names only real run directories")
     resolved = candidate.resolve()
     if resolved.parent != base or resolved.name in {"", ".", ".."}:
         raise ValueError(f"{name} is not a run directory directly under {base}")

@@ -271,6 +271,21 @@ def test_the_inventory_separates_lab_packaging_and_unknown_material(tmp_path: Pa
     assert update["disposable_bytes"] == 4 * 2048
 
 
+def test_the_inventory_never_reads_a_linked_run(
+    tmp_path: Path, link_directory: Callable[[Path, Path], None]
+) -> None:
+    repo = tmp_path / "repo"
+    runs = repo / "artifacts" / "lab" / "runs"
+    runs.mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link_directory(runs / "20261007-100000-windows-update", _update_run(elsewhere))
+
+    report = storage.inventory(repo, pins.load(tmp_path / "pins.json", runs), now=LATER)
+
+    assert [entry for entry in report["entries"] if entry["area"] == "runs"] == []
+
+
 def test_an_update_check_keeps_its_logs_before_offering_the_working_copies(
     tmp_path: Path,
 ) -> None:

@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .identity import LAB_ROOT, REPO_ROOT, RUNS_ROOT, RunIdentity, run_identity
+from .identity import LAB_ROOT, REPO_ROOT, RUNS_ROOT, RunIdentity, is_link, run_identity
 from .pins import Registry, load
 
 PLAN_SCHEMA = 1
@@ -180,12 +180,12 @@ def _packaging_owned(name: str) -> bool:
 
 
 def _children(root: Path, *, include_files: bool = False) -> list[Path]:
-    if not root.is_dir() or root.is_symlink():
+    if not root.is_dir() or is_link(root):
         return []
     return sorted(
         path
         for path in root.iterdir()
-        if path.name != ".DS_Store" and (include_files or (path.is_dir() and not path.is_symlink()))
+        if path.name != ".DS_Store" and (include_files or (path.is_dir() and not is_link(path)))
     )
 
 
@@ -415,7 +415,7 @@ def _revalidate(
     target: dict[str, Any], runs_root: Path, registry: Registry, now: float
 ) -> str | None:
     run = runs_root / str(target["run"])
-    if run.is_symlink() or not run.is_dir():
+    if is_link(run) or not run.is_dir():
         return "the run is gone or no longer a directory"
     identity = run_identity(run)
     if str(target["subtree"]) not in _declared(identity):
