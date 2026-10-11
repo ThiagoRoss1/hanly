@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
 
@@ -131,15 +133,17 @@ def test_an_unfinished_session_keeps_its_browser_folder(tmp_path: Path, runs: Pa
     assert [target["subtree"] for target in finished["targets"]] == ["browser"]
 
 
-def test_links_are_never_followed_or_collected(tmp_path: Path, runs: Path) -> None:
+def test_links_are_never_followed_or_collected(
+    tmp_path: Path, runs: Path, link_directory: Callable[[Path, Path], None]
+) -> None:
     run = _update_run(runs)
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "precious.txt").write_text("keep", "utf-8")
-    (run / "temp" / "nested" / "escape").symlink_to(outside)
+    link_directory(run / "temp" / "nested" / "escape", outside)
     for sub in ("install", "release", "profile"):
         os.rename(run / sub, tmp_path / f"moved-{sub}")
-    (run / "profile").symlink_to(tmp_path / "moved-profile")
+    link_directory(run / "profile", tmp_path / "moved-profile")
 
     plan = storage.preview(runs, _registry(tmp_path), now=LATER)
 
@@ -231,9 +235,11 @@ def test_plans_cannot_name_anything_outside_a_run(tmp_path: Path, runs: Path) ->
         storage.apply(path, runs, _registry(tmp_path), now=LATER)
 
 
-def test_a_redirected_runs_root_is_refused(tmp_path: Path, runs: Path) -> None:
+def test_a_redirected_runs_root_is_refused(
+    tmp_path: Path, runs: Path, link_directory: Callable[[Path, Path], None]
+) -> None:
     link = tmp_path / "redirected"
-    link.symlink_to(runs)
+    link_directory(link, runs)
 
     with pytest.raises(storage.StorageError, match="redirected"):
         storage.preview(link, _registry(tmp_path), now=LATER)
@@ -284,17 +290,14 @@ def test_an_update_check_keeps_its_logs_before_offering_the_working_copies(
 
 
 def test_a_subtree_that_cannot_be_read_completely_is_never_proposed(
-    tmp_path: Path, runs: Path
+    tmp_path: Path, runs: Path, unreadable: Callable[[Path], AbstractContextManager[None]]
 ) -> None:
     run = _update_run(runs)
     locked = run / "install" / "locked"
     locked.mkdir()
     (locked / "inside.bin").write_bytes(b"?")
-    locked.chmod(0)
-    try:
+    with unreadable(locked):
         plan = storage.preview(runs, _registry(tmp_path), now=LATER)
-    finally:
-        locked.chmod(0o755)
 
     reasons = {kept["subtree"]: kept["reason"] for kept in plan["kept"]}
     assert "install" not in {target["subtree"] for target in plan["targets"]}

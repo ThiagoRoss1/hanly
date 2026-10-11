@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -228,11 +229,13 @@ def test_a_checkout_changed_during_the_run_is_recorded_beside_the_start(tmp_path
 # -- names --------------------------------------------------------------------------------
 
 
-def test_names_cannot_leave_the_runs_root(tmp_path: Path) -> None:
+def test_names_cannot_leave_the_runs_root(
+    tmp_path: Path, link_directory: Callable[[Path, Path], None]
+) -> None:
     root = tmp_path / "runs"
     (root / "real").mkdir(parents=True)
     (tmp_path / "outside").mkdir()
-    (root / "link").symlink_to(tmp_path / "outside")
+    link_directory(root / "link", tmp_path / "outside")
 
     assert resolve_name("real", root) == (root / "real").resolve()
     for name in ("../outside", str(tmp_path / "outside"), "link", ".."):
