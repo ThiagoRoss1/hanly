@@ -305,6 +305,40 @@ def test_a_subtree_that_cannot_be_read_completely_is_never_proposed(
     assert (run / "install" / "nested" / "payload.bin").exists()
 
 
+def test_a_link_met_while_deleting_stops_before_anything_is_deleted(
+    tmp_path: Path, runs: Path, link_directory: Callable[[Path, Path], None]
+) -> None:
+    # Appeared after the plan was revalidated: shallow files sort before it in the walk.
+    subtree = _update_run(runs) / "install"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (subtree / "shallow.bin").write_bytes(b"s")
+    (subtree / "z" / "y").mkdir(parents=True)
+    link_directory(subtree / "z" / "y" / "escape", outside)
+    before = _tree(subtree)
+
+    with pytest.raises(storage.StorageError, match="link"):
+        storage._delete_tree(subtree)
+
+    assert _tree(subtree) == before
+
+
+def test_a_folder_unreadable_while_deleting_stops_before_anything_is_deleted(
+    runs: Path, unreadable: Callable[[Path], AbstractContextManager[None]]
+) -> None:
+    subtree = _update_run(runs) / "release"
+    (subtree / "shallow.bin").write_bytes(b"s")
+    locked = subtree / "z" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "inside.bin").write_bytes(b"?")
+    before = _tree(subtree)
+
+    with unreadable(locked), pytest.raises(OSError):
+        storage._delete_tree(subtree)
+
+    assert _tree(subtree) == before
+
+
 def test_a_case_variant_of_preserved_evidence_is_never_disposable(
     tmp_path: Path, runs: Path
 ) -> None:

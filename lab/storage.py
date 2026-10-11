@@ -465,19 +465,24 @@ def content_fingerprint(root: Path) -> str:
 
 
 def _delete_tree(root: Path) -> None:
-    """Remove a validated subtree bottom-up, refusing any link met on the way."""
+    """Remove a validated subtree bottom-up, refusing it whole if it holds any link."""
+
+    # Read all of it before deleting any of it: a link or unreadable folder that
+    # appeared after revalidation must refuse the subtree, not just its remainder.
+    entries = [
+        (Path(entry.path), entry.stat(follow_symlinks=False)) for entry in _walk(root, strict=True)
+    ]
+    if any(_is_link(info) for _, info in entries):
+        raise StorageError(f"a link appeared under {root}")
 
     directories = [root]
-    for entry in _walk(root, strict=True):
-        info = entry.stat(follow_symlinks=False)
-        if _is_link(info):
-            raise StorageError(f"a link appeared under {root}")
+    for path, info in entries:
         if stat.S_ISDIR(info.st_mode):
-            directories.append(Path(entry.path))
+            directories.append(path)
         else:
             if sys.platform == "win32" and not info.st_mode & stat.S_IWRITE:
-                os.chmod(entry.path, stat.S_IWRITE)
-            os.unlink(entry.path)
+                os.chmod(path, stat.S_IWRITE)
+            os.unlink(path)
     for directory in sorted(directories, key=lambda path: len(path.parts), reverse=True):
         os.rmdir(directory)
 
