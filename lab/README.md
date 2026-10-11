@@ -466,9 +466,9 @@ different stages, or only some passed. A backend this machine lacks is
 
 The first pass of each case is `cold`, then `--warmup` passes, then `--samples`
 warm ones. Only warm passes are scored; percentiles are nearest-rank over the
-retained raw durations. Peak RSS comes from the standard library and is always
-available; current RSS needs `psutil` and reports itself unavailable without it,
-rather than reporting zero.
+retained raw durations. Peak RSS comes from the standard library's `resource`
+module, which Windows lacks, so there it is reported unavailable (`null`);
+current RSS needs `psutil`. Neither is ever reported as zero.
 
 ## The corpus
 
