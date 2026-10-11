@@ -7,6 +7,7 @@ import io
 import os
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from importlib import metadata
@@ -504,8 +505,11 @@ def test_a_macos_installation_is_the_app_not_the_directory_holding_the_program(
 
 
 def test_the_macos_updater_takes_the_zip_and_relaunches_the_bundles_program(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The handoff script's directory is made by tempfile; keep it out of the real TEMP.
+    (tmp_path / "temp").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "temp"))
     channel = _macos_channel(tmp_path)
     spawned: list[Any] = []
     installer = _macos_installer(channel, spawned)

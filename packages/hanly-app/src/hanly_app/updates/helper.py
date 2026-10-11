@@ -13,6 +13,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from hanly_app.updates.build_identity import PENDING_RECEIPT_NAME, PREVIOUS_RECEIPT_NAME
 from hanly_app.updates.cleanup import _process_alive
@@ -39,11 +40,20 @@ MOVE_ATTEMPTS = 30
 #: slow start as a failure would roll back a working update.
 READY_WAIT_SECONDS = 600
 
-#: How long the shell waits for the helper to acknowledge that it owns the
-#: transaction. Quitting before that leaves nobody to apply the update.
-CLAIM_WAIT_SECONDS = 30.0
+#: How long the shell waits for a live helper to acknowledge that it owns the
+#: transaction. Quitting before that leaves nobody to apply the update. A helper
+#: that exits is noticed at once, so this bounds only a slow PowerShell start,
+#: which took 25 s on a loaded machine.
+CLAIM_WAIT_SECONDS = 120.0
 
 Clock = Callable[[], float]
+
+
+@runtime_checkable
+class HelperProcess(Protocol):
+    """The started helper, observed only for whether it has exited."""
+
+    def poll(self) -> int | None: ...
 
 
 class HelperError(RuntimeError):
@@ -141,8 +151,8 @@ def start_helper(
     *,
     spawn: Spawn | None = None,
     recover: bool = False,
-) -> None:
-    """Write the helper, keep a recovery copy, and start it detached."""
+) -> HelperProcess | None:
+    """Write the helper, keep a recovery copy, start it detached, and return it."""
 
     if sys.platform != "win32" and spawn is None:
         raise HelperError("the in-place update helper is a Windows program")
@@ -155,14 +165,16 @@ def start_helper(
         arguments.append("-Recover")
     runner = spawn if spawn is not None else spawn_detached
     try:
-        runner(arguments, script.parent)
+        process = runner(arguments, script.parent)
     except (OSError, HandoffError) as error:
         raise HelperError(f"could not start the update helper: {error}") from error
+    return process if isinstance(process, HelperProcess) else None
 
 
 def await_claim(
     journal: UpdateJournal,
     *,
+    process: HelperProcess | None = None,
     timeout: float = CLAIM_WAIT_SECONDS,
     clock: Clock = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -179,6 +191,10 @@ def await_claim(
         pid = claim.get("pid") if isinstance(claim, dict) else None
         if isinstance(pid, int) and pid > 0:
             return pid
+        if process is not None and process.poll() is not None:
+            raise HelperError(
+                "the update helper stopped before it started; nothing has been changed"
+            )
         sleep(0.2)
     raise HelperError("the update helper did not start; nothing has been changed")
 
@@ -684,9 +700,17 @@ function Restore-Receipt {{
 }}
 
 function Wait-ForStartup {{
+  param($Candidate)
+
   $deadline = (Get-Date).AddSeconds({ready_wait})
   while ((Get-Date) -lt $deadline) {{
     if (Test-Started) {{ return $true }}
+    # A build that never started, or has already exited, cannot answer any more;
+    # one last look covers an answer written just before it exited.
+    if ($null -eq $Candidate -or $Candidate.HasExited) {{
+      Start-Sleep -Seconds 1
+      return (Test-Started)
+    }}
     Start-Sleep -Seconds 1
   }}
   return $false
@@ -722,7 +746,7 @@ try {{
     Update-Progress "Starting Hanly $version…" $operations.Count
     Clear-Acknowledgement
     $candidate = Start-Candidate (Get-ReadyArguments)
-    if (Wait-ForStartup) {{
+    if (Wait-ForStartup $candidate) {{
       Write-Record 'committed'
       Write-Result 'committed' "Hanly $version started."
       $status = 0
@@ -764,6 +788,7 @@ exit $status
 
 __all__ = [
     "CLAIM_WAIT_SECONDS",
+    "HelperProcess",
     "EXIT_WAIT_SECONDS",
     "HELPER_SCRIPT_NAME",
     "MOVE_ATTEMPTS",

@@ -1,0 +1,65 @@
+# Final Lab update — checkpoint
+
+Plan: [`../plans/final-lab-update.md`](../plans/final-lab-update.md). Handoff:
+[`../review-handoffs/final-lab-update.md`](../review-handoffs/final-lab-update.md).
+Branch `lab/app-health`, from `d05b8db`. Phase A only.
+
+## State: stopped at the Review Handoff
+
+| Wave | State | Commits |
+|---|---|---|
+| Brief | done | `d9a27e8` |
+| 1 Identity, provenance, registry | done | `8de9410` |
+| 2 Comparison and compact explanations | done | `f3db81c` |
+| 3 Storage inventory and GC | done | `3f7ec7f` |
+| 4 Controlled-image corpus | done | `bb1c337` |
+| 5A+5B Stage facts, repeatability | done | `74ed3ce` |
+| 5C Corpus through stress | done | `47ce842` |
+| 5D Backend differential | done | `6356154` |
+| Suppression cleanup | done | `28e25c3` |
+| 6 Real-run fixes, docs, handoff | done | `123693a`, `f0fdd7c`, `7236dc6`, handoff commit |
+
+## Phase B (macOS) review
+
+Done 2026-10-07: reviewed `d05b8db..2d82e8b`, corrected in `db0c823..ace1a7d`
+(8 fixes), outcome appended to the handoff. Verdict: accepted for macOS with
+corrections; Windows pending. Gates at `ace1a7d`: ruff and mypy clean,
+portable 2656 passed / 2 skipped, native 126 passed.
+
+## CI follow-up
+
+`d39b757` (Lab tests host-independent), `8b93d50` (capture-shutdown test
+diagnosis), `4c779e6` (choice list ignores a resting pointer). All pushed;
+details in the handoff's "CI after the review".
+
+## Validation
+
+Phase A (at `2d82e8b`): ruff and mypy clean; `--suite portable` 2640 passed, 2
+pre-existing skips; `--suite native` 126 passed. Phase B results are above. Real
+Mac runs are listed in the handoff. Nothing was pushed, merged, tagged or released.
+
+## Decisions worth keeping
+
+- `lab_provenance` v1 is additive; legacy runs are read from old fields and
+  flagged "source read at shutdown".
+- Performance comparison needs a known protocol and equal host on both sides;
+  legacy runs compare correctness only.
+- GC trusts only a run's own `lab_provenance.disposable`, after the writer kept
+  its logs; nothing on this Mac is eligible.
+- Corpus stress is judged by `corpus-surface-v1` (selection, not dictionary).
+- 5A and 5B share a commit because stability is computed from the same facts.
+
+## Phase B (Windows) review
+
+Done 2026-10-11 at `f3262a7`, corrected in `f2e9fa4..73882c5` (Windows tests
+for links and unreadable folders, GC reads a subtree whole before deleting,
+junctions never listed as runs, README peak RSS). Verdict: accepted for
+Windows with corrections. Gates at `73882c5`: ruff and mypy clean, portable
+2555 passed / 113 skipped; native at `cbf755a` 123 passed, 1 failed (updater
+helper rollback timing on a busy desktop, product, code unchanged since
+`d05b8db`, deferred). Details in the handoff's "Windows Phase B Review Outcome".
+
+## Continue
+
+Human decisions only: merge, and whether to apply the GC plan
+`artifacts/lab/.gc-plan-ac783efa3c6e64ce.json`.

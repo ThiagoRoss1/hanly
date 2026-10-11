@@ -14,7 +14,7 @@ from hanly import PixelFormat, Point, ROIImage
 from hanly.vision_provider import VisionConfig, VisionProvider
 from hanly.word_resolver import WordResolver
 
-RUN = Path("artifacts/benchmarks/runs/ef2c1ffc-3746-4b94-a40a-680b7e9e29c3")
+RUN = Path("artifacts/lab/runs/ef2c1ffc-3746-4b94-a40a-680b7e9e29c3")
 
 #: The word under the recorded cursor in each exported capture. `frozen-8` is
 #: the control: it succeeded before the change and must keep succeeding.

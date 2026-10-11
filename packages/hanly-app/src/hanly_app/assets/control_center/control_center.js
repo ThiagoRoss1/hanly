@@ -173,8 +173,7 @@
   let sliderEditing = false;
   let readinessLoading = true;
   let logFilters = { level: "all", subsystem: "all", search: "" };
-  let thinkTick = "a";
-  let thinkText = "";
+  let updateBusyView = null;
   let darkMedia = null;
 
   // pywebview injects its api after the document is parsed, so the bridge is
@@ -262,6 +261,7 @@
     attr(select, "aria-hidden", "true");
 
     let active = -1;
+    let pointerAt = null;
 
     function options() { return Array.prototype.slice.call(select.options); }
     function isOpen() { return root.hasAttribute("data-open"); }
@@ -278,10 +278,24 @@
         attr(item, "aria-selected", index === select.selectedIndex ? "true" : "false");
         if (option.disabled) attr(item, "aria-disabled", "true");
         if (index === active) item.setAttribute("data-active", "");
-        item.addEventListener("mousemove", function () { highlight(index); });
+        item.addEventListener("mousemove", function (event) { follow(index, event); });
         item.addEventListener("click", function () { choose(index); });
         list.appendChild(item);
       });
+    }
+
+    // Chromium replays a mousemove at a resting pointer whenever the content
+    // under it changes (the list opening, a highlight scrolling into view), so
+    // only a pointer that has moved since the list opened may take the
+    // highlight from the keyboard.
+    function follow(index, event) {
+      const at = event.screenX + "," + event.screenY;
+      if (pointerAt === null || at === pointerAt) {
+        pointerAt = at;
+        return;
+      }
+      pointerAt = at;
+      highlight(index);
     }
 
     function highlight(index) {
@@ -313,6 +327,7 @@
       attr(root, "data-placement", below < 180 && rect.top > below ? "top" : null);
       root.setAttribute("data-open", "");
       attr(button, "aria-expanded", "true");
+      pointerAt = null;
       highlight(select.selectedIndex >= 0 ? select.selectedIndex : step(-1, 1));
     }
 
@@ -934,14 +949,6 @@
     return "";
   }
 
-  // The stage label swaps because the coordinator's snapshot changed, never on
-  // a timer this page owns.
-  function sayStage(text) {
-    if (text === thinkText) return;
-    thinkText = text;
-    thinkTick = thinkTick === "a" ? "b" : "a";
-  }
-
   function matrix(container) {
     const grid = el("span", "matrix");
     for (let index = 0; index < 9; index += 1) {
@@ -951,15 +958,6 @@
       grid.appendChild(cell);
     }
     container.appendChild(grid);
-  }
-
-  function thinkNode(text, sizer) {
-    const wrapper = el("span", "think");
-    wrapper.appendChild(el("span", "think-sizer", sizer || text));
-    const live = el("span", "think-text", text);
-    live.dataset.think = thinkTick;
-    wrapper.appendChild(live);
-    return wrapper;
   }
 
   function actionButton(label, className, action, argument) {
@@ -978,7 +976,11 @@
     const busy = updatesBusy(state);
     const status = state.status || "idle";
 
-    clear(panel);
+    // Progress polls keep the busy DOM; only a changed label starts fresh motion.
+    if (!busy || !updateBusyView || updateBusyView.block.parentNode !== panel) {
+      clear(panel);
+      updateBusyView = null;
+    }
     attr(panel, "data-tone",
       status === "failed" || status === "cancelled" ? "bad"
         : ((application && application.installable) || status === "restart" ||
@@ -988,7 +990,11 @@
     // mode is observable rather than inferred from whichever button exists.
     if (busy) {
       panel.dataset.updateMode = "busy";
-      panel.appendChild(busyBlock(state));
+      if (!updateBusyView) {
+        updateBusyView = busyBlock();
+        panel.appendChild(updateBusyView.block);
+      }
+      refreshBusyBlock(updateBusyView, state);
     } else if (status === "restart" || state.restart_required) {
       panel.dataset.updateMode = "staged";
       panel.appendChild(stagedBlock(state));
@@ -1007,34 +1013,45 @@
     renderActivity(state);
   }
 
-  function busyBlock(state) {
-    const progress = state.progress;
+  function busyBlock() {
     const block = el("div", "update-busy");
     const line = el("div", "update-busy-line");
     matrix(line);
-    sayStage(state.message || formatStatus(state.status));
-    // The sizer holds the widest message this panel can show, so the box does
-    // not resize as the stage changes.
-    line.appendChild(thinkNode(thinkText, "Checking installed files…………"));
-    line.appendChild(el("span", "update-detail", describeTransfer(progress)));
-    const fraction = progress && typeof progress.fraction === "number" ? progress.fraction : null;
-    line.appendChild(el("span", "update-percent",
-      fraction === null ? "" : Math.round(fraction * 100) + "%"));
+    const wrapper = el("span", "think");
+    wrapper.appendChild(el("span", "think-sizer", "Checking installed files…………"));
+    const detail = el("span", "update-detail");
+    const percent = el("span", "update-percent");
+    line.appendChild(wrapper);
+    line.appendChild(detail);
+    line.appendChild(percent);
     block.appendChild(line);
 
     const track = el("div", "track");
-    attr(track, "data-indeterminate", fraction === null ? "true" : "false");
     const fill = el("div", "track-fill");
-    if (fraction !== null) fill.style.width = (fraction * 100).toFixed(1) + "%";
     track.appendChild(fill);
     block.appendChild(track);
 
-    if (state.cancellable) {
-      const actions = el("div", "update-actions");
-      actions.appendChild(actionButton("Cancel", "btn btn-sm btn-quiet", "cancel_update"));
-      block.appendChild(actions);
+    const actions = el("div", "update-actions");
+    actions.appendChild(actionButton("Cancel", "btn btn-sm btn-quiet", "cancel_update"));
+    block.appendChild(actions);
+    return { block, wrapper, detail, percent, track, fill, actions, label: null };
+  }
+
+  function refreshBusyBlock(view, state) {
+    const text = state.message || formatStatus(state.status);
+    if (!view.label || view.label.textContent !== text) {
+      if (view.label) view.wrapper.removeChild(view.label);
+      view.label = el("span", "think-text", text);
+      view.label.dataset.think = "1";
+      view.wrapper.appendChild(view.label);
     }
-    return block;
+    const progress = state.progress;
+    const fraction = progress && typeof progress.fraction === "number" ? progress.fraction : null;
+    view.detail.textContent = describeTransfer(progress);
+    view.percent.textContent = fraction === null ? "" : Math.round(fraction * 100) + "%";
+    attr(view.track, "data-indeterminate", fraction === null ? "true" : "false");
+    view.fill.style.width = fraction === null ? "" : (fraction * 100).toFixed(1) + "%";
+    view.actions.hidden = !state.cancellable;
   }
 
   function idleBlock(state) {
@@ -1071,6 +1088,12 @@
       const message = el("p", "update-sub", application.message);
       message.style.margin = "0";
       block.appendChild(message);
+    }
+    // A failed install comes back here; without its reason it looks like nothing happened.
+    if (state.status === "failed" && state.message) {
+      const failure = el("p", "update-sub update-failure", state.message);
+      failure.setAttribute("role", "alert");
+      block.appendChild(failure);
     }
 
     const actions = el("div", "update-actions");

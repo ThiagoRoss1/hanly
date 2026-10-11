@@ -27,7 +27,7 @@ PACKAGES = ROOT / "packages"
 #: Documents that tell a reader which version to install. A historical mention
 #: elsewhere - the release a migration note is written about, an old
 #: investigation - is deliberately out of scope.
-_INSTALL_DOCUMENTS = (ROOT / "README.md", ROOT / "benchmarks" / "dev" / "README.md")
+_INSTALL_DOCUMENTS = (ROOT / "README.md", ROOT / "lab" / "README.md")
 
 #: The two shapes those documents state a version in: the product heading, and
 #: the engine pin a reader would otherwise copy by hand.

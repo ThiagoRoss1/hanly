@@ -10,8 +10,10 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import sys
 import tempfile
 import time
+import urllib.error
 import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -73,7 +75,7 @@ from hanly_app.updates.manifest import (
     TreeManifest,
     UpdateMetadata,
     parse_checksums,
-    require_safe_relative_path,
+    require_installable_path,
 )
 from hanly_app.updates.package import (
     FORMAT_DMG,
@@ -512,7 +514,7 @@ def _installed_path(name: str) -> str | None:
         return None
     relative = "/".join(parts)
     try:
-        require_safe_relative_path(relative)
+        require_installable_path(relative)
     except ManifestError:
         return None
     return relative
@@ -671,6 +673,22 @@ class ReleaseSnapshot:
         if asset is None:
             raise DifferentialUpdateError(f"the release for Hanly {self.version} has no {name}")
         return asset
+
+
+def _unreachable(error: BaseException) -> bool:
+    """Whether a failure says the release server was not reached, not that the release is absent.
+
+    urllib reports both as ``OSError``; only a 404 or 410 is an answer about the release.
+    """
+
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, urllib.error.HTTPError):
+            return cause.code not in (404, 410)
+        if isinstance(cause, OSError):
+            return True
+        cause = cause.__cause__
+    return False
 
 
 def snapshot_release(payload: Any, version: str) -> ReleaseSnapshot:
@@ -1023,7 +1041,12 @@ class TreeUpdateInstaller:
                 self._tagged_release_source(self._stamp.release_tag), self._stamp.version
             )
             package = self._read_package(snapshot, self._stamp.version)
-        except (DifferentialUpdateError, UpdateServiceError):
+        except (DifferentialUpdateError, UpdateServiceError) as error:
+            if _unreachable(error):
+                raise DifferentialUpdateError(
+                    f"could not reach the published Hanly {self._stamp.version} release to "
+                    "confirm this installation. Nothing was changed; try again later."
+                ) from error
             return None
         entry = package.index.entry_for(self._stamp.platform, self._stamp.architecture)
         if entry is None or entry.identity.to_dict() != self._stamp.identity.to_dict():
@@ -1736,6 +1759,9 @@ def _preserved_bytes(install_root: Path, paths: tuple[str, ...]) -> int:
 
 
 def _is_read_only(path: Path) -> bool:
+    if sys.platform == "win32":
+        # No statvfs there; a read-only volume fails later, when staging writes.
+        return False
     try:
         return bool(os.statvfs(path).f_flag & os.ST_RDONLY)
     except (OSError, AttributeError):

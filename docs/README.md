@@ -13,7 +13,7 @@ mistaken for a live instruction.
 | [`architecture/DECISION-*`](architecture/) | Approved decisions that amend `01`–`03`; the latest OCR decision is `DECISION-2026-09-22-ocr-backend.md` |
 | [`architecture/visual/`](architecture/visual/) | Diagram companions to `01`–`04`, kept 1:1 with their invariant lists |
 | [`execution/first-release-plan.md`](execution/first-release-plan.md) | The release operator's runbook |
-| Root, `packaging/`, `tools/`, `data/`, `benchmarks/dev/` READMEs | Installing, building, releasing, the dictionary, and measurement |
+| Root, `packaging/`, `tools/`, `data/`, `lab/` READMEs | Installing, building, releasing, the dictionary, and measurement |
 
 ## V1 execution scaffolding
 

@@ -1,6 +1,6 @@
 # Hanly
 
-**1.0.0** — a Korean OCR popup dictionary for the desktop. Hover over Korean
+**1.1.0** — a Korean OCR popup dictionary for the desktop. Hover over Korean
 text anywhere on screen and a dictionary popup tells you what the word under
 the cursor means.
 
@@ -44,7 +44,7 @@ they name directories instead of package names. The *third-party* libraries it
 depends on do come from PyPI, and pip fetches them for you; there is no
 `requirements.txt` because `pyproject.toml` already declares them.
 
-Install the engine **first**. `hanly-app` depends on `hanly==1.0.0`, which
+Install the engine **first**. `hanly-app` depends on `hanly==1.1.0`, which
 exists only in this checkout, so installing `hanly-app` on its own sends pip
 looking for a package index that does not have it.
 
@@ -170,7 +170,7 @@ install does. `packaging/README.md` covers the build and release flow.
 | `packages/hanly` | The engine: OCR orchestration, Korean linguistics, dictionary lookup, resource validation. Depends on no desktop code |
 | `packages/hanly-app` | The desktop: capture, hover, hotkeys, popup, tray, Control Center, updates |
 | `tools/` | Builds the dictionary; developer rigs. Ships in neither package |
-| `benchmarks/dev/` | Measurement harness. Ships in neither package |
+| `lab/` | The developer lab: `python -m lab` runs Hanly under observation and reports. Ships in neither package |
 | `packaging/` | PyInstaller spec and the frozen entry point |
 | `docs/` | Architecture, `CODE-MAP.md`, and execution history; `docs/README.md` is the index |
 
@@ -182,8 +182,8 @@ files, the provider seams, and where the dictionary comes from.
 
 ```bash
 python -m pytest
-python -m ruff check packages packaging tests tools benchmarks
-python -m mypy packages packaging tests tools benchmarks
+python -m ruff check packages packaging tests tools lab
+python -m mypy packages packaging tests tools lab
 ```
 
 `python -m pytest --suite portable` runs only what needs no Qt, Torch or
@@ -192,4 +192,4 @@ display; `--suite native` and `--suite packaged` select the rest
 
 `tools/dev_lookup.py` runs one real `image → EasyOCR → Kiwi → KRDICT` lookup
 and prints the result as JSON, without starting the desktop. `tools/README.md`
-has the rigs; `benchmarks/dev/README.md` has the measurement harness.
+has the rigs; `lab/README.md` has the developer lab.

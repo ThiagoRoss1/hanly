@@ -451,9 +451,23 @@ def require_safe_relative_path(path: str) -> PurePosixPath:
             raise ManifestError(f"{path!r} has a segment Windows would rewrite")
         if part.split(".")[0].lower() in _RESERVED_STEMS:
             raise ManifestError(f"{path!r} uses a reserved device name")
-    if parts[0] in RESERVED_NAMES:
+    # Folded: Windows and macOS resolve any spelling of these to the same entry.
+    if parts[0].casefold() in RESERVED_NAMES:
         raise ManifestError(f"{path!r} is inside the updater's own working area")
     return PurePosixPath(path)
+
+
+def require_installable_path(path: str) -> PurePosixPath:
+    """Accept a path an in-place update may write.
+
+    The installed manifest is the one control file a Windows build publishes,
+    so an update replaces it like any product file. The working area stays
+    refused: nothing a release names may land inside a transaction.
+    """
+
+    if path == INSTALLED_MANIFEST_NAME:
+        return PurePosixPath(path)
+    return require_safe_relative_path(path)
 
 
 def _require_mapping(payload: Any, what: str) -> Mapping[str, Any]:
@@ -899,7 +913,10 @@ def require_tree_path(path: str, platform: str) -> tuple[str, ...]:
     for segment in segments:
         if segment in ("", ".", ".."):
             raise ManifestError(f"{path!r} does not stay inside the installation")
-    if segments[0] == WORKING_DIRECTORY_NAME:
+    if segments[0] == WORKING_DIRECTORY_NAME or (
+        platform in (PLATFORM_WINDOWS, PLATFORM_MACOS)
+        and segments[0].casefold() == WORKING_DIRECTORY_NAME
+    ):
         raise ManifestError(f"{path!r} is inside the updater's own working area")
     if platform == PLATFORM_WINDOWS:
         _require_windows_segments(path, segments)
@@ -1078,7 +1095,10 @@ def _require_control_entries(entries: Mapping[str, TreeEntry], platform: str) ->
     if entry is not None and (platform != PLATFORM_WINDOWS or not entry.is_file):
         raise ManifestError(f"{INSTALLED_MANIFEST_NAME} is not a file this build publishes")
     for path in entries:
-        if path.split("/")[-1] == INSTALLED_MANIFEST_NAME and path != INSTALLED_MANIFEST_NAME:
+        if (
+            path.split("/")[-1].casefold() == INSTALLED_MANIFEST_NAME
+            and path != INSTALLED_MANIFEST_NAME
+        ):
             raise ManifestError(f"{path} uses the updater's own control-file name")
 
 
@@ -1177,6 +1197,7 @@ __all__ = [
     "content_fingerprint",
     "delta_asset_name",
     "parse_checksums",
+    "require_installable_path",
     "require_safe_relative_path",
     "require_tree_path",
     "tree_difference",

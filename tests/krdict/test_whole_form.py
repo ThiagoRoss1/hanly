@@ -247,3 +247,56 @@ def test_the_dictionary_is_never_asked_more_than_five_times(
             assert len(set(asked)) == len(asked), (surface, asked)
     finally:
         dictionary.close()
+
+
+@pytest.mark.parametrize(
+    ("surface", "index", "headword"),
+    [
+        ("손님이", 0, "손님"),
+        ("손님이", 2, "손님"),
+        ("비밀번호는", 0, "비밀번호"),
+        ("비밀번호는", 3, "비밀번호"),
+        ("고소득층이", 0, "고소득층"),
+        ("학교에서", 0, "학교"),
+        ("어머니께서", 0, "어머니"),
+        ("선생님께", 0, "선생님"),
+        ("책상이.", 0, "책상"),
+        ("회사원들은", 0, "회사원"),
+    ],
+)
+def test_a_listed_word_is_found_without_its_particles(
+    language: LanguagePipeline, surface: str, index: int, headword: str
+) -> None:
+    """The stem lost 님 or a compound half to morphology; the word is still listed."""
+
+    assert _primary(language, surface, index)[0] == headword
+
+
+@pytest.mark.parametrize(
+    ("surface", "headword"), [("누군가는", "누구"), ("뭔가", "뭐"), ("무언가를", "무어")]
+)
+def test_a_contraction_answers_its_real_stem_not_an_invented_join(
+    language: LanguagePipeline, surface: str, headword: str
+) -> None:
+    """누군가 itself is not in KRDICT; joining across its overlap made 누이다."""
+
+    assert _primary(language, surface, 0)[0] == headword
+
+
+@pytest.mark.parametrize(
+    ("surface", "index", "headword"),
+    [
+        ("뭉클해졌습니다", 0, "뭉클하다"),
+        ("뭉클했다", 0, "뭉클하다"),
+        ("가득했다", 0, "가득하다"),
+        ("뭉클해졌습니다", 3, "지다"),
+        ("옹기종기했다", 0, "옹기종기"),
+        ("공부했다", 0, "공부하다"),
+    ],
+)
+def test_an_adverb_and_its_ha_suffix_answer_the_predicate_only_when_listed(
+    language: LanguagePipeline, surface: str, index: int, headword: str
+) -> None:
+    """옹기종기하다 is not in KRDICT, so the adverb itself stays the answer."""
+
+    assert _primary(language, surface, index)[0] == headword

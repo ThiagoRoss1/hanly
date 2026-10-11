@@ -371,6 +371,8 @@ def test_one_installation_admits_one_helper_at_a_time(helper: Path, tmp_path: Pa
     lock.parent.mkdir(parents=True, exist_ok=True)
     handle = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     try:
+        if sys.platform == "win32":
+            pytest.skip("the native POSIX helper is not a Windows program")
         import fcntl
 
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -8,7 +8,9 @@ cannot be checked any other way.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from time import monotonic
 
 import pytest
 from hanly_app.updates.journal import COMMITTED, RESTORED
@@ -16,6 +18,7 @@ from hanly_app.updates.journal import COMMITTED, RESTORED
 from tests.hanly_fixtures.update_handoff import COMPILER
 from tests.hanly_fixtures.update_transaction import (
     PROGRAM_NAME,
+    TEST_READY_WAIT,
     Installation,
     append_operation,
     build_installation,
@@ -74,6 +77,44 @@ def test_a_build_that_reports_the_wrong_version_is_rolled_back(tmp_path: Path) -
     assert installation.read("_internal/dropped.txt") == "goes\n"
     assert installation.read("_internal/added.txt") is None
     assert installation.launched == ["new", "old"]
+
+
+def test_a_build_that_exits_without_answering_is_rolled_back_without_waiting(
+    tmp_path: Path,
+) -> None:
+    """A replacement that has already exited can never acknowledge; the user
+    should not watch the progress window for the whole startup allowance."""
+
+    installation = _install(tmp_path, reported_version="9.9.9", linger=0)
+    before = installation.digest(PROGRAM_NAME)
+
+    started = monotonic()
+    run_helper(installation)
+    result = installation.await_outcome()
+
+    assert result["outcome"] == RESTORED
+    assert monotonic() - started < TEST_READY_WAIT / 2
+    assert installation.digest(PROGRAM_NAME) == before
+    assert installation.launched == ["new", "old"]
+
+
+def test_a_build_that_cannot_start_at_all_is_rolled_back_without_waiting(
+    tmp_path: Path,
+) -> None:
+    installation = _install(tmp_path)
+    before = installation.digest(PROGRAM_NAME)
+    plan = json.loads((installation.journal.directory / "plan.json").read_text("utf-8"))
+    operation = next(item for item in plan["operations"] if item["path"] == PROGRAM_NAME)
+    (installation.journal.directory / operation["payload"]).write_bytes(b"not a program")
+
+    started = monotonic()
+    run_helper(installation)
+    result = installation.await_outcome()
+
+    assert result["outcome"] == RESTORED
+    assert monotonic() - started < TEST_READY_WAIT / 2
+    assert installation.digest(PROGRAM_NAME) == before
+    assert installation.launched == ["old"]
 
 
 def test_an_interrupted_apply_settles_when_the_helper_runs_again(tmp_path: Path) -> None:

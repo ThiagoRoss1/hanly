@@ -12,6 +12,8 @@ resources/dev/krdict/*.sqlite3
 resources/dev/models/
 resources/dev/runtime-local.json
 resources/dev/app-config.json
+artifacts/lab/
+# Evidence recorded before the lab moved its root to artifacts/lab/.
 artifacts/benchmarks/
 artifacts/investigation-2026-09-05
 data/source/
@@ -23,3 +25,6 @@ packages/hanly-app/src/hanly_app/assets/easyocr_models/
 # Written by the release build before each freeze; it names one build.
 packages/hanly-app/src/hanly_app/assets/hanly-build.json
 data/reports/
+
+# macOS Finder view settings
+.DS_Store

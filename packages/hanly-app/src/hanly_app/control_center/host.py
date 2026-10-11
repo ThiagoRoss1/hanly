@@ -6,6 +6,7 @@ policy.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from collections.abc import Callable
@@ -525,6 +526,9 @@ class ControlCenterHost:
         # Qt WebEngine needs its shared-OpenGL attribute, and Chromium its
         # argument zero, before any Qt object exists in this process.
         prepare_control_center_qt()
+        # Cocoa transforms the child during QApplication creation, before Accessory policy.
+        if sys.platform == "darwin":
+            os.environ["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
         ensure_qt_application(diagnostics=self._diagnostics)
         # Between the two: pywebview reads the primary screen's geometry while
         # creating the window, and a session with none reaches that call.

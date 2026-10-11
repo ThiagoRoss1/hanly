@@ -5,7 +5,7 @@ This file provides guidance to Codex when working with code in this repository.
 ## Project state
 
 Hanly is a Korean popup-dictionary desktop app: hover over Korean text anywhere
-on screen and a dictionary popup explains the word. Version 1.0.0 is Hanly V1 —
+on screen and a dictionary popup explains the word. Version 1.1.0 is Hanly V1 —
 two independently installable packages (`hanly`, the
 engine; `hanly-app`, the desktop), frozen builds for Windows, macOS and Linux,
 an in-place updater, and CI.
@@ -54,8 +54,8 @@ are V1 scaffolding and may be archived after V1; `01`–`03` are not.
 
 ```bash
 python -m pytest                     # the full local gate
-python -m ruff check packages packaging tests tools benchmarks
-python -m mypy packages packaging tests tools benchmarks
+python -m ruff check packages packaging tests tools lab
+python -m mypy packages packaging tests tools lab
 ```
 
 `--suite portable` (no Qt, Torch or display), `--suite native` (`tests/native/`,
@@ -64,10 +64,21 @@ real desktop runtime and window server) and `--suite packaged`
 `packaging/README.md` has the details. The venv (`.venv/`) runs Python 3.13,
 but the code targets **3.10+** — no newer-only syntax or APIs.
 
-Run the desktop as a user does: `hanly` or `python -m hanly_app`. A first
+Run the desktop as a user does: `hanly` or `python -m hanly_app`. Run it under
+observation with `python -m lab` (you drive) or `python -m lab tour` (the lab
+drives and scores); each writes a visual report under `artifacts/lab/runs/`. A first
 launch writes the per-user `runtime.json` and provisions `krdict` from
 `HANLY_KRDICT_DB` or `data/generated/krdict.sqlite3` (see `data/README.md`).
 `resources/dev/` is benchmark-only configuration for `--runtime-config`.
+
+To use Lab evidence, read the compact summary first (`summary.md` or
+`campaign.md`), then check its provenance (start-time commit, clean or dirty,
+observed backend), the baseline (`python -m lab baseline`) and the
+comparison's compatibility before trusting any explanation. Open
+`report.json` or `events.jsonl` only when the summary is not enough. Reports are
+rebuilt under the current scoring rules, so a rebuilt verdict can differ from
+the recorded one; the recording itself never changes. `lab/README.md` has the
+details.
 
 ## Runtime rules that are easy to break
 
@@ -86,9 +97,10 @@ launch writes the per-user `runtime.json` and provisions `krdict` from
   happen; `LookupEngine.state` says whether providers are loaded;
   `config.LookupPreload` decides which a launch pays for.
 - **Privacy:** tracing carries no recognized text and no pixels. Private
-  evidence reaches disk only through the benchmark's explicit Export, under
-  the gitignored `artifacts/benchmarks/runs/`.
-- Developer-only instrumentation lives under `benchmarks/dev/` (including its
+  evidence reaches disk only through the lab's explicit Export, or a
+  `lab tour` over lab-authored pages it has verified it owns, under the
+  gitignored `artifacts/lab/runs/`.
+- Developer-only instrumentation lives under `lab/` (including its
   tests and the `dev-hud`); nothing dev-only belongs in `packages/`.
 
 ## Architecture boundaries
@@ -150,6 +162,12 @@ inside the escaped bundle, asserting the target occurs exactly once, and
 diffing against a backup.
 
 ## Governance
+
+Name a new branch or worktree for its actual workstream, not for the agent:
+for example `lab/app-health`, `fix/windows-updater` or `v2/pixel-interface`.
+Use a short descriptive slug and keep related phases on the same branch unless
+the human requests isolation. A worktree uses that same workstream name; do not
+create one per step. Do not add an automatic `codex/` or `claude/` prefix.
 
 Agents may propose architecture changes and draft ADRs, but approved
 architecture changes need human approval before becoming authoritative. Commit,

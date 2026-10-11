@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,28 @@ from hanly_app.control_center.host import (
     ControlCenterHost,
     initial_window_size,
 )
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_window_child_prevents_foreground_transform_before_qt(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+) -> None:
+    variable = "QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"
+    monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr(control_center_host.sys, "platform", platform)
+    monkeypatch.setattr(control_center_host, "prepare_control_center_qt", lambda: None)
+    monkeypatch.setattr(control_center_host, "verify_primary_screen", lambda: None)
+    module = SimpleNamespace()
+    monkeypatch.setitem(control_center_host.sys.modules, "webview", module)
+    calls = []
+
+    def create(**kwargs: Any) -> None:
+        calls.append(os.environ.get(variable))
+
+    monkeypatch.setattr(control_center_host, "ensure_qt_application", create)
+    assert ControlCenterHost(object())._load_webview() is module
+    assert calls == ["1" if platform == "darwin" else None]
 
 
 class _Event:
@@ -330,8 +353,6 @@ def test_an_explicit_size_is_honoured_over_the_derived_one() -> None:
     host = _host(webview, width=1200, height=900)
     host.run()
 
-    created = next(
-        kwargs for name, kwargs in webview.calls if name == "create_window"
-    )
+    created = next(kwargs for name, kwargs in webview.calls if name == "create_window")
     assert created["width"] == 1200
     assert created["height"] == 900

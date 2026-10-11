@@ -9,6 +9,7 @@ makes of the bundle afterwards. The macOS lane runs the real tools.
 from __future__ import annotations
 
 import plistlib
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,15 @@ from hanly_app.updates.macos import (
 
 from tests.hanly_fixtures.update_release import PublishedRelease
 from tests.hanly_fixtures.update_tree import BUNDLE_IDENTIFIER, MACOS, info_plist
+
+
+@pytest.fixture(autouse=True)
+def _private_temp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # An image that will not detach keeps its mount holder on purpose; keep
+    # that holder out of the real TEMP.
+    holder = tmp_path / "temp"
+    holder.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(holder))
 
 
 @dataclass

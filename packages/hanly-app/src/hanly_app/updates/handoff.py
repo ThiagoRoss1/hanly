@@ -31,7 +31,7 @@ SWAP_ATTEMPTS = 30
 #: could roll back a working build during model and Qt initialization.
 READY_WAIT_SECONDS = 600
 
-Spawn = Callable[[list[str], Path], None]
+Spawn = Callable[[list[str], Path], object]
 
 
 class HandoffError(RuntimeError):
@@ -119,7 +119,7 @@ def render_handoff_script(*, executable: str, platform: str = sys.platform) -> s
     )
 
 
-def spawn_detached(command: list[str], directory: Path) -> None:
+def spawn_detached(command: list[str], directory: Path) -> subprocess.Popen[bytes]:
     """Start a helper that outlives the parent process it is waiting for.
 
     On Windows, use NEW_PROCESS_GROUP to isolate console signals and CREATE_NO_WINDOW.
@@ -131,9 +131,8 @@ def spawn_detached(command: list[str], directory: Path) -> None:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
             subprocess, "CREATE_NO_WINDOW", 0
         )
-        subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
-        return
-    subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
+        return subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
+    return subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
 
 
 def _write_handoff_script(body: str, *, platform: str, directory: Path) -> Path:
@@ -593,6 +592,8 @@ def launch_mode(platform: str = sys.platform) -> str:
 def write_descriptor(path: Path, transaction: NativeTransaction) -> Path:
     """Write the descriptor privately, and make it durable before it is used."""
 
+    if sys.platform == "win32":
+        raise HandoffError("the native update descriptor exists only on macOS and Linux")
     payload = transaction.to_bytes()
     try:
         handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
@@ -759,6 +760,8 @@ def _lock_is_free(path: Path) -> bool:
     does not exist.
     """
 
+    if sys.platform == "win32":
+        raise HandoffError("advisory installation locks exist only on macOS and Linux")
     import fcntl
 
     try:

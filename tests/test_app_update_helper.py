@@ -27,6 +27,7 @@ from hanly_app.updates.helper import (
     pending_transaction,
     recover_pending,
     render_helper_script,
+    start_helper,
     write_helper,
 )
 from hanly_app.updates.journal import UpdateJournal
@@ -144,6 +145,53 @@ def test_quitting_before_the_helper_owns_the_transaction_is_refused(
             clock=lambda: next(elapsed),
             sleep=lambda _seconds: None,
         )
+
+
+class _Process:
+    """Stands in for the helper process the shell started."""
+
+    def __init__(self, exit_code: int | None) -> None:
+        self.exit_code = exit_code
+
+    def poll(self) -> int | None:
+        return self.exit_code
+
+
+def test_a_helper_that_exits_without_claiming_fails_at_once(tmp_path: Path) -> None:
+    """A dead helper will never claim, so waiting out the deadline only delays the answer."""
+
+    journal = _journal(tmp_path)
+    ticks: list[float] = []
+
+    def clock() -> float:
+        ticks.append(float(len(ticks)))
+        return ticks[-1]
+
+    with pytest.raises(HelperError, match="stopped before it started; nothing has been changed"):
+        await_claim(journal, process=_Process(2), clock=clock, sleep=lambda _seconds: None)
+    assert len(ticks) < 5
+
+
+def test_a_live_helper_that_is_slow_to_start_is_still_waited_for(tmp_path: Path) -> None:
+    """PowerShell's cold start took 25 s on a loaded machine; that is slow, not failed."""
+
+    journal = _journal(tmp_path)
+    elapsed = iter([0.0, 45.0, 90.0, 90.0])
+
+    def sleep(_seconds: float) -> None:
+        journal.helper_path.write_text(json.dumps({"pid": 77}), encoding="utf-8-sig")
+
+    claimed = await_claim(
+        journal, process=_Process(None), clock=lambda: next(elapsed), sleep=sleep
+    )
+    assert claimed == 77
+
+
+def test_starting_the_helper_hands_back_the_process_it_started(tmp_path: Path) -> None:
+    journal = _journal(tmp_path)
+    started = _Process(None)
+
+    assert start_helper(journal, tmp_path / "recovery", spawn=lambda _a, _d: started) is started
 
 
 def test_a_helper_that_claimed_the_transaction_reports_its_process(

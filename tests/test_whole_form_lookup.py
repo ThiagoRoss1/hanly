@@ -255,3 +255,135 @@ def test_an_inflected_predicate_may_still_replace_its_surface() -> None:
     language = LanguagePipeline(_Morphology(_SPLIT), dictionary)
 
     assert language.lookup(TextSelection(_SURFACE, 0)).entries[0].headword == "초대받다"
+
+
+# --- a surface without its trailing particles --------------------------------
+
+#: `손님이`: Kiwi splits off the suffix 님 and keeps 손 as the unit's lemma.
+_PARTICLED = MorphologyAnalysis(
+    tokens=(
+        TokenAnalysis(token="손", lemma="손", part_of_speech="NNG", start=0, length=1),
+        TokenAnalysis(token="님", lemma="님", part_of_speech="XSN", start=1, length=1),
+        TokenAnalysis(token="이", lemma="이", part_of_speech="JKS", start=2, length=1),
+    ),
+    candidates=(LexicalCandidate(lemma="손", start=0, end=3, part_of_speech="NNG"),),
+)
+
+
+@pytest.mark.parametrize("cursor_index", range(3))
+def test_a_word_is_found_without_its_particles_before_its_parts(cursor_index: int) -> None:
+    dictionary = _Dictionary({"손님": _entry("손님", "guest"), "손": _entry("손", "hand")})
+    language = LanguagePipeline(_Morphology(_PARTICLED), dictionary)
+
+    result = language.lookup(TextSelection("손님이", cursor_index))
+
+    assert result.entries[0].headword == "손님"
+    assert dictionary.queries == ["손님이", "손님"]
+    assert result.context is not None
+    # The split's 손 ("hand") would explain a different word, so no lexical part is shown.
+    assert [c.lemma for c in result.context.components if not c.grammatical] == []
+
+
+def test_the_exact_surface_still_wins_over_the_particle_stripped_form() -> None:
+    dictionary = _Dictionary(
+        {"손님이": _entry("손님이", "listed"), "손님": _entry("손님", "guest")}
+    )
+    language = LanguagePipeline(_Morphology(_PARTICLED), dictionary)
+
+    assert language.lookup(TextSelection("손님이", 0)).entries[0].headword == "손님이"
+    assert dictionary.queries == ["손님이"]
+
+
+def test_an_unlisted_stripped_form_falls_through_to_the_unit() -> None:
+    dictionary = _Dictionary({"손": _entry("손", "hand")})
+    language = LanguagePipeline(_Morphology(_PARTICLED), dictionary)
+
+    assert language.lookup(TextSelection("손님이", 0)).entries[0].headword == "손"
+    assert dictionary.queries[:3] == ["손님이", "손님", "손"]
+
+
+def test_endings_are_never_stripped_from_a_predicate() -> None:
+    dictionary = _Dictionary({"받다": _entry("받다", "receive")})
+    LanguagePipeline(_Morphology(_SPLIT), dictionary).lookup(TextSelection(_SURFACE, 3))
+
+    # 었/어요 are endings, not particles: no shortened surface such as 초대받았 is
+    # probed, only the whole form and then the units themselves.
+    assert dictionary.queries == [_SURFACE, "초대받다", "받다", "초대"]
+
+
+def test_a_particle_after_a_second_word_is_not_stripped_across_the_space() -> None:
+    analysis = MorphologyAnalysis(
+        tokens=(
+            TokenAnalysis(token="책", lemma="책", part_of_speech="NNG", start=0, length=1),
+            TokenAnalysis(token="학교", lemma="학교", part_of_speech="NNG", start=2, length=2),
+            TokenAnalysis(token="에", lemma="에", part_of_speech="JKB", start=4, length=1),
+        ),
+        candidates=(
+            LexicalCandidate(lemma="책", start=0, end=1, part_of_speech="NNG"),
+            LexicalCandidate(lemma="학교", start=2, end=5, part_of_speech="NNG"),
+        ),
+    )
+    dictionary = _Dictionary({"책": _entry("책", "book"), "학교": _entry("학교", "school")})
+    LanguagePipeline(_Morphology(analysis), dictionary).lookup(TextSelection("책 학교에", 0))
+
+    assert "책 학교" not in dictionary.queries
+
+
+def test_overlapping_units_are_never_joined_into_a_whole_form() -> None:
+    """`누군가는`: 누구 spans 누군, 이다 starts inside it; 누+이다 is a different word."""
+
+    analysis = MorphologyAnalysis(
+        tokens=(
+            TokenAnalysis(token="누구", lemma="누구", part_of_speech="NP", start=0, length=2),
+            TokenAnalysis(token="이", lemma="이다", part_of_speech="VCP", start=1, length=1),
+            TokenAnalysis(token="ᆫ가", lemma="ᆫ가", part_of_speech="EF", start=1, length=2),
+            TokenAnalysis(token="는", lemma="는", part_of_speech="JX", start=3, length=1),
+        ),
+        candidates=(
+            LexicalCandidate(lemma="누구", start=0, end=2, part_of_speech="NP"),
+            LexicalCandidate(lemma="이다", start=1, end=4, part_of_speech="VCP"),
+        ),
+    )
+    dictionary = _Dictionary(
+        {"누이다": _entry("누이다", "lay down"), "누구": _entry("누구", "who")}
+    )
+
+    result = LanguagePipeline(_Morphology(analysis), dictionary).lookup(
+        TextSelection("누군가는", 0)
+    )
+
+    assert result.entries[0].headword == "누구"
+    assert "누이다" not in dictionary.queries
+
+
+#: `뭉클했다`: Kiwi keeps the adverb 뭉클 apart from the adjective-forming 하.
+_ADVERB_HA = MorphologyAnalysis(
+    tokens=(
+        TokenAnalysis(token="뭉클", lemma="뭉클", part_of_speech="MAG", start=0, length=2),
+        TokenAnalysis(token="하", lemma="하", part_of_speech="XSA", start=2, length=1),
+        TokenAnalysis(token="었", lemma="었", part_of_speech="EP", start=2, length=1),
+        TokenAnalysis(token="다", lemma="다", part_of_speech="EF", start=3, length=1),
+    ),
+    candidates=(LexicalCandidate(lemma="뭉클", start=0, end=4, part_of_speech="MAG"),),
+)
+
+
+def test_an_adverb_with_the_ha_suffix_answers_the_listed_predicate() -> None:
+    dictionary = _Dictionary(
+        {"뭉클하다": _entry("뭉클하다", "touched"), "뭉클": _entry("뭉클", "")}
+    )
+    result = LanguagePipeline(_Morphology(_ADVERB_HA), dictionary).lookup(
+        TextSelection("뭉클했다", 0)
+    )
+
+    assert result.entries[0].headword == "뭉클하다"
+
+
+def test_an_adverb_whose_predicate_is_not_listed_keeps_its_own_answer() -> None:
+    dictionary = _Dictionary({"뭉클": _entry("뭉클", "with a lump in the throat")})
+    result = LanguagePipeline(_Morphology(_ADVERB_HA), dictionary).lookup(
+        TextSelection("뭉클했다", 0)
+    )
+
+    assert result.entries[0].headword == "뭉클"
+    assert dictionary.queries.index("뭉클하다") < dictionary.queries.index("뭉클")
