@@ -666,7 +666,7 @@ data with trusted default-branch tooling):
 
 ```powershell
 python tools/release_version.py                # print installed product version
-python tools/release_version.py --tag v1.0.0   # check the local package/tag match
+python tools/release_version.py --tag v1.1.0   # check the local package/tag match
 ```
 
 ## Runtime configuration

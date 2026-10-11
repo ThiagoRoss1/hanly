@@ -18,7 +18,7 @@ python -m pip install -e "packages/hanly-app[dev]"
 
 That extra adds Pillow for image campaigns and psutil for process sampling. It
 must come *after* `packages/hanly` is installed — `hanly-app` depends on
-`hanly==1.0.0`, which exists only in this checkout. Every command runs from the
+`hanly==1.1.0`, which exists only in this checkout. Every command runs from the
 repository root.
 
 ## The three commands

@@ -48,8 +48,8 @@ class _ScriptedBridge(ControlCenterBridge):
             state["updates"]["application"] = {
                 "installable": True,
                 "current_version": "0.9.0",
-                "latest_version": "1.0.0",
-                "message": "Hanly 1.0.0 is available.",
+                "latest_version": "1.1.0",
+                "message": "Hanly 1.1.0 is available.",
             }
         return state
 
