@@ -1,4 +1,4 @@
-"""Small text in Hanly's own windows stays readable in both themes."""
+"""The React Control Center and popup text stays readable in both themes."""
 
 from __future__ import annotations
 
@@ -6,19 +6,22 @@ import re
 from pathlib import Path
 
 import pytest
-from hanly_app.qt_theme import PALETTES
 
 ROOT = Path(__file__).parents[1]
-CSS = ROOT / "packages/hanly-app/src/hanly_app/assets/control_center/control_center.css"
-
-#: WCAG AA for text under 18 pt, which is all of the popup's secondary text.
+CONTROL_CENTER_CSS = ROOT / "apps/desktop/src/styles/controlCenter.css"
+POPUP_CSS = ROOT / "apps/desktop/src/styles/popup.css"
 SMALL_TEXT = 4.5
 
 
 def _luminance(colour: str) -> float:
     value = colour.lstrip("#")
-    channels = [int(value[i : i + 2], 16) / 255 for i in (0, 2, 4)]
-    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    channels = [int(value[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+    linear = [
+        channel / 12.92
+        if channel <= 0.04045
+        else ((channel + 0.055) / 1.055) ** 2.4
+        for channel in channels
+    ]
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 
 
@@ -27,26 +30,34 @@ def contrast(first: str, second: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
+def _theme_tokens() -> dict[str, dict[str, str]]:
+    stylesheet = CONTROL_CENTER_CSS.read_text(encoding="utf-8")
+    light_block = re.search(r":root\s*\{(?P<body>[^{}]+)\}", stylesheet)
+    dark_block = re.search(r'\[data-mode="dark"\]\s*\{(?P<body>[^{}]+)\}', stylesheet)
+    assert light_block is not None and dark_block is not None
+
+    def parse(block: str) -> dict[str, str]:
+        return dict(re.findall(r"--([\w-]+):\s*(#[0-9A-Fa-f]{6});", block))
+
+    light = parse(light_block.group("body"))
+    dark = {**light, **parse(dark_block.group("body"))}
+    return {"light": light, "dark": dark}
+
+
 @pytest.mark.parametrize("mode", ["light", "dark"])
-@pytest.mark.parametrize("ink", ["ink", "ink2", "ink3"])
-@pytest.mark.parametrize("surface", ["bg", "foot"])
-def test_popup_text_meets_small_text_contrast(mode: str, ink: str, surface: str) -> None:
-    palette = PALETTES[mode]
+@pytest.mark.parametrize("ink", ["text-primary", "text-secondary", "text-muted"])
+@pytest.mark.parametrize("surface", ["surface", "surface-raised", "surface-subtle"])
+def test_react_text_tokens_meet_small_text_contrast(mode: str, ink: str, surface: str) -> None:
+    tokens = _theme_tokens()[mode]
 
-    assert contrast(palette[ink], palette[surface]) >= SMALL_TEXT
-
-
-@pytest.mark.parametrize("mode", ["light", "dark"])
-@pytest.mark.parametrize("surface", ["bg", "foot"])
-def test_the_three_inks_keep_their_order(mode: str, surface: str) -> None:
-    palette = PALETTES[mode]
-    ratios = [contrast(palette[ink], palette[surface]) for ink in ("ink", "ink2", "ink3")]
-
-    assert ratios == sorted(ratios, reverse=True)
-    assert ratios[1] - ratios[2] >= 0.5
+    assert contrast(tokens[ink], tokens[surface]) >= SMALL_TEXT
 
 
-def test_the_control_center_muted_text_is_the_popups_tertiary_ink() -> None:
-    muted = re.findall(r"--text-muted: (#[0-9A-Fa-f]{6});", CSS.read_text(encoding="utf-8"))
+def test_popup_uses_the_shared_react_tokens_for_its_text_and_footer() -> None:
+    center = CONTROL_CENTER_CSS.read_text(encoding="utf-8")
+    popup = POPUP_CSS.read_text(encoding="utf-8")
 
-    assert muted == [PALETTES["light"]["ink3"], PALETTES["dark"]["ink3"]]
+    for role in ("text-primary", "text-secondary", "text-muted"):
+        assert f"var(--{role})" in center
+        assert f"var(--{role})" in popup
+    assert "background: var(--surface-subtle)" in popup

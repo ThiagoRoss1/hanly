@@ -314,7 +314,7 @@ def open_diagnostics(
     """Start a session log in the per-user diagnostics directory.
 
     Call this before any native runtime is initialized, so a failure during
-    OCR preload or Qt startup is already being recorded. An unwritable
+    OCR preload or desktop startup is already being recorded. An unwritable
     location returns a memory-only log rather than failing the launch.
     """
 
@@ -336,10 +336,6 @@ def runtime_versions(packages: Iterable[str] = ()) -> dict[str, str]:
     names = tuple(packages) or (
         "hanly",
         "hanly-app",
-        "PyQt6",
-        "PyQt6-WebEngine",
-        "pywebview",
-        "pystray",
         "easyocr",
         "torch",
         "kiwipiepy",
@@ -442,29 +438,6 @@ def diagnostics_bundle(
     }
 
 
-def install_qt_message_handler(log: DiagnosticLog) -> bool:
-    """Route Qt's own messages into the log, flushing fatals before the abort.
-
-    Qt writes its fatal diagnostics to stderr and then aborts the process,
-    which in a windowed build means the message is lost exactly when it
-    matters most. Returns whether the handler could be installed.
-    """
-
-    try:
-        from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
-    except ImportError:
-        return False
-
-    def handler(mode: object, _context: object, message: object) -> None:
-        text = f"Qt {getattr(mode, 'name', mode)}: {message}"
-        log.add(text)
-        if mode is QtMsgType.QtFatalMsg:
-            _flush_standard_streams()
-
-    qInstallMessageHandler(handler)
-    return True
-
-
 def _formatted_traceback(stage: str, error: BaseException) -> str:
     chain = "".join(
         traceback.format_exception(type(error), error, error.__traceback__)
@@ -484,17 +457,6 @@ def _bounded(text: str, limit: int = MAX_RECORD_CHARS) -> str:
     return f"{text[: limit - 1]}\u2026"
 
 
-def _flush_standard_streams() -> None:
-    """Flush stdout/stderr, tolerating the absent streams of a windowed build."""
-
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            if stream is not None:
-                stream.flush()
-        except (OSError, ValueError):
-            continue
-
-
 __all__ = [
     "DEFAULT_SUBSYSTEM",
     "LEVELS",
@@ -509,7 +471,6 @@ __all__ = [
     "StartupTimeline",
     "RotatingLogFile",
     "diagnostics_bundle",
-    "install_qt_message_handler",
     "open_diagnostics",
     "runtime_versions",
     "sanitize_text",

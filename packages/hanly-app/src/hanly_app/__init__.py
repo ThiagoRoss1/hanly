@@ -24,15 +24,9 @@ if TYPE_CHECKING:
         ScreenRect,
     )
     from hanly_app.control_center.bridge import (
-        ControlCenterAssets,
         ControlCenterBridge,
         ControlCenterUnavailable,
-        control_center_document,
-        load_control_center_assets,
-        prepare_control_center_qt,
     )
-    from hanly_app.control_center.host import ControlCenterHost
-    from hanly_app.control_center.process import ControlCenterOptions, ControlCenterProcess
     from hanly_app.hover.controller import HoverController, HoverRequest
     from hanly_app.hover.lookup import HoverLookupRuntime
     from hanly_app.hover.mouse_observer import MouseObserver
@@ -70,14 +64,6 @@ if TYPE_CHECKING:
         UpdateService,
     )
 
-    from .application import (
-        DesktopApplication,
-        DesktopApplicationError,
-        DiagnosticLog,
-        default_app_config_path,
-        load_update_service,
-        run_desktop,
-    )
     from .composition import (
         LookupWorker,
         build_lookup_controller,
@@ -109,14 +95,12 @@ if TYPE_CHECKING:
         ManualLookupRuntime,
         ManualLookupStartupError,
         create_manual_lookup,
-        create_qt_manual_lookup,
     )
     from .paths import (
         default_log_directory,
         default_runtime_config_path,
         discover_runtime_config,
     )
-    from .qt_bootstrap import ensure_qt_application
     from .runtime import (
         HanlyRuntime,
         RuntimeConfigError,
@@ -131,8 +115,6 @@ if TYPE_CHECKING:
         watch_worker_readiness,
     )
     from .runtime_trace import RuntimeTraceSink, emit_trace
-    from .signal_bridge import QtSignalBridge
-    from .tray import TrayService, TrayState, TrayStatus
 
 #: Exported name -> the submodule that defines it.
 _EXPORTS: dict[str, str] = {
@@ -149,18 +131,11 @@ _EXPORTS: dict[str, str] = {
     "ConfigError": "config",
     "ConfigManager": "config",
     "ConfiguredCaptureService": "acquisition.capture",
-    "ControlCenterAssets": "control_center.bridge",
     "ControlCenterBridge": "control_center.bridge",
-    "ControlCenterHost": "control_center.host",
-    "ControlCenterOptions": "control_center.process",
-    "ControlCenterProcess": "control_center.process",
     "ControlCenterUnavailable": "control_center.bridge",
     "DEFAULT_HOTKEYS": "hotkeys",
-    "DesktopApplication": "application",
-    "DesktopApplicationError": "application",
     "DesktopController": "desktop_controller",
     "DesktopState": "desktop_controller",
-    "DiagnosticLog": "application",
     "DownloadProgress": "updates.resource_service",
     "DuplicateHotkeyError": "hotkeys",
     "GitHubReleaseFetcher": "updates.resource_service",
@@ -193,7 +168,6 @@ _EXPORTS: dict[str, str] = {
     "PopupPosition": "popup.presentation",
     "PopupRuntime": "popup.presentation",
     "PopupSize": "popup.presentation",
-    "QtSignalBridge": "signal_bridge",
     "RemoteManifest": "updates.resource_service",
     "RemoteResource": "updates.resource_service",
     "ResourceFetcher": "updates.resource_service",
@@ -213,9 +187,6 @@ _EXPORTS: dict[str, str] = {
     "Theme": "config",
     "Transport": "lookup.transport",
     "TransportClosed": "lookup.transport",
-    "TrayService": "tray",
-    "TrayState": "tray",
-    "TrayStatus": "tray",
     "UpdateAvailability": "updates.resource_service",
     "UpdateCoordinator": "updates.coordinator",
     "UpdateResult": "updates.resource_service",
@@ -223,27 +194,19 @@ _EXPORTS: dict[str, str] = {
     "Worker": "lookup.executor",
     "build_lookup_controller": "composition",
     "build_lookup_worker_factory": "composition",
-    "control_center_document": "control_center.bridge",
     "create_lookup_controller": "composition",
     "create_lookup_controller_from_config": "runtime",
     "create_lookup_worker_factory": "composition",
     "create_manual_lookup": "manual_lookup",
-    "create_qt_manual_lookup": "manual_lookup",
     "create_worker_factory_from_config": "runtime",
-    "default_app_config_path": "application",
     "default_log_directory": "paths",
     "default_runtime_config_path": "paths",
     "discover_runtime_config": "paths",
     "emit_trace": "runtime_trace",
-    "ensure_qt_application": "qt_bootstrap",
     "format_lookup_result": "popup.presentation",
-    "load_control_center_assets": "control_center.bridge",
     "load_runtime": "runtime",
-    "load_update_service": "application",
     "open_diagnostics": "diagnostics",
     "preload_ocr_runtime": "lookup.preload",
-    "prepare_control_center_qt": "control_center.bridge",
-    "run_desktop": "application",
     "watch_worker_readiness": "runtime_status",
 }
 
@@ -273,18 +236,11 @@ __all__ = [
     "ConfiguredCaptureService",
     "ConfigError",
     "ConfigManager",
-    "ControlCenterAssets",
     "ControlCenterBridge",
-    "ControlCenterHost",
-    "ControlCenterOptions",
-    "ControlCenterProcess",
     "ControlCenterUnavailable",
     "DEFAULT_HOTKEYS",
-    "DesktopApplication",
-    "DesktopApplicationError",
     "DesktopController",
     "DesktopState",
-    "DiagnosticLog",
     "DownloadProgress",
     "DuplicateHotkeyError",
     "HanlyRuntime",
@@ -319,7 +275,6 @@ __all__ = [
     "RuntimeStatus",
     "RuntimeStatusPublisher",
     "RuntimeTraceSink",
-    "QtSignalBridge",
     "RemoteManifest",
     "RemoteResource",
     "ResourceFetcher",
@@ -328,9 +283,6 @@ __all__ = [
     "ScreenRect",
     "Theme",
     "TechnicalDetailLevel",
-    "TrayService",
-    "TrayState",
-    "TrayStatus",
     "UpdateAvailability",
     "UpdateCoordinator",
     "UpdateResult",
@@ -353,22 +305,14 @@ __all__ = [
     "create_lookup_controller_from_config",
     "create_lookup_worker_factory",
     "create_manual_lookup",
-    "create_qt_manual_lookup",
-    "control_center_document",
     "create_worker_factory_from_config",
-    "default_app_config_path",
-    "ensure_qt_application",
     "default_log_directory",
     "default_runtime_config_path",
     "discover_runtime_config",
     "format_lookup_result",
     "emit_trace",
     "load_runtime",
-    "load_update_service",
-    "load_control_center_assets",
     "open_diagnostics",
-    "prepare_control_center_qt",
     "preload_ocr_runtime",
-    "run_desktop",
     "watch_worker_readiness",
 ]

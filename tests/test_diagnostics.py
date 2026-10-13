@@ -90,6 +90,14 @@ def test_runtime_versions_name_what_a_reader_needs_to_reproduce_a_run() -> None:
     assert versions["hanly"] != "not installed"
 
 
+def test_runtime_version_defaults_exclude_removed_desktop_stacks() -> None:
+    versions = runtime_versions()
+
+    assert not {"PyQt6", "PyQt6-WebEngine", "pywebview", "pystray"}.intersection(
+        versions
+    )
+
+
 def test_a_rotating_file_rejects_bounds_it_cannot_honour(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="max_bytes"):
         RotatingLogFile(tmp_path / LOG_FILE_NAME, max_bytes=0)

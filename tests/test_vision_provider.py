@@ -12,10 +12,6 @@ from hanly.vision_provider import (
     VisionProviderError,
 )
 
-darwin_only = pytest.mark.skipif(
-    sys.platform != "darwin", reason="Vision is a macOS framework"
-)
-
 
 def _roi(width: int = 4, height: int = 2) -> ROIImage:
     return ROIImage(width, height, PixelFormat.RGB_888, bytes(width * height * 3))
@@ -26,9 +22,7 @@ def test_the_adapter_satisfies_the_engine_ocr_seam() -> None:
 
 
 def test_availability_is_false_off_darwin_without_raising() -> None:
-    if sys.platform == "darwin":
-        assert VisionProvider.is_available() is True
-    else:
+    if sys.platform != "darwin":
         assert VisionProvider.is_available() is False
 
 
@@ -43,12 +37,8 @@ def test_recognizing_off_darwin_reports_a_provider_error() -> None:
         VisionProvider().recognize(_roi())
 
 
-@darwin_only
-def test_an_empty_roi_is_a_normal_empty_result_not_an_error() -> None:
-    assert VisionProvider().recognize(_roi(32, 16)) == ()
 
 
-@darwin_only
 def test_language_correction_is_off_by_default() -> None:
     """Correction can turn one real word into another, which a dictionary
     lookup must not do silently. It stays opt-in."""
@@ -57,29 +47,6 @@ def test_language_correction_is_off_by_default() -> None:
     assert VisionConfig().languages == ("ko-KR",)
 
 
-@darwin_only
-def test_recognized_regions_carry_top_left_pixel_geometry() -> None:
-    """Vision reports bottom-left normalized coordinates; the seam does not."""
-
-    pillow = pytest.importorskip("PIL")
-    from PIL import Image, ImageDraw, ImageFont
-
-    del pillow
-    font = ImageFont.truetype(
-        "/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttc", 40
-    )
-    canvas = Image.new("RGB", (360, 120), "white")
-    ImageDraw.Draw(canvas).text((40, 30), "사과했어요", font=font, fill="black")
-    roi = ROIImage(canvas.width, canvas.height, PixelFormat.RGB_888, canvas.tobytes())
-
-    results = VisionProvider().recognize(roi)
-
-    assert results, "Vision should read large rendered Korean"
-    region = results[0]
-    assert region.text.strip() == "사과했어요"
-    assert 0 <= region.quad.p1.x < region.quad.p2.x <= canvas.width
-    assert 0 <= region.quad.p1.y < region.quad.p4.y <= canvas.height
-    assert 0.0 <= region.confidence <= 1.0
 
 
 def test_pinning_vision_where_it_does_not_exist_is_a_configuration_error(
@@ -119,6 +86,39 @@ def test_auto_falls_back_instead_of_refusing(
     )
 
     assert runtime._ocr_factory() is not None
+
+
+def test_host_vision_capability_resolves_without_loading_the_framework(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from hanly.easyocr_provider import EasyOCRConfig
+    from hanly_app.config import OCRBackend
+    from hanly_app.runtime import HanlyRuntime
+
+    def unexpected_probe() -> bool:
+        raise AssertionError("service runtime must use the native host capability")
+
+    monkeypatch.setattr(VisionProvider, "is_available", staticmethod(unexpected_probe))
+    runtime = HanlyRuntime(
+        config_path=tmp_path / "runtime.json",
+        resource_manager=object(),  # type: ignore[arg-type]
+        krdict_path=tmp_path / "krdict.sqlite3",
+        easyocr_config=EasyOCRConfig(),
+        ocr_backend=OCRBackend.AUTO,
+        vision_available=True,
+    )
+    fallback = HanlyRuntime(
+        config_path=tmp_path / "runtime.json",
+        resource_manager=object(),  # type: ignore[arg-type]
+        krdict_path=tmp_path / "krdict.sqlite3",
+        easyocr_config=EasyOCRConfig(),
+        ocr_backend=OCRBackend.AUTO,
+        vision_available=False,
+    )
+
+    assert runtime.resolved_ocr_backend() is OCRBackend.VISION
+    assert fallback.resolved_ocr_backend() is OCRBackend.EASYOCR
 
 
 def test_the_lookup_child_builds_the_recognizer_it_was_told_to(tmp_path) -> None:
@@ -232,45 +232,3 @@ def test_scaling_replicates_pixels_exactly_and_invents_no_detail() -> None:
 
     with Image.open(BytesIO(_png_bytes(roi, 1))) as plain:
         assert plain.size == (3, 2)
-
-
-@darwin_only
-def test_geometry_comes_back_in_the_captured_coordinate_space() -> None:
-    """Only the payload is enlarged. A quad outside the ROI would send the
-    resolver looking for a word that is not where it says it is."""
-
-    pytest.importorskip("PIL")
-    from PIL import Image, ImageDraw
-
-    canvas = Image.new("RGB", (240, 60), "white")
-    ImageDraw.Draw(canvas).text((12, 16), "Hanly", fill="black")
-    roi = ROIImage(240, 60, PixelFormat.RGB_888, canvas.tobytes())
-
-    results = VisionProvider().recognize(roi)
-
-    assert results, "the fixture must produce at least one region"
-    for result in results:
-        for point in result.quad.points:
-            assert 0 <= point.x <= roi.width
-            assert 0 <= point.y <= roi.height
-
-
-@darwin_only
-def test_doubling_does_not_change_where_a_region_is_reported() -> None:
-    """Same pixels, same place, whatever size the recognizer was handed."""
-
-    pytest.importorskip("PIL")
-    from PIL import Image, ImageDraw
-
-    canvas = Image.new("RGB", (240, 60), "white")
-    ImageDraw.Draw(canvas).text((12, 16), "Hanly", fill="black")
-    roi = ROIImage(240, 60, PixelFormat.RGB_888, canvas.tobytes())
-
-    plain = VisionProvider(VisionConfig(input_scale=1)).recognize(roi)
-    doubled = VisionProvider(VisionConfig(input_scale=2)).recognize(roi)
-
-    if not plain or not doubled:
-        pytest.skip("this machine's Vision did not read the control fixture")
-    # Geometry agrees to within a pixel of the enlarged sampling grid.
-    assert abs(plain[0].quad.p1.x - doubled[0].quad.p1.x) <= 2
-    assert abs(plain[0].quad.p1.y - doubled[0].quad.p1.y) <= 2

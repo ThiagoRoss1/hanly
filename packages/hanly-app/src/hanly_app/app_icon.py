@@ -65,29 +65,6 @@ def favicon_data_uri() -> str:
     return "data:image/x-icon;base64," + base64.b64encode(data).decode("ascii")
 
 
-def qt_icon(platform: str = sys.platform) -> Any:
-    """The application-wide ``QIcon`` for ``platform``.
-
-    macOS shows it only in the Dock and Cmd+Tab, which expect the square
-    treatment the bundle carries. Elsewhere it is the face below 32 px for title
-    bars and the application icon from 32 px up for the taskbar and Alt+Tab; at
-    200% scaling a title bar asks for 32 physical pixels and so shows the latter.
-    """
-
-    from PyQt6.QtGui import QIcon
-
-    icon = QIcon()
-    if platform == "darwin":
-        icon.addFile(str(macos_icon_path()))
-        return icon
-    for size in WINDOW_FACE_SIZES:
-        icon.addFile(str(window_face_path(size)))
-    for size in ICON_SIZES:
-        if size >= _APPLICATION_ICON_FROM:
-            icon.addFile(str(icon_path(size)))
-    return icon
-
-
 def tray_image() -> Any:
     """The status-item image, as the Pillow image the tray backend expects."""
 
@@ -109,7 +86,6 @@ __all__ = [
     "favicon_data_uri",
     "icon_path",
     "macos_icon_path",
-    "qt_icon",
     "tray_image",
     "window_face_path",
 ]

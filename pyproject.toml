@@ -15,11 +15,13 @@ dev = [
     "zstandard>=0.23,<1",
 ]
 
+lab = ["PyQt6>=6.7,<7"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "lab/tests"]
 pythonpath = ["."]
 markers = [
-    "native: runs real Qt, child-process, or OS-adapter behavior",
+    "native: runs the real Tauri/WebKit desktop, child-process, or OS-adapter behavior",
     "packaged: runs the frozen product rather than the checkout",
 ]
 
@@ -52,8 +54,6 @@ module = [
     "PIL.*",
     "mss.*",
     "PyQt6.*",
-    "pystray.*",
-    "webview.*",
     "psutil.*",
 ]
 ignore_missing_imports = true

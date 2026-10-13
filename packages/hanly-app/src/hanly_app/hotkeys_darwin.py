@@ -1,4 +1,4 @@
-"""Deliver macOS global hotkeys through Carbon on Qt's main run loop.
+"""Deliver macOS global hotkeys through Carbon on a native main run loop.
 
 Carbon needs no privacy grant; pynput's off-main input-source query aborts on
 macOS 26. Press/release events support holds, which end when the primary key rises:

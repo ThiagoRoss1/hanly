@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from hanly.resource_manager import ResourceManager, ResourceManifest, ResourceSpec
 from hanly_app.acquisition.capture import ScreenRect
-from hanly_app.acquisition.selector import CaptureSelection
+from hanly_app.acquisition.selection import CaptureSelection
 from hanly_app.config import (
     HOVER_DELAY_MAX_MS,
     HOVER_DELAY_MIN_MS,
@@ -22,7 +22,6 @@ from hanly_app.control_center import bridge as control_center
 from hanly_app.control_center.bridge import (
     ControlCenterBridge,
     ControlCenterUnavailable,
-    load_control_center_assets,
 )
 from hanly_app.desktop_controller import DesktopState
 from hanly_app.diagnostics import DiagnosticLog
@@ -270,51 +269,10 @@ def test_bridge_validates_region_and_monitor_target_choices(tmp_path: Path) -> N
         bridge.set_region({"left": 0, "top": 0, "width": 0, "height": 600})
 
 
-def _element_ids(html: str) -> list[str]:
-    """Every ``id`` attribute in the page, in order, as the browser will see them."""
-
-    from html.parser import HTMLParser
-
-    found: list[str] = []
-
-    class _Ids(HTMLParser):
-        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-            found.extend(value for name, value in attrs if name == "id" and value)
-
-    _Ids().feed(html)
-    return found
 
 
-def test_the_packaged_window_probe_names_controls_the_shipped_page_has() -> None:
-    """The frozen UI self-check looks these up by id; a stale one fails every release.
-
-    Each must be exactly one element of the shipped page: ``getElementById``
-    answers for the first match, so a duplicate would let the wrong one pass.
-    """
-
-    from hanly_app.self_check import UI_PROBE_ELEMENTS
-
-    ids = _element_ids(load_control_center_assets().html)
-
-    assert UI_PROBE_ELEMENTS
-    for probe in UI_PROBE_ELEMENTS:
-        assert ids.count(probe) == 1, f"{probe!r} is not one element of the shipped page"
-    # The ids the redesign removed, which the gate kept probing until 2026-09-23.
-    legacy = {"control-center", "start-capture", "runtime-state", "quit-hanly"}
-    assert legacy.isdisjoint(UI_PROBE_ELEMENTS)
 
 
-def test_control_center_assets_are_packaged_and_have_no_provider_logic() -> None:
-    assets = load_control_center_assets()
-
-    assert "<title>Hanly</title>" in assets.html
-    # One token set, redefined for the dark mode the theme control selects.
-    assert "--accent: #E88CA1" in assets.css
-    assert '[data-mode="dark"]' in assets.css
-    assert "function renderState" in assets.javascript
-    assert "function renderUpdates" in assets.javascript
-    assert "install_update" in assets.javascript
-    assert "sqlite" not in assets.javascript.lower()
 
 
 def test_hover_delay_is_bounded_to_the_supported_range(tmp_path: Path) -> None:
@@ -331,20 +289,20 @@ def test_hover_delay_is_bounded_to_the_supported_range(tmp_path: Path) -> None:
             bridge.set_hover_delay(rejected)
 
 
-def test_the_delay_slider_is_given_the_bounds_python_actually_enforces(
+def test_the_service_snapshot_reports_the_hover_delay_range(
     tmp_path: Path,
 ) -> None:
-    """A slider with its own constants drifts from the validator behind it."""
+    """The React control takes its limits from this service-owned range."""
 
     bridge, _runtime, _manager = _bridge(tmp_path)
 
     bounds = bridge.get_state()["runtime"]["hover_delay_bounds"]
     assert bounds == {"min": HOVER_DELAY_MIN_MS, "max": HOVER_DELAY_MAX_MS}
-    assert 'id="hover-delay-slider"' in load_control_center_assets().html
-    assert "hover_delay_bounds" in load_control_center_assets().javascript
 
 
-def test_the_installed_version_reaches_the_page_or_nothing_does() -> None:
+def test_the_installed_version_reaches_the_page_or_nothing_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The sidebar shows the running build, and shows nothing if it cannot."""
 
     from hanly_app.control_center import bridge as control_center
@@ -352,15 +310,11 @@ def test_the_installed_version_reaches_the_page_or_nothing_does() -> None:
     version = control_center.ControlCenterBridge().get_state()["runtime"]["app_version"]
     assert version is None or isinstance(version, str)
 
-    def unavailable() -> str:
-        raise RuntimeError("no metadata here")
+    def unavailable(_distribution: str) -> str:
+        raise control_center.PackageNotFoundError("hanly-app")
 
-    original = control_center.installed_version
-    control_center.installed_version = unavailable
-    try:
-        snapshot = control_center.ControlCenterBridge().get_state()
-    finally:
-        control_center.installed_version = original
+    monkeypatch.setattr(control_center, "version", unavailable)
+    snapshot = control_center.ControlCenterBridge().get_state()
     assert snapshot["runtime"]["app_version"] is None
 
 
@@ -381,15 +335,6 @@ def test_persisted_hotkeys_are_validated_by_the_desktop_canonicalizer(
     assert bridge.get_state()["config"]["hotkey"] == "ctrl+alt+k"
 
 
-def test_ui_script_resolves_the_bridge_after_pywebview_injects_it() -> None:
-    """pywebview adds ``window.pywebview.api`` after the document is parsed,
-    so a bridge captured at parse time stays null and every control dies."""
-
-    javascript = load_control_center_assets().javascript
-
-    assert "const api = window.pywebview" not in javascript
-    assert "function bridge()" in javascript
-    assert "const api = bridge();" in javascript
 
 
 class _StubCoordinator:
@@ -526,24 +471,6 @@ def test_opening_release_notes_without_an_update_channel_is_refused() -> None:
         ControlCenterBridge().open_release_notes()
 
 
-def test_the_primary_update_action_installs_in_app_and_the_browser_is_secondary() -> None:
-    """Every bridge call the UI can make for an application update, and which
-    one the markup makes primary."""
-
-    assets = load_control_center_assets()
-
-    assert "install_application_update" in assets.javascript
-    assert "open_release_page" not in assets.javascript
-    # The update panel is built from the coordinator's snapshot, so which
-    # action is primary is decided in the script rather than in the markup.
-    assert '"Install update", "btn btn-primary"' in assets.javascript
-    assert '"View release notes", "btn btn-quiet"' in assets.javascript
-    # The one action that reaches a browser is the notes, and only the notes.
-    browser_calls = [
-        line for line in assets.javascript.splitlines() if "open_release_notes" in line
-    ]
-    assert len(browser_calls) == 1
-    assert "View release notes" in browser_calls[0]
 
 
 def test_selecting_a_capture_area_persists_what_the_selector_returned(
@@ -653,13 +580,6 @@ def test_retrying_is_refused_until_startup_supplies_the_action(tmp_path: Path) -
     assert retries == ["retry"]
 
 
-def test_the_page_says_when_a_region_scope_has_no_region_to_read() -> None:
-    """A monitor can disappear between sessions; the fallback must be visible."""
-
-    assets = load_control_center_assets()
-
-    assert "reading the whole monitor" in assets.javascript
-    assert 'capture_mode === "region"' in assets.javascript
 
 
 def test_start_capture_is_refused_while_the_runtime_is_still_preparing() -> None:
@@ -980,24 +900,6 @@ def test_an_invented_activation_choice_names_what_was_offered(tmp_path: Path) ->
         bridge.update_settings({"hover_activation": "sometimes"})
 
 
-def test_every_new_preference_has_a_control_on_the_page() -> None:
-    """A setting the page cannot reach is a setting the user does not have."""
-
-    assets = load_control_center_assets()
-
-    for element in ("lookup-preload", "live-engine", "hover-mode-rows", "shortcut-list",
-                    "theme-choices", "popup-size-choices", "technical-detail-choices",
-                    "hover-delay-slider", "hover-delay-value"):
-        assert f'id="{element}"' in assets.html, element
-    for choice in ("when_capture_starts", "always", "on_demand"):
-        assert f'value="{choice}"' in assets.html, choice
-    # The shortcut rows and the activation modes are rendered from the config
-    # field names, so those are what the script has to name.
-    for field in ("hover_hotkey", "capture_hotkey", "hover_activation",
-                  "always_active", "push_to_hover", "theme", "popup_default_size",
-                  "technical_details"):
-        assert field in assets.javascript, field
-    assert "update_settings" in assets.javascript
 
 
 def _log_bridge(tmp_path: Path) -> tuple[ControlCenterBridge, DiagnosticLog, Path]:
@@ -1106,70 +1008,18 @@ def test_a_build_without_a_log_says_so_rather_than_exporting_nothing(
         bridge.clear_logs()
 
 
-def test_the_logs_panel_renders_records_with_text_content_only() -> None:
-    """A log line can hold anything an operating system put in an error."""
-
-    assets = load_control_center_assets()
-
-    for element in ("log-list", "log-levels", "log-subsystem", "log-search"):
-        assert f'id="{element}"' in assets.html, element
-    for action in ("refresh-logs", "copy-logs", "clear-logs", "export-diagnostics"):
-        assert f'id="{action}"' in assets.html, action
-    body = assets.javascript.split("function renderLogs(", 1)[1].split("function loadLogs", 1)[0]
-    # Records reach the page only through the one element helper, which sets
-    # text and never markup.
-    assert "innerHTML" not in body
-    assert "el(" in body
-    helper = assets.javascript.split("function el(", 1)[1].split("function attr(", 1)[0]
-    assert "textContent" in helper
-    assert "innerHTML" not in helper
 
 
-def test_the_update_panel_states_what_is_downloaded_and_what_remains() -> None:
-    """A percentage on its own is what made the last update look frozen: the
-    page has to say the size, the bytes left, and which stage is running."""
-
-    assets = load_control_center_assets()
-
-    assert 'id="activity-list"' in assets.html
-    for fragment in (
-        "function describePlan",
-        "function describeTransfer",
-        '"Download full update"',
-        "remaining",
-    ):
-        assert fragment in assets.javascript, fragment
-    # Both are real bridge operations, not page-local state. The second click
-    # authorizing a full download is the argument, not a different action.
-    assert '"Cancel", "btn btn-sm btn-quiet", "cancel_update"' in assets.javascript
-    assert '"install_application_update", "true"' in assets.javascript
 
 
-def test_a_download_at_one_hundred_percent_is_not_reported_as_finished() -> None:
-    """Explaining the gap is the whole point of the byte line: the payload is
-    in and the files are still being replaced."""
-
-    javascript = load_control_center_assets().javascript
-
-    assert "remaining" in javascript
-    assert "formatBytes" in javascript
-    # Stage labels come from the coordinator's phases, so the page never
-    # invents one smooth percentage across network, unpacking and restart.
-    for phase in ("inspecting", "unpacking", "preparing"):
-        assert phase in javascript, phase
 
 
 def test_the_activity_tail_is_bounded_rather_than_appended_to() -> None:
-    """The snapshot crosses a pipe on every poll, so an ever-growing log would
-    make a long update slower the longer it ran."""
+    """The updater bounds its service snapshot before React renders activity."""
 
     from hanly_app.updates.coordinator import ACTIVITY_LIMIT
 
     assert ACTIVITY_LIMIT <= 200
-    javascript = load_control_center_assets().javascript
-    body = javascript.split("function renderActivity(", 1)[1].split("// ---- readiness", 1)[0]
-    assert "clear(list)" in body
-    assert "appendChild(list)" not in body
 
 
 def test_the_readiness_panel_names_the_recognizer_actually_in_use() -> None:
@@ -1228,14 +1078,3 @@ def test_vision_availability_is_probed_once() -> None:
     bridge.get_state()
 
     assert calls == [1]
-
-
-def test_quitting_uses_the_exit_role_rather_than_a_fixed_colour() -> None:
-    assets = load_control_center_assets()
-
-    assert 'class="btn btn-sm btn-exit" id="quit-confirm-yes"' in assets.html
-    assert 'class="btn btn-sm btn-exit-quiet" id="quit-ask"' in assets.html
-    assert "btn-danger" not in assets.html and ".btn-danger" not in assets.css
-    rules = [line for line in assets.css.splitlines() if line.startswith(".btn-exit")]
-    assert rules and all("#" not in rule for rule in rules), rules
-    assert "--exit: var(--accent);" in assets.css
