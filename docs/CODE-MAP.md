@@ -459,6 +459,31 @@ the migration routes.
 
 ---
 
+
+## 7a. Approved Tauri migration workspace (in progress)
+
+`apps/desktop/` is the official migration workspace; the shipped entry points
+above remain the implemented product until functional/native/packaged parity
+passes. This foundation is not a hidden fallback switch or a release installer.
+
+| Path | Responsibility currently implemented |
+|---|---|
+| `apps/desktop/src/pages/` | React Control Center, popup and region-selector presentation routes |
+| `apps/desktop/src/services/` | Restricted Tauri bridge, event subscriptions and structured errors |
+| `apps/desktop/src-tauri/src/commands/` | Native caller-derived per-window authorization and parameter validation |
+| `apps/desktop/src-tauri/src/lifecycle/` | Private bounded JSONL, request correlation, deadlines, disconnect and service cleanup |
+| `apps/desktop/src-tauri/src/windows/` | Native windows, incumbent geometry contract, latest popup sequence and coalesced events |
+| `packages/hanly-app/src/hanly_app/service/` | Qt-free internal desktop service; handshake, honest unready state, settings/logs and shutdown |
+| `tests/test_desktop_service.py`, `apps/desktop/tests/` | Service isolation/contracts and React routing/state/settings/interaction coverage |
+
+The new internal service is run by Rust, not an alternative user-facing Python
+UI entry point. Heavy lookup providers remain outside its initial import graph.
+Capture, acquisition/lookup composition, native permissions/hotkeys, updater,
+release packaging and Lab integration are not yet connected. See
+[the workspace instructions](../apps/desktop/README.md) and the single
+[migration checkpoint](execution/checkpoints/desktop-tauri-migration.md).
+
+
 ## 8. Running it from a fresh clone
 
 ```bash
