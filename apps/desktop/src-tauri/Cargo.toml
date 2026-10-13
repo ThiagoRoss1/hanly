@@ -3,7 +3,7 @@ name = "hanly-desktop"
 version = "1.1.0"
 description = "Hanly native desktop application"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.99"
 
 [build-dependencies]
 tauri-build = { version = "=2.7.2", features = [] }
@@ -14,6 +14,24 @@ serde_json = "1"
 tauri = { version = "=2.12.3", features = ["tray-icon"] }
 
 tauri-plugin-clipboard-manager = "=2.4.2"
+tauri-plugin-global-shortcut = "=2.4.1"
+ctrlc = { version = "=3.5.2", features = ["termination"] }
+libc = "0.2"
+anyhow = "1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-app-kit = { version = "=0.3.2", features = ["NSWindow", "NSApplication", "NSScreen", "NSImage"] }
+
+objc2-foundation = { version = "=0.3.2", features = ["NSData", "NSProcessInfo"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

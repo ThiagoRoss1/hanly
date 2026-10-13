@@ -86,7 +86,16 @@ pub fn decode(bytes: &[u8]) -> Result<Message, BridgeError> {
                 || *sequence == 0
                 || *sequence > MAX_SEQUENCE
                 || !payload.is_object()
-                || !["state", "popup", "popup_hide", "service_status"].contains(&event.as_str())
+                || ![
+                    "state",
+                    "popup",
+                    "popup_hide",
+                    "service_status",
+                    "native_action",
+                    "trace",
+                ]
+                .contains(&event.as_str())
+                    && !(cfg!(debug_assertions) && event == "lab_capture")
             {
                 return Err(protocol_error());
             }

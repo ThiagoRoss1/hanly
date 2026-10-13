@@ -1,3 +1,5 @@
+pub mod selector;
+
 use crate::ipc::BridgeError;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -9,6 +11,7 @@ pub struct Presentation {
     pub popup: Option<Value>,
     pub sequence: u64,
     pub visible: bool,
+    pub region: Option<Value>,
     queued: bool,
     state_pending: bool,
     popup_pending: bool,
@@ -18,11 +21,25 @@ pub struct Presentation {
 
 pub type SharedPresentation = Arc<Mutex<Presentation>>;
 
+pub fn reset(presentation: &SharedPresentation) {
+    *presentation.lock().expect("presentation") = Presentation::default();
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
         let window = tauri::WebviewWindowBuilder::from_config(app, config)?
+            .incognito(
+                app.state::<crate::DesktopState>()
+                    .options
+                    .app_config
+                    .is_some(),
+            )
             .on_navigation(allowed_navigation)
             .build()?;
+        if window.label() == "popup" {
+            crate::platform::configure_popup(&window)
+                .map_err(|e| tauri::Error::Anyhow(anyhow::anyhow!(e.message)))?;
+        }
         if window.label() == "control-center" {
             let window_handle = window.clone();
             window.on_window_event(move |event| {
@@ -65,6 +82,12 @@ pub fn event(
             state.popup_pending = true;
         }
         "service_status" => {
+            if payload["state"] == "failed" {
+                state.visible = false;
+                state.popup =
+                    Some(json!({"type":"popup_hide","sequence":state.sequence,"payload":{}}));
+                state.popup_pending = true;
+            }
             state.status = Some(payload);
             state.status_pending = true;
         }
@@ -87,28 +110,45 @@ pub fn event(
 }
 
 fn flush_events(app: &AppHandle, presentation: &SharedPresentation) {
-    let mut state = presentation.lock().expect("presentation");
-    state.queued = false;
-    if std::mem::take(&mut state.state_pending) {
-        if let Some(snapshot) = &state.state {
-            let _ = app.emit_to("control-center", "desktop-state", snapshot);
+    let (snapshot, status, popup) = {
+        let mut state = presentation.lock().expect("presentation");
+        state.queued = false;
+        let snapshot = std::mem::take(&mut state.state_pending)
+            .then(|| state.state.clone())
+            .flatten();
+        let status = std::mem::take(&mut state.status_pending)
+            .then(|| state.status.clone())
+            .flatten();
+        let popup =
+            std::mem::take(&mut state.popup_pending).then(|| (state.visible, state.popup.clone()));
+        (snapshot, status, popup)
+    };
+
+    // Native dispatch can re-enter the event loop; never retain its shared lock.
+    if let Some(snapshot) = snapshot {
+        let theme = match snapshot["config"]["theme"].as_str() {
+            Some("dark") => Some(tauri::Theme::Dark),
+            Some("light") => Some(tauri::Theme::Light),
+            _ => None,
+        };
+        for window in app.webview_windows().values() {
+            let _ = window.set_theme(theme);
         }
+        let _ = app.emit_to("control-center", "desktop-state", snapshot);
     }
-    if std::mem::take(&mut state.status_pending) {
-        if let Some(status) = &state.status {
-            let _ = app.emit_to("control-center", "desktop-service-status", status);
-        }
+    if let Some(status) = status {
+        let _ = app.emit_to("control-center", "desktop-service-status", status);
     }
-    if std::mem::take(&mut state.popup_pending) {
+    if let Some((visible, message)) = popup {
         if let Some(window) = app.get_webview_window("popup") {
-            if state.visible {
-                if let Some(message) = &state.popup {
+            if visible {
+                if let Some(message) = &message {
                     let _ = show_popup(&window, &message["payload"]);
                 }
             } else {
                 let _ = window.hide();
             }
-            if let Some(message) = &state.popup {
+            if let Some(message) = message {
                 let _ = window.emit("desktop-popup", message);
             }
         }
@@ -121,43 +161,57 @@ pub fn local_action(
     method: &str,
     params: &Value,
 ) -> Result<Value, BridgeError> {
-    let mut state = presentation.lock().expect("presentation");
     if method == "frontend_ready" {
-        if window.label() == "popup" {
-            if let Some(message) = &state.popup {
-                let _ = window.emit("desktop-popup", message);
+        let messages = {
+            let state = presentation.lock().expect("presentation");
+            match window.label() {
+                "popup" => vec![("desktop-popup", state.popup.clone())],
+                "control-center" => vec![
+                    ("desktop-state", state.state.clone()),
+                    ("desktop-service-status", state.status.clone()),
+                ],
+                "region-selector" => vec![("desktop-region", state.region.clone())],
+                _ => vec![],
             }
-        } else if window.label() == "control-center" {
-            if let Some(snapshot) = &state.state {
-                let _ = window.emit("desktop-state", snapshot);
-            }
-        }
-        if window.label() == "control-center" {
-            if let Some(status) = &state.status {
-                let _ = window.emit("desktop-service-status", status);
+        };
+        for (event, payload) in messages {
+            if let Some(payload) = payload {
+                let _ = window.emit(event, payload);
             }
         }
         return Ok(json!({}));
     }
-    if !state.visible || params["sequence"].as_u64() != Some(state.sequence) {
-        return Err(BridgeError::new(
-            "stale_popup",
-            "This popup has been superseded.",
-        ));
-    }
+
+    let message = {
+        let mut state = presentation.lock().expect("presentation");
+        if !state.visible || params["sequence"].as_u64() != Some(state.sequence) {
+            return Err(BridgeError::new(
+                "stale_popup",
+                "This popup has been superseded.",
+            ));
+        }
+        match method {
+            "popup_close" => {
+                state.visible = false;
+                let message = json!({"type":"popup_hide","sequence":state.sequence,"payload":{}});
+                state.popup = Some(message.clone());
+                Some(message)
+            }
+            "popup_expand" => {
+                if let Some(message) = &mut state.popup {
+                    message["payload"]["expanded"] = params["expanded"].clone();
+                }
+                None
+            }
+            "popup_geometry" => None,
+            _ => return Err(window_error()),
+        }
+    };
+
     match method {
         "popup_close" => {
-            state.visible = false;
-            let message = json!({"type":"popup_hide","sequence":state.sequence,"payload":{}});
-            state.popup = Some(message.clone());
             window.hide().map_err(|_| window_error())?;
-            let _ = window.emit("desktop-popup", message);
-        }
-        // Expansion changes native size through the frontend's subsequent geometry command.
-        "popup_expand" => {
-            if let Some(message) = &mut state.popup {
-                message["payload"]["expanded"] = params["expanded"].clone();
-            }
+            let _ = window.emit("desktop-popup", message.expect("close message"));
         }
         "popup_geometry" => {
             let width = params["width"].as_f64().ok_or_else(window_error)?;
@@ -166,6 +220,8 @@ pub fn local_action(
                 .set_size(LogicalSize::new(width, height))
                 .map_err(|_| window_error())?;
         }
+        // The frontend follows expansion with its measured geometry command.
+        "popup_expand" => {}
         _ => return Err(window_error()),
     }
     Ok(json!({}))

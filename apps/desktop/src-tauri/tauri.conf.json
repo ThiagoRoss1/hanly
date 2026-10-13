@@ -11,17 +11,56 @@
   },
   "app": {
     "security": {
-      "capabilities": ["desktop"],
+      "capabilities": [
+        "desktop"
+      ],
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'"
     },
     "windows": [
-      {"label": "control-center", "title": "Hanly", "url": "index.html", "width": 1060, "height": 760, "minWidth": 720, "minHeight": 560, "create": false},
-      {"label": "popup", "title": "Hanly", "url": "index.html?view=popup", "width": 380, "height": 260, "focus": false, "focusable": false, "visible": false, "decorations": false, "alwaysOnTop": true, "skipTaskbar": true, "resizable": false, "create": false},
-      {"label": "region-selector", "title": "Hanly — Select capture area", "url": "index.html?view=region_selector", "visible": false, "decorations": false, "alwaysOnTop": true, "skipTaskbar": true, "resizable": false, "create": false}
+      {
+        "label": "control-center",
+        "title": "Hanly",
+        "url": "index.html",
+        "width": 1060,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 560,
+        "create": false
+      },
+      {
+        "label": "popup",
+        "title": "Hanly",
+        "url": "index.html?view=popup",
+        "width": 380,
+        "height": 260,
+        "focus": false,
+        "focusable": false,
+        "visible": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "create": false
+      },
+      {
+        "label": "region-selector",
+        "title": "Hanly \u2014 Select capture area",
+        "url": "index.html?view=region_selector",
+        "visible": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "create": false
+      }
     ]
   },
   "bundle": {
     "active": false,
-    "icon": ["../../../packages/hanly-app/src/hanly_app/assets/icons/hanly-icon-128.png"]
+    "icon": [
+      "../../../packages/hanly-app/src/hanly_app/assets/icons/hanly-icon-128.png",
+      "../../../packaging/icons/hanly.ico",
+      "../../../packaging/icons/hanly.icns"
+    ]
   }
 }

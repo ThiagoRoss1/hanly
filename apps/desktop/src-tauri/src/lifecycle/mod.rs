@@ -1,3 +1,7 @@
+pub mod options;
+#[cfg(windows)]
+mod windows_job;
+
 use crate::ipc::{self, BridgeError, Message, MAX_PENDING};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -9,7 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 type Answer = Result<Value, BridgeError>;
-type EventSink = Arc<dyn Fn(u64, &str, Value) + Send + Sync>;
+pub(crate) type EventSink = Arc<dyn Fn(u64, &str, Value) + Send + Sync>;
 
 struct Channel {
     writer: Option<mpsc::SyncSender<Vec<u8>>>,
@@ -23,12 +27,26 @@ struct Channel {
 pub struct Service {
     channel: Arc<Mutex<Channel>>,
     child: Arc<Mutex<Child>>,
+    #[cfg(windows)]
+    job: Arc<Mutex<Option<windows_job::WindowsJob>>>,
     next_id: AtomicU64,
     threads: Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
 impl Service {
     pub fn launch(mut command: Command, events: EventSink) -> Result<Self, BridgeError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command
+                .creation_flags(0x08000004)
+                .env("HANLY_SUPERVISED_JOB", "1");
+        }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -40,6 +58,19 @@ impl Service {
                     "Hanly could not start its desktop service.",
                 )
             })?;
+        #[cfg(windows)]
+        let job = match windows_job::WindowsJob::attach(&child).and_then(|job| {
+            job.resume(child.id())?;
+            Ok(job)
+        }) {
+            Ok(job) => Arc::new(Mutex::new(Some(job))),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        let group_pid = child.id();
         let mut input = child.stdin.take().expect("piped service stdin");
         let output = child.stdout.take().expect("piped service stdout");
         let (writer, writes) = mpsc::sync_channel::<Vec<u8>>(MAX_PENDING);
@@ -128,6 +159,8 @@ impl Service {
         });
         let watch_channel = channel.clone();
         let watch_child = child.clone();
+        #[cfg(windows)]
+        let watch_job = job.clone();
         let watcher_thread = thread::spawn(move || loop {
             let (stopped, failed) = {
                 let state = watch_channel.lock().expect("service channel");
@@ -136,10 +169,15 @@ impl Service {
             let mut child = watch_child.lock().expect("service process");
             // A wedged writer or a malformed service must not keep the family alive.
             if failed && !stopped {
-                let _ = child.kill();
+                #[cfg(windows)]
+                watch_job.lock().expect("service job").take();
+                terminate_family(group_pid, &mut child);
             }
             match child.try_wait() {
                 Ok(Some(_)) | Err(_) => {
+                    #[cfg(windows)]
+                    watch_job.lock().expect("service job").take();
+                    terminate_family(group_pid, &mut child);
                     fail(&watch_channel, disconnected());
                     break;
                 }
@@ -151,13 +189,20 @@ impl Service {
         Ok(Self {
             channel,
             child,
+            #[cfg(windows)]
+            job,
             next_id: AtomicU64::new(1),
             threads: Mutex::new(vec![writer_thread, reader_thread, watcher_thread]),
         })
     }
 
     pub fn request(&self, window: &str, method: &str, params: Value) -> Answer {
-        self.request_with_timeout(window, method, params, Duration::from_secs(15))
+        self.request_with_timeout(
+            window,
+            method,
+            params,
+            Duration::from_secs(if method == "self_check" { 120 } else { 15 }),
+        )
     }
 
     fn request_with_timeout(
@@ -211,6 +256,11 @@ impl Service {
         }
     }
 
+    pub fn connected(&self) -> bool {
+        let channel = self.channel.lock().expect("service channel");
+        !channel.stopped && channel.failure.is_none()
+    }
+
     pub fn stop(&self) {
         let _ = self.request_with_timeout(
             "host",
@@ -223,20 +273,30 @@ impl Service {
             channel.stopped = true;
             channel.writer.take();
         }
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let mut child = self.child.lock().expect("service process");
             if matches!(child.try_wait(), Ok(Some(_))) {
                 break;
             }
             if Instant::now() >= deadline {
-                let _ = child.kill();
+                terminate_family(child.id(), &mut child);
                 let _ = child.wait();
                 break;
             }
             drop(child);
             thread::sleep(Duration::from_millis(20));
         }
+        #[cfg(unix)]
+        {
+            let pid = self.child.lock().expect("service process").id();
+            // Detached update helpers have their own session; only service/lookup descendants share this group.
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+        #[cfg(windows)]
+        self.job.lock().expect("service job").take();
         fail(&self.channel, disconnected());
         for thread in self.threads.lock().expect("service threads").drain(..) {
             let _ = thread.join();
@@ -248,6 +308,14 @@ impl Drop for Service {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+fn terminate_family(pid: u32, child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
 }
 
 fn fail(channel: &Mutex<Channel>, error: BridgeError) {
@@ -275,34 +343,144 @@ fn disconnected() -> BridgeError {
     )
 }
 
-pub fn service_command() -> Result<Command, BridgeError> {
-    #[cfg(debug_assertions)]
-    {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let python = if cfg!(windows) {
-            root.join(".venv/Scripts/python.exe")
-        } else {
-            root.join(".venv/bin/python")
-        };
-        let mut command = Command::new(python);
-        command.args(["-m", "hanly_app.service"]).current_dir(root);
-        Ok(command)
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let executable = std::env::current_exe().map_err(|_| {
+pub fn service_command(
+    app: Option<&tauri::AppHandle>,
+    options: &options::LaunchOptions,
+) -> Result<Command, BridgeError> {
+    use tauri::Manager;
+    let executable = std::env::current_exe().map_err(|_| {
+        BridgeError::new(
+            "service_missing",
+            "Hanly could not locate its native executable.",
+        )
+    })?;
+    let service_name = if cfg!(windows) {
+        "hanly-service.exe"
+    } else {
+        "hanly-service"
+    };
+    let resource_root = if let Some(app) = app {
+        app.path().resource_dir().map_err(|_| {
             BridgeError::new(
                 "service_missing",
-                "The packaged desktop service is missing.",
+                "Hanly could not locate its runtime resources.",
             )
-        })?;
-        let name = if cfg!(windows) {
-            "hanly-service.exe"
-        } else {
-            "hanly-service"
-        };
-        Ok(Command::new(executable.with_file_name(name)))
+        })?
+    } else if cfg!(target_os = "macos")
+        && executable
+            .parent()
+            .is_some_and(|p| p.file_name().is_some_and(|n| n == "MacOS"))
+    {
+        executable
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("bundle Contents directory")
+            .join("Resources")
+    } else {
+        executable
+            .parent()
+            .expect("native executable directory")
+            .join("resources")
+    };
+    let primary = resource_root.join("hanly-service").join(service_name);
+    let portable = executable
+        .parent()
+        .ok_or_else(|| {
+            BridgeError::new(
+                "service_missing",
+                "Hanly could not locate its installation.",
+            )
+        })?
+        .join("resources/hanly-service")
+        .join(service_name);
+    let bundled = if primary.is_file() {
+        Some(primary)
+    } else if portable.is_file() {
+        Some(portable)
+    } else {
+        None
+    };
+    let mut command;
+    #[cfg(debug_assertions)]
+    let observer = std::env::var("HANLY_DESKTOP_SERVICE_MODULE")
+        .ok()
+        .filter(|module| module == "lab.service_observer");
+    #[cfg(not(debug_assertions))]
+    let observer: Option<String> = None;
+    if let Some(service) = bundled.filter(|_| observer.is_none()) {
+        command = Command::new(service);
+    } else {
+        #[cfg(debug_assertions)]
+        {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../..")
+                .canonicalize()
+                .map_err(|_| {
+                    BridgeError::new("service_missing", "The development checkout is missing.")
+                })?;
+            let python = if cfg!(windows) {
+                root.join(".venv/Scripts/python.exe")
+            } else {
+                root.join(".venv/bin/python")
+            };
+            command = Command::new(python);
+            command
+                .args(["-m", observer.as_deref().unwrap_or("hanly_app.service")])
+                .current_dir(root);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            return Err(BridgeError::new(
+                "service_missing",
+                "The packaged desktop service is missing. Reinstall Hanly.",
+            ));
+        }
     }
+    let install_root = if cfg!(target_os = "macos")
+        && executable
+            .parent()
+            .is_some_and(|p| p.file_name().is_some_and(|n| n == "MacOS"))
+    {
+        executable
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| resource_root.clone())
+    } else {
+        executable
+            .parent()
+            .expect("native executable directory")
+            .to_path_buf()
+    };
+    command
+        .arg("--installation-root")
+        .arg(install_root)
+        .arg("--root-pid")
+        .arg(std::process::id().to_string());
+    for (name, path) in [
+        ("--runtime-config", &options.runtime_config),
+        ("--app-config", &options.app_config),
+    ] {
+        if let Some(path) = path {
+            command.arg(name).arg(path);
+        }
+    }
+    if let Some(roi) = &options.roi {
+        command.args(["--roi", roi]);
+    }
+    if options.trace {
+        command.arg("--trace");
+    }
+    if let Some(mode) = &options.self_check {
+        command.args(["--self-check-mode", mode]);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    Ok(command)
 }
 
 #[cfg(test)]
@@ -311,11 +489,15 @@ mod tests {
 
     fn fixture(script: &str) -> Service {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let python = if cfg!(windows) {
-            root.join(".venv/Scripts/python.exe")
-        } else {
-            root.join(".venv/bin/python")
-        };
+        let python = std::env::var_os("HANLY_TEST_PYTHON")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    root.join(".venv/Scripts/python.exe")
+                } else {
+                    root.join(".venv/bin/python")
+                }
+            });
         let mut command = Command::new(python);
         command.args(["-u", "-c", script]);
         Service::launch(command, Arc::new(|_, _, _| {})).unwrap()
@@ -399,11 +581,15 @@ mod integration_tests {
     #[test]
     fn actual_python_service_matches_the_host_and_keeps_capture_unavailable() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let python = if cfg!(windows) {
-            root.join(".venv/Scripts/python.exe")
-        } else {
-            root.join(".venv/bin/python")
-        };
+        let python = std::env::var_os("HANLY_TEST_PYTHON")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    root.join(".venv/Scripts/python.exe")
+                } else {
+                    root.join(".venv/bin/python")
+                }
+            });
         let profile =
             std::env::temp_dir().join(format!("hanly-service-contract-{}", std::process::id()));
         std::fs::create_dir_all(&profile).unwrap();
