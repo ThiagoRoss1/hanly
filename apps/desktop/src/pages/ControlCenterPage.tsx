@@ -350,7 +350,7 @@ function CapturePage({ state, busy, run, saveSettings, onSelectArea }: {
           </div>
         </section>
 
-        <div className="region-collapse" data-open={mode === "region"}>
+        <div aria-hidden={mode !== "region"} inert={mode !== "region"} className="region-collapse" data-open={mode === "region"}>
           <div className="collapse-inner">
             <section aria-labelledby="region-heading" className="panel collapse-gap" data-rise="3">
               <div className="region-head"><h2 className="panel-title" id="region-heading">Region</h2><span className="region-coords">{regionLabel(region)}</span><button className="btn btn-sm btn-quiet" disabled={busy} onClick={onSelectArea} type="button">Select area</button></div>
@@ -582,11 +582,11 @@ function UpdatesPage({ state, busy, run }: { state: HanlyState; busy: boolean; r
 
       <section className="panel" data-rise="2">
         <button aria-controls="resource-collapse" aria-expanded={resourcesOpen} className="disclosure" onClick={() => setResourcesOpen((open) => !open)} type="button"><span aria-hidden="true" className="disclosure-caret">▾</span>Dictionary and resources<span className="disclosure-summary">{resources.length}</span></button>
-        <div aria-hidden={!resourcesOpen} className="region-collapse" data-open={resourcesOpen} id="resource-collapse"><div className="collapse-inner"><div className="panel-rows">{resources.length === 0 ? <p className="resource-foot">No local resources have been reported yet.</p> : resources.map((resource) => <ResourceRow key={resource.id} resource={resource} offered={availableResources.get(resource.id)} busy={busy || isBusy} install={() => void run("install_update", { resource_id: resource.id })} />)}</div><p className="resource-foot">Resources swap without restarting. Lookups pause for a moment during the swap.</p></div></div>
+        <div aria-hidden={!resourcesOpen} inert={!resourcesOpen} className="region-collapse" data-open={resourcesOpen} id="resource-collapse"><div className="collapse-inner"><div className="panel-rows">{resources.length === 0 ? <p className="resource-foot">No local resources have been reported yet.</p> : resources.map((resource) => <ResourceRow key={resource.id} resource={resource} offered={availableResources.get(resource.id)} busy={busy || isBusy} install={() => void run("install_update", { resource_id: resource.id })} />)}</div><p className="resource-foot">Resources swap without restarting. Lookups pause for a moment during the swap.</p></div></div>
       </section>
       <section className="panel panel-quiet" data-rise="3">
         <button aria-controls="activity-collapse" aria-expanded={activityOpen} className="disclosure" onClick={() => setActivityOpen((open) => !open)} type="button"><span aria-hidden="true" className="disclosure-caret">▾</span>Update activity<span className="disclosure-summary">{activity.length}</span></button>
-        <div aria-hidden={!activityOpen} className="region-collapse" data-open={activityOpen} id="activity-collapse"><div className="collapse-inner"><div className="panel-rows" style={{ borderTop: "1px solid var(--border)" }}>{activity.length ? activity.map((item, index) => <div className="log-row" key={`${item.at ?? index}-${index}`}><span className="log-time">{item.at ? new Date(item.at * 1000).toLocaleTimeString() : ""}</span><span className="log-message">{item.message}</span></div>) : <p className="resource-foot">No update activity has been reported.</p>}</div></div></div>
+        <div aria-hidden={!activityOpen} inert={!activityOpen} className="region-collapse" data-open={activityOpen} id="activity-collapse"><div className="collapse-inner"><div className="panel-rows" style={{ borderTop: "1px solid var(--border)" }}>{activity.length ? activity.map((item, index) => <div className="log-row" key={`${item.at ?? index}-${index}`}><span className="log-time">{item.at ? new Date(item.at * 1000).toLocaleTimeString() : ""}</span><span className="log-message">{item.message}</span></div>) : <p className="resource-foot">No update activity has been reported.</p>}</div></div></div>
       </section>
     </div>
   );
