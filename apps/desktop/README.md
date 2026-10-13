@@ -1,80 +1,102 @@
 # Hanly Desktop
 
-The official Tauri/React migration workspace. This is an **incomplete development
-foundation**, not the distributable Hanly product yet. The production `hanly`
-command still runs the existing desktop while its replacements gain parity.
-The single migration checkpoint is
-[`desktop-tauri-migration.md`](../../docs/execution/checkpoints/desktop-tauri-migration.md).
+The official desktop is a Tauri native root with React-owned Control Center,
+popup, and capture-area windows. Rust owns the native event loop, tray, global
+shortcuts, platform adapters, and supervised-process lifecycle. A private
+versioned JSONL bridge connects it to the Qt-free Python desktop service; that
+service retains capture, hover and lookup policy, settings, resource
+provisioning, diagnostics, and the existing verified updater. OCR, Kiwi, and
+KRDICT run in the isolated lookup child. The reusable `hanly` engine remains
+independent of desktop code.
 
-## Current boundary
+The bridge caps frames at 1 MiB and concurrent requests at 32. Rust derives the
+calling window's identity and authorizes each method before dispatch. The
+service and lookup child use bounded private pipes; the product starts no Node
+server. Selection snapshots stay transient in memory, and neither tracing nor
+logs contain recognized text or screen pixels.
 
-Rust owns three native windows, tray/reopen, a restricted per-window command
-bridge and a private supervised Python service. React renders the Control
-Center, popup and selector routes using the incumbent visual assets/tokens.
-Python owns settings and diagnostics. The service currently answers handshake,
-state, settings and logs; capture, lookup, permissions, resources, update
-transactions and region selection return explicit unavailable errors.
-No Qt or heavy provider runtime is imported by this service startup.
+The installed product keeps the `io.github.thiagoross1.hanly` bundle ID, V1
+settings and resource paths, and the `hanly-desktop` executable name. Its
+Python service is packaged under `resources/hanly-service/` on Windows and
+Linux, or `Contents/Resources/hanly-service/` inside `Hanly.app`. The build
+inventory rejects missing provider inputs and Qt, WebEngine, pywebview, or
+pystray runtime payloads. PyQt is a developer-only Lab dependency, installed
+from the `lab` dependency group when running Lab's native page tests.
 
-`service.hello` confirms protocol compatibility, not lookup readiness. Request
-frames are capped at 1 MiB, requests at 32 pending, event snapshots are coalesced,
-and disconnects resolve outstanding calls. The native root derives caller labels;
-frontend code cannot impersonate another window or choose a process/file path.
-Clipboard access is a bounded write-only logs action through Rust.
+## Source development
 
-## Development
-
-Use the repository `.venv` with the editable `hanly` and `hanly-app` packages,
-Node 22.12+ and Rust 1.90+. Production packaging must eventually bundle Python;
-the development launch deliberately uses `.venv`, never a production Node backend.
-From this directory:
-
-```sh
-npm ci --cache /private/tmp/hanly-npm-cache
-npm run check
-npm test
-npm run test:ui
-npm run build
-PATH="$HOME/.cargo/bin:$PATH" cargo test --manifest-path src-tauri/Cargo.toml --locked
-PATH="$HOME/.cargo/bin:$PATH" cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
-PATH="$HOME/.cargo/bin:$PATH" cargo fmt --manifest-path src-tauri/Cargo.toml --check
-```
-
-For a native development launch with a disposable profile on macOS/Linux:
+Use Python 3.10+, Node 22, and Rust 1.99. Install the engine before the desktop
+package, then build the React assets and a debug native root with its embedded
+frontend:
 
 ```sh
-XDG_CONFIG_HOME=/private/tmp/hanly-desktop-profile PATH="$HOME/.cargo/bin:$PATH" npm run tauri -- dev
+python -m pip install --upgrade pip
+python -m pip install --group dev
+python -m pip install --editable packages/hanly
+python -m pip install --editable "packages/hanly-app[runtime]"
+npm ci --prefix apps/desktop
+npm run --prefix apps/desktop check
+npm test --prefix apps/desktop
+npm run --prefix apps/desktop test:ui
+npm run --prefix apps/desktop build
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --locked
 ```
 
-Windows uses a disposable `LOCALAPPDATA` directory instead. Close hides the
-Control Center; Open Hanly in the tray reopens it; Quit Hanly stops the root and
-its service. The Vite server is developer-only. To embed the production frontend
-in a debug executable while retaining the development Python service:
+The source `hanly` command and `python -m hanly_app` forward supported options
+to that existing debug executable. The debug root starts the checkout's
+`.venv` Python service. There is no automatic compile, second Python UI, or Qt
+fallback. `HANLY_DESKTOP_EXECUTABLE` can point the Python command at another
+already-built native executable.
+
+For the live Vite development workflow only, use `npm run tauri -- dev` from
+this directory after installing frontend dependencies. This command uses a
+local development server; it is not the product's user launch path.
+
+The native Lab page test needs the separate developer-only UI dependency:
 
 ```sh
-npm run build
-PATH="$HOME/.cargo/bin:$PATH" cargo build --manifest-path src-tauri/Cargo.toml --features custom-protocol --locked
-XDG_CONFIG_HOME=/private/tmp/hanly-desktop-profile ./src-tauri/target/debug/hanly-desktop
+python -m pip install --group lab
 ```
 
-## Remaining release work
+The normal `dev` and `runtime` dependency sets do not install PyQt or other
+production UI frameworks.
 
-`bundle.active` is intentionally false until the Python runtime, providers,
-models, resources, native helper and identity stamp have a verified bundle
-layout. Release-mode Rust expects the fixed sibling `hanly-service` executable
-(`hanly-service.exe` on Windows); that payload is not built yet. Do not treat
-`tauri build --no-bundle` as an installable or functional release.
+## Build and validate the product
 
-Current production Qt/Qt WebEngine/pywebview adapters and tests remain until
-replacement parity passes. The updater has not been replaced by a Tauri plugin.
-Native focus, non-activation, popup retention, monitor/DPI behavior, packaged
-identity, updater transition, Lab attribution and Windows/Linux acceptance
-remain migration gates, not guarantees from these API-level checks.
+Build the complete product on its target operating system:
 
-Setup follows the official [Tauri capabilities](https://v2.tauri.app/security/capabilities/),
-[sidecar packaging](https://v2.tauri.app/develop/sidecar/),
-[clipboard adapter](https://v2.tauri.app/plugin/clipboard/),
-[Vite integration](https://v2.tauri.app/start/frontend/vite/), and
-[Tailwind Vite installation](https://tailwindcss.com/docs/installation/using-vite)
-documentation. Stable dependencies were resolved from the registry and their
-exact versions recorded in `package-lock.json` and `src-tauri/Cargo.lock`.
+```sh
+npm ci --prefix apps/desktop
+python tools/prepare_easyocr_models.py
+python tools/build_package.py
+```
+
+`tools/build_package.py` embeds the build identity, freezes the Python service,
+stages native updater resources, generates an active Tauri bundle
+configuration, builds the Tauri root, verifies the resulting product, and
+creates the existing platform archives and update metadata. The checked-in
+Tauri config keeps standalone bundling disabled because its resource paths
+exist only during this coordinated build. Do not use a standalone Tauri bundle
+as the installable product.
+
+The official layouts and preserved updater flow are documented in
+[`packaging/README.md`](../../packaging/README.md). Run the gates on the host
+that can execute them:
+
+```sh
+python -m pytest --suite portable
+python -m pytest --suite native
+HANLY_REQUIRE_PACKAGED=1 python -m pytest --suite packaged
+```
+
+The native suite needs the desktop runtime, display, EasyOCR weights, and a
+KRDICT fixture. The packaged suite needs the freshly built native root and
+Python service; its UI cases use an isolated appcopy and profile. Windows
+process-family and updater acceptance must run on Windows. Linux WebKitGTK and
+portable-package acceptance must run on Linux. A Mac build or cross-compiled
+binary does not establish those platform results. See the
+[migration checkpoint](../../docs/execution/checkpoints/desktop-tauri-migration.md)
+for the current implementation evidence and remaining native gates.

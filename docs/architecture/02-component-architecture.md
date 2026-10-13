@@ -175,9 +175,9 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 | Kiwi / kiwipiepy | `KiwiProvider` |
 | KRDICT | `KRDICTProvider` |
 | SQLite (local, read-only at runtime) | `KRDICTProvider` |
-| PyQt6 | `PopupController` / PyQt6 popup |
-| pywebview | Control Center |
-| pystray | `TrayService` |
+| React | Control Center, dictionary popup and region selector |
+| Tauri / system webview | Native windows and restricted IPC |
+| Tauri tray / global-shortcut | Native tray and global shortcut edges |
 | GitHub Releases | `UpdateService` / `ResourceFetcher` |
 
 ## Dependency invariants
@@ -204,8 +204,7 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 
 ## Approved desktop migration overlay — 2026-10-12
 
-The component descriptions above identify the implemented V1 baseline. The
-approved desktop composition is:
+The approved desktop composition is implemented across these ownership seams:
 
 ```text
 React UI → Tauri/Rust native shell → supervised Qt-free Python desktop service → hanly
@@ -217,8 +216,8 @@ windows, tray, activation, platform adapters, child supervision and validated
 IPC. Python retains desktop business rules, configuration, acquisition,
 resources, updates and lookup coordination; the existing `hanly` package stays
 independent, and concrete heavy providers stay in the unloadable lookup child.
-No second Qt shell or duplicate owner for a lifecycle operation remains after
-parity is established. The migration does not add a production Node backend or
+There is one native root and one service owner for each lifecycle operation.
+The migration does not add a production Node backend or
 move client-specific concerns into `hanly`.
 
 The bridge is private versioned JSONL with typed request/reply/event envelopes,

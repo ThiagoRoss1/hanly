@@ -184,7 +184,7 @@ This capability integrates only behavior already implemented by the current prov
 
 ### C — Basic Popup
 
-- **Goal:** Provide `PopupController` and a borderless PyQt6 popup that positions and renders `LookupResult` with a reasonable V1 visual baseline.
+- **Goal:** Provide `PopupController` and a borderless Tauri/React popup that positions and renders `LookupResult` with a reasonable V1 visual baseline.
 - **Dependencies:** `Concrete Hanly V1 Engine Integration` and `Desktop Foundation`.
 - **Blocks:** `Manual Hotkey Lookup`.
 - **Parallelism:** May run in parallel with B, D, and E after the concrete-runtime gate.
@@ -202,7 +202,7 @@ This capability integrates only behavior already implemented by the current prov
 
 ### E — Basic Control Center
 
-- **Goal:** Establish the pywebview HTML/CSS/JavaScript interface for capture start / stop, target / region selection, basic settings and app state, local resource status, OCR implementation status, update controls, hover delay, and hotkeys.
+- **Goal:** Establish the Tauri/React interface for capture start / stop, target / region selection, basic settings and app state, local resource status, OCR implementation status, update controls, hover delay, and hotkeys.
 - **Dependencies:** `Concrete Hanly V1 Engine Integration`, `Desktop Foundation`, and `ResourceManager Core`.
 - **Blocks:** Final `Hover Lookup Integration` and `Resource / Update UI Integration`.
 - **Parallelism:** May run beside B–D once all of its dependencies are satisfied. It is the inserted planning capability after Hotkey Service, tracked operationally as HAN-34.

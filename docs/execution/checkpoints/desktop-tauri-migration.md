@@ -1,12 +1,11 @@
 # Hanly Desktop Tauri migration checkpoint
 
-Status: Phase A is incomplete. Inventory, approved architecture overlays and
-a tested React/Tauri/Python protocol foundation are implemented. The foundation
-was exercised natively on this Mac using a disposable debug app/profile. Runtime
-composition, full UI/native parity, packaging/updater, Lab convergence and legacy
-removal remain open. This is a continuation checkpoint, not a Review Handoff. The session stops at
-a safe context boundary; the authorized migration remains unfinished. This checkpoint is the one migration plan; update it at meaningful
-boundaries and end Phase A with one Review Handoff.
+Status: Phase A implementation is committed and handed off with explicit native
+acceptance limits. All final portable/native/frontend/Rust/packaged gates pass.
+The final Mac bundle and both archives are verified, and release family shutdown
+has zero survivors. Screen Recording and Accessibility grants remain absent;
+real hover, popup focus/crossing, selection and shortcut delivery remain
+unverified. The migration is not fully accepted. Phase B has not begun.
 
 Branch: `desktop/tauri-migration`, based on `main` at `0902075`. Preserve
 `spike/desktop-renderers` at preservation commit `39fc4e7` until the official
@@ -24,6 +23,13 @@ Qt-free runtime, complete packaging, updater compatibility or Windows behavior.
 | `4f48f5c` | Qt-free service protocol/config/logs; 11 focused service process/isolation tests, Ruff and mypy passed. | Runtime acquisition/lookup/provisioning/updater composition and worker-family lifecycle. |
 | `c106a54` | Official React workspace and stable exact lock; 9 contract tests, 5 DOM interaction tests, strict types and Vite build passed. | Complete behavior/visual parity for every action, dialog and popup/selector scenario. |
 | `09f2912` | Rust native/IPC supervision foundation; 12 tests, Clippy/rustfmt and isolated debug Mac UI/root-service shutdown checks passed. | Native adapters, restart/signals, fresh release bundle/updater and Lab acceptance. |
+| `62f7612` | Complete React state/actions/dialogs/popup/selector interactions; aligned settings and full-height shell. | 40 UI + 9 contract tests, types/build; native source visual checks passed. |
+| `e02c011` | Real async service/runtime, native input seam, acquisition/lookup and clean protocol shutdown. | 72 focused checks; final portable/native gates pass. |
+| `1e0ded9` | Native windows, context, supervision, transactional hotkeys and root readiness. | Rust 15 + Clippy/fmt; native capture/shortcut acceptance still unverified. |
+| `624ba53` | Removed production Qt adapters/assets and migrated retained tests. | Portable 2,569 and native 86 passed. |
+| `e8fca98` | Official Lab launch, family attribution and private-evidence boundary. | 518 portable Lab and native corpus fixture passed; successful hover recording still absent. |
+| `96cc73e` | Coordinated native/service packaging, updater transition and CI dependency ordering. | All 7 packaged Mac gates passed with native host access; frozen OCR/lookup, ordinary-root acknowledgement and failed-root rollback verified. |
+| `422bb07` | Collapsed panels are inert and hidden from accessibility. | 40 React interactions, types/build and final 7-test packaged gate passed; hidden region controls absent from actual packaged AX tree. |
 
 Three Luna workers were requested at `xhigh` under the repository execution
 policy; their runtime configuration was not independently audited. No separate
@@ -102,12 +108,9 @@ socket, shell command or arbitrary method lookup. Protocol v1 is:
 - Stdout carries frames only; diagnostics go to the private session log/stderr.
   A disconnect fails pending requests, marks runtime unavailable, attempts only
   the defined service restart path, and never leaves a detached lookup child.
-- The current PyInstaller executable is windowed (`console=False`), and
-  `cli.main()` eventually uses `_leave()` / `os._exit()` for the old Qt shell.
-  The packaged service must prove redirected stdin/stdout exist for JSONL, and
-  must answer graceful shutdown before returning. Keep `freeze_support()` first
-  so spawned lookup children still re-enter the service executable correctly;
-  do not reuse the old abrupt shell exit path for the supervised service.
+- The internal frozen service is console-capable with redirected JSONL pipes;
+  Windows hides its console. Its entrypoint calls `freeze_support()` first,
+  and graceful shutdown returns normally after the service/lookup owner closes.
 - Python emits only normalized JSON values. The final request-currency check
   remains in Python immediately before popup publication; a later frontend
   sequence check may discard superseded presentation but cannot replace it.
@@ -115,9 +118,9 @@ socket, shell command or arbitrary method lookup. Protocol v1 is:
   and joins the lookup child, flushes diagnostics, replies when possible, then
   exits. Rust waits a bounded interval and terminates the process family only
   after graceful shutdown fails.
-- Updater handoff waits for the new Tauri/Rust root's readiness event after its
-  native root and service protocol handshake are live. Provider preload/runtime
-  readiness and an opened React window are later, separate milestones.
+- Updater handoff waits for the new Tauri/Rust root after both the service
+  handshake and React frontend readiness. Provider preload/runtime readiness
+  remains a separate milestone; a service handshake alone never commits an update.
 
 ## Test migration inventory
 
@@ -127,7 +130,7 @@ socket, shell command or arbitrary method lookup. Protocol v1 is:
 | `test_app_config.py`, `test_runtime.py`, `test_runtime_status.py`, `test_first_run.py`, `test_owned_cleanup.py`, `test_diagnostics.py`, `test_update_*`, `test_app_update_*`, `test_update_coordinator.py`, `test_update_service.py` | Keep domain/config/resource/updater guarantees. Port UI dispatch and root lifecycle seams; extend install-tree compatibility, new-root acknowledgement and rollback cases. |
 | `test_capture.py`, `test_text_acquisition*`, `test_direct_text_routing.py`, `test_mouse_observer.py`, `test_hover_controller.py`, `test_hover_lookup*`, `test_lookup_controller.py`, `test_lookup_process.py`, `test_job_executor.py`, `test_manual_lookup.py`, `test_retained_target_evidence.py` | Keep Qt-free behavior contracts; add service IPC, restart, ordering, 1 MiB/32 pending, malformed frame, per-window authorization and disconnect/cleanup coverage. |
 | `test_qt_bootstrap.py`, `test_signal_bridge.py`, `test_capture_selector.py`, Qt-specific cases in `test_popup.py`, `native/shared/test_qt_hover_scheduler.py`, `test_hover_exit_qt.py`, `test_qt_popup_window.py`, `test_qt_screen.py`, `native/macos/test_popup_panel.py`, `native/shared/test_capture_prompt_shutdown.py`, `test_app_icon_qt.py`, `native/windows/test_window_frame.py` | Qt adapter tests: port each behavior to Rust/native window or Python scheduler boundary before removing the old test. Keep the Qt-independent `popup/presentation.py` placement/content assertions. Retain genuine geometry, focus, cleanup and selection assertions. |
-| `test_control_center.py`, `test_control_center_host.py`, `test_control_center_process.py`, `test_control_center_refresh.py`, `native/macos/test_control_center_identity.py`, `native/shared/test_control_center_combobox.py`, `test_control_center_copy.py`, `test_control_center_layout.py`, `test_control_center_lifecycle.py`, `test_webengine_startup.py`, `native/windows/test_webengine_arguments.py`, `tests/hanly_fixtures/assets/control_center_harness.js` | Keep Python action validation/configuration semantics in service tests; replace pywebview/DOM harness behavior with React state, routing, settings and interaction tests; replace host/process/WebEngine behavior with Rust window/command/lifecycle tests. Delete old host-only cases only after replacement evidence exists. |
+| `test_control_center.py`, `test_control_center_host.py`, `test_control_center_process.py`, `test_control_center_refresh.py`, `native/macos/test_control_center_identity.py`, `native/shared/test_control_center_combobox.py`, `test_control_center_copy.py`, `test_control_center_layout.py`, `test_control_center_lifecycle.py`, `test_webengine_startup.py`, `native/windows/test_webengine_arguments.py`, `tests/hanly_fixtures/assets/control_center_harness.js` | Keep Python action validation/configuration semantics in service tests; renderer and settings interactions belong in Vitest React DOM tests; host/process/WebEngine behavior belongs in Rust window/command/lifecycle tests. The legacy refresh JS harness is removed after React behavior coverage; host-only cases remain until native replacements pass. |
 | `tests/packaged/*`, `test_packaging.py`, `test_release_build.py`, `test_release_products.py`, workflow checks | Replace PyInstaller inventory/self-check assumptions with Tauri + sidecar/runtime identity and inventory tests, real fresh-bundle startup, user-data transition and updater smoke. Preserve version/source identity and target-platform coverage. |
 | `lab/tests/*` plus Lab app launch/control/sampling tests | Port launch/control/observation to the official root and count the whole process family (Tauri + Python service + lookup child + owned helpers). Preserve privacy and ownership guards. |
 
@@ -135,20 +138,30 @@ No framework test is removed just because it names Qt. A test is obsolete only
 when its responsibility no longer exists and that fact is recorded with a
 replacement or a clear explanation.
 
-## Ordered continuation A–F
+The former `test_control_center_refresh.py` and its JS harness are now replaced
+by `apps/desktop/tests/ui/desktop-pages.test.tsx`: the 40 DOM tests cover
+readiness and update polling, poll failure/reconnect, event state replacement,
+permission recheck on return from OS settings, stable navigation focus and
+in-progress settings edits, shortcut and delay validation, update confirmation
+and cancellation, logs filtering/copy/export, and popup/region routes. The
+Python `test_control_center.py` keeps bridge business rules but no longer
+asserts legacy page HTML, JavaScript or CSS. `test_theme_contrast.py` reads the
+React palette tokens directly instead of importing the Qt palette; its light
+muted-text token was adjusted to clear 4.5:1 on the popup footer surface.
+Focused evidence: `npm run test:ui` (40 passed), `npm run check`, `npm run
+build`, `pytest tests/test_control_center.py tests/test_theme_contrast.py -q`
+(76 passed), and Ruff on the edited Python tests.
 
-| Phase | Work and exit evidence | Status |
+## Current execution state
+
+| Phase | Implemented boundary | Remaining evidence |
 |---|---|---|
-| **A. Inventory and contracts** | Inventory surfaces/actions/dependencies/lifecycle; approve the transitional overlay in architecture sources and synchronized visuals without renumbering RF/CA/DAG/AEF IDs; lock the versioned IPC and process ownership contract; classify tests and gaps. | Initial inventory/contract written here; code parity remains open. |
-| **B. Official Tauri foundation and Python service** | Establish official `apps/desktop` React/Tauri workspace; Qt-free Python service entrypoint; root supervision, bounded IPC, startup/provisioning/status, disconnect/crash/restart, bounded clean shutdown and isolated lookup child. Prove shell/window remains responsive during resource/provider preparation. | Protocol foundation checked; asynchronous provisioning, provider composition, restart and packaged process-family cleanup remain open. |
-| **C. React behavior and visual parity** | Port Control Center sections/actions, live status, settings, compact/expanded popup and entries/decomposition, dialogs, permissions/onboarding, region selection, update progress/confirmation/results, diagnostics/export. Compare against the current V1 appearance; no new visual identity. | React routes/settings/logs and unavailable-action feedback implemented; full behavior and visual parity remain open. |
-| **D. Replace Qt infrastructure** | Port ROI/monitor geometry, timers/callbacks, tray/reopen, hotkey press and release, native permissions/activation, popup focus/nonactivation/placement/retention, shutdown/signals. Run native Mac checks and platform contract tests; remove Qt adapters only after replacements pass. | Not started. |
-| **E. Packaging, updater and CI** | Build Tauri plus Python runtime/providers/models/resources for Windows/macOS/Linux; preserve product identity, config/data paths and icons; adapt inventory, signatures/manifests, workflows and old-layout transition; carry forward updater verification/ownership/handoff/root acknowledgement/rollback. Never substitute Tauri updater plugin without explicit approval. | Not started. Linux distro/display limits and Windows acceptance stay explicit. |
-| **F. Lab, convergence and legacy removal** | Lab launches and attributes the official root plus complete child family; run controlled Mac visual/native and compatible Lab comparisons; measure release startup/first/warm lookup/RAM/CPU/shutdown; update CODE-MAP/readmes/commands; remove production Qt, QtWebEngine and pywebview dependencies/assets/hooks after parity; run proportional portable/native/packaged/frontend/Rust gates; write the single final Review Handoff and stop Phase A. | Not started. No final handoff until all authorized Phase A work and evidence are present. |
-
-At each boundary update this file with changed status, commits, actual checks,
-results, unresolved risks and exact next steps. Do not create per-worker reports
-or an interim Review Handoff.
+| A | Inventory, approved ownership/IPC contracts and synchronized invariants. | None. |
+| B | Asynchronous service, runtime/lookup composition, bounded IPC and family supervision. | None in verified Mac scenarios. |
+| C | All React surfaces and interactions; corrected full-height shell and settings grid. | Live popup and selector screen-content acceptance. |
+| D | Native windows, tray/reopen, shortcuts, permissions, timers and shutdown adapters. | Real shortcut press/release, popup nonactivation/crossing, mixed-monitor selection. |
+| E | Coordinated Tauri/Python product, existing updater transition/ack/rollback and CI. | Windows/Linux host execution. |
+| F | Lab root/family attribution, privacy, legacy removal, runbooks and final handoff. | Permission/input-dependent native workload acceptance. |
 
 ## Native Windows continuation checklist
 
@@ -161,6 +174,7 @@ the updater at the user's Hanly installation or settings.
 py -3.10 -m venv .venv
 & .\.venv\Scripts\python.exe -m pip install --upgrade pip
 & .\.venv\Scripts\python.exe -m pip install --group dev
+& .\.venv\Scripts\python.exe -m pip install --group lab
 & .\.venv\Scripts\python.exe -m pip install -e packages/hanly
 & .\.venv\Scripts\python.exe -m pip install -e 'packages/hanly-app[runtime]'
 & .\.venv\Scripts\python.exe tools/prepare_easyocr_models.py
@@ -174,9 +188,13 @@ Push-Location apps/desktop
 npm ci
 npm run check
 npm test
+npm run test:ui
 npm run build
-npm run tauri -- build
 Pop-Location
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+& .\.venv\Scripts\python.exe tools/build_package.py
 $env:HANLY_REQUIRE_PACKAGED = "1"
 # Set HANLY_PACKAGED_APP to the fresh bundle's executable or install fixture.
 & .\.venv\Scripts\python.exe -m pytest --suite packaged
@@ -218,12 +236,11 @@ bundle and a temporary `%LOCALAPPDATA%` profile:
    `HANLY_REQUIRE_NATIVE=1` and `HANLY_REQUIRE_PACKAGED=1` results from Windows
    CI in addition to the real-desktop checks.
 
-At this checkpoint `package-lock.json` and `Cargo.lock` exist and stable
-versions are exact. Scripts include `check`, `test`, `test:ui`, `build` and
-`tauri`; the official configuration still disables release bundling. The debug
-Mac `.app` uses developer Python and proves neither Windows redirected stdio nor
-release packaging. The Windows continuation above is staged for the complete
-runtime; update its packaged commands when implementation phase E lands.
+Exact dependency locks and scripts are committed. Use the coordinated builder;
+the checked-in Tauri config disables standalone bundling because its generated
+service/resource overlay exists only during that build. The Mac debug app uses
+developer Python and cannot establish Windows redirected stdio, Job ownership,
+WebView2 behavior or updater acceptance.
 
 ## Linux validation limits
 
@@ -243,96 +260,70 @@ when available, and mark absent compositor/portal/tray checks unverified.
 This Mac session cannot claim Linux native acceptance. A passing Ubuntu/Xvfb
 job is build/virtual-display evidence, not cross-desktop equivalence.
 
-## Verification recorded for this checkpoint
+## Current verification and remaining work — 2026-10-13
 
-- Read the migration brief, repository instructions, code map, architecture
-  sources, execution plan, OCR decision/latency record, spike plan/handoff and
-  README from `spike/desktop-renderers`, Lab README, and packaging/updater/CI
-  entry points.
-- Architecture overlay was added to sources 01–03 and their visual companions;
-  each existing invariant ID and its order is unchanged.
-- `.venv/bin/python -m pytest tests/test_architecture_invariants.py -q` — 6
-  passed. This checks ordered RF, CA, DAG and AEF markdown/visual lists and the
-  repository's derived invariant index.
-- `.venv/bin/python -m pytest -q --tb=short` outside the sandbox: **2,800 passed,
-  3 skipped, 1 failed** in 413.88 s. Failure:
-  `tests/packaged/shared/test_packaged_desktop.py::test_the_frozen_worker_becomes_ready_on_an_isolated_profile`:
-  the existing `dist/macos/Hanly.app` reports both package versions as 1.0.0, while
-  the checkout expects 1.1.0. The full gate is not green. No assertion, timeout,
-  skip or bundle identity was changed to conceal this stale build.
-- The earlier sandbox-only portable run had 2,663 passes, 3 skips and 6 failures
-  from denied process inventory/sysctl and Vision access. The unsandboxed full
-  run resolved those failures; it still exposed the stale packaged identity.
-- Final focused service/invariant checks: **17 passed** (11 service, 6 architecture).
-  Ruff passed; mypy passed across **362** source files after the final edits.
-- Frontend: **9** Node contract/state/settings/routing tests and **5** Vitest/jsdom
-  page-interaction tests passed; strict TypeScript check and Vite build passed.
-  The ISO log timestamp regression is covered by a real rendered-page test.
-- Rust: **12** tests passed, including actual Rust→Python service handshake and
-  cleanup, malformed protocol, deadlines, monotonic events and window scopes.
-  Clippy with `-D warnings` and rustfmt check passed.
-- Tauri debug custom-protocol executable and disposable debug `.app` built.
-  This `.app` uses developer `.venv` Python and is not a self-contained release.
-  `bundle.active` remains false in the official configuration pending phase E.
-- Native Computer Use on the disposable app/profile: Control Center Capture,
-  Appearance, Logs and Permissions navigation; visible unavailable capture;
-  Light theme acknowledged, persisted and retained after reopen; incumbent
-  three-panel Appearance layout; valid ISO log times; explicit unavailable
-  permission checks; Quit confirmation and normal exit code 0. Exact observed
-  root/service PIDs and creation times were checked: **2 observed, 0 remaining**.
-  No screenshot, private profile, recording or process evidence was added to Git.
-- Tray/Dock/Cmd+Tab/close-reopen via tray, real hover/direct-text/OCR, popup
-  non-activation/retention/crossing, region overlay and packaged updater acceptance
-  were not established. No official Lab tour or release memory/latency result
-  exists. No Windows/Linux native or CI acceptance is claimed.
+- Portable Python: 2,569 passed, 2 skipped. Run with process-inventory access;
+  sandbox-denied `ps` does not prove cleanup. The two live Vision recognition
+  assertions now live in the native suite, with the original assertions intact.
+- Native Mac: 81 passed, plus 5 newly routed live Vision geometry cases passed.
+  The Lab Qt fixture sees a real screen under native execution; its sandboxed
+  no-screen failure is not product evidence. No engine source was changed.
+- Service/lifecycle/launcher: 72 focused checks passed. Lab portable: 518 passed;
+  suite routing: 7 passed. Whole-tree Ruff passed; mypy: 337 files clean.
+- Frontend: 9 contracts and 40 React interaction tests passed; TypeScript and
+  production Vite build passed. Rust: 15 tests, Clippy and rustfmt passed.
+- CI: 88 workflow contracts passed. Native CI installs Python packages before
+  the Rust integration test that launches the actual Python service.
+- Actual source Mac UI: six tabs, settings acknowledgement and persisted light
+  theme, default and ~730x563 window layout/scrolling, scope-dialog cancel,
+  truthful capture permission error, close/reopen with the same root/service,
+  Quit confirmation and both PIDs gone. No system privacy grant was changed.
+- Native shortcut registration reports 3/3. A sole-app Lab input probe passed
+  driver TCC preflight and dispatched every press/release, but emitted no
+  native shortcut edge. The isolated Carbon dispatcher comparison could not
+  launch reliably, so it supplies no evidence and no target patch was adopted.
+- Earlier tours 141441, 143450, 144857, 152425 and 154154 all failed or aborted
+  before a valid hover. They are not lookup acceptance or performance results.
+  The 154154 cleanup had zero survivors/forced termination. Earlier service
+  Vision capability probing and Lab responsibility-header bugs were fixed.
+- User's old raw debug app (root 86203/service 86211, started 19:19) was closed
+  per instruction. Latest disposable visual root 89788/service 89793 exited
+  through the real Quit action. The stray Carbon probe 87277 was terminated.
+- Final committed-source 422bb07 bundle: all 7 packaged checks passed in
+  111.77s with native host access, including real React readiness, frozen
+  OCR/lookup, ordinary-root acknowledgement and shipped POSIX helper rollback.
+  Sandbox-only LaunchServices/process/rollback failures disappeared with native
+  access and no assertion/code changes.
+- Final build ID `77d09d75-bbc9-4565-98d0-6ebb7f6304ad`, version 1.1.0,
+  arm64, built 2026-10-13 23:06:59Z from
+  `422bb0742c062ed6358973addb896125bfa9d83f`. App is
+  `dist/macos/Hanly.app`; deep/strict ad-hoc signature and intended macOS icon
+  verify. ZIP and DMG each match all 3,762 release-manifest entries, with zero
+  missing/different/unexpected files; both inventories and DMG mount pass.
+- Final actual packaged UI displays ready/sleeping and aligned controls; hidden
+  region controls are absent from accessibility when Current monitor is selected.
+- Release recording `20261013-202154-run`: 124.9s startup/idle with on-demand
+  providers, plus native activation/visual inspection; no capture or lookup.
+  It attributes Rust, frozen service, GPU/network/WebContent and macOS helpers.
+  Peak family RSS 246.7 MiB; whole-period mean summed CPU 6.0%. Samples from
+  30–120s average 77.39 MiB RSS / 1.51% summed CPU. Runtime preparation completed
+  9.576s after root spawn with an existing runtime/DB and providers sleeping.
+  These are one observed startup/idle run, not lookup workload, visible-popup
+  latency, a performance guarantee or a comparable Qt/spike memory improvement.
+- Recording provenance is product commit 422bb07 with documentation dirty;
+  no product source changed during the run. Existing registered baselines are
+  October 7 Qt tours/stress with a different sampler/workload. No comparison
+  is made. Root 95648 exited 0, zero surviving/forced children; an independent
+  check found all nine sampled PIDs gone, including attributed WebKit helpers.
+- Screen Recording and Accessibility remain ungranted in the final packaged
+  self-check. The permission question is unanswered; no grant is assumed or
+  changed. Real keyboard input/hover/popup/selection checks require those grants
+  and actual delivery evidence. Windows/Linux native acceptance remains pending.
 
-## Implemented foundation and continuation — 2026-10-13
-
-- `apps/desktop`: React Router pages, incumbent CSS/icon and shared token aliases,
-  typed native bridge/events, structured errors, settings/logs and interaction
-  tests. Rust creates native windows and tray/reopen scaffolding, derives caller
-  window identity, restricts navigation/CSP/permissions, coalesces pending event
-  snapshots and supervises the fixed private Python process.
-- `hanly_app.service`: strict JSONL and Qt-free startup; handshake, honest idle/
-  sleeping state, configuration persistence, bounded log snapshot and shutdown.
-  All remaining recognized service actions explicitly return `unavailable`.
-  `freeze_support()` precedes service main dispatch; production frozen service
-  packaging is still absent. No provider, dictionary outcome or engine code changed.
-- Stable dependencies were resolved from npm/crates registries; exact versions
-  and lockfiles are committed. Tauri 3 alpha hits were rejected in favor of
-  stable Tauri 2.12.3; no experimental performance settings or private SPI was
-  copied into production. Diagnostic spike code stays on its preserved branch.
-- Existing production CLI, Qt/pywebview shell, adapters, dependencies, packaging,
-  updater and tests remain. The foundation does not switch users to an incomplete
-  desktop or provide a hidden runtime fallback. No tests were discarded.
-- Service failures resolve outstanding requests and show a restart-required
-  error. An automatic restart budget, worker family ownership/kill guarantees,
-  event acknowledgement during hover, update root acknowledgement and native
-  signal supervision must be completed before production integration.
-
-Continue on this branch, without another plan or intermediate handoff:
-
-1. Extend the service with one serialized owner for callbacks/timers, then port
-   `StartupCoordinator`, Qt-free bridge actions and `create_manual_lookup` using
-   the existing engine/AX/UIA/MSS contracts. Keep resource work off the UI thread,
-   readiness/residency separate and the final Python currency check intact.
-2. Implement event-backed popup presentation/geometry feedback and retained-target
-   crossing; connect monitor/cursor capture and the React selector. Complete
-   native hotkey press/release, permissions, non-activation, theme and shutdown.
-   Test every migrated adapter responsibility before deleting its Qt tests/code.
-3. Complete update/diagnostics actions and confirmations through the existing
-   Python updater. Resolve root-versus-service installation identity and challenge
-   acknowledgement. A protocol handshake alone must never commit an update.
-4. Produce a console-capable, console-hidden-on-Windows frozen service plus its
-   providers/models/resources/helpers; define Tauri bundle inventory and stable
-   identity, and preserve old product layout/update/data-path compatibility.
-   Then adapt self-checks, CI, native/packaged tests and official launch commands.
-5. Port Lab launch/control and exact whole-family attribution, respecting existing
-   ownership/privacy guards. Run fresh Mac packaged acceptance and controlled
-   Safari tours; record compatible release measurements. Execute the real Windows
-   continuation and retain explicit Linux limitations. Only then remove production
-   Qt/Qt WebEngine/pywebview, update current architecture descriptions/companions,
-   run final gates and write the single Review Handoff. Do not start Phase B.
-
-Development and boundary commands are in `apps/desktop/README.md`. Do not treat
-this checkpoint as migration completion or as approval of unchecked behavior.
+No implementation work remains outside the documented native acceptance limits.
+The single final handoff is
+`docs/execution/review-handoffs/desktop-tauri-migration.md`. Continue its
+permission/input-dependent checks when the user supplies the missing access;
+use the Windows checklist above on Windows, and record Linux native limits.
+Playwright remains deferred. No push, merge, tag, release or Phase B review
+occurred. Local documentation/handoff commits complete this implementation run.
