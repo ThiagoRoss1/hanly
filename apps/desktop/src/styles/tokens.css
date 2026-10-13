@@ -1,0 +1,12 @@
+@theme inline {
+  --color-hanly-surface: var(--surface);
+  --color-hanly-subtle: var(--surface-subtle);
+  --color-hanly-raised: var(--surface-raised);
+  --color-hanly-text: var(--text-primary);
+  --color-hanly-muted: var(--text-muted);
+  --color-hanly-border: var(--border);
+  --color-hanly-accent: var(--accent);
+  --color-hanly-success: var(--success);
+  --color-hanly-warning: var(--warning);
+  --color-hanly-danger: var(--danger);
+}
