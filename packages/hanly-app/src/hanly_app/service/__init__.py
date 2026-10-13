@@ -1,4 +1,4 @@
-"""Qt-free Python desktop-service protocol foundation."""
+"""Internal Python desktop service and its bounded protocol."""
 
 from __future__ import annotations
 

@@ -9,6 +9,8 @@ never library objects or foreign exceptions.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -1055,6 +1057,14 @@ def lookup_child(connection: PipeEnd, settings: LookupSettings) -> None:
     Importable under ``spawn`` and deliberately narrow. It provisions nothing,
     acknowledges no update, registers no hotkey, and opens no window.
     """
+
+    # The supervised service owns stdout as a framed JSONL channel. A library
+    # that prints from the spawned lookup child must not corrupt its protocol.
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    try:
+        os.dup2(sys.stdout.fileno(), 1)
+    except (OSError, ValueError):
+        pass
 
     from hanly_app.lookup.preload import preload_ocr_runtime
 

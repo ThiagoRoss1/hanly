@@ -1,8 +1,7 @@
 """Process bootstrap helpers that must run before desktop UI imports.
 
-Windows changes native-library resolution after Qt initializes. Importing the
-OCR runtime first preserves that ordering while leaving a missing optional
-runtime as a visible provider/startup diagnostic.
+The isolated lookup child loads native OCR libraries before provider composition.
+A missing optional runtime remains a visible provider/startup diagnostic.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
 
 DiagnosticReporter = Callable[[str], None]
 
-#: The OCR runtime imported before Qt.
+#: The OCR runtime preloaded inside the isolated lookup child.
 OCR_RUNTIME_MODULE = "easyocr"
 
 #: Suppress only known Torch notices from EasyOCR setup and CPU-only inference;
@@ -68,7 +67,7 @@ def preload_ocr_runtime(
     *,
     on_diagnostic: DiagnosticReporter | None = None,
 ) -> str | None:
-    """Import the OCR runtime before Qt, reporting failure as non-fatal."""
+    """Import the OCR runtime in the lookup child, reporting failure as non-fatal."""
 
     global _measured, _timing
 

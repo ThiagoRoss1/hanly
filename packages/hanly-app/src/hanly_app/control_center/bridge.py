@@ -1,29 +1,26 @@
-"""The pywebview Control Center and its UI-independent application bridge.
+"""UI-independent Control Center application bridge.
 
 The bridge exposes snapshots and small desktop actions as JSON-compatible
 values. It does not construct providers, open databases, or perform language
-processing. ``ControlCenterHost`` deliberately selects pywebview's Qt backend
-so it can reuse the ``QApplication`` that already hosts the popup.
+processing. The Tauri frontend communicates with this business layer through
+the desktop service protocol.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 import urllib.parse
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from enum import Enum
-from importlib.resources import files
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from hanly.resource_manager import ResourceManager
 
 from hanly_app.acquisition.capture import CaptureService, MonitorInfo, ScreenRect
-from hanly_app.acquisition.selector import CaptureSelection
-from hanly_app.app_icon import favicon_data_uri
+from hanly_app.acquisition.selection import CaptureSelection
 from hanly_app.config import (
     HOVER_DELAY_MAX_MS,
     HOVER_DELAY_MIN_MS,
@@ -46,10 +43,11 @@ from hanly_app.permissions import (
     missing_permission_refusal,
     permission_from_id,
 )
-from hanly_app.runtime import HanlyRuntime
 from hanly_app.runtime_status import ApplicationSnapshot, RuntimeStatus
-from hanly_app.updates.coordinator import UpdateCoordinator
-from hanly_app.updates.desktop_update import installed_version
+
+if TYPE_CHECKING:
+    from hanly_app.runtime import HanlyRuntime
+    from hanly_app.updates.coordinator import UpdateCoordinator
 
 
 class ControlCenterUnavailable(RuntimeError):
@@ -64,38 +62,6 @@ RUNTIME_NOT_READY = "Hanly is still preparing its lookup runtime."
 #: Composition supplies the selector so this bridge stays Qt-free; the
 #: selector suspends observation while its overlay covers the desktop.
 CaptureAreaSelector = Callable[[], "CaptureSelection | None"]
-
-
-def prepare_control_center_qt() -> None:
-    """Prepare Qt WebEngine before the shared ``QApplication`` is created.
-
-    Qt WebEngine requires either an early import or the shared-OpenGL-context
-    application attribute before Qt constructs its application object. Desktop
-    startup must call this before creating the popup's ``QApplication``.
-    """
-
-    try:
-        from PyQt6.QtCore import QCoreApplication, Qt
-    except ImportError as error:
-        raise ControlCenterUnavailable(
-            "the Control Center requires the pywebview Qt6 runtime extra"
-        ) from error
-
-    module_name = "PyQt6.QtWebEngineWidgets"
-    if QCoreApplication.instance() is not None and module_name not in sys.modules:
-        raise ControlCenterUnavailable(
-            "prepare_control_center_qt() must run before QApplication is created"
-        )
-
-    QCoreApplication.setAttribute(
-        Qt.ApplicationAttribute.AA_ShareOpenGLContexts,
-    )
-    try:
-        __import__(module_name)
-    except ImportError as error:
-        raise ControlCenterUnavailable(
-            "the Control Center requires the pywebview Qt6 runtime extra"
-        ) from error
 
 
 class DesktopLifecycle(Protocol):
@@ -136,56 +102,6 @@ class MonitorSource(Protocol):
 
     def enumerate_monitors(self) -> Sequence[MonitorInfo]:
         """Return selectable monitors without performing a capture."""
-
-
-@dataclass(frozen=True, slots=True)
-class ControlCenterAssets:
-    """The packaged UI files loaded for a pywebview window."""
-
-    html: str
-    css: str
-    javascript: str
-    html_path: Path
-
-
-def load_control_center_assets() -> ControlCenterAssets:
-    """Load the HTML/CSS/JS bundle from package data."""
-
-    asset_root = files("hanly_app").joinpath("assets").joinpath("control_center")
-    html_path = Path(str(asset_root.joinpath("index.html")))
-    return ControlCenterAssets(
-        html=asset_root.joinpath("index.html").read_text(encoding="utf-8"),
-        css=asset_root.joinpath("control_center.css").read_text(encoding="utf-8"),
-        javascript=asset_root.joinpath("control_center.js").read_text(encoding="utf-8"),
-        html_path=html_path,
-    )
-
-
-def control_center_document(assets: ControlCenterAssets | None = None) -> str:
-    """Return the window's HTML as one self-contained document.
-
-    Inlining the stylesheet and script is what lets the packaged build and a
-    zipped wheel serve the same page without a file server.
-    """
-
-    return _inline_assets(assets if assets is not None else load_control_center_assets())
-
-
-def _inline_assets(assets: ControlCenterAssets) -> str:
-    """Make one self-contained document so zipped wheels work as well."""
-
-    document = assets.html.replace(
-        '<link rel="stylesheet" href="control_center.css">',
-        f"<style>\n{assets.css}\n</style>",
-    )
-    document = document.replace(
-        '<link rel="icon" href="favicon.ico">',
-        f'<link rel="icon" href="{favicon_data_uri()}">',
-    )
-    return document.replace(
-        '<script src="control_center.js"></script>',
-        f"<script>\n{assets.javascript}\n</script>",
-    )
 
 
 def _vision_is_available() -> bool:
@@ -944,8 +860,8 @@ def _installed_version() -> str | None:
     """
 
     try:
-        return installed_version()
-    except Exception:
+        return version("hanly-app")
+    except PackageNotFoundError:
         return None
 
 
@@ -1080,11 +996,7 @@ def _target_name(monitor: int | None) -> str:
 
 __all__ = [
     "CaptureAreaSelector",
-    "ControlCenterAssets",
     "ControlCenterBridge",
     "ControlCenterUnavailable",
     "RUNTIME_NOT_READY",
-    "control_center_document",
-    "load_control_center_assets",
-    "prepare_control_center_qt",
 ]

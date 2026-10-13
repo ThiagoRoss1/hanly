@@ -1,10 +1,10 @@
-"""Composition for the first developer-runnable manual lookup alpha.
+"""Compose manual and hover lookup behavior for the desktop service.
 
 This module owns only desktop wiring.  The existing :class:`HanlyRuntime`
 still supplies the concrete provider factories, while
 :class:`LookupController` keeps lookup work bounded and worker-owned. The
 composition root supplies one dispatcher to both hotkeys and lookup results so
-application work always returns to the UI thread.
+application work always returns to the serialized service owner.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from threading import RLock, Thread, Timer
 from typing import Any, Protocol, TypeAlias, cast
 
-from hanly import BoundingBox, HanlyError, LookupResult, LookupStatus, Point
+from hanly import HanlyError, LookupResult, LookupStatus, Point
 
 from hanly_app.acquisition.capture import CaptureResult, ConfiguredCaptureService, ScreenRect
 from hanly_app.acquisition.direct_text import default_text_acquisition
@@ -30,7 +30,7 @@ from hanly_app.hover.target import (
     screen_rect,
 )
 from hanly_app.lookup.controller import LookupController, ResultDispatcher, ResultHandler
-from hanly_app.popup.presentation import PopupController, should_present
+from hanly_app.popup.presentation import should_present
 
 from .config import (
     DEFAULT_CAPTURE_HOTKEY,
@@ -550,7 +550,7 @@ class ManualLookupRuntime:
             ) from error
 
     def _register_hotkeys(self) -> None:
-        """Register the shell's shortcuts, reporting rather than refusing.
+        """Register desktop shortcuts, reporting rather than refusing.
 
         A combination another application already owns costs the user that one
         shortcut. It must not also cost them the tray, the window, the popup,
@@ -592,15 +592,15 @@ class ManualLookupRuntime:
             pass
 
     def shutdown(self) -> None:
-        """Close UI resources and request non-blocking worker/listener shutdown."""
+        """Release owned resources and request non-blocking worker shutdown."""
 
         self._shutdown(wait=False)
 
     def begin_shutdown(self) -> None:
-        """Release UI-owned resources and request worker shutdown without waiting.
+        """Release service-owned resources and request worker shutdown without waiting.
 
-        Safe to call on the Qt thread: it never joins the lookup worker, so an
-        in-flight OCR job cannot freeze the popup, tray, or Control Center.
+        It never joins the lookup worker, so an in-flight OCR job cannot block
+        the service owner while shutdown begins.
         """
 
         self._shutdown(wait=False)
@@ -616,7 +616,7 @@ class ManualLookupRuntime:
         return self._controller.join(timeout)
 
     def _shutdown(self, *, wait: bool) -> None:
-        """Shared teardown with an explicit UI-safe or process-exit wait policy."""
+        """Apply teardown with an explicit owner-safe or process-exit wait policy."""
 
         with self._lock:
             if self._closed:
@@ -713,8 +713,8 @@ class ManualLookupRuntime:
         """Join the lookup child away from the thread that asked for the stop.
 
         Retiring waits for a child process to exit, which is measured in
-        hundreds of milliseconds. Doing that inside the Qt action would freeze
-        the tray, the window, and the popup for exactly as long as it takes.
+        hundreds of milliseconds. Doing that inside an owner callback would
+        block protocol dispatch for exactly as long as it takes.
         """
 
         if self._engine is None:
@@ -1151,6 +1151,7 @@ def create_manual_lookup(
     hover_enabled: bool = False,
     hover_delay_ms: float | None = None,
     hover_scheduler: HoverScheduler | None = None,
+    exit_scheduler: HoverScheduler | None = None,
     app_config: AppConfig | None = None,
     hover_listener_factory: MouseListenerFactory | None = None,
     hover_on_error: HoverErrorHandler | None = None,
@@ -1238,6 +1239,7 @@ def create_manual_lookup(
                 manual.capture_service,
                 delay_ms=_hover_delay(hover_delay_ms, app_config),
                 scheduler=hover_scheduler,
+                exit_scheduler=exit_scheduler,
                 dispatcher=dispatcher,
                 listener_factory=hover_listener_factory,
                 on_error=hover_on_error,
@@ -1252,181 +1254,6 @@ def create_manual_lookup(
     if app_config is not None:
         manual.apply_config(app_config)
     return manual
-
-
-def create_qt_manual_lookup(
-    runtime: RuntimeComposition,
-    capture_service: CaptureSource,
-    *,
-    hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.PUSH_TO_HOVER],
-    hotkey_factory: HotkeyFactory | None = None,
-    shutdown_scheduler: ShutdownScheduler | None = None,
-    hover_enabled: bool = True,
-    hover_delay_ms: float | None = None,
-    hover_scheduler: HoverScheduler | None = None,
-    app_config: AppConfig | None = None,
-    hover_listener_factory: MouseListenerFactory | None = None,
-    hover_on_error: HoverErrorHandler | None = None,
-    on_initialization_error: InitializationErrorHandler | None = None,
-    trace_sink: RuntimeTraceSink | None = None,
-    capture_observer: CaptureObserver | None = None,
-    on_toggle_hover: Callable[[], None] | None = None,
-    on_error: ErrorReporter | None = None,
-    capture_refusal: CaptureRefusal | None = None,
-    on_diagnostic: Callable[[str], None] | None = None,
-    on_engine_state: Callable[[str, str], None] | None = None,
-    idle_scheduler: IdleScheduler | None = None,
-    on_stopped: Callable[[], None] | None = None,
-    on_toggle_capture: Callable[[], None] | None = None,
-    lookup_hotkey: str = "",
-) -> ManualLookupRuntime:
-    """Build the real Qt alpha composition on the caller's UI thread.
-
-    One :class:`QtResultDispatcher` is constructed first and shared by both the
-    hotkey service and the lookup controller, so hotkey actions and results
-    both re-enter application code on the Qt UI thread.
-    """
-
-    from PyQt6.QtGui import QCursor
-
-    from hanly_app.hover.qt_scheduler import QtHoverScheduler
-    from hanly_app.popup.qt import QtPopupTrigger, QtPopupView, QtResultDispatcher
-
-    dispatcher = QtResultDispatcher()
-    view = QtPopupView(config=app_config)
-    popup_controller = PopupController(view, popup_size=view.popup_size)
-    popup_trigger = QtPopupTrigger(popup_controller, trace_sink=trace_sink)
-
-    controller: LookupController
-
-    origins = CaptureOrigins()
-    manual_holder: list[ManualLookupRuntime] = []
-
-    def popup_geometry_changed(position: object, size: object) -> None:
-        if not manual_holder:
-            return
-        popup = _popup_rect(position, size)
-        if popup is not None:
-            manual_holder[0].update_popup_geometry(popup)
-
-    popup_controller.set_geometry_handler(popup_geometry_changed)
-
-    def present_result(result: LookupResult) -> object:
-        if not should_present(result):
-            _trace_suppressed(trace_sink, result, controller.current_request_id)
-            return None
-        lookup_request_id = controller.current_request_id
-        word = (
-            manual_holder[0].word_rect(result, lookup_request_id)
-            if manual_holder
-            else None
-        )
-        position = popup_trigger.open(
-            result,
-            lookup_request_id=lookup_request_id,
-            anchor=_bounding_box(word),
-        )
-        if manual_holder:
-            manual_holder[0].note_presented(
-                result, lookup_request_id, _popup_rect(position, view.popup_size)
-            )
-        return position
-
-    engine = _create_engine(
-        runtime,
-        app_config,
-        trace_sink=trace_sink,
-        on_diagnostic=on_diagnostic,
-        on_state=on_engine_state,
-    )
-    controller = _create_runtime_controller(
-        runtime,
-        _as_result_handler(present_result),
-        dispatcher,
-        trace_sink=trace_sink,
-        on_initialization_error=on_initialization_error,
-        engine=engine,
-    )
-
-    def current_cursor() -> Point:
-        cursor = QCursor.pos()
-        return Point(float(cursor.x()), float(cursor.y()))
-
-    configured_capture = (
-        capture_service
-        if isinstance(capture_service, ConfiguredCaptureService)
-        else ConfiguredCaptureService(capture_service)
-    )
-    configured_hotkey = app_config.hotkey if app_config is not None else hotkey
-    manual = ManualLookupRuntime(
-        controller,
-        configured_capture,
-        popup_trigger.open,
-        close_popup=popup_controller.close,
-        clear_popup=popup_controller.clear,
-        current_cursor=current_cursor,
-        dispatcher=dispatcher,
-        hotkey=configured_hotkey,
-        hover_hotkey=_configured_hover_hotkey(app_config),
-        capture_hotkey=_configured_capture_hotkey(app_config),
-        lookup_hotkey=lookup_hotkey,
-        activation=_configured_activation(app_config),
-        on_toggle_capture=on_toggle_capture,
-        hotkey_factory=hotkey_factory,
-        shutdown_scheduler=shutdown_scheduler,
-        trace_sink=trace_sink,
-        capture_observer=capture_observer,
-        engine=engine,
-        preload=_configured_preload(app_config),
-        on_toggle_hover=on_toggle_hover,
-        on_error=on_error,
-        capture_refusal=capture_refusal,
-        origins=origins,
-        idle_scheduler=idle_scheduler,
-        on_stopped=on_stopped,
-        apply_popup_preferences=view.apply_preferences,
-    )
-    manual_holder.append(manual)
-    if hover_enabled:
-        manual.attach_hover(
-            HoverLookupRuntime(
-                controller,
-                manual.capture_service,
-                delay_ms=_hover_delay(hover_delay_ms, app_config),
-        # Debounce on Qt's thread, with a separate timer for popup crossing;
-        # sharing one QTimer previously suppressed exit dismissal.
-                scheduler=hover_scheduler or QtHoverScheduler(),
-                exit_scheduler=QtHoverScheduler(),
-                dispatcher=dispatcher,
-                listener_factory=hover_listener_factory,
-                on_error=hover_on_error,
-                on_invalidate=popup_controller.clear,
-                trace_sink=trace_sink,
-                capture_observer=capture_observer,
-                acquisition=default_text_acquisition(),
-                origins=origins,
-                sticky=_hover_is_sticky(app_config),
-            )
-        )
-        hover = manual.hover_runtime
-        if hover is not None:
-            popup_controller.set_dismissed_handler(hover.clear_target)
-    if app_config is not None:
-        manual.apply_config(app_config)
-    return manual
-
-
-def _popup_rect(position: object, size: object) -> ScreenRect | None:
-    """Describe the frame the popup actually took, so the cursor may enter it."""
-
-    if position is None:
-        return None
-    return ScreenRect(
-        left=int(getattr(position, "x")),
-        top=int(getattr(position, "y")),
-        width=int(getattr(size, "width")),
-        height=int(getattr(size, "height")),
-    )
 
 
 def _hover_is_sticky(app_config: AppConfig | None) -> bool:
@@ -1451,19 +1278,6 @@ def _hover_delay(delay_ms: float | None, app_config: AppConfig | None) -> float:
     if app_config is not None:
         return float(app_config.hover_delay_ms)
     return AppConfig().hover_delay_ms
-
-
-def _as_result_handler(popup: PopupPresenter) -> ResultHandler:
-    """Adapt a popup presenter to the controller's result-handler contract.
-
-    Presenters such as ``QtPopupTrigger.open`` return a placement value that
-    the controller neither needs nor consumes.
-    """
-
-    def deliver(result: LookupResult) -> None:
-        popup(result)
-
-    return deliver
 
 
 def _configured_preload(app_config: AppConfig | None) -> LookupPreload:
@@ -1573,12 +1387,6 @@ def _trace_suppressed(
     )
 
 
-def _bounding_box(rect: ScreenRect | None) -> BoundingBox | None:
-    if rect is None:
-        return None
-    return BoundingBox(rect.left, rect.top, rect.left + rect.width, rect.top + rect.height)
-
-
 def _no_retention_reason(
     result: LookupResult, lookup_request_id: int | None, word: ScreenRect | None
 ) -> str:
@@ -1638,5 +1446,4 @@ __all__ = [
     "RuntimeComposition",
     "ShutdownScheduler",
     "create_manual_lookup",
-    "create_qt_manual_lookup",
 ]

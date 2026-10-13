@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 1024 * 1024
@@ -14,7 +14,11 @@ MAX_REQUEST_ID_LENGTH = 64
 MAX_STRUCTURE_DEPTH = 32
 MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_SEQUENCE = 9_007_199_254_740_991
-EVENT_NAMES = frozenset({"state", "popup", "popup_hide", "service_status"})
+MAX_SELECTION_SNAPSHOT_DIMENSION = 16_384
+MAX_SELECTION_SNAPSHOT_PIXELS = 64_000_000
+EVENT_NAMES = frozenset(
+    {"state", "popup", "popup_hide", "service_status", "native_action", "trace"}
+)
 
 WINDOWS = frozenset({"host", "control-center", "popup", "region-selector"})
 
@@ -46,9 +50,34 @@ class Request:
 
 
 _METHOD_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
-    # Methods already implemented by the Qt-free smoke service.
+    # Explicit methods supported by the supervised desktop service.
     "service.hello": (frozenset(), frozenset()),
     "service.shutdown": (frozenset(), frozenset()),
+    "settings.prepare": (frozenset({"changes"}), frozenset()),
+    "settings.commit": (frozenset({"token"}), frozenset()),
+    "settings.abort": (frozenset({"token"}), frozenset()),
+    "native.input": (frozenset({"action", "edge"}), frozenset()),
+    "native.context": (
+        frozenset({"cursor", "monitors"}),
+        frozenset({"popup_rect", "registered_hotkeys", "vision_available"}),
+    ),
+    "native.selection": (frozenset({"active"}), frozenset()),
+    "native.selection_snapshot": (frozenset({"bounds"}), frozenset()),
+    "native.region_selected": (frozenset({"region"}), frozenset()),
+    "service.popup_geometry": (
+        frozenset({"sequence", "x", "y", "width", "height"}),
+        frozenset(),
+    ),
+    "service.popup_close": (frozenset({"sequence"}), frozenset()),
+    "service.popup_expand": (
+        frozenset({"sequence", "expanded"}),
+        frozenset(),
+    ),
+    "update.acknowledge": (
+        frozenset(),
+        frozenset({"legacy_ready_path", "challenge_path"}),
+    ),
+    "self_check": (frozenset({"mode"}), frozenset({"image"})),
     "get_state": (frozenset(), frozenset()),
     "update_settings": (frozenset({"changes"}), frozenset()),
     "get_logs": (frozenset(), frozenset()),
@@ -78,6 +107,19 @@ _METHOD_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 _METHOD_WINDOWS: dict[str, frozenset[str]] = {
     "service.hello": frozenset({"host"}),
     "service.shutdown": frozenset({"host"}),
+    "settings.prepare": frozenset({"control-center"}),
+    "settings.commit": frozenset({"control-center"}),
+    "settings.abort": frozenset({"control-center"}),
+    "native.input": frozenset({"host"}),
+    "native.context": frozenset({"host"}),
+    "native.selection": frozenset({"host"}),
+    "native.selection_snapshot": frozenset({"host"}),
+    "native.region_selected": frozenset({"host"}),
+    "service.popup_geometry": frozenset({"popup"}),
+    "service.popup_close": frozenset({"popup"}),
+    "service.popup_expand": frozenset({"popup"}),
+    "update.acknowledge": frozenset({"host"}),
+    "self_check": frozenset({"host"}),
     "get_state": frozenset({"control-center"}),
     "update_settings": frozenset({"control-center"}),
     "get_logs": frozenset({"control-center"}),
@@ -193,6 +235,14 @@ def validate_event(value: object) -> dict[str, Any]:
         raise ProtocolFailure("invalid_event", "Event name is not supported.")
     if not isinstance(value["payload"], dict):
         raise ProtocolFailure("invalid_event", "Event payload must be a JSON object.")
+    if value["event"] == "native_action":
+        payload = value["payload"]
+        if (
+            set(payload) != {"action"}
+            or not isinstance(payload["action"], str)
+            or payload["action"] not in {"restart_required", "quit"}
+        ):
+            raise ProtocolFailure("invalid_event", "Native action payload is unsupported.")
     return value
 
 
@@ -313,7 +363,7 @@ def _validate_param_values(
     params: dict[str, Any],
     request_id: str,
 ) -> None:
-    def fail(message: str) -> None:
+    def fail(message: str) -> NoReturn:
         raise ProtocolFailure("invalid_params", message, request_id=request_id)
 
     string_params = {
@@ -426,6 +476,200 @@ def _validate_param_values(
     if method == "install_application_update" and "confirm_full" in params:
         if type(params["confirm_full"]) is not bool:
             fail("confirm_full must be a boolean.")
+    if method in {"settings.prepare"}:
+        changes = params["changes"]
+        if not isinstance(changes, dict):
+            fail("changes must be an object.")
+        _validate_settings_changes(changes, fail)
+    if method in {"settings.commit", "settings.abort"}:
+        token = params["token"]
+        if not isinstance(token, str) or not 1 <= len(token) <= 64 or not token.isascii():
+            fail("token must be a non-empty ASCII string within its length bound.")
+    if method == "native.input":
+        if not isinstance(params["action"], str) or params["action"] not in {
+            "push_to_hover",
+            "toggle_hover",
+            "toggle_capture",
+        }:
+            fail("action is not a supported native hotkey action.")
+        if not isinstance(params["edge"], str) or params["edge"] not in {
+            "pressed",
+            "released",
+        }:
+            fail("edge must be pressed or released.")
+    if method == "native.context":
+        cursor = params["cursor"]
+        if not isinstance(cursor, dict) or set(cursor) != {"x", "y"}:
+            fail("cursor must contain x and y coordinates.")
+        for coordinate in cursor.values():
+            if not _bounded_coordinate(coordinate):
+                fail("cursor coordinates are outside the supported bounds.")
+        monitors = params["monitors"]
+        if not isinstance(monitors, list) or len(monitors) > 32:
+            fail("monitors must be a list containing at most 32 displays.")
+        for monitor in monitors:
+            _validate_monitor(monitor, fail)
+        if "popup_rect" in params:
+            _validate_rect(params["popup_rect"], fail, "popup_rect")
+        if "registered_hotkeys" in params:
+            _validate_registered_hotkeys(params["registered_hotkeys"], fail)
+        if "vision_available" in params and type(params["vision_available"]) is not bool:
+            fail("vision_available must be a boolean.")
+    if method == "native.selection" and type(params["active"]) is not bool:
+        fail("active must be a boolean.")
+    if method == "native.selection_snapshot":
+        bounds = params["bounds"]
+        _validate_rect(bounds, fail, "bounds")
+        width, height = bounds["width"], bounds["height"]
+        left, top = bounds["left"], bounds["top"]
+        if (
+            width > MAX_SELECTION_SNAPSHOT_DIMENSION
+            or height > MAX_SELECTION_SNAPSHOT_DIMENSION
+            or width * height > MAX_SELECTION_SNAPSHOT_PIXELS
+        ):
+            fail("snapshot bounds exceed the supported pixel limits.")
+        if (
+            not -100_000 <= left + width <= 100_000
+            or not -100_000 <= top + height <= 100_000
+        ):
+            fail("snapshot bounds extend outside the supported coordinates.")
+    if method == "native.region_selected":
+        region = params["region"]
+        if not isinstance(region, dict):
+            fail("region must be an object.")
+        _validate_rect(region, fail, "region")
+    if method.startswith("service.popup_"):
+        if type(params["sequence"]) is not int or not 0 < params["sequence"] <= MAX_SEQUENCE:
+            fail("sequence must be a positive popup sequence.")
+        if method == "service.popup_geometry":
+            if not _bounded_coordinate(params["x"]) or not _bounded_coordinate(params["y"]):
+                fail("popup position is outside the supported bounds.")
+            for key in ("width", "height"):
+                if type(params[key]) is not int or not 1 <= params[key] <= 1000:
+                    fail(f"popup {key} must be between 1 and 1000.")
+        if method == "service.popup_expand" and type(params["expanded"]) is not bool:
+            fail("expanded must be a boolean.")
+    if method == "update.acknowledge":
+        paths = {
+            key: params[key]
+            for key in ("legacy_ready_path", "challenge_path")
+            if key in params
+        }
+        if len(paths) != 1:
+            fail("exactly one update handoff path must be provided.")
+        selected = next(iter(paths.values()))
+        if not isinstance(selected, str) or not 1 <= len(selected) <= 4096:
+            fail("update handoff path must be a bounded absolute path.")
+        if not selected.startswith("/") and not (
+            len(selected) >= 3 and selected[1:3] in {":\\", ":/"}
+        ):
+            fail("update handoff path must be absolute.")
+    if method == "self_check":
+        if not isinstance(params["mode"], str) or params["mode"] not in {
+            "inventory",
+            "ocr",
+            "worker",
+            "ui",
+        }:
+            fail("mode is not a supported self-check mode.")
+        image = params.get("image")
+        if image is not None:
+            if not isinstance(image, str) or not 1 <= len(image) <= 4096:
+                fail("image must be a bounded absolute path.")
+            if not image.startswith("/") and not (
+                len(image) >= 3 and image[1:3] in {":\\", ":/"}
+            ):
+                fail("image must be an absolute path.")
+
+
+def _validate_settings_changes(changes: dict[str, Any], fail: Any) -> None:
+    supported = {
+        "hotkey",
+        "hover_hotkey",
+        "capture_hotkey",
+        "hover_activation",
+        "lookup_preload",
+        "ocr_backend",
+        "hover_delay_ms",
+        "capture_mode",
+        "theme",
+        "popup_enabled",
+        "popup_default_size",
+        "technical_details",
+        "update_checks_enabled",
+    }
+    if set(changes) - supported:
+        fail("changes contains an unsupported setting.")
+    string_fields = {
+        "hotkey",
+        "hover_hotkey",
+        "capture_hotkey",
+        "hover_activation",
+        "lookup_preload",
+        "ocr_backend",
+        "capture_mode",
+        "theme",
+        "popup_default_size",
+        "technical_details",
+    }
+    for key in string_fields.intersection(changes):
+        if not isinstance(changes[key], str) or len(changes[key]) > 128:
+            fail(f"{key} must be a string within its length bound.")
+    for key in {"popup_enabled", "update_checks_enabled"}.intersection(changes):
+        if type(changes[key]) is not bool:
+            fail(f"{key} must be a boolean.")
+    if "hover_delay_ms" in changes and type(changes["hover_delay_ms"]) is not int:
+        fail("hover_delay_ms must be an integer.")
+
+
+def _validate_monitor(
+    monitor: object,
+    fail: Callable[[str], NoReturn],
+) -> None:
+    if not isinstance(monitor, dict) or set(monitor) != {"index", "name", "bounds"}:
+        fail("each monitor must contain index, name, and bounds.")
+    if type(monitor["index"]) is not int or not 1 <= monitor["index"] <= 100_000:
+        fail("monitor index is outside the supported bounds.")
+    if not isinstance(monitor["name"], str) or len(monitor["name"]) > 128:
+        fail("monitor name must be a string within its length bound.")
+    _validate_rect(monitor["bounds"], fail, "monitor bounds")
+
+
+def _validate_rect(
+    value: object,
+    fail: Callable[[str], NoReturn],
+    name: str,
+) -> None:
+    if not isinstance(value, dict) or set(value) != {"left", "top", "width", "height"}:
+        fail(f"{name} must contain left, top, width, and height.")
+    if type(value["left"]) is not int or not -100_000 <= value["left"] <= 100_000:
+        fail(f"{name} left is outside the supported bounds.")
+    if type(value["top"]) is not int or not -100_000 <= value["top"] <= 100_000:
+        fail(f"{name} top is outside the supported bounds.")
+    for key in ("width", "height"):
+        if type(value[key]) is not int or not 1 <= value[key] <= 100_000:
+            fail(f"{name} {key} is outside the supported bounds.")
+
+
+def _validate_registered_hotkeys(
+    value: object,
+    fail: Callable[[str], NoReturn],
+) -> None:
+    allowed = {"push_to_hover", "toggle_hover", "toggle_capture"}
+    if not isinstance(value, dict) or set(value) - allowed:
+        fail("registered_hotkeys has unsupported actions.")
+    if any(not isinstance(binding, str) or len(binding) > 128 for binding in value.values()):
+        fail("registered hotkey bindings must be bounded strings.")
+
+
+def _bounded_coordinate(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and abs(value) <= 100_000
+        and value == value
+        and abs(value) != float("inf")
+    )
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -5,7 +5,6 @@ from collections.abc import Callable, Mapping
 from threading import Event, Thread
 from typing import Any, cast
 
-import pytest
 from hanly import (
     DictionaryEntry,
     HanlyError,
@@ -26,7 +25,6 @@ from hanly_app.lookup.controller import LookupController, LookupRequest, ResultD
 from hanly_app.manual_lookup import (
     ManualLookupRuntime,
     create_manual_lookup,
-    create_qt_manual_lookup,
 )
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
@@ -469,39 +467,6 @@ def test_a_hotkey_another_application_owns_costs_only_that_shortcut() -> None:
     assert popup.closed
     assert capture.closed
     assert hotkeys.shutdown_calls == 1
-
-
-def test_qt_composition_shares_one_dispatcher_between_hotkeys_and_results(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``create_qt_manual_lookup`` is the composition the alpha actually runs.
-    Both the hotkey service and the lookup controller must post through the
-    same Qt dispatcher instance."""
-
-    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    pytest.importorskip("PyQt6.QtWidgets")
-    from hanly_app.popup.qt import QtResultDispatcher
-    from PyQt6.QtWidgets import QApplication
-
-    application = QApplication.instance() or QApplication([])
-    assert application is not None
-
-    runtime = _Runtime(_Worker())
-    hotkeys = _HotkeyFactory()
-    capture = _Capture()
-    composition = create_qt_manual_lookup(
-        runtime,
-        capture,
-        hotkey_factory=hotkeys,
-        shutdown_scheduler=lambda callback: callback(),
-    )
-
-    assert isinstance(runtime.dispatcher, QtResultDispatcher)
-    assert hotkeys.dispatcher is runtime.dispatcher
-    assert composition.controller is runtime.controller
-
-    composition.shutdown()
-    assert capture.closed
 
 
 def test_the_manual_hotkey_path_traces_every_stage_it_reaches() -> None:

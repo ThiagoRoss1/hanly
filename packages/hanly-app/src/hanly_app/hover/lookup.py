@@ -163,8 +163,8 @@ class HoverLookupRuntime:
         self._readiness_generation = 0
         self._readiness_waiting = False
         self._origins = origins if origins is not None else CaptureOrigins()
-        # Dwell and popup crossing overlap; sharing one QTimer lets a new
-        # dwell replace the callback that should dismiss the popup.
+        # Dwell and popup crossing overlap; they need independent timer slots
+        # so new movement cannot replace the dismissal callback.
         self._exit_scheduler = exit_scheduler
         self._scheduler = scheduler
         self._transfer_ms = float(transfer_ms)
@@ -904,7 +904,7 @@ class HoverLookupRuntime:
                 self._dispatcher(lambda: self._on_direct_text(request, acquired))
             except Exception as error:
                 # This runs on the native worker, which may neither capture nor
-                # touch Qt, so the rejection is only recorded, by its class.
+                # mutate service state, so the rejection is recorded by class.
                 emit_trace(
                     self._trace_sink,
                     "hover_direct_text_dispatch_failed",

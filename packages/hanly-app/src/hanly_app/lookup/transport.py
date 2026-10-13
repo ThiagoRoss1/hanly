@@ -207,7 +207,7 @@ def spawn_child(
 
     ``spawn`` is explicit rather than inherited from the platform default: the
     child must start from a clean interpreter that imports only its own role,
-    and a forked copy of a Qt process is not one. The child is daemonic so a
+    and a forked copy of a native desktop process is not one. The child is daemonic so a
     parent that dies without shutting down cannot leave it running.
     """
 

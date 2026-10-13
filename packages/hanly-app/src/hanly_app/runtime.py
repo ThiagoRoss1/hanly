@@ -108,6 +108,8 @@ class HanlyRuntime:
     #: Where worker-thread provider construction reports what it cost. The
     #: desktop attaches its session timeline; other clients leave it out.
     timeline: StartupTimeline | None = None
+    #: Host-probed Vision support avoids loading the OCR framework to choose a backend.
+    vision_available: bool | None = None
 
     def _ocr_factory(self) -> OCRProviderFactory:
         """Build the recognizer this runtime asks for.
@@ -137,8 +139,11 @@ class HanlyRuntime:
 
     def _wants_vision(self) -> bool:
         backend = self.ocr_backend or OCRBackend.EASYOCR
+        vision_available = self.vision_available
+        if vision_available is None:
+            vision_available = VisionProvider.is_available()
         if backend is OCRBackend.VISION:
-            if not VisionProvider.is_available():
+            if not vision_available:
                 # Refuse here rather than letting every single lookup fail with
                 # the same provider error on a machine that has no Vision.
                 raise RuntimeConfigError(
@@ -146,7 +151,7 @@ class HanlyRuntime:
                     "this machine does not provide; use \"auto\" or \"easyocr\""
                 )
             return True
-        return backend is OCRBackend.AUTO and VisionProvider.is_available()
+        return backend is OCRBackend.AUTO and vision_available
 
     def create_worker_factory(
         self,

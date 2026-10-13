@@ -788,6 +788,55 @@ def test_cancelling_reports_that_nothing_was_changed() -> None:
         coordinator.shutdown()
 
 
+def test_shutdown_signals_a_cancellable_application_update() -> None:
+    """The native service can close without leaving staged updater work alive."""
+
+    entered = threading.Event()
+    finished = threading.Event()
+
+    class _Cancelled(RuntimeError):
+        cancelled = True
+
+    class _WaitingInstaller(_FakeInstaller):
+        def prepare(
+            self,
+            version: str,
+            *,
+            on_progress: ProgressCallback | None = None,
+            should_cancel: Any = None,
+        ) -> _FakePrepared:
+            del version, on_progress
+            entered.set()
+            try:
+                deadline = time.monotonic() + _STATUS_TIMEOUT
+                while should_cancel is not None and not should_cancel():
+                    if time.monotonic() >= deadline:
+                        raise AssertionError("shutdown did not signal update cancellation")
+                    time.sleep(0.005)
+                raise _Cancelled("shutdown cancelled the staged update")
+            finally:
+                finished.set()
+
+    installer = _WaitingInstaller()
+    coordinator = UpdateCoordinator(
+        _FakeService(),
+        application_check=_installable,
+        application_installer=cast(Any, installer),
+    )
+    coordinator.check_for_updates()
+    _settle(coordinator)
+    coordinator.install_application_update()
+    assert entered.wait(_STATUS_TIMEOUT)
+
+    coordinator.shutdown(wait=False)
+
+    assert finished.wait(_STATUS_TIMEOUT)
+    deadline = time.monotonic() + _STATUS_TIMEOUT
+    while installer.abandoned == 0 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert installer.abandoned == 1
+
+
 def test_application_phases_are_not_described_as_resource_updates() -> None:
     """The one label that was wrong before: a person restarting their whole
     application was told a resource was being verified."""
