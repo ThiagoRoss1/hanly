@@ -14,10 +14,7 @@ import argparse
 import importlib
 import json
 import os
-import queue
 import sys
-import threading
-import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -778,213 +775,11 @@ def run_live_hover(args: argparse.Namespace) -> int:
 
 
 def run_real_hover(args: argparse.Namespace) -> int:
-    """Measure dwell-to-visible latency through the real resident controller."""
+    """Measure a controlled image through the native Tauri popup path."""
 
-    image, target, prepared_image, transformation = prepare_roi(
-        args.image,
-        target=Point(args.target_x, args.target_y),
-        size=args.roi_size,
-    )
-    scenario = f"real_hover_roi_{image.width}x{image.height}"
-    metadata = build_metadata(
-        repo_root=Path.cwd(),
-        kind="real_hover",
-        config={
-            "runtime_config": args.config,
-            "dwell_ms": args.dwell_ms,
-            "cpu_threads": args.cpu_threads,
-            "capture_source": "retained_static_fixture",
-            "visible_endpoint": "development_qt_popup",
-            "ledger_fsync": False,
-        },
-        scenario={
-            "name": scenario,
-            "image": args.image,
-            "transformation": transformation,
-            "warmup_samples": args.warmup,
-            "warm_samples": args.samples,
-        },
-        versions=_versions(),
-    )
-    run_dir = args.output_root / str(metadata["run_id"])
-    run_dir.mkdir(parents=True, exist_ok=True)
-    log = (run_dir / "stdout.log").open("w", encoding="utf-8", newline="\n")
+    from .session.real_hover import run_real_hover as run_native_hover
 
-    def report(message: str) -> None:
-        print(message)
-        log.write(message + "\n")
-        log.flush()
-
-    report(f"Benchmark run {metadata['run_id']} ({scenario})")
-    runtime = load_runtime(args.config)
-    runtime = replace(
-        runtime,
-        easyocr_config=_benchmark_ocr_config(runtime.easyocr_config, args),
-    )
-    factory = runtime.create_worker_factory()
-    counters = {"worker_constructions": 0, "lookup_invocations": 0}
-
-    class CountingWorker:
-        def __init__(self) -> None:
-            counters["worker_constructions"] += 1
-            self._delegate = factory()
-
-        def __call__(self, request: Any) -> Any:
-            counters["lookup_invocations"] += 1
-            return self._delegate(request)
-
-        def close(self) -> None:
-            self._delegate.close()
-
-    callbacks: queue.Queue[Any] = queue.Queue()
-    delivered = threading.Event()
-    latest_result: list[Any] = []
-    current: dict[str, Any] = {}
-
-    # OCR runs in this process here, unlike the desktop, so its native runtime
-    # is prepared before Qt exactly as the lookup child prepares its own.
-    from hanly_app.lookup.preload import preload_ocr_runtime
-
-    preload_ocr_runtime()
-    from hanly_app.hover.controller import HoverController
-    from hanly_app.lookup.controller import LookupController
-    from hanly_app.popup.presentation import PopupPosition
-    from hanly_app.popup.qt import QtPopupView
-    from PyQt6.QtWidgets import QApplication
-
-    application = QApplication.instance() or QApplication([])
-    popup = QtPopupView()
-
-    with RunStore(run_dir, metadata, fsync=False) as store:
-        ProcessSampler(run_dir / "process.csv").run(0)
-
-        def on_result(result: Any) -> None:
-            render_started = time.perf_counter_ns()
-            popup.show_result(result, PopupPosition(20, 20))
-            application.processEvents()
-            render_duration = time.perf_counter_ns() - render_started
-            visible = popup.isVisible()
-            store.append_sample(
-                evidence_class="measured",
-                scenario=scenario,
-                stage="popup_visible",
-                iteration=current["iteration"],
-                condition=current["condition"],
-                duration_ns=render_duration,
-                correctness_status="success" if visible else "failed",
-                development_runtime=True,
-            )
-            latest_result[:] = [result]
-            delivered.set()
-
-        controller = LookupController(
-            CountingWorker,
-            on_result,
-            result_dispatcher=callbacks.put,
-            thread_name="benchmark-real-hover",
-        )
-        controller.start()
-
-        def on_stable(_request: Any) -> None:
-            dwell_duration = time.perf_counter_ns() - current["started_ns"]
-            store.append_sample(
-                evidence_class="measured",
-                scenario=scenario,
-                stage="dwell",
-                iteration=current["iteration"],
-                condition=current["condition"],
-                duration_ns=dwell_duration,
-                correctness_status="success",
-                configured_dwell_ms=args.dwell_ms,
-            )
-            capture_started = time.perf_counter_ns()
-            captured_image, captured_target = image, target
-            capture_duration = time.perf_counter_ns() - capture_started
-            store.append_sample(
-                evidence_class="measured",
-                scenario=scenario,
-                stage="capture_static_fixture",
-                iteration=current["iteration"],
-                condition=current["condition"],
-                duration_ns=capture_duration,
-                correctness_status="success",
-            )
-            controller.submit(captured_image, captured_target)
-
-        hover = HoverController(on_stable, delay_ms=args.dwell_ms)
-        results: list[Any] = []
-        try:
-            for iteration, condition in enumerate(
-                CampaignPlan(args.warmup, args.samples).conditions()
-            ):
-                delivered.clear()
-                latest_result.clear()
-                current.update(
-                    iteration=iteration,
-                    condition=condition,
-                    started_ns=time.perf_counter_ns(),
-                )
-                hover.on_position(Point(target.x, target.y))
-                deadline = time.monotonic() + args.timeout
-                while not delivered.is_set():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("hover result did not become visible in time")
-                    try:
-                        callback = callbacks.get(timeout=min(0.05, remaining))
-                    except queue.Empty:
-                        application.processEvents()
-                        continue
-                    callback()
-                result = latest_result[0]
-                status = "success" if result.status.value == args.expected_status else "failed"
-                store.append_sample(
-                    evidence_class="measured",
-                    scenario=scenario,
-                    stage="perceived_hover_total",
-                    iteration=iteration,
-                    condition=condition,
-                    duration_ns=time.perf_counter_ns() - current["started_ns"],
-                    correctness_status=status,
-                    endpoint="development_qt_popup_visible",
-                    request_current=controller.current_request_id is not None,
-                )
-                results.append(result)
-        finally:
-            hover.shutdown()
-            controller.stop(wait=True)
-            popup.close()
-            application.processEvents()
-
-        samples = store.read_samples()
-        summaries = summarize_stages(samples)
-        _write_json(run_dir / "summary.json", summaries)
-        _write_json(run_dir / "counts.json", counters)
-        if results:
-            _write_json(run_dir / "result.json", _serialize_result(results[-1]))
-        prepared_image.save(run_dir / "input.png", format="PNG")
-        prepared_image.close()
-
-        failed = sum(
-            sample["correctness_status"] != "success"
-            for sample in samples
-            if sample["stage"] == "perceived_hover_total"
-        )
-        report(
-            f"completed {len(results)} visible hover traces; failures={failed}; "
-            f"worker constructions={counters['worker_constructions']}; "
-            f"lookup/OCR invocations={counters['lookup_invocations']}"
-        )
-        if "perceived_hover_total" in summaries:
-            report(
-                "warm perceived p50={p50:.3f} ms p95={p95:.3f} ms".format(
-                    p50=summaries["perceived_hover_total"]["p50"] / 1_000_000,
-                    p95=summaries["perceived_hover_total"]["p95"] / 1_000_000,
-                )
-            )
-        report(f"evidence: {run_dir}")
-    log.close()
-    return 1 if failed else 0
+    return run_native_hover(args)
 
 
 def run_dev_hud(args: argparse.Namespace) -> int:
@@ -999,6 +794,7 @@ def run_dev_hud(args: argparse.Namespace) -> int:
     return run_hud_session(
         runtime_config=args.config,
         app_config=args.app_config,
+        desktop=args.desktop,
         roi_size=args.roi_size,
         dwell_ms=args.dwell_ms,
         show_roi=not args.no_roi,
@@ -1054,7 +850,7 @@ def _parser() -> argparse.ArgumentParser:
 
     hud = subcommands.add_parser(
         "dev-hud",
-        help="run the real Hanly desktop with the on-screen developer HUD",
+        help="run Hanly under Lab observation with the on-screen developer HUD",
     )
 
     lab = subcommands.add_parser(
@@ -1092,6 +888,7 @@ def _parser() -> argparse.ArgumentParser:
         help="explicit runtime configuration; omit to use the normal per-user one",
     )
     hud.add_argument("--app-config", type=Path)
+    hud.add_argument("--desktop", type=Path, help="Hanly executable or .app")
     hud.add_argument("--roi-size", type=_parse_size)
     hud.add_argument(
         "--dwell-ms",
@@ -1128,19 +925,24 @@ def _parser() -> argparse.ArgumentParser:
     real.set_defaults(handler=run_real_lookup)
 
     hover = subcommands.add_parser(
-        "real-hover", help="measure dwell through a visible development Qt popup"
+        "real-hover", help="measure dwell through the native Tauri popup with a controlled ROI"
     )
     hover.add_argument("--image", type=Path, required=True)
     hover.add_argument("--config", type=Path, required=True)
+    hover.add_argument("--desktop", type=Path, help="Hanly executable or .app")
     hover.add_argument("--target-x", type=float, required=True)
     hover.add_argument("--target-y", type=float, required=True)
     hover.add_argument("--roi-size", type=_parse_size)
     hover.add_argument("--dwell-ms", type=float, default=150.0)
+    hover.add_argument(
+        "--expected-text",
+        required=True,
+        help="Korean surface under the pointer, used only to score this private local run",
+    )
     hover.add_argument("--cpu-threads", type=_parse_cpu_threads)
     hover.add_argument("--warmup", type=int, default=2)
     hover.add_argument("--samples", type=int, default=10)
     hover.add_argument("--timeout", type=float, default=120.0)
-    hover.add_argument("--expected-status", default="SUCCESS")
     hover.add_argument(
         "--output-root", type=Path, default=Path("artifacts/lab/runs")
     )
@@ -1157,6 +959,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     live.add_argument("--config", type=Path, required=True)
+    live.add_argument("--desktop", type=Path, help="Hanly debug executable or .app")
+    live.add_argument(
+        "--app-config",
+        type=Path,
+        help="preferences file used as the source for the disposable Lab profile",
+    )
     live.add_argument(
         "--duration",
         type=_parse_live_duration,
@@ -1542,6 +1350,11 @@ def _common_session_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend", choices=("auto", "vision", "easyocr"), help="text recognizer for this run"
     )
+    parser.add_argument(
+        "--desktop",
+        type=Path,
+        help="Hanly desktop executable or .app (default: this checkout's debug build)",
+    )
     parser.add_argument("--no-open", action="store_true", help="do not open the report")
 
 
@@ -1567,6 +1380,7 @@ def run_lab_session(args: argparse.Namespace) -> int:
             baseline=_baseline_argument(getattr(args, "baseline", None)),
             retain_fixture_text=getattr(args, "retain_fixture_text", False),
             runtime_config=args.config,
+            desktop=getattr(args, "desktop", None),
             duration=getattr(args, "duration", None),
             hud=args.hud,
             open_report=not args.no_open,

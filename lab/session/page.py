@@ -81,15 +81,19 @@ class TourPage(QWidget):
     def __init__(self) -> None:
         super().__init__(
             None,
-            # Not a Tool window: on macOS those hide whenever the shell is
-            # deactivated, which the Control Center opening does.
+            # Keep the fixture visible while the native desktop receives input.
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        screen = QApplication.primaryScreen()
-        if screen is None:
+        screens = QApplication.screens()
+        if not screens:
             raise RuntimeError("no screen is available for a tour")
-        self.setGeometry(screen.availableGeometry())
+        geometries = [screen.geometry() for screen in screens]
+        left = min(geometry.left() for geometry in geometries)
+        top = min(geometry.top() for geometry in geometries)
+        right = max(geometry.right() for geometry in geometries)
+        bottom = max(geometry.bottom() for geometry in geometries)
+        self.setGeometry(left, top, right - left + 1, bottom - top + 1)
         self.pages: list[Page] = []
         self.status = ""
         self._current: Page | None = None

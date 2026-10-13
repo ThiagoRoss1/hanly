@@ -25,63 +25,59 @@ SCENARIOS = (
     Scenario(
         "APP-STARTUP",
         "startup",
-        "Desktop readiness and shutdown",
-        ("tests/native/shared/test_desktop_startup.py",),
-        "real_source_app",
-        "Ready without capture; shell and owned children exit.",
+        "Packaged desktop readiness and shutdown",
+        (
+            "tests/packaged/shared/test_packaged_desktop.py::"
+            "test_the_native_window_waits_for_react_and_answers_its_state_bridge",
+        ),
+        "real_packaged_app",
+        "The native root waits for React and its service, then exits cleanly.",
+        needs_bundle=True,
         timeout_seconds=480,
         observe_identity=True,
     ),
     Scenario(
         "CC-LIFECYCLE",
         "control_center",
-        "Open, close and reopen the window",
-        (
-            "tests/native/shared/test_control_center_lifecycle.py::"
-            "test_the_window_opens_closes_and_reopens_without_touching_the_shell",
-        ),
-        "real_ui_injected_bridge",
-        "The shell survives both windows and owns no WebEngine.",
-        observe_identity=True,
+        "React window routes and event readiness",
+        ("apps/desktop/tests/ui/desktop-pages.test.tsx",),
+        "react_dom_mock_ipc",
+        "Popup and region routes wait for their native event listeners before ready.",
     ),
     Scenario(
         "CC-CONTROLS",
         "control_center",
-        "Choice controls and responsive layout",
-        (
-            "tests/native/shared/test_control_center_combobox.py",
-            "tests/native/shared/test_control_center_layout.py",
-        ),
-        "real_ui_injected_bridge",
-        "Choices respond to input and controls stay inside the page.",
+        "Settings and service-backed controls",
+        ("apps/desktop/tests/ui/desktop-pages.test.tsx",),
+        "react_dom_mock_ipc",
+        "Settings persist through the desktop service and failures stay visible.",
     ),
     Scenario(
         "CC-UPDATE-STAGE",
         "updater_ui",
-        "Update stage transitions and progress",
-        ("tests/native/shared/test_update_stage_animation.py",),
-        "real_ui_injected_update",
-        "Stage motion happens once per changed label, not per poll.",
+        "Update confirmation, progress and activity controls",
+        ("apps/desktop/tests/ui/desktop-pages.test.tsx",),
+        "react_dom_jsdom_mock_ipc",
+        (
+            "The React update page confirms a full download and renders acknowledged "
+            "progress and activity."
+        ),
     ),
     Scenario(
         "CAPTURE-CHOICE",
         "capture",
-        "Capture selection closes during quit",
-        ("tests/native/shared/test_capture_prompt_shutdown.py",),
-        "real_ui_simulated_input",
-        "Quit closes either choice and releases its nested loop.",
+        "Capture-scope dialog cancellation",
+        ("apps/desktop/tests/ui/desktop-pages.test.tsx",),
+        "react_dom_mock_ipc",
+        "Cancelling the capture-scope dialog leaves capture settings unchanged.",
     ),
     Scenario(
         "HOVER-POPUP",
         "hover_popup",
-        "Hover scheduling and popup lifecycle",
-        (
-            "tests/native/shared/test_qt_hover_scheduler.py",
-            "tests/native/shared/test_qt_popup_window.py",
-            "tests/native/shared/test_hover_exit_qt.py",
-        ),
-        "real_ui_simulated_lookup",
-        "Latest requests present correctly and popup exit stays usable.",
+        "Popup route and request currency",
+        ("apps/desktop/tests/ui/desktop-pages.test.tsx",),
+        "react_dom_mock_ipc",
+        "Only current dictionary events render, and popup actions report geometry.",
     ),
     Scenario(
         "SETTINGS",
@@ -112,11 +108,15 @@ SCENARIOS = (
     Scenario(
         "MAC-IDENTITY",
         "processes",
-        "Control Center application identity",
-        ("tests/native/macos/test_control_center_identity.py",),
-        "real_source_window",
-        "The settled child is Accessory; sampling also records transient identity.",
+        "Packaged native application identity",
+        (
+            "tests/packaged/macos/test_frozen_identity.py::"
+            "test_the_tauri_root_is_the_only_foreground_app_and_owns_the_service",
+        ),
+        "real_packaged_app_identity",
+        "The Tauri root is foreground and owns the Python service and WebKit family.",
         platforms=("darwin",),
+        needs_bundle=True,
         observe_identity=True,
     ),
     Scenario(
@@ -139,7 +139,7 @@ SCENARIOS = (
         "Frozen Control Center window and bridge",
         (
             "tests/packaged/shared/test_packaged_desktop.py::"
-            "test_the_frozen_control_center_opens_and_answers_its_own_page",
+            "test_the_native_window_waits_for_react_and_answers_its_state_bridge",
         ),
         "real_packaged_ui",
         "The shipped page renders, reaches the bridge and exits.",
@@ -150,10 +150,10 @@ SCENARIOS = (
     Scenario(
         "BUNDLE-WORKER",
         "packaging",
-        "Frozen providers on an isolated profile",
+        "Frozen OCR runtime on an isolated profile",
         (
             "tests/packaged/shared/test_packaged_desktop.py::"
-            "test_the_frozen_worker_becomes_ready_on_an_isolated_profile",
+            "test_the_frozen_ocr_self_check_runs_on_an_isolated_profile",
         ),
         "real_packaged_fixture",
         "The frozen runtime recognizes the committed fixture and closes.",
@@ -166,7 +166,7 @@ SCENARIOS = (
         "Normal frozen launch, close, reactivation and tray reopen",
         ("tests/packaged/macos/test_frozen_identity.py",),
         "real_packaged_launch",
-        "Only the shell is a Foreground app; children never are; all exit on quit.",
+        "The Tauri root is foreground; its service and WebKit family exit on quit.",
         platforms=("darwin",),
         needs_bundle=True,
         timeout_seconds=600,
@@ -177,7 +177,7 @@ SCENARIOS = (
         "Normal frozen launch, capture, close, tray reopen and quit on Windows",
         ("tests/packaged/windows/test_frozen_identity.py",),
         "real_packaged_launch",
-        "Only the Control Center ever has a taskbar window; nothing outlives quitting.",
+        "The Tauri root owns the taskbar window; its service exits on quit.",
         platforms=("win32",),
         needs_bundle=True,
         timeout_seconds=600,

@@ -375,35 +375,10 @@ class HoverHUD(QWidget):
 
 
 class _ProcessResources:
-    """Report this process's own CPU and memory, when psutil is installed.
-
-    CPU is expressed in whole cores rather than as a percentage of the machine,
-    because that is what predicts behavior on a weaker one: a lookup that keeps
-    2.0 cores busy has no headroom left on a dual-core laptop. The backend runs
-    CPU-only by construction, so there is no GPU figure to report.
-    """
-
-    def __init__(self) -> None:
-        self._process: Any | None = None
-        try:
-            import psutil
-
-            self._process = psutil.Process()
-            self._process.cpu_percent(None)
-        except Exception:
-            self._process = None
+    """Avoid presenting the Lab HUD process as Hanly resource usage."""
 
     def summary(self) -> str:
-        process = self._process
-        if process is None:
-            return "cpu n/a (psutil)"
-        try:
-            cores = process.cpu_percent(None) / 100.0
-            rss_mb = process.memory_info().rss / 1e6
-            threads = process.num_threads()
-        except Exception:
-            return "cpu n/a"
-        return f"{cores:.1f} cores · {rss_mb:.0f} MB · {threads} thr"
+        return "native family samples · Lab report"
 
 
 def _decode_boxes(value: JSONPrimitive) -> tuple[tuple[int, int, int, int], ...]:

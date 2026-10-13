@@ -102,6 +102,7 @@ class StressItem:
     image_target: tuple[float, float] | None = None
     truth_target: str | None = None
     case: str | None = None
+    private: bool = False
 
     @property
     def negative(self) -> bool:
@@ -172,6 +173,7 @@ def corpus_plan(manifest: Path, repeats: int) -> tuple[list[StressItem], list[di
                     image_target=point,
                     truth_target=truth_target,
                     case=case.case_id,
+                    private=case.is_private,
                     repeat_of=None if round_index == 1 else f"{case.case_id}#1",
                 )
             )

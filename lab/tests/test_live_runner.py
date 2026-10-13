@@ -20,6 +20,7 @@ from lab.live_runner import (
     ObservedCaptureSource,
     RuntimeTraceAdapter,
     SessionEvidenceCounts,
+    _capture_from_payload,
     _export_message,
     _freeze_message,
     _run_cleanup_steps,
@@ -36,6 +37,53 @@ from lab.microscope import build_ring
 
 def _rows(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_native_capture_frame_rebuilds_roi_plan_and_request_identity() -> None:
+    rect = {"left": 10, "top": 20, "width": 2, "height": 1}
+    point = {"x": 11.0, "y": 20.0}
+    plan = {
+        "requested_cursor": point,
+        "effective_cursor": point,
+        "monitor_index": 1,
+        "monitor_name": "Display 1",
+        "monitor_bounds": {"left": 0, "top": 0, "width": 100, "height": 80},
+        "configured_region": None,
+        "clip_bounds": {"left": 0, "top": 0, "width": 100, "height": 80},
+        "roi_size": [2, 1],
+        "roi_grid": 32,
+        "ideal_region": rect,
+        "desired_region": rect,
+        "actual_region": rect,
+        "target": {"x": 1.0, "y": 0.0},
+        "image_width": 2,
+        "image_height": 1,
+        "pixel_format": "RGB_888",
+        "image_byte_length": 6,
+    }
+    payload = {
+        "image": {
+            "width": 2,
+            "height": 1,
+            "pixel_format": "RGB_888",
+            "data_base64": "YWJjZGVm",
+        },
+        "region": rect,
+        "target": {"x": 1.0, "y": 0.0},
+        "plan": plan,
+        "hover_request_id": 7,
+        "lookup_request_id": 12,
+    }
+
+    capture, hover_id, lookup_id = _capture_from_payload(payload)
+
+    assert capture.image.data == b"abcdef"
+    assert capture.region == ScreenRect(10, 20, 2, 1)
+    assert capture.target == Point(1.0, 0.0)
+    assert capture.plan is not None
+    assert capture.plan.monitor_name == "Display 1"
+    assert capture.plan.image_byte_length == 6
+    assert (hover_id, lookup_id) == (7, 12)
 
 
 def test_runtime_adapter_correlates_dwell_dispatch_and_full_popup_latency(

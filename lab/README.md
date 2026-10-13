@@ -1,7 +1,9 @@
 # Hanly Lab
 
-The developer lab: run the real Hanly under observation, let the lab drive it,
-and read a visual report of exactly what every process did. It also keeps the
+**1.1.0** — developer tools for the matching Hanly desktop.
+
+The developer lab: run the real Tauri desktop under observation, let the lab drive it,
+and read a visual report of the native app and its owned service family. It also keeps the
 measurement campaigns and regression checks that used to live in `benchmarks/`.
 
 Nothing here ships: neither `hanly` nor `hanly_app` imports this package, and it
@@ -9,17 +11,17 @@ is not part of either distribution.
 
 ## Setup
 
-Install the desktop as described in the root `README.md`, then add the `dev`
-extra on top of it:
+Install the desktop and the portable development dependencies as described in
+the root `README.md`. Only install the separate `lab` group when using the
+Lab-authored Qt pages or developer HUD:
 
 ```bash
-python -m pip install -e "packages/hanly-app[dev]"
+python -m pip install --group dev
+python -m pip install --group lab
 ```
 
-That extra adds Pillow for image campaigns and psutil for process sampling. It
-must come *after* `packages/hanly` is installed — `hanly-app` depends on
-`hanly==1.1.0`, which exists only in this checkout. Every command runs from the
-repository root.
+The `lab` group adds PyQt6 for Lab-owned fixture pages and the HUD. It is not a
+Hanly runtime dependency. Every command runs from the repository root.
 
 ## The three commands
 
@@ -34,16 +36,17 @@ run of every kind, and `python -m lab report <run-name>` reopens one.
 
 ### `python -m lab` (`run`) — you drive
 
-Starts the real desktop through `run_desktop`, the same composition `hanly`
-uses, with the lab's recorder as its trace sink. The lookup engine and the
-Control Center are still the real spawned children. Use Hanly normally; quit
-from the tray or with Ctrl+C, or pass `--duration SECONDS`. `--hud` also draws
-the on-screen HUD. Production tracing sends no recognized text to a sink that
-does not ask for it, and this mode does not ask.
+Starts the native Hanly desktop as a separate process with a disposable app
+profile and the selected runtime configuration. Lab observes its bounded trace
+stream and samples the desktop, its Python service, lookup child and WebKit
+helpers externally. Use Hanly normally; quit from the tray or with Ctrl+C, or
+pass `--duration SECONDS`. `--desktop PATH` selects a packaged app or binary;
+`--hud` also draws the Lab-owned on-screen HUD. A normal session does not opt in
+to recognized text or capture geometry.
 
 ### `python -m lab tour` — the lab drives
 
-Covers the screen with lab-authored Korean, presses the real capture shortcut,
+Covers the virtual desktop with lab-authored Korean, presses the real capture shortcut,
 glides the real pointer onto each word, and waits for the app's own trace to say
 how that hover ended. Every target has a known answer:
 
@@ -54,7 +57,8 @@ how that hover ended. Every target has a known answer:
   seed 7 and painted at 16, 22, 30 and 40 px across three themes and the
   installed Korean typefaces.
 
-The plain command is the **standard tour**: the whole story and 300 words, about
+The fixture page and HUD are Qt windows owned by Lab; the app being measured is
+the launched Tauri desktop. The plain command is the **standard tour**: the whole story and 300 words, about
 three and a half minutes. Tours with the same settings are comparable;
 `--baseline <earlier-run>` adds a before/after table to the new report.
 `--quick` is a 40-second smoke run (24 words, no story); `--words`,
@@ -62,9 +66,9 @@ three and a half minutes. Tours with the same settings are comparable;
 incomparable with the standard one.
 
 Text is painted, so each hover exercises capture and OCR. **Move the mouse
-yourself to stop the tour.** It checks before starting that Screen Recording and
-Accessibility (to move the pointer) are granted to the terminal and that the
-capture shortcut is bound, and says what to change if not.
+yourself to stop the tour.** It checks that the capture shortcut is bound.
+Hanly reports required screen-capture or accessibility access in its native
+Permissions pane; the Lab does not grant or change OS permissions.
 
 #### Scoring
 
@@ -102,10 +106,9 @@ the selection the target word), from which every rule since v2 is computed.
   is recorded in the run's `metadata.json`, and reports show read text only for
   such a run. This is retention of lab-authored fixture text; it is not the
   private-screen Export below, and it never applies to a session you drive.
-- **Diagnostics** mirrored into the timeline keep their text only for
-  informational lifecycle lines (startup, Control Center, lookup engine,
-  cleanup, capture, updates, resources); any other line keeps its subsystem and
-  level only. The run profile's own session log behaves as `hanly`'s does.
+- **Process and diagnostic data** comes from the isolated desktop profile and
+  the external sampler. The regular session never mirrors service log text
+  into the timeline.
 - **Private screen content** reaches disk only through `live-hover`'s explicit
   Export, under the gitignored `artifacts/lab/runs/`; Freeze stays in memory.
 
@@ -161,8 +164,8 @@ profile; the runtime configuration, dictionary and models are reused read-only):
 
 | File | |
 |---|---|
-| `events.jsonl` | every trace event from the shell and the lookup child (content fields removed), startup phases, lifecycle diagnostics, and the lab's own driver events, including each tour result as described above |
-| `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms, sampled from a separate process so it cannot stall the shell; roles are exact, not inferred |
+| `events.jsonl` | every accepted trace event from the native desktop service and lookup child (content fields removed), plus Lab lifecycle and driver events, including each tour result as described above |
+| `processes.jsonl` | memory, CPU and threads for the native Tauri host and its owned Python service, lookup and webview helpers every 250 ms, sampled externally; macOS helper attribution uses the OS process-responsibility assignment only when the Lab launcher compiles and its runtime probe succeeds |
 | `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
 | `report.json`, `summary.md` | the same model for scripts and agents |
 
@@ -170,10 +173,13 @@ The report rebuilds from the recorded files at any time and never writes beside
 a baseline it compares with. Its findings name the code where each cost lives;
 they are derived from the run, not hand-written.
 
-Measurement limits: child timestamps share the shell's clock (`perf_counter`
+Measurement limits: trace timestamps share the service's monotonic clock (`perf_counter`
 is system-wide on every supported OS). RSS is resident, not private, memory and
-is sampled, so short spikes can be missed. The shell's numbers include the lab
-recorder hosted in the same process.
+is sampled, so short spikes can be missed. On macOS, the Lab compiles its
+developer-only responsibility launcher and probes for the OS interface before
+using it to assign WebKit helpers. A missing compiler, compile/probe failure, or
+absent OS interface uses the process tree instead; each run records the chosen
+attribution path, and tree-only attribution may omit reparented helpers.
 
 ## Evidence: identity, baselines, comparison, storage
 
@@ -266,11 +272,11 @@ none of them proves a complete real-release update.
 
 ## `dev-hud` — run Hanly with the on-screen HUD
 
-**This is the one to reach for.** It starts the *real* desktop — same
-composition, same providers, same hover behaviour — with a panel drawn on top
-showing what each hover actually did: the stage timeline (dwell, capture, OCR,
-token selection, morphology, dictionary), OCR hit rate, worker readiness, and
-process resources. A second overlay outlines the region that was captured.
+It supervises the *real* Tauri desktop and shows a separate Lab-owned panel
+with its bounded trace events: dwell, capture, OCR, token selection,
+morphology, dictionary and popup decisions. Process-family resource samples
+are recorded in the Lab report; the panel labels those measurements there.
+An optional second overlay outlines the last captured region.
 
 ```powershell
 python -m lab dev-hud
@@ -287,6 +293,7 @@ python -m lab dev-hud --config resources/dev/runtime-local.json
 |---|---|
 | `--config PATH` | explicit runtime configuration; omit for the normal per-user one |
 | `--app-config PATH` | explicit preferences file |
+| `--desktop PATH` | Hanly executable or `.app` |
 | `--roi-size WxH` | capture region size, for comparing detection areas |
 | `--dwell-ms N` | the dwell the panel labels its timeline with (display only) |
 | `--no-roi` | show only the panel, without the captured-region outline |
@@ -314,11 +321,12 @@ python -m lab real-lookup `
   --config resources/dev/runtime-local.json `
   --target-x 100 --target-y 24 --roi-size 192x48
 
-# Dwell through an actually visible Qt popup.
+# Dwell through the native Tauri popup using a controlled private ROI.
 python -m lab real-hover `
   --image tests/hanly_fixtures/assets/korean_reading_roi.png `
   --config resources/dev/runtime-local.json `
-  --target-x 100 --target-y 24 --roi-size 192x48
+  --target-x 100 --target-y 24 --roi-size 192x48 `
+  --expected-text 읽습니다.
 
 # OCR invocation opportunities by hover condition. Deterministic, no hardware.
 python -m lab hover-rate
@@ -335,6 +343,11 @@ python -m lab package `
 A committed Korean fixture is correctness-regression evidence, not an OCR
 accuracy corpus.
 
+`real-hover` paints the supplied image in a temporary Lab-owned page, drives
+the real desktop hover pipeline, and times the native popup trace. Its private
+image and expected surface are removed after the run; the report retains only
+text-free outcome facts and timing measurements.
+
 `resources/dev/runtime-local.json` is gitignored and machine-local; it points
 at a KRDICT database you built yourself. `tools/README.md` has its shape.
 
@@ -344,10 +357,11 @@ at a KRDICT database you built yourself. `tools/README.md` has its shape.
 python -m lab live-hover --config resources/dev/runtime-local.json --duration 300
 ```
 
-Not part of normal startup and not covered by fixture benchmarks: it uses the
-current real mouse/capture/hover/OCR/lookup/popup composition and needs you to
-provide desktop input for two to five minutes. Only start it when you are ready
-to do that.
+This launches the checkout's debug Tauri app with an isolated profile and
+observes its real mouse, capture, hover, OCR, lookup, and native popup path. It
+needs you to provide desktop input for two to five minutes. Only start it when
+you are ready to do that. Pass `--desktop` to select a different debug app and
+`--app-config` to choose the preferences copied into the disposable profile.
 
 The session starts in `idle`; **`Ctrl+Alt+Shift+B`** advances to the next phase
 after each interval. The remaining phases are empty areas, non-Korean text,
@@ -355,10 +369,11 @@ repeated same Korean word, several Korean words, stationary changing content,
 fast movement, and normal browser/game use.
 
 Each run writes `metadata.json`, `live-events.jsonl`, `process.csv`,
-`summary.json`, and `stdout.log`. `process.csv` and the summary's resource use
-describe the benchmark's own shell process only; the lookup child that holds the
-OCR models is a separate process and is not sampled. Pixel hashing runs on a separate bounded
-thread; no screenshot or pixel buffer is written to disk.
+`processes.jsonl`, `summary.json`, and `stdout.log`. `process.csv` measures the
+native Tauri shell; `processes.jsonl` samples the owned desktop family, including
+its lookup child and macOS WebKit helpers where responsibility attribution is
+available. Pixel hashing runs on a separate bounded thread; no screenshot or
+pixel buffer is written to disk unless you explicitly export a frozen lookup.
 
 ### Freeze and export
 

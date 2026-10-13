@@ -19,17 +19,19 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
-
-from PyQt6.QtCore import QPoint, QRect
+from typing import TYPE_CHECKING, Any
 
 from .browser_text import FOLDER, BrowserText, is_drawn
 from .driver import TourDriver, _Observation, outcome_record
 from .ownership import owner_at
 from .recorder import LabRecorder
 from .stress import StressItem
-from .stress_page import StressPage, StressPlaced
 from .stress_scoring import CORPUS_RULE, RULE, failing_stage, stress_verdict
+
+if TYPE_CHECKING:
+    from PyQt6.QtCore import QPoint, QRect
+
+    from .stress_page import StressPage, StressPlaced
 
 #: How long a ``leave_early`` hover waits for its lookup to be submitted.
 _SUBMIT_WAIT = 2.0
@@ -53,17 +55,23 @@ class StressDriver(TourDriver):
         run_dir: Path,
         retain_fixture_text: bool,
         retain_fixture_images: bool,
+        settle_timeout: float = 4.0,
+        first_timeout: float = 90.0,
+        owned_pids: set[int] | None = None,
     ) -> None:
         super().__init__(
             recorder,
             page,
             capture_hotkey=capture_hotkey,
+            settle_timeout=settle_timeout,
+            first_timeout=first_timeout,
             retain_fixture_text=retain_fixture_text,
         )
         self._stress_page = page
         self._uia_items = uia_items
         self._run_dir = run_dir
         self._retain_images = retain_fixture_images
+        self._desktop_pid = next(iter(owned_pids or ()), None)
         self._allowed: set[int] = set()
         self._last_popup: QRect | None = None
         self._page_index = 0
@@ -75,18 +83,16 @@ class StressDriver(TourDriver):
     # -- the run ------------------------------------------------------------------
 
     def run(self) -> None:
-        from .driver import ensure_capture
-
         self._recorder.lab("tour_waiting_for_runtime")
         if not self._ready.wait(180):
             self._recorder.lab("tour_aborted", reason="runtime_never_ready")
             return
+        if self._runtime_failed:
+            self._recorder.lab("tour_aborted", reason="runtime_failed")
+            return
         self._page.show_page(0)
         time.sleep(0.4)
-        how = ensure_capture(self._observing, self._press_capture_hotkey)
-        self._recorder.lab("tour_capture", how=how, hotkey=self._capture_hotkey)
-        if how == "never_started":
-            self._recorder.lab("tour_aborted", reason="capture_never_started")
+        if not self._ensure_capture():
             return
         first = True
         for index, page in enumerate(self._page.pages):
@@ -131,7 +137,7 @@ class StressDriver(TourDriver):
             done = self._hover(placed, page, first)
         if not done:
             return False
-        self._last_popup = _own_popup_rect(self._page_handle)
+        self._last_popup = _own_popup_rect(self._page_handle, self._desktop_pid)
         self._move_to(self._page.to_global(self._page.pages[page].rest))
         self._popup_hidden.clear()
         self._popup_hidden.wait(0.8)
@@ -149,6 +155,8 @@ class StressDriver(TourDriver):
 
     def _at_previous_popup(self, placed: StressPlaced) -> StressPlaced:
         """Rest where the last answer was shown, if that spot is still on blank page."""
+
+        from PyQt6.QtCore import QRect
 
         rect = self._last_popup
         if rect is None:
@@ -292,6 +300,10 @@ class StressDriver(TourDriver):
     def _hover_points(
         self, items: list[StressItem], points: list[tuple[int, int]], rest: tuple[int, int]
     ) -> bool:
+        from PyQt6.QtCore import QPoint, QRect
+
+        from .stress_page import StressPlaced
+
         origin = self._page.geometry().topLeft()
         self._move_to(rest)
         for item, (x, y) in zip(items, points, strict=False):
@@ -367,6 +379,15 @@ class StressDriver(TourDriver):
         )
         if item is not None and item.family == "corpus":
             record.update(case=item.case, truth_target=item.truth_target)
+            if item.private:
+                for field in (
+                    "surface",
+                    "expected",
+                    "expected_lemma",
+                    "cursor",
+                    "region",
+                ):
+                    record.pop(field, None)
         record["verdict"] = stress_verdict(record)
         record["stage"] = failing_stage(record)
         record["rule"] = CORPUS_RULE if record["family"] == "corpus" else RULE
@@ -461,25 +482,48 @@ def _stop(process: subprocess.Popen[Any]) -> None:
             process.kill()
 
 
-def _own_popup_rect(page_handle: int) -> QRect | None:
-    """Where this process's popup is: its visible top-level window that is not the page.
+def _own_popup_rect(page_handle: int, desktop_pid: int | None) -> QRect | None:
+    """Locate a compact native Hanly window without inspecting its contents."""
 
-    Asked of the window manager rather than of Qt, so it is safe off the Qt thread.
-    """
+    if desktop_pid is None:
+        return None
+    from PyQt6.QtCore import QRect
 
+    if sys.platform == "darwin":
+        try:
+            import Quartz
+        except ImportError:
+            return None
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+            Quartz.kCGNullWindowID,
+        )
+        for window in windows or ():
+            if int(window.get("kCGWindowOwnerPID", -1)) != desktop_pid:
+                continue
+            bounds = window.get("kCGWindowBounds") or {}
+            width, height = int(bounds.get("Width", 0)), int(bounds.get("Height", 0))
+            if 40 < width < 900 and 30 < height < 900:
+                return QRect(
+                    int(bounds.get("X", 0)),
+                    int(bounds.get("Y", 0)),
+                    width,
+                    height,
+                )
+        return None
     if sys.platform != "win32":
         return None
     import ctypes
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
-    own = os.getpid()
+    allowed = {desktop_pid}
     found: list[QRect] = []
 
     def visit(handle: int, _parameter: int) -> bool:
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
-        if pid.value != own or handle == page_handle or not user32.IsWindowVisible(handle):
+        if pid.value not in allowed or handle == page_handle or not user32.IsWindowVisible(handle):
             return True
         rect = wintypes.RECT()
         user32.GetWindowRect(handle, ctypes.byref(rect))

@@ -7,13 +7,13 @@ import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from lab.cli import _parser, with_default_verb
 from lab.report.build import build_report
-from lab.report.model import build_model
+from lab.report.model import build_model, lifecycle, startup
 from lab.session.corpus import TourTarget, story_targets, word_targets
 from lab.session.driver import _Observation, observe, outcome_record
 from lab.session.recorder import LabDiagnosticLog, LabRecorder
@@ -80,6 +80,98 @@ def test_startup_lines_become_structured_phases(tmp_path: Path) -> None:
     )
     assert (milestone["name"], milestone["at_ms"]) == ("runtime ready", 675)
     assert str(Path.home()) not in other["message"]
+
+
+def test_native_runtime_readiness_drives_timeline_and_startup_report() -> None:
+    events = [
+        {"event": "desktop_started", "t_ms": 10.0},
+        {
+            "event": "runtime_preparation_completed",
+            "phase": "runtime",
+            "t_ms": 47.0,
+        },
+        {"event": "lab_runtime_ready", "t_ms": 47.0},
+        {
+            "event": "lab_driver_input_preflight",
+            "t_ms": 48.0,
+            "preflight_available": True,
+            "post_event_access": False,
+            "listen_event_access": True,
+            "accessibility_trusted": False,
+        },
+    ]
+
+    marks = lifecycle(events)
+    report = startup(events)
+
+    assert [mark["label"] for mark in marks] == ["Desktop runtime ready"]
+    assert report["milestones"] == [
+        {"name": "desktop service ready", "at_ms": 37.0, "t": 47.0}
+    ]
+    assert report["lab_driver_input_preflight"] == {
+        "preflight_available": True,
+        "post_event_access": False,
+        "listen_event_access": True,
+        "accessibility_trusted": False,
+    }
+
+
+def test_tour_hotkey_synthesis_marks_each_press_and_release_without_key_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lab.session.driver import TourDriver
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict[str, object]]] = []
+
+        def lab(self, name: str, /, **fields: object) -> None:
+            self.events.append((name, fields))
+
+    class Keys:
+        ctrl = object()
+        shift = object()
+        f10 = object()
+
+    class Keyboard:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        def press(self, _key: object) -> None:
+            self.events.append("press")
+
+        def release(self, _key: object) -> None:
+            self.events.append("release")
+
+    driver: Any = object.__new__(TourDriver)
+    driver._capture_hotkey = "ctrl+shift+f10"
+    driver._keys = Keys
+    driver._keyboard = Keyboard()
+    driver._recorder = Recorder()
+    monkeypatch.setattr("lab.session.driver.time.sleep", lambda _duration: None)
+
+    driver._press_capture_hotkey()
+
+    names = [name for name, _fields in driver._recorder.events]
+    assert names[0] == "tour_capture_input_started"
+    assert names[-1] == "tour_capture_input_completed"
+    assert names.count("tour_capture_key_dispatch_started") == 6
+    assert names.count("tour_capture_key_dispatch_completed") == 6
+    edges = [
+        fields["edge"]
+        for name, fields in driver._recorder.events
+        if name.endswith("started") and name != "tour_capture_input_started"
+    ]
+    assert edges == [
+        "press",
+        "press",
+        "press",
+        "release",
+        "release",
+        "release",
+    ]
+    assert all("key" not in fields for _name, fields in driver._recorder.events)
+    assert driver._keyboard.events == ["press"] * 3 + ["release"] * 3
 
 
 # -- binding and scoring a hover -----------------------------------------------------------
@@ -692,27 +784,36 @@ def test_only_lab_sessions_are_discovered_by_start_time(
         runner.resolve_run("nothing-here")
 
 
-def test_the_lab_quits_through_the_shells_interrupt_handler() -> None:
-    # A child process, because the old route killed the caller outright on Windows.
-    import subprocess
-    import sys
+def test_the_lab_stops_the_native_child_with_its_platform_interrupt(tmp_path: Path) -> None:
+    import signal
 
-    script = (
-        "import signal\n"
-        "from lab.session import runner\n"
-        "signal.signal(signal.SIGINT, lambda *_: print('handled', flush=True))\n"
-        "runner._request_quit()\n"
-        "print('alive', flush=True)\n"
-    )
-    child = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=Path(__file__).resolve().parents[2],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    from lab.session.desktop_process import DesktopProcess
 
-    assert (child.returncode, child.stdout.split()) == (0, ["handled", "alive"])
+    recorder = LabRecorder(tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False)
+    process = SimpleNamespace(poll=lambda: None)
+    sent: list[int] = []
+    process.send_signal = sent.append
+    desktop = DesktopProcess(
+        tmp_path / "hanly-desktop",
+        runtime_config=tmp_path / "runtime.json",
+        app_config=tmp_path / "app.json",
+        environment={},
+        recorder=recorder,
+        sampler=SimpleNamespace(unregister_process=lambda _pid: None),
+        repo_root=tmp_path,
+    )
+    desktop.process = cast(Any, process)
+
+    desktop.request_stop()
+    desktop.request_stop()
+    recorder.close()
+
+    expected = (
+        getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT)
+        if sys.platform == "win32"
+        else signal.SIGINT
+    )
+    assert sent == [expected]
 
 
 def test_a_tour_never_toggles_off_capture_the_app_already_started() -> None:
@@ -739,6 +840,202 @@ def test_a_tour_never_toggles_off_capture_the_app_already_started() -> None:
 
     stuck = threading.Event()
     assert ensure_capture(stuck, lambda: None, launch_grace=0, after_press=0) == "never_started"
+
+
+def test_capture_start_requires_a_native_hotkey_acknowledgement() -> None:
+    import threading
+
+    from lab.session.driver import ensure_capture
+
+    observing = threading.Event()
+    acknowledged = threading.Event()
+    rejected = threading.Event()
+    assert ensure_capture(
+        observing,
+        lambda: None,
+        launch_grace=0,
+        after_press=1,
+        delivery_ack=acknowledged,
+        delivery_rejected=rejected,
+        acknowledgement_timeout=0.01,
+    ) == "input_unconfirmed"
+
+    def reject() -> None:
+        acknowledged.set()
+        rejected.set()
+
+    assert ensure_capture(
+        observing,
+        reject,
+        launch_grace=0,
+        after_press=1,
+        delivery_ack=acknowledged,
+        delivery_rejected=rejected,
+    ) == "input_rejected"
+
+
+def test_native_input_ack_is_not_mistaken_for_capture_observation() -> None:
+    import threading
+
+    from lab.session.driver import ensure_capture
+
+    observing = threading.Event()
+    acknowledged = threading.Event()
+
+    def delivered() -> None:
+        acknowledged.set()
+
+    assert ensure_capture(
+        observing,
+        delivered,
+        launch_grace=0,
+        after_press=0.02,
+        delivery_ack=acknowledged,
+    ) == "never_started"
+
+
+def test_tour_consumes_common_runtime_and_native_input_trace_events() -> None:
+    import threading
+
+    from lab.session.driver import TourDriver
+
+    driver = TourDriver.__new__(TourDriver)
+    driver._ready = threading.Event()
+    driver._runtime_failed = False
+    driver._native_context_seen = threading.Event()
+    driver._registered_hotkey_count = None
+    driver._capture_input_ack = threading.Event()
+    driver._capture_input_rejected = threading.Event()
+    driver._observing = threading.Event()
+    driver._popup_hidden = threading.Event()
+    driver._lock = threading.Lock()
+    driver._active = None
+
+    driver._observe("runtime_preparation_completed", 1, {"phase": "runtime"})
+    driver._observe("native_context", 2, {"registered_hotkey_count": 3})
+    driver._observe(
+        "native_input",
+        3,
+        {"action": "toggle_capture", "edge": "pressed", "accepted": False},
+    )
+
+    assert driver._ready.is_set()
+    assert driver._native_context_seen.is_set()
+    assert driver._registered_hotkey_count == 3
+    assert driver._capture_input_ack.is_set()
+    assert driver._capture_input_rejected.is_set()
+
+    driver._ready.clear()
+    driver._observe("runtime_preparation_failed", 4, {"phase": "runtime"})
+    assert driver._ready.is_set()
+    assert driver._runtime_failed
+
+
+def test_tour_rejects_unregistered_native_capture_hotkey(tmp_path: Path) -> None:
+    import threading
+
+    from lab.session.driver import TourDriver
+
+    recorder = LabRecorder(
+        tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False
+    )
+    driver = TourDriver.__new__(TourDriver)
+    driver._recorder = recorder
+    driver._native_context_seen = threading.Event()
+    driver._native_context_seen.set()
+    driver._registered_hotkey_count = 0
+
+    assert not driver._ensure_capture()
+    recorder.close()
+
+    events = _events(tmp_path / "events.jsonl")
+    assert [(event["event"], event["reason"]) for event in events] == [
+        ("tour_aborted", "capture_hotkey_unregistered")
+    ]
+
+
+def test_tour_reports_lab_driver_event_post_access_and_fails_fast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from lab.session import driver as tour_driver
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict[str, object]]] = []
+
+        def lab(self, name: str, /, **fields: object) -> None:
+            self.events.append((name, fields))
+
+    recorder = Recorder()
+    instance: Any = tour_driver.TourDriver.__new__(tour_driver.TourDriver)
+    instance._recorder = recorder
+    instance._native_context_seen = threading.Event()
+    instance._native_context_seen.set()
+    instance._registered_hotkey_count = 3
+    monkeypatch.setattr(
+        tour_driver,
+        "_macos_input_preflight",
+        lambda: {
+            "preflight_available": True,
+            "post_event_access": False,
+            "listen_event_access": False,
+            "accessibility_trusted": False,
+        },
+    )
+
+    assert not instance._ensure_capture()
+    assert [event for event, _fields in recorder.events] == [
+        "lab_driver_input_preflight",
+        "tour_aborted",
+    ]
+    assert recorder.events[-1][1]["reason"] == "lab_driver_post_event_access_unavailable"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS permissions are platform-specific")
+def test_macos_driver_preflight_reads_permissions_without_prompting() -> None:
+    from lab.session.driver import _macos_input_preflight
+
+    result = _macos_input_preflight()
+
+    assert result is not None
+    assert set(result) == {
+        "preflight_available",
+        "post_event_access",
+        "listen_event_access",
+        "accessibility_trusted",
+    }
+    assert result["preflight_available"] is True
+    assert all(
+        isinstance(result[name], bool)
+        for name in ("post_event_access", "listen_event_access", "accessibility_trusted")
+    )
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "counts", "expected"),
+    [
+        (0, {"tour_aborted": 1}, 2),
+        (0, {}, 2),
+        (0, {"tour_stopped_by_user": 1}, 0),
+        (0, {"tour_finished": 1}, 0),
+        (1, {"tour_finished": 1}, 1),
+    ],
+)
+def test_failed_driven_session_cannot_exit_as_a_pass(
+    exit_code: int, counts: dict[str, int], expected: int
+) -> None:
+    from lab.session.runner import _driven_exit_code
+
+    assert _driven_exit_code("tour", exit_code, counts) == expected
+
+
+def test_empty_tour_is_rejected_before_creating_a_session() -> None:
+    from lab.session.runner import SessionOptions, run_session
+
+    with pytest.raises(SystemExit, match="at least one story target or dictionary word"):
+        run_session(SessionOptions(mode="tour", words=0, story_sizes=()))
 
 
 def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path) -> None:
@@ -786,12 +1083,20 @@ def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path)
     assert result["hover_ids"] == [9]
 
 
-def test_a_helper_belongs_to_its_nearest_sampled_ancestor() -> None:
+def test_a_helper_belongs_to_its_nearest_sampled_ancestor(monkeypatch: Any) -> None:
+    import psutil
+
     from lab.session.sampler import nearest_owner
 
-    shell, window = SimpleNamespace(pid=1), SimpleNamespace(pid=2)
-    webengine = SimpleNamespace(pid=3, parents=lambda: [window, shell])
-    stray = SimpleNamespace(pid=4, parents=lambda: [SimpleNamespace(pid=9)])
+    parent_map = {
+        2: SimpleNamespace(ppid=lambda: 1),
+        3: SimpleNamespace(ppid=lambda: 2),
+        4: SimpleNamespace(ppid=lambda: 9),
+        9: SimpleNamespace(ppid=lambda: 0),
+    }
+    monkeypatch.setattr(psutil, "Process", lambda pid: parent_map[pid])
+    webengine = SimpleNamespace(ppid=lambda: 2)
+    stray = SimpleNamespace(ppid=lambda: 9)
     owned = {1: "shell", 2: "control_center"}
 
     assert nearest_owner(webengine, owned) == 2

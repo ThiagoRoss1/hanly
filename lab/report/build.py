@@ -231,6 +231,7 @@ def system_map(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "process.shell": procs.get("shell", {}),
         "process.lookup": procs.get("lookup", {}),
         "process.control_center": procs.get("control_center", {}),
+        "process.desktop_helpers": procs.get("shell helpers", {}),
     }
 
 

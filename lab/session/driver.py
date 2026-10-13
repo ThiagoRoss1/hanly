@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -105,6 +106,7 @@ class TourDriver:
         settle_timeout: float = 4.0,
         first_timeout: float = 90.0,
         retain_fixture_text: bool = False,
+        owned_pids: set[int] | None = None,
     ) -> None:
         self._recorder = recorder
         self._page = page
@@ -112,10 +114,16 @@ class TourDriver:
         self._settle_timeout = settle_timeout
         self._first_timeout = first_timeout
         self._retain_fixture_text = retain_fixture_text
+        self._owned_pids = set(owned_pids or ())
         self._lock = threading.Lock()
         self._active: _Observation | None = None
         self._ready = threading.Event()
+        self._runtime_failed = False
         self._observing = threading.Event()
+        self._native_context_seen = threading.Event()
+        self._registered_hotkey_count: int | None = None
+        self._capture_input_ack = threading.Event()
+        self._capture_input_rejected = threading.Event()
         self._popup_hidden = threading.Event()
         self._expected: tuple[int, int] | None = None
         #: Captured images are in device pixels; the probe grid is in points.
@@ -137,12 +145,12 @@ class TourDriver:
         if not self._ready.wait(180):
             self._recorder.lab("tour_aborted", reason="runtime_never_ready")
             return
+        if self._runtime_failed:
+            self._recorder.lab("tour_aborted", reason="runtime_failed")
+            return
         self._page.show_page(0)
         time.sleep(0.4)
-        how = ensure_capture(self._observing, self._press_capture_hotkey)
-        self._recorder.lab("tour_capture", how=how, hotkey=self._capture_hotkey)
-        if how == "never_started":
-            self._recorder.lab("tour_aborted", reason="capture_never_started")
+        if not self._ensure_capture():
             return
         first = True
         for index, page in enumerate(self._page.pages):
@@ -261,6 +269,28 @@ class TourDriver:
     def _observe(self, name: str, observed_ns: int, fields: Mapping[str, Any]) -> None:
         if name == "startup_milestone" and fields.get("name") == "runtime ready":
             self._ready.set()
+        elif name == "runtime_preparation_completed" and fields.get("phase") == "runtime":
+            self._ready.set()
+        elif name == "runtime_preparation_failed" and fields.get("phase") == "runtime":
+            self._runtime_failed = True
+            self._ready.set()
+        elif name == "lab_runtime_ready":
+            self._ready.set()
+        elif name == "lab_runtime_failed":
+            self._runtime_failed = True
+            self._ready.set()
+        if name == "native_context":
+            count = fields.get("registered_hotkey_count")
+            self._registered_hotkey_count = count if isinstance(count, int) else None
+            self._native_context_seen.set()
+        if (
+            name == "native_input"
+            and fields.get("action") == "toggle_capture"
+            and fields.get("edge") == "pressed"
+        ):
+            self._capture_input_ack.set()
+            if fields.get("accepted") is not True:
+                self._capture_input_rejected.set()
         if name == "hover_observation_started":
             self._observing.set()
         if name in {"retained_target_cleared", "popup_suppressed"}:
@@ -278,34 +308,117 @@ class TourDriver:
 
         own = os.getpid()
         children = {child.pid: child.name for child in multiprocessing.active_children()}
+        additional_owned: set[int] = getattr(self, "_allowed", set())
         half_w, half_h = _ROI_HALF
         foreign = []
         for fx, fy in _PROBES:
             px = min(x + fx * half_w, x + half_w - 1)
             py = min(y + fy * half_h, y + half_h - 1)
             owner = owner_at(px, py)
-            if owner == own:
+            if owner == own or owner in self._owned_pids or owner in additional_owned:
                 continue
             # The owner's identity stays coarse: which Hanly child, or simply "other".
-            who = "none" if owner is None else children.get(owner, "other")
+            who = (
+                "none"
+                if owner is None
+                else "hanly-desktop"
+                if owner in self._owned_pids
+                else "lab-page"
+                if owner in additional_owned
+                else children.get(owner, "other")
+            )
             foreign.append(f"{fx:+.1f},{fy:+.1f}:{who}")
         return foreign
 
     # -- the real input devices ---------------------------------------------------
 
     def _press_capture_hotkey(self) -> None:
+        press_started = time.perf_counter_ns()
+        self._recorder.lab("tour_capture_input_started")
         parts = [part.strip().lower() for part in self._capture_hotkey.split("+")]
         aliases = {"control": "ctrl", "option": "alt", "command": "cmd"}
         keys: list[Any] = []
         for part in parts:
             named = aliases.get(part, part)
             keys.append(getattr(self._keys, named, None) or named)
-        for key in keys:
+
+        for index, key in enumerate(keys):
+            edge_started = time.perf_counter_ns()
+            self._recorder.lab(
+                "tour_capture_key_dispatch_started", edge="press", index=index
+            )
             self._keyboard.press(key)
+            self._recorder.lab(
+                "tour_capture_key_dispatch_completed",
+                edge="press",
+                index=index,
+                duration_ms=round((time.perf_counter_ns() - edge_started) / 1e6, 2),
+            )
             time.sleep(0.02)
-        for key in reversed(keys):
+
+        for index, key in reversed(list(enumerate(keys))):
+            edge_started = time.perf_counter_ns()
+            self._recorder.lab(
+                "tour_capture_key_dispatch_started", edge="release", index=index
+            )
             self._keyboard.release(key)
+            self._recorder.lab(
+                "tour_capture_key_dispatch_completed",
+                edge="release",
+                index=index,
+                duration_ms=round((time.perf_counter_ns() - edge_started) / 1e6, 2),
+            )
             time.sleep(0.02)
+        self._recorder.lab(
+            "tour_capture_input_completed",
+            duration_ms=round((time.perf_counter_ns() - press_started) / 1e6, 2),
+        )
+
+    def _ensure_capture(self) -> bool:
+        if not self._native_context_seen.wait(5):
+            self._recorder.lab("tour_aborted", reason="native_context_unavailable")
+            return False
+        if not self._registered_hotkey_count:
+            self._recorder.lab(
+                "tour_aborted",
+                reason="capture_hotkey_unregistered",
+                registered_hotkey_count=0,
+            )
+            return False
+
+        input_access = _macos_input_preflight()
+        if input_access is not None:
+            self._recorder.lab("lab_driver_input_preflight", **input_access)
+            if input_access.get("post_event_access") is False:
+                self._recorder.lab(
+                    "tour_aborted",
+                    reason="lab_driver_post_event_access_unavailable",
+                    registered_hotkey_count=self._registered_hotkey_count,
+                )
+                return False
+
+        how = ensure_capture(
+            self._observing,
+            self._press_capture_hotkey,
+            delivery_ack=self._capture_input_ack,
+            delivery_rejected=self._capture_input_rejected,
+        )
+        self._recorder.lab("tour_capture", how=how, hotkey=self._capture_hotkey)
+        if how not in {"never_started", "input_rejected", "input_unconfirmed"}:
+            return True
+
+        reason = {
+            "never_started": "capture_never_started",
+            "input_rejected": "capture_hotkey_rejected",
+            "input_unconfirmed": "capture_hotkey_unconfirmed",
+        }[how]
+        self._recorder.lab(
+            "tour_aborted",
+            reason=reason,
+            native_input_acknowledged=self._capture_input_ack.is_set(),
+            registered_hotkey_count=self._registered_hotkey_count,
+        )
+        return False
 
     def _glide(self, x: int, y: int) -> None:
         start_x, start_y = self._mouse.position
@@ -336,18 +449,35 @@ def ensure_capture(
     *,
     launch_grace: float = 10.0,
     after_press: float = 120.0,
+    delivery_ack: threading.Event | None = None,
+    delivery_rejected: threading.Event | None = None,
+    acknowledgement_timeout: float = 5.0,
 ) -> str:
     """Leave the app watching the screen, and say how it got there.
 
-    The capture shortcut toggles, and a tour runs with hover always active,
-    which the app honours by starting capture at launch. Pressing blindly
-    would turn that session off, so the app's own trace decides.
+    The capture shortcut toggles. ``always_active`` controls hover only after
+    capture starts, so it is not evidence that the session is already watching.
+    Press only after checking the app's observation trace; a successful native
+    input acknowledgement still is not proof that the capture listener started.
     """
 
     if observing.wait(launch_grace):
         return "already_watching"
     press()
-    return "shortcut" if observing.wait(after_press) else "never_started"
+    deadline = time.monotonic() + after_press
+    acknowledgement_deadline = time.monotonic() + acknowledgement_timeout
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            return "never_started"
+        if observing.wait(min(0.05, deadline - now)):
+            return "shortcut"
+        if delivery_rejected is not None and delivery_rejected.is_set():
+            return "input_rejected"
+        if delivery_ack is not None and delivery_ack.is_set():
+            continue
+        if delivery_ack is not None and time.monotonic() >= acknowledgement_deadline:
+            return "input_unconfirmed"
 
 
 def observe(
@@ -522,6 +652,43 @@ def _exceeds_probe(roi: tuple[int, int], scale: float = 1.0) -> bool:
 
     width, height = roi[0] / scale, roi[1] / scale
     return width > 2 * _ROI_HALF[0] or height > 2 * _ROI_HALF[1]
+
+
+def _macos_input_preflight() -> dict[str, bool | None] | None:
+    """Read TCC checks for the Lab driver without prompting for permission."""
+
+    if sys.platform != "darwin":
+        return None
+
+    try:
+        import ctypes
+
+        core_graphics = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+        )
+        application_services = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        checks = {
+            "post_event_access": core_graphics.CGPreflightPostEventAccess,
+            "listen_event_access": core_graphics.CGPreflightListenEventAccess,
+            "accessibility_trusted": application_services.AXIsProcessTrusted,
+        }
+        for check in checks.values():
+            check.argtypes = []
+            check.restype = ctypes.c_bool
+    except (AttributeError, OSError):
+        return {
+            "preflight_available": False,
+            "post_event_access": None,
+            "listen_event_access": None,
+            "accessibility_trusted": None,
+        }
+
+    return {
+        "preflight_available": True,
+        **{name: bool(check()) for name, check in checks.items()},
+    }
 
 
 def _decode(value: object) -> dict[str, Any] | None:

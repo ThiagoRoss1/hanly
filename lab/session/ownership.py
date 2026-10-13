@@ -1,9 +1,8 @@
 """Which process owns the window at a screen point, asked of the window server.
 
-A tour keeps recognized text, so before each hover it proves the pixels under
-the capture region are this process's own window (the tour page, or Hanly's
-popup, which the shell draws). Anything else means another application is on
-top, and the hover is skipped rather than read.
+A tour keeps recognized text, so before each hover it verifies that the capture
+region belongs to its fixture page or the native Hanly desktop. Anything else
+means another application is on top, and the hover is skipped rather than read.
 """
 
 from __future__ import annotations

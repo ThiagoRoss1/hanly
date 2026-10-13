@@ -85,7 +85,7 @@ def _tour(
     if finished:
         events.append({"event": "tour_finished", "t_ms": 99})
     (run / "events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n", "utf-8")
-    sample = {"t_ms": 5, "processes": [{"pid": 2, "role": "lookup", "rss": int(rss * 2**20)}]}
+    sample = {"t_ms": 5, "processes": [{"pid": 2, "role": "shell", "rss": int(rss * 2**20)}]}
     (run / "processes.jsonl").write_text(json.dumps(sample) + "\n", "utf-8")
     return run
 
@@ -303,14 +303,13 @@ def test_a_tour_report_explains_the_comparison_and_leaves_the_baseline_identical
     verdicts = {row["measure"]: row["verdict"] for row in comparison["performance"]}
     assert verdicts == {
         "popup p50": "higher",
-        "lookup peak sampled RSS": "higher",
-        "shell peak sampled RSS": "unavailable",
+        "desktop family peak sampled RSS": "higher",
     }
     summary = (current / "summary.md").read_text("utf-8")
     assert "## Provenance" in summary and "- correctness: mixed" in summary
     assert "band ±" in summary and "indicative-bands-v1" in summary
     # Process samples are counted, so memory lines carry their sample counts too.
-    assert "lookup peak sampled RSS: higher (500.0 -> 900.0 MiB, n=1/1" in summary
+    assert "desktop family peak sampled RSS: higher (500.0 -> 900.0 MiB, n=1/1" in summary
 
 
 def test_an_incompatible_pair_is_shown_raw_and_never_explained(tmp_path: Path) -> None:

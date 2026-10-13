@@ -376,6 +376,12 @@ def process_profile(
     pids: dict[str, set[int]] = defaultdict(set)
     for sample in samples:
         totals: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])
+        family = [
+            row
+            for row in sample.get("processes", ())
+            if str(row.get("role", "")) == "shell"
+            or str(row.get("role", "")).startswith("shell.")
+        ]
         for row in sample.get("processes", ()):
             if "rss" not in row:
                 continue
@@ -384,6 +390,21 @@ def process_profile(
             totals[role][0] += row["rss"] / 2**20
             totals[role][1] += row.get("cpu", 0.0)
             totals[role][2] += row.get("threads", 0)
+        family_rows = [row for row in family if "rss" in row]
+        if family_rows:
+            family_rss = sum(row["rss"] / 2**20 for row in family_rows)
+            family_cpu = sum(row.get("cpu", 0.0) for row in family_rows)
+            family_threads = sum(row.get("threads", 0) for row in family_rows)
+            series["desktop family"].append(
+                (round(sample["t_ms"], 1), round(family_rss, 1), round(family_cpu, 1))
+            )
+            pids["desktop family"].update(int(row["pid"]) for row in family_rows)
+            peak = peaks.setdefault(
+                "desktop family", {"rss_mib": 0.0, "cpu": 0.0, "threads": 0}
+            )
+            peak["rss_mib"] = max(peak["rss_mib"], round(family_rss, 1))
+            peak["cpu"] = max(peak["cpu"], round(family_cpu, 1))
+            peak["threads"] = max(peak["threads"], int(family_threads))
         for role, (rss, cpu, threads) in totals.items():
             series[role].append((round(sample["t_ms"], 1), round(rss, 1), round(cpu, 1)))
             peak = peaks.setdefault(role, {"rss_mib": 0.0, "cpu": 0.0, "threads": 0})
@@ -407,12 +428,20 @@ def _role_group(role: str) -> str:
 def lifecycle(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Milestones worth a marker on every timeline."""
 
+    has_runtime_preparation_events = any(
+        event["event"] in {"runtime_preparation_completed", "runtime_preparation_failed"}
+        for event in events
+    )
     marks = {
         "session_started": "Session started",
         "startup_milestone": None,
         "hover_observation_started": "Watching the screen",
         "executor_worker_construction_started": "Lookup engine loading",
         "executor_worker_ready": "Lookup engine ready",
+        "runtime_preparation_completed": "Desktop runtime ready",
+        "runtime_preparation_failed": "Desktop runtime failed",
+        "lab_runtime_ready": "Desktop runtime ready",
+        "lab_runtime_failed": "Desktop runtime failed",
         "tour_capture_requested": "Capture shortcut pressed",
         "tour_capture": "Tour capture on",
         "tour_page": "Tour page",
@@ -425,6 +454,8 @@ def lifecycle(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     out = []
     for event in events:
         name = event["event"]
+        if has_runtime_preparation_events and name in {"lab_runtime_ready", "lab_runtime_failed"}:
+            continue
         if name not in marks:
             continue
         label = marks[name] or str(event.get("name"))
@@ -454,6 +485,29 @@ def startup(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         for e in events
         if e["event"] == "startup_milestone"
     ]
+    desktop_started = next(
+        (event["t_ms"] for event in events if event["event"] == "desktop_started"),
+        None,
+    )
+    runtime_events = [
+        event
+        for event in events
+        if event["event"]
+        in {"runtime_preparation_completed", "runtime_preparation_failed"}
+        and event.get("phase") == "runtime"
+    ]
+    for event in runtime_events:
+        name = (
+            "desktop service ready"
+            if event["event"] == "runtime_preparation_completed"
+            else "desktop service failed"
+        )
+        at_ms = (
+            round(event["t_ms"] - desktop_started, 1)
+            if desktop_started is not None
+            else round(event["t_ms"], 1)
+        )
+        milestones.append({"name": name, "at_ms": at_ms, "t": event["t_ms"]})
     prewarm = [
         {"stage": e.get("stage"), "ms": _ms(e.get("duration_ns")), "end": e["t_ms"]}
         for e in events
@@ -469,6 +523,22 @@ def startup(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         else None
     )
     first_answer = next((e["t_ms"] for e in events if e["event"] == "popup_visible"), None)
+    input_preflight = next(
+        (
+            {
+                key: event.get(key)
+                for key in (
+                    "preflight_available",
+                    "post_event_access",
+                    "listen_event_access",
+                    "accessibility_trusted",
+                )
+            }
+            for event in reversed(events)
+            if event["event"] == "lab_driver_input_preflight"
+        ),
+        None,
+    )
     return {
         "phases": phases,
         "milestones": milestones,
@@ -476,6 +546,7 @@ def startup(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "engine_load_ms": engine,
         "engine_ready_t": max(prewarm_done) if prewarm_done else None,
         "first_answer_t": first_answer,
+        "lab_driver_input_preflight": input_preflight,
     }
 
 
@@ -742,7 +813,7 @@ def compare_tours(
                     eligible=eligible["memory"],
                     samples=rss_samples,
                 )
-                for role in ("lookup", "shell")
+                for role in ("desktop family",)
             ),
         ],
     }
@@ -882,10 +953,18 @@ def findings(model: Mapping[str, Any]) -> list[dict[str, str]]:
     if shell:
         add(
             "insight",
-            f"Shell peaked at {shell['rss_mib']:.0f} MiB (includes the lab's own recorder)",
-            "The lab hosts the shell in-process, so this includes recording overhead; "
-            "compare with a plain `hanly` launch before treating it as product memory.",
-            "hanly_app/application.py",
+            f"Tauri host peaked at {shell['rss_mib']:.0f} MiB",
+            "The separately launched desktop process, excluding its service and webview helpers.",
+            "apps/desktop/src-tauri",
+        )
+    family = procs.get("desktop family")
+    if family:
+        add(
+            "insight",
+            f"Hanly process family peaked at {family['rss_mib']:.0f} MiB, "
+            f"mean CPU {family['mean_cpu']:.0f}%",
+            "Per-sample total of the Tauri host and processes assigned to its process tree.",
+            "apps/desktop/src-tauri",
         )
 
     tour = model.get("tour")

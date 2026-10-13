@@ -3,8 +3,8 @@
 The installation is a published release unpacked under the run directory, with
 its own profile and TEMP, so nothing here touches the everyday app. The update
 itself is the production path: ``TreeUpdateRunner`` and ``UpdateCoordinator``
-from this checkout, composed exactly as ``application._tree_runner`` composes
-them, against the real public release source (read only), then the real
+from this checkout, composed with the shared desktop-runtime update factory,
+against the real public release source (read only), then the real
 PowerShell helper, the real relaunch and the new build's own acknowledgement.
 
 What differs from a person clicking Install update is the process hosting the
@@ -191,10 +191,10 @@ class _Updater:
 
 
 def _updater(application: Path) -> _Updater:
-    from hanly_app.application import _staging_strategy
     from hanly_app.paths import default_recovery_directory
     from hanly_app.updates.build_identity import BuildStamp, receipt_store
     from hanly_app.updates.coordinator import UpdateCoordinator
+    from hanly_app.updates.desktop_runtime import _staging_strategy
     from hanly_app.updates.desktop_update import check_application_update
     from hanly_app.updates.installer import TreeUpdateInstaller
     from hanly_app.updates.resource_service import GitHubReleaseFetcher
@@ -210,7 +210,7 @@ def _updater(application: Path) -> _Updater:
         stamp=stamp,
         install_root=application,
         store=store,
-        strategy=_staging_strategy(stamp, application, store),
+        strategy=_staging_strategy(stamp, application, store, root_pid=os.getpid()),
         tagged_release_source=fetcher.fetch_release_by_tag,
     )
     prepared: list[Any] = []
