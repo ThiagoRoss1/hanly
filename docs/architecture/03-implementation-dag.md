@@ -479,3 +479,15 @@ Detailed implementation plans are created just in time when a capability becomes
 - **DAG-INV-16:** Korean Test Fixtures are small deterministic inputs for ordinary automated tests, distinct from the non-blocking HanlyOCR benchmark dataset.
 - **DAG-INV-17:** The desktop lifecycle and packaging feasibility spikes are non-blocking risk-discovery capabilities unless their evidence leads to a later human-approved DAG change.
 - **DAG-INV-18:** The official concrete EasyOCR + Kiwi + KRDICT runtime is composed through ResourceManager-backed application wiring before capture, popup, hotkey, and manual-lookup capabilities consume it; later update/distribution work remains separate.
+
+## Approved desktop migration overlay — 2026-10-12
+
+This DAG continues to describe the V1 capability dependencies and order. The
+approved Tauri/React desktop migration is tracked by the single
+[migration checkpoint](../execution/checkpoints/desktop-tauri-migration.md),
+which sequences implementation as A–F: inventory/contracts, Tauri and Python
+service foundation, React parity, Qt infrastructure replacement, packaging and
+updater/CI, then Lab convergence and legacy removal. That execution sequence
+does not rewrite V1 capability blockers, add speculative engine work, or
+renumber/reorder `DAG-INV-*`; this source and its visual companion remain in
+sync with the existing DAG.

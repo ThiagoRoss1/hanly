@@ -151,3 +151,25 @@ The approved flow defines these states and failure-relevant decisions without pr
 - The diagram does not define retry, fallback, notification, or recovery policy for provider initialization or lookup failures.
 
 > **Open clarification:** Startup failure presentation and recovery behavior are not specified by the approved Runtime Flow.
+
+## Approved desktop migration overlay — 2026-10-12
+
+The flow above records the implemented V1 baseline. The approved desktop target
+replaces its Qt shell and pywebview window with one Tauri/Rust native root and
+React for every desktop surface. The root supervises one Qt-free Python desktop
+service; that service retains configuration, provisioning, acquisition, hover
+decisions, update policy and lookup coordination, and keeps heavy providers in
+the isolated lookup child. The service remains responsive while resources and
+providers prepare.
+
+Private Rust-to-Python stdio JSONL uses protocol version 1, correlated request
+IDs, explicit methods and per-window authorization, bounded to 1 MiB per frame
+and 32 pending requests. Python still performs the final current-request check
+before publishing a popup result. Startup health, service readiness, runtime
+readiness and provider residency remain separate states. The updater waits for
+the new Tauri root to report readiness after its service handshake; service
+readiness alone cannot acknowledge a replacement install. The detailed surface
+map and continuation order live in the [migration checkpoint](../execution/checkpoints/desktop-tauri-migration.md).
+
+This overlay does not renumber or reorder `RF-INV-*`; the V1 invariant list
+below and its visual companion stay 1:1.

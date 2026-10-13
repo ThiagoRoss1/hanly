@@ -201,3 +201,28 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 - **CA-INV-14:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation before presentation.
 - **CA-INV-15:** `LookupResult` can model success, normal non-success, and processing-error outcomes without treating every non-success as an exception.
 - **CA-INV-16:** The language stage is acquisition-neutral: it accepts a `TextSelection` and never receives an image, screen geometry, or a desktop object, so one implementation serves pixel and non-pixel clients alike.
+
+## Approved desktop migration overlay — 2026-10-12
+
+The component descriptions above identify the implemented V1 baseline. The
+approved desktop composition is:
+
+```text
+React UI → Tauri/Rust native shell → supervised Qt-free Python desktop service → hanly
+                                                   └→ isolated lookup child
+```
+
+React owns every product surface and presentation. Tauri/Rust owns native
+windows, tray, activation, platform adapters, child supervision and validated
+IPC. Python retains desktop business rules, configuration, acquisition,
+resources, updates and lookup coordination; the existing `hanly` package stays
+independent, and concrete heavy providers stay in the unloadable lookup child.
+No second Qt shell or duplicate owner for a lifecycle operation remains after
+parity is established. The migration does not add a production Node backend or
+move client-specific concerns into `hanly`.
+
+The bridge is private versioned JSONL with typed request/reply/event envelopes,
+explicit methods, per-window authorization, a 1 MiB frame ceiling and 32
+outstanding-request limit. Its complete schema and the old-to-new ownership map
+are in the [migration checkpoint](../execution/checkpoints/desktop-tauri-migration.md).
+Existing `CA-INV-*` IDs and order are unchanged.
