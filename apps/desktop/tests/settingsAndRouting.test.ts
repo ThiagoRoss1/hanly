@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { APP_ROUTES, resolveInitialRoute } from "../src/contracts/routes.ts";
+import type { HanlyState } from "../src/contracts/desktop.ts";
 import { desktopStateReducer, initialDesktopState } from "../src/features/desktopState.ts";
 import { formatHotkey, hotkeyFromKeyboardEvent, validateHoverDelay } from "../src/features/settings.ts";
 
@@ -24,13 +25,23 @@ test("shortcut capture keeps native key names in Hanly's stored format", () => {
   assert.deepEqual(formatHotkey("<ctrl>+<shift>+space"), ["ctrl", "shift", "space"]);
 });
 
-test("desktop state events replace snapshots and keep service failures visible", () => {
+test("desktop state events validate full snapshots and keep service failures visible", () => {
   const state = {
-    app: {},
-    config: {},
-    runtime: {},
-    permissions: {},
-  };
+    app: { state: "new", activity: "preparing", detail: "Starting.", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
+    config: {
+      capture_hotkey: "ctrl+shift+f10", capture_mode: "full_monitor", capture_monitor: null, capture_region: null,
+      hotkey: "ctrl+shift+f9", hover_activation: "push_to_hover", hover_delay_ms: 80, hover_hotkey: "ctrl+shift+f8",
+      lookup_preload: "when_capture_starts", ocr_backend: "auto", popup_enabled: true, popup_default_size: "compact",
+      technical_details: "off", theme: "system", update_checks_enabled: true,
+    },
+    runtime: {
+      ocr_provider: null, ocr_backends: ["auto", "easyocr"], app_version: "1.1.0", hover_delay_bounds: { min: 20, max: 2000 },
+      resources: [], status: { phase: "idle", stage: "startup", message: "Starting." }, engine: { state: "sleeping", message: "Not loaded." },
+      hotkeys: {}, log_path: null, diagnostics: ["Service: Hanly desktop service started."],
+    },
+    updates: { available: false, status: "idle", message: "" },
+    permissions: { supported: false, items: [] },
+  } satisfies HanlyState;
   const received = desktopStateReducer(initialDesktopState, { type: "state-received", payload: state });
   assert.deepEqual(received.state, state);
   assert.equal(received.connectionError, null);

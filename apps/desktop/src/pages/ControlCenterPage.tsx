@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   HanlyState,
@@ -61,10 +61,6 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isState(value: unknown): value is HanlyState {
-  return Boolean(value && typeof value === "object" && "app" in value && "config" in value && "runtime" in value);
-}
-
 function regionLabel(region?: { left: number; top: number; width: number; height: number } | null): string {
   if (!region) return "No region selected";
   return `${region.left}, ${region.top} · ${region.width} × ${region.height}`;
@@ -76,6 +72,7 @@ export function ControlCenterPage() {
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
   const [quitAsking, setQuitAsking] = useState(false);
+  const [choosingArea, setChoosingArea] = useState(false);
 
   const run = useCallback(async (method: DesktopMethod, params: Record<string, unknown> = {}) => {
     setBusy(method);
@@ -92,6 +89,11 @@ export function ControlCenterPage() {
 
   const saveSettings = useCallback((changes: Record<string, unknown>) =>
     run("update_settings", { changes }), [run]);
+
+  const selectArea = useCallback(() => {
+    setActionError("");
+    setChoosingArea(true);
+  }, []);
 
   const page = PAGE_COPY[section];
   const activity = state?.app.activity ?? state?.app.state ?? serviceStatus?.state ?? "preparing";
@@ -126,7 +128,7 @@ export function ControlCenterPage() {
             {(connectionError || serviceStatus?.state === "failed") && (
               <div className="banner" data-tone="bad" role="alert">
                 <span className="banner-text">{connectionError || serviceStatus?.message || "The Hanly desktop service is unavailable."}</span>
-                <button className="btn btn-sm btn-quiet" disabled={refreshing} onClick={() => void refresh()} type="button">Try again</button>
+                <button className="btn btn-sm btn-quiet" disabled={refreshing} onClick={() => void run("retry_runtime").then(() => refresh())} type="button">Try again</button>
               </div>
             )}
             <LoadingPanel message={connectionError ? "The desktop service did not provide runtime state." : "Connecting to Hanly…"} />
@@ -139,11 +141,11 @@ export function ControlCenterPage() {
   const target = section === "capture";
   let content: ReactNode;
   if (section === "capture") {
-    content = <CapturePage state={state} busy={Boolean(busy)} run={run} saveSettings={saveSettings} />;
+    content = <CapturePage state={state} busy={Boolean(busy)} run={run} saveSettings={saveSettings} onSelectArea={selectArea} />;
   } else if (section === "permissions") {
     content = <PermissionsPage state={state} busy={Boolean(busy)} run={run} />;
   } else if (section === "shortcuts") {
-    content = <ShortcutsPage state={state} busy={Boolean(busy)} saveSettings={saveSettings} />;
+    content = <ShortcutsPage state={state} busy={Boolean(busy)} run={run} saveSettings={saveSettings} />;
   } else if (section === "appearance") {
     content = <AppearancePage state={state} busy={Boolean(busy)} saveSettings={saveSettings} />;
   } else if (section === "updates") {
@@ -195,8 +197,8 @@ export function ControlCenterPage() {
           </div>
           {target && (
             <div className="head-actions">
-              <button className="btn" disabled={Boolean(busy)} onClick={() => void run("select_region")} type="button">Select area</button>
-              <button className="btn btn-primary btn-capture" disabled={Boolean(busy)} onClick={() => void run(state.app.capture_running ? "stop_capture" : "start_capture")} type="button">
+              <button className="btn" disabled={Boolean(busy)} onClick={selectArea} type="button">Select area</button>
+              <button className="btn btn-primary btn-capture" disabled={Boolean(busy) || (!state.app.capture_running && state.runtime.status.phase !== "ready")} title={!state.app.capture_running && state.runtime.status.phase !== "ready" ? "Hanly is still preparing its lookup runtime." : undefined} onClick={() => void run(state.app.capture_running ? "stop_capture" : "start_capture")} type="button">
                 {state.app.capture_running ? "Stop capture" : "Start capture"}
               </button>
             </div>
@@ -206,6 +208,12 @@ export function ControlCenterPage() {
           {connectionError && <div className="banner" data-tone="warn" role="status"><span className="banner-text">{connectionError}</span><button className="btn btn-sm btn-quiet" disabled={refreshing} onClick={() => void refresh()} type="button">Reconnect</button></div>}
           {actionError && <div className="banner" data-tone="bad" role="alert"><span className="banner-text">{actionError}</span></div>}
           {content}
+          {choosingArea && <CaptureChoiceDialog
+            busy={Boolean(busy)}
+            onCancel={() => setChoosingArea(false)}
+            onChooseMonitor={() => { setChoosingArea(false); void run("set_capture_mode", { mode: "full_monitor" }); }}
+            onChooseRegion={() => { setChoosingArea(false); void run("select_region"); }}
+          />}
         </div>
       </main>
     </div>
@@ -241,11 +249,36 @@ function LoadingPanel({ message }: { message: string }) {
   return <section className="panel"><div className="panel-head"><h2 className="panel-title">Hanly</h2></div><div className="panel-rows"><div className="readiness-row"><span className="readiness-detail">{message}</span></div></div></section>;
 }
 
-function CapturePage({ state, busy, run, saveSettings }: {
+function CaptureChoiceDialog({ busy, onCancel, onChooseMonitor, onChooseRegion }: {
+  busy: boolean;
+  onCancel: () => void;
+  onChooseMonitor: () => void;
+  onChooseRegion: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => dialogRef.current?.focus(), []);
+
+  return (
+    <div className="choice-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <section aria-labelledby="capture-choice-title" aria-modal="true" className="choice-dialog panel" onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }} ref={dialogRef} role="dialog" tabIndex={-1}>
+        <h2 className="panel-title" id="capture-choice-title">Where should Hanly read?</h2>
+        <p className="panel-note">Choose the area Hanly should watch. This is saved as a setting.</p>
+        <div className="choice-actions">
+          <button className="btn" disabled={busy} onClick={onChooseMonitor} type="button">Whole monitor</button>
+          <button className="btn btn-primary" disabled={busy} onClick={onChooseRegion} type="button">Select an area</button>
+          <button className="btn btn-quiet" disabled={busy} onClick={onCancel} type="button">Cancel</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CapturePage({ state, busy, run, saveSettings, onSelectArea }: {
   state: HanlyState;
   busy: boolean;
   run: (method: DesktopMethod, params?: Record<string, unknown>) => Promise<unknown>;
   saveSettings: (changes: Record<string, unknown>) => Promise<unknown>;
+  onSelectArea: () => void;
 }) {
   const config = state.config;
   const app = state.app;
@@ -256,7 +289,9 @@ function CapturePage({ state, busy, run, saveSettings }: {
   const [formError, setFormError] = useState("");
   const region = app.region ?? config.capture_region ?? null;
   const mode = config.capture_mode ?? app.capture_mode ?? "full_monitor";
-  const selectedTarget = config.capture_monitor == null ? "cursor" : `monitor:${config.capture_monitor}`;
+  const selectedTarget = app.target || (config.capture_monitor == null ? "cursor" : `monitor:${config.capture_monitor}`);
+  const selectedMonitor = app.targets.find((monitor) => `monitor:${monitor.index}` === selectedTarget);
+  const targetLabel = selectedTarget === "cursor" ? "the display under the cursor" : selectedMonitor?.name ?? selectedTarget.replace("monitor:", "Monitor ");
 
   useEffect(() => { setDelayDraft(String(delay)); }, [delay]);
   useEffect(() => {
@@ -273,7 +308,7 @@ function CapturePage({ state, busy, run, saveSettings }: {
     }
     setFormError("");
     setDelayDraft(String(result.value));
-    await saveSettings({ hover_delay_ms: result.value });
+    await run("set_hover_delay", { delay_ms: result.value });
   }
 
   async function applyRegion() {
@@ -295,49 +330,97 @@ function CapturePage({ state, busy, run, saveSettings }: {
     <section className="page">
       <div className="capture-status" data-live={Boolean(app.capture_running)} data-rise="1">
         <span aria-hidden="true" className="dot" data-live={Boolean(app.capture_running)} data-tone={app.capture_running ? "ok" : undefined} />
-        <span className="capture-headline">{app.capture_running ? "Reading" : titleCase(app.activity ?? app.state, "Not reading")}</span>
-        <span className="capture-where">{app.capture_running ? (mode === "region" ? "Selected region" : "Current monitor") : "Capture is stopped"}</span>
-        {app.detail && <span className="capture-hint">{app.detail}</span>}
+        <span className="capture-headline">{app.activity === "preparing" ? "Preparing capture" : app.activity === "error" ? "Capture needs attention" : app.capture_running ? "Reading now" : "Not reading"}</span>
+        <span className="capture-where">{(app.activity === "preparing" || app.activity === "error") && app.detail
+          ? app.detail
+          : mode === "region"
+            ? region ? `${targetLabel} · ${region.width} × ${region.height} at ${region.left}, ${region.top}` : `${targetLabel} · no region saved, reading the whole monitor`
+            : `${targetLabel} · whole screen`}</span>
+        <span className="capture-hint">{app.activity === "preparing" ? "please wait" : app.capture_running
+          ? config.hover_activation === "push_to_hover" && config.hotkey ? `hold ${formatHotkey(config.hotkey).join(" ")}` : "hover active"
+          : "press start to read"}</span>
       </div>
 
       <div className="capture-stage">
         <section aria-labelledby="target-heading" className="panel" data-rise="2">
-          <div className="panel-head"><div><h2 className="panel-title" id="target-heading">Reading target</h2><p className="panel-note">Choose the display Hanly reads.</p></div></div>
+          <div className="panel-head"><h2 className="panel-title" id="target-heading">Reading target</h2></div>
           <div aria-label="Capture target" className="panel-rows" role="radiogroup">
-            <TargetOption selected={selectedTarget === "cursor"} disabled={busy} label="Follow cursor" detail="Hanly follows the display the cursor is on." onSelect={() => void run("set_target", { target: "cursor" })} />
-            {(app.targets ?? []).map((monitor) => (
-              <TargetOption key={monitor.index} selected={selectedTarget === `monitor:${monitor.index}`} disabled={busy} label={monitor.name} detail={`${monitor.bounds.width} × ${monitor.bounds.height} · ${monitor.bounds.left}, ${monitor.bounds.top}`} onSelect={() => void run("set_target", { target: `monitor:${monitor.index}` })} />
-            ))}
+            <TargetOption selected={mode !== "region"} disabled={busy} label="Current monitor" detail="Follows the display the cursor is on." onSelect={() => void run("set_capture_mode", { mode: "full_monitor" })} />
+            <TargetOption selected={mode === "region"} disabled={busy} label="Selected region" detail="A fixed rectangle you draw once." onSelect={() => void run("set_capture_mode", { mode: "region" })} />
           </div>
         </section>
 
-        <section aria-labelledby="area-heading" className="panel" data-rise="3" style={{ marginTop: 12 }}>
-          <div className="panel-head"><div><h2 className="panel-title" id="area-heading">Capture area</h2><p className="panel-note">Choose a monitor or draw a fixed region.</p></div></div>
-          <div aria-label="Capture area" className="panel-rows" role="radiogroup">
-            <TargetOption selected={mode === "full_monitor"} disabled={busy} label="Current monitor" detail="Uses the whole selected monitor for cursor-centered reading." onSelect={() => void saveSettings({ capture_mode: "full_monitor" })} />
-            <TargetOption selected={mode === "region"} disabled={busy} label="Selected region" detail="Keep capture inside a rectangle you select once." onSelect={() => void saveSettings({ capture_mode: "region" })} />
-          </div>
-          <div className="region-head"><span className="region-coords">{regionLabel(region)}</span><button className="btn btn-sm btn-quiet" disabled={busy} onClick={() => void run("select_region")} type="button">Select area</button></div>
-          <div className="region-body">
+        <div className="region-collapse" data-open={mode === "region"}>
+          <div className="collapse-inner">
+            <section aria-labelledby="region-heading" className="panel collapse-gap" data-rise="3">
+              <div className="region-head"><h2 className="panel-title" id="region-heading">Region</h2><span className="region-coords">{regionLabel(region)}</span><button className="btn btn-sm btn-quiet" disabled={busy} onClick={onSelectArea} type="button">Select area</button></div>
+              <div className="region-body">
             <div className="region-fields">
               {(["left", "top", "width", "height"] as const).map((key) => (
-                <label className="field" key={key}><span className="field-label">{key}</span><input aria-label={`Region ${key}`} className="input" inputMode="numeric" onChange={(event) => setRegionDraft((current) => ({ ...current, [key]: event.target.value }))} value={regionDraft[key]} /></label>
+                <label className="field" key={key}><span className="field-label">{key}</span><input aria-label={`Region ${key}`} className="input" disabled={busy || mode !== "region"} inputMode="numeric" onChange={(event) => setRegionDraft((current) => ({ ...current, [key]: event.target.value }))} value={regionDraft[key]} /></label>
               ))}
             </div>
-            <div className="region-actions"><button className="btn btn-sm btn-text" disabled={busy} onClick={() => void run("set_region", { region: null })} type="button">Clear</button><button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void applyRegion()} type="button">Apply</button></div>
+                <div className="region-actions"><button className="btn btn-sm btn-text" disabled={busy || mode !== "region"} onClick={() => void run("set_region", { region: null })} type="button">Clear</button><button className="btn btn-sm btn-primary" disabled={busy || mode !== "region"} onClick={() => void applyRegion()} type="button">Apply</button></div>
+              </div>
+            </section>
           </div>
-        </section>
+        </div>
 
         <section aria-labelledby="capture-settings-heading" className="settings-card" data-rise="4">
           <div className="settings-head"><h2 className="panel-title" id="capture-settings-heading">Capture settings</h2><span className="settings-aside">Applies to both targets.</span></div>
-          <div className="settings-row"><label className="settings-name" htmlFor="capture-target">Monitor</label><select className="select" id="capture-target" disabled={busy} onChange={(event) => void run("set_target", { target: event.target.value })} value={selectedTarget}><option value="cursor">Follow cursor</option>{(app.targets ?? []).map((monitor) => <option key={monitor.index} value={`monitor:${monitor.index}`}>{monitor.name}</option>)}</select><span className="settings-help">Which display Hanly reads, in either target.</span></div>
-          <div className="settings-row"><label className="settings-name" htmlFor="hover-delay-slider">Hover delay</label><input aria-label="Hover delay in milliseconds" disabled={busy} id="hover-delay-slider" max={bounds.max} min={bounds.min} onChange={(event) => setDelayDraft(event.target.value)} onPointerUp={(event) => void saveDelay(event.currentTarget.value)} step="10" type="range" value={delayDraft} /><span className="delay-value"><input aria-label="Hover delay value in milliseconds" className="delay-input" disabled={busy} inputMode="numeric" onBlur={(event) => void saveDelay(event.currentTarget.value)} onChange={(event) => setDelayDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} value={delayDraft} /><span className="delay-unit">ms</span></span><span className="settings-help">How long the cursor rests before Hanly reads.</span></div>
-          <div className="settings-row"><label className="settings-name" htmlFor="lookup-preload">Lookup engine</label><select className="select" disabled={busy} id="lookup-preload" onChange={(event) => void saveSettings({ lookup_preload: event.target.value })} value={String(config.lookup_preload ?? "when_capture_starts")}><option value="when_capture_starts">Load while watching the screen</option><option value="always">Keep loaded</option><option value="on_demand">Load only for a lookup</option></select><span className="settings-help">{config.lookup_preload === "always" ? "Loaded at launch and kept loaded, including through pause." : config.lookup_preload === "on_demand" ? "Nothing is loaded until a lookup needs it." : "Loaded while watching the screen, retired on pause."}</span></div>
-          <div className="settings-row"><label className="settings-name" htmlFor="ocr-backend">Text recognizer</label><select className="select" disabled={busy || (state.runtime.ocr_backends ?? []).length === 0} id="ocr-backend" onChange={(event) => void saveSettings({ ocr_backend: event.target.value })} value={String(config.ocr_backend ?? "auto")}><option value="auto">Automatic (recommended)</option>{(state.runtime.ocr_backends ?? []).filter((backend) => backend !== "auto").map((backend) => <option key={backend} value={backend}>{backend === "vision" ? "Apple Vision" : "EasyOCR"}</option>)}</select><span className="settings-help">{state.runtime.ocr_provider ? `In use: ${state.runtime.ocr_provider}` : "Recognizer availability has not been reported."}</span></div>
+          <CaptureSetting label="Monitor" controlId="capture-target" help="Which display Hanly reads, in either target.">
+            <select aria-describedby="capture-target-help" className="select" id="capture-target" disabled={busy} onChange={(event) => void run("set_target", { target: event.target.value })} value={selectedTarget}>
+              <option value="cursor">Follow cursor</option>
+              {app.targets.map((monitor) => <option key={monitor.index} value={`monitor:${monitor.index}`}>{monitor.name}</option>)}
+            </select>
+          </CaptureSetting>
+          <CaptureSetting label="Hover delay" controlId="hover-delay-slider" help="How long the cursor rests before Hanly reads.">
+            <input
+              aria-label="Hover delay in milliseconds"
+              aria-describedby="hover-delay-slider-help"
+              disabled={busy}
+              id="hover-delay-slider"
+              max={bounds.max}
+              min={bounds.min}
+              onChange={(event) => setDelayDraft(event.target.value)}
+              onPointerUp={(event) => void saveDelay(event.currentTarget.value)}
+              onKeyUp={(event) => { if (event.key.startsWith("Arrow")) void saveDelay(event.currentTarget.value); }}
+              step="10"
+              type="range"
+              value={delayDraft}
+            />
+            <span className="delay-value">
+              <input aria-label="Hover delay value in milliseconds" aria-describedby="hover-delay-slider-help" className="delay-input" disabled={busy} inputMode="numeric" onBlur={(event) => void saveDelay(event.currentTarget.value)} onChange={(event) => setDelayDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} value={delayDraft} />
+              <span className="delay-unit">ms</span>
+            </span>
+          </CaptureSetting>
+          <CaptureSetting label="Lookup engine" controlId="lookup-preload" help={config.lookup_preload === "always" ? "Loaded at launch and kept loaded, including through pause." : config.lookup_preload === "on_demand" ? "Nothing is loaded until a lookup needs it." : "Loaded while watching the screen, retired on pause."}>
+            <select aria-describedby="lookup-preload-help" className="select" disabled={busy} id="lookup-preload" onChange={(event) => void saveSettings({ lookup_preload: event.target.value })} value={String(config.lookup_preload ?? "when_capture_starts")}>
+              <option value="when_capture_starts">Load while watching the screen</option>
+              <option value="always">Keep loaded</option>
+              <option value="on_demand">Load only for a lookup</option>
+            </select>
+          </CaptureSetting>
+          <CaptureSetting label="Text recognizer" controlId="ocr-backend" help={state.runtime.ocr_provider ? `In use: ${state.runtime.ocr_provider}` : "Recognizer availability has not been reported."}>
+            <select aria-describedby="ocr-backend-help" className="select" disabled={busy || (state.runtime.ocr_backends ?? []).length === 0} id="ocr-backend" onChange={(event) => void saveSettings({ ocr_backend: event.target.value })} value={String(config.ocr_backend ?? "auto")}>
+              <option value="auto">Automatic (recommended)</option>
+              {(state.runtime.ocr_backends ?? []).filter((backend) => backend !== "auto").map((backend) => <option key={backend} value={backend}>{backend === "vision" ? "Apple Vision" : "EasyOCR"}</option>)}
+            </select>
+          </CaptureSetting>
           {formError && <div className="banner" data-tone="bad" role="alert">{formError}</div>}
         </section>
       </div>
     </section>
+  );
+}
+
+function CaptureSetting({ label, controlId, help, children }: { label: string; controlId: string; help: string; children: ReactNode }) {
+  return (
+    <div className="settings-row">
+      <label className="settings-name" htmlFor={controlId}>{label}</label>
+      <div className="settings-control">{children}</div>
+      <span className="settings-help" id={`${controlId}-help`}>{help}</span>
+    </div>
   );
 }
 
@@ -348,6 +431,7 @@ function TargetOption({ selected, disabled, label, detail, onSelect }: { selecte
 function PermissionsPage({ state, busy, run }: { state: HanlyState; busy: boolean; run: (method: DesktopMethod, params?: Record<string, unknown>) => Promise<unknown> }) {
   const permissions = state.permissions;
   const items = permissions.items ?? [];
+  const missing = items.filter((item) => !item.granted);
   useEffect(() => {
     if (!permissions.supported) return;
     const refresh = () => void run("refresh_permissions");
@@ -360,7 +444,10 @@ function PermissionsPage({ state, busy, run }: { state: HanlyState; busy: boolea
       <section className="panel panel-quiet" data-rise="1">
         <div className="panel-head"><div><h2 className="panel-title">Desktop access</h2><p className="panel-note">Permission grants are checked by Hanly before capture begins.</p></div><button className="btn btn-sm" disabled={busy || !permissions.supported} onClick={() => void run("refresh_permissions")} type="button">Recheck</button></div>
         {!permissions.supported ? <div className="panel-rows"><div className="readiness-row"><span className="readiness-detail">{permissions.available === false ? permissions.message || "Permission checks are not connected in this build." : "This platform does not require a separate permission check."}</span></div></div> : (
-          <div className="panel-rows">{items.map((item) => <PermissionCard key={item.id} item={item} busy={busy} onGrant={() => void run("grant_permission", { permission: item.id })} />)}</div>
+          <>
+            {missing.length > 0 && <div aria-live="polite" className="permission-onboarding" role="status"><strong>Before Hanly can read</strong><span>Grant the required desktop access, then return here and recheck.</span></div>}
+            <div className="panel-rows">{items.map((item) => <PermissionCard key={item.id} item={item} busy={busy} onGrant={() => void run("grant_permission", { permission: item.id })} />)}</div>
+          </>
         )}
         <p className="panel-note" style={{ padding: "0 14px 12px" }}>Granted permissions stay listed so you can see what Hanly is using.</p>
       </section>
@@ -373,7 +460,7 @@ function PermissionCard({ item, busy, onGrant }: { item: PermissionItem; busy: b
   return <div className="permission" data-granted={item.granted}><span aria-hidden="true" className="dot" data-tone={item.granted ? "ok" : "info"} /><div style={{ flex: 1, minWidth: 0 }}><div className="permission-head"><span className="permission-name">{item.label}</span><span className="tag" data-tone={tone}>{item.granted ? "granted" : item.state === "unknown" ? "unknown" : "required"}</span></div><div className="permission-why">{item.requirement} {item.granted ? "" : item.restart_note}</div></div>{!item.granted && <button className="btn btn-sm btn-primary" disabled={busy} onClick={onGrant} type="button">Open settings</button>}</div>;
 }
 
-function ShortcutsPage({ state, busy, saveSettings }: { state: HanlyState; busy: boolean; saveSettings: (changes: Record<string, unknown>) => Promise<unknown> }) {
+function ShortcutsPage({ state, busy, run, saveSettings }: { state: HanlyState; busy: boolean; run: (method: DesktopMethod, params?: Record<string, unknown>) => Promise<unknown>; saveSettings: (changes: Record<string, unknown>) => Promise<unknown> }) {
   const [recording, setRecording] = useState<string | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -386,11 +473,14 @@ function ShortcutsPage({ state, busy, saveSettings }: { state: HanlyState; busy:
       const field = recording;
       setRecording(null);
       setError("");
-      void saveSettings({ [field]: binding }).catch((reason: unknown) => setError(errorText(reason)));
+      const update = field === "hotkey"
+        ? run("set_hotkey", { hotkey: binding })
+        : saveSettings({ [field]: binding });
+      void update.catch((reason: unknown) => setError(errorText(reason)));
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [recording, saveSettings]);
+  }, [recording, run, saveSettings]);
 
   const registered = state.runtime.hotkeys ?? {};
   const prepared = (state.app.state ?? "new") !== "new";
@@ -453,24 +543,51 @@ function AppearancePage({ state, busy, saveSettings }: { state: HanlyState; busy
 }
 
 function UpdatesPage({ state, busy, run }: { state: HanlyState; busy: boolean; run: (method: DesktopMethod, params?: Record<string, unknown>) => Promise<unknown> }) {
-  const updates = state.updates ?? {};
+  const updates = state.updates;
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
   const application = updates.application;
   const isBusy = UPDATE_BUSY.has(updates.status ?? "");
   const availableResources = new Map((updates.resources ?? []).filter((resource) => resource.available).map((item) => [item.id, item]));
-  const resources = state.runtime.resources ?? [];
+  const resources = state.runtime.resources;
+  const activity = updates.activity ?? [];
   const progress = updates.progress;
-  const fraction = typeof progress?.fraction === "number" ? Math.max(0, Math.min(1, progress.fraction)) : null;
+  const fraction = typeof progress?.fraction === "number"
+    ? Math.max(0, Math.min(1, progress.fraction))
+    : progress?.total ? Math.max(0, Math.min(1, (progress.completed ?? 0) / progress.total)) : null;
   const bytesLine = progress?.total ? `${formatBytes(progress.completed ?? 0)} / ${formatBytes(progress.total)}` : "";
 
   return (
     <div className="page stack stack-wide">
       <section className="panel" data-tone={updates.status === "failed" ? "bad" : application?.installable || updates.awaiting_confirmation ? "accent" : undefined} data-rise="1">
         <div className="panel-head"><div><h2 className="panel-title">Hanly application</h2><p className="panel-note">Application files update separately from dictionary resources.</p></div><span className="tag" data-tone={updates.status === "failed" ? "bad" : application?.installable ? "accent" : "ok"}>{valueText(updates.status, "not checked")}</span></div>
-        {isBusy ? <div className="update-busy"><div className="update-busy-line"><span className="update-strong">{updates.message || titleCase(updates.status)}</span><span className="update-detail">{bytesLine}</span><span className="update-percent">{fraction === null ? "" : `${Math.round(fraction * 100)}%`}</span></div><div className="track" data-indeterminate={fraction === null}><div className="track-fill" style={{ width: fraction === null ? undefined : `${fraction * 100}%` }} /></div>{updates.cancellable && <div className="update-actions"><button className="btn btn-sm btn-quiet" disabled={busy} onClick={() => void run("cancel_update")} type="button">Cancel</button></div>}</div> : updates.restart_required || updates.status === "restart" ? <div className="update-line"><div><div className="update-strong">Ready to restart</div><div className="update-sub">{updates.message || "Hanly restarts into the new build. Your settings stay."}</div></div></div> : updates.awaiting_confirmation ? <div className="update-block"><div className="update-strong">This installation needs the full download</div><div className="update-sub">{updates.message}</div><div className="update-actions"><button className="btn btn-primary" disabled={busy} onClick={() => void run("install_application_update", { confirm_full: true })} type="button">Download full update</button><button className="btn btn-quiet" disabled={busy} onClick={() => void run("cancel_update")} type="button">Not now</button></div></div> : application?.installable ? <div className="update-block"><div className="update-versions"><span className="update-from">{application.current_version ?? "Current"}</span><span className="update-from">→</span><span className="update-to">{application.latest_version}</span>{updates.plan && <span className="update-size">· {describePlan(updates.plan)}</span>}</div>{application.message && <p className="update-sub">{application.message}</p>}{updates.status === "failed" && updates.message && <p className="update-sub update-failure" role="alert">{updates.message}</p>}<div className="update-actions"><button className="btn btn-primary" disabled={busy} onClick={() => void run("install_application_update", { confirm_full: false })} type="button">Install update</button>{application.release_url && <button className="btn btn-quiet" disabled={busy} onClick={() => void run("open_release_notes")} type="button">View release notes</button>}</div></div> : <div className="update-line"><div><div className="update-strong">Hanly {state.runtime.app_version ?? ""}</div><div className="update-sub">{updates.message || application?.message || "No update check has been run."}</div></div><button className="btn" disabled={busy} onClick={() => void run("check_for_updates")} type="button">Check now</button></div>}
+        {isBusy ? (
+          <div className="update-busy">
+            <div className="update-busy-line"><span className="update-strong">{updates.message || titleCase(updates.status)}</span><span className="update-detail">{bytesLine}</span><span className="update-percent">{fraction === null ? "" : `${Math.round(fraction * 100)}%`}</span></div>
+            <div aria-label="Update progress" aria-valuemax={100} aria-valuemin={0} aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)} className="track" data-indeterminate={fraction === null} role="progressbar"><div className="track-fill" style={{ width: fraction === null ? undefined : `${fraction * 100}%` }} /></div>
+            {updates.cancellable && <div className="update-actions"><button className="btn btn-sm btn-quiet" disabled={busy} onClick={() => void run("cancel_update")} type="button">Cancel</button></div>}
+          </div>
+        ) : updates.restart_required || updates.status === "restart" ? (
+          <div className="update-line"><div><div className="update-strong">Ready to restart</div><div className="update-sub">{updates.message || "Hanly restarts into the new build. Your settings stay."}</div></div></div>
+        ) : updates.awaiting_confirmation ? (
+          <div className="update-block"><div className="update-strong">This installation needs the full download</div><div className="update-sub">{updates.message}</div><div className="update-actions"><button className="btn btn-primary" disabled={busy} onClick={() => void run("install_application_update", { confirm_full: true })} type="button">Download full update</button><button className="btn btn-quiet" disabled={busy} onClick={() => void run("cancel_update")} type="button">Not now</button></div></div>
+        ) : application?.installable ? (
+          <div className="update-block"><div className="update-versions"><span className="update-from">{application.current_version ?? "Current"}</span><span className="update-from">→</span><span className="update-to">{application.latest_version}</span>{updates.plan && <span className="update-size">· {describePlan(updates.plan)}</span>}</div>{application.message && <p className="update-sub">{application.message}</p>}<div className="update-actions"><button className="btn btn-primary" disabled={busy} onClick={() => void run("install_application_update", { confirm_full: false })} type="button">Install update</button>{application.release_url && <button className="btn btn-quiet" disabled={busy} onClick={() => void run("open_release_notes")} type="button">View release notes</button>}</div></div>
+        ) : updates.status === "failed" ? (
+          <div className="update-line"><div><div className="update-strong">Update check failed</div><div className="update-sub" role="alert">{updates.message || application?.message || "Hanly could not check for updates."}</div></div><button className="btn" disabled={busy} onClick={() => void run("check_for_updates")} type="button">Try again</button></div>
+        ) : (
+          <div className="update-line"><div><div className="update-strong">Hanly {state.runtime.app_version ?? ""}</div><div className="update-sub">{updates.message || application?.message || "No update check has been run."}</div></div><button className="btn" disabled={busy} onClick={() => void run("check_for_updates")} type="button">Check now</button></div>
+        )}
       </section>
 
-      <section className="panel" data-rise="2"><div className="panel-head"><div><h2 className="panel-title">Dictionary and resources</h2><p className="panel-note" id="resources-summary">{resources.length ? `${resources.length} local resource${resources.length === 1 ? "" : "s"}` : "No local resources reported yet."}</p></div></div><div className="panel-rows">{resources.length === 0 ? <p className="resource-foot">No local resources have been reported yet.</p> : resources.map((resource) => <ResourceRow key={resource.id} resource={resource} offered={availableResources.get(resource.id)} busy={busy || isBusy} install={() => void run("install_update", { resource_id: resource.id })} />)}</div></section>
-      {(updates.activity ?? []).length > 0 && <section className="panel panel-quiet" data-rise="3"><div className="panel-head"><h2 className="panel-title">Recent update activity</h2></div><div className="panel-rows">{updates.activity?.map((item, index) => <div className="log-row" key={`${item.at ?? index}-${index}`}><span className="log-time">{item.at ? new Date(item.at * 1000).toLocaleTimeString() : ""}</span><span className="log-message">{item.message}</span></div>)}</div></section>}
+      <section className="panel" data-rise="2">
+        <button aria-controls="resource-collapse" aria-expanded={resourcesOpen} className="disclosure" onClick={() => setResourcesOpen((open) => !open)} type="button"><span aria-hidden="true" className="disclosure-caret">▾</span>Dictionary and resources<span className="disclosure-summary">{resources.length}</span></button>
+        <div aria-hidden={!resourcesOpen} className="region-collapse" data-open={resourcesOpen} id="resource-collapse"><div className="collapse-inner"><div className="panel-rows">{resources.length === 0 ? <p className="resource-foot">No local resources have been reported yet.</p> : resources.map((resource) => <ResourceRow key={resource.id} resource={resource} offered={availableResources.get(resource.id)} busy={busy || isBusy} install={() => void run("install_update", { resource_id: resource.id })} />)}</div><p className="resource-foot">Resources swap without restarting. Lookups pause for a moment during the swap.</p></div></div>
+      </section>
+      <section className="panel panel-quiet" data-rise="3">
+        <button aria-controls="activity-collapse" aria-expanded={activityOpen} className="disclosure" onClick={() => setActivityOpen((open) => !open)} type="button"><span aria-hidden="true" className="disclosure-caret">▾</span>Update activity<span className="disclosure-summary">{activity.length}</span></button>
+        <div aria-hidden={!activityOpen} className="region-collapse" data-open={activityOpen} id="activity-collapse"><div className="collapse-inner"><div className="panel-rows" style={{ borderTop: "1px solid var(--border)" }}>{activity.length ? activity.map((item, index) => <div className="log-row" key={`${item.at ?? index}-${index}`}><span className="log-time">{item.at ? new Date(item.at * 1000).toLocaleTimeString() : ""}</span><span className="log-message">{item.message}</span></div>) : <p className="resource-foot">No update activity has been reported.</p>}</div></div></div>
+      </section>
     </div>
   );
 }
@@ -482,12 +599,14 @@ function ResourceRow({ resource, offered, busy, install }: { resource: RuntimeRe
 function LogsPage({ state, busy, run }: { state: HanlyState; busy: boolean; run: (method: DesktopMethod, params?: Record<string, unknown>) => Promise<unknown> }) {
   const [snapshot, setSnapshot] = useState<LogSnapshot | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [filter, setFilter] = useState("all");
   const [subsystem, setSubsystem] = useState("all");
   const [search, setSearch] = useState("");
 
   const refreshLogs = useCallback(async () => {
     setError("");
+    setNotice("");
     try { setSnapshot(await getLogs()); }
     catch (reason) { setError(errorText(reason)); }
   }, []);
@@ -505,18 +624,20 @@ function LogsPage({ state, busy, run }: { state: HanlyState; busy: boolean; run:
     try {
       await run("copy_text", { text });
       setError("");
+      setNotice(`Copied ${records.length} visible ${records.length === 1 ? "record" : "records"}.`);
     } catch (reason) { setError(errorText(reason)); }
   }
 
   async function emptyLogs() {
-    try { setSnapshot(await clearLogs()); setError(""); }
+    try { setSnapshot(await clearLogs()); setError(""); setNotice("Session log cleared."); }
     catch (reason) { setError(errorText(reason)); }
   }
 
   async function saveDiagnostics() {
     try {
       const saved = await exportDiagnostics();
-      setError(`Saved ${saved.records} records to ${saved.path}`);
+      setError("");
+      setNotice(`Saved ${saved.records} records to ${saved.path}`);
     } catch (reason) { setError(errorText(reason)); }
   }
 
@@ -524,7 +645,8 @@ function LogsPage({ state, busy, run }: { state: HanlyState; busy: boolean; run:
     <div className="page stack stack-wide">
       <section className="panel" data-rise="1"><div className="panel-head"><div><h2 className="panel-title">Runtime readiness</h2><p className="panel-note">Readiness and provider residency are separate states.</p></div><button className="btn btn-sm" disabled={busy} onClick={() => void run("retry_runtime")} type="button">Retry runtime</button></div><div className="readiness-stage"><div className="readiness-rows">{readiness.map((row) => <div className="readiness-row" key={row.label}><span aria-hidden="true" className="dot" data-tone={row.tone || undefined} /><span className="readiness-label">{row.label}</span><span className="readiness-detail">{row.detail}</span><span className="readiness-value" data-tone={row.tone || undefined}>{row.value}</span></div>)}</div></div></section>
       <section className="panel panel-quiet" data-rise="2"><div className="logs-head"><h2 className="panel-title">Recent records</h2><div aria-label="Filter by log level" className="logs-filters">{levels.map((level) => <button aria-pressed={filter === level} className="chip" key={level} onClick={() => setFilter(level)} type="button">{titleCase(level)}</button>)}</div><select aria-label="Filter by subsystem" className="select" onChange={(event) => setSubsystem(event.target.value)} value={subsystem}><option value="all">All subsystems</option>{(snapshot?.subsystems ?? []).map((name) => <option key={name} value={name}>{name}</option>)}</select><input aria-label="Search logs" className="log-search" onChange={(event) => setSearch(event.target.value)} placeholder="Search records" value={search} /></div><div aria-live="polite" className="log-list">{records.length === 0 ? <div className="log-empty">{error || "No records match."}</div> : records.map((record, index) => <LogLine key={`${record.timestamp}-${index}`} record={record} />)}</div><div className="logs-foot"><span className="logs-summary">{snapshot ? `${records.length} of ${snapshot.records.length} records · ${snapshot.log_path ?? state.runtime.log_path ?? ""}` : "Logs are loading."}</span><div className="logs-actions"><button className="btn btn-sm" disabled={busy || !snapshot} onClick={() => void refreshLogs()} type="button">Refresh</button><button className="btn btn-sm" disabled={busy || records.length === 0} onClick={() => void copyLogs()} type="button">Copy visible</button><button className="btn btn-sm btn-quiet" disabled={busy || !snapshot} onClick={() => void emptyLogs()} type="button">Clear</button><button className="btn btn-sm btn-quiet" disabled={busy} onClick={() => void saveDiagnostics()} type="button">Export diagnostics</button></div></div></section>
-      {error && <div className="banner" data-tone={error.startsWith("Saved ") ? "warn" : "bad"} role="status">{error}</div>}
+      {error && <div className="banner" data-tone="bad" role="alert">{error}</div>}
+      {notice && <div className="banner" data-tone="warn" role="status">{notice}</div>}
     </div>
   );
 }

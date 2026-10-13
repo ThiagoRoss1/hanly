@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import { desktopRequest, markFrontendReady } from "../services/desktopBridge.ts";
+import { listenToDesktopEvents } from "../services/desktopEvents.ts";
 import { normalizeDesktopError } from "../services/desktopBridgeCore.ts";
-import type { CaptureRegion } from "../contracts/desktop.ts";
+import type { CaptureRegion, DesktopRegionEvent } from "../contracts/desktop.ts";
 
 interface PointerPoint {
   x: number;
@@ -25,15 +26,37 @@ function normalizedBox(start: PointerPoint, end: PointerPoint): SelectionBox {
 export function RegionSelectorPage() {
   const [selection, setSelection] = useState<SelectionBox | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [desktop, setDesktop] = useState<DesktopRegionEvent | null>(null);
   const origin = useRef<PointerPoint | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.regionSelector = "true";
-    void markFrontendReady("region_selector").catch((reason: unknown) => {
-      setError(normalizeDesktopError(reason).message);
+    let active = true;
+    let unlisten: (() => void) | null = null;
+
+    void listenToDesktopEvents({
+      onRegion: (event: DesktopRegionEvent) => {
+        if (active) {
+          setDesktop(event);
+          setSelection(null);
+          setError(null);
+          origin.current = null;
+        }
+      },
+    }).then(async (dispose) => {
+      if (!active) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+      await markFrontendReady("region_selector");
+    }).catch((reason: unknown) => {
+      if (active) setError(normalizeDesktopError(reason).message);
     });
 
     return () => {
+      active = false;
+      unlisten?.();
       delete document.documentElement.dataset.regionSelector;
     };
   }, []);
@@ -109,15 +132,20 @@ function pointFromEvent(event: PointerEvent<HTMLElement>): PointerPoint {
     width: `${selection.width}px`,
     height: `${selection.height}px`,
   } : undefined;
+  const instruction = error ?? (desktop
+    ? `Drag across ${desktop.monitors.length} ${desktop.monitors.length === 1 ? "display" : "displays"} · Esc or right-click to cancel`
+    : "Drag across the screen · Esc or right-click to cancel");
 
   return (
     <main
       aria-label="Select a screen region"
       className="region-screen"
+      data-monitor-count={desktop?.monitors.length ?? 0}
       onPointerDown={startSelection}
       onPointerMove={moveSelection}
       onPointerUp={(event) => void finishSelection(event)}
     >
+      {desktop?.image && <img alt="" aria-hidden="true" className="region-backdrop" src={desktop.image} />}
       <div aria-hidden="true" className="region-selection" data-active={Boolean(selection)} style={boxStyle}>
         {selection && (
           <span className="region-selection-size">{selection.width} × {selection.height}</span>
@@ -126,9 +154,7 @@ function pointFromEvent(event: PointerEvent<HTMLElement>): PointerPoint {
       <section aria-live="polite" className="region-instructions">
         <div className="region-instruction-copy">
           <div className="region-instruction-title">Choose where Hanly reads</div>
-          <div className="region-instruction-hint">
-            {error || "Drag inside one monitor · Esc or right-click to cancel"}
-          </div>
+          <div className="region-instruction-hint">{instruction}</div>
         </div>
         <button className="btn btn-sm btn-quiet region-cancel" onClick={() => void cancel()} type="button">
           Cancel

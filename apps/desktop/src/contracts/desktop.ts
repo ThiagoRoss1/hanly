@@ -31,48 +31,50 @@ export interface PermissionItem {
 
 export interface HanlyState {
   app: {
-    state?: string;
-    activity?: string;
-    detail?: string;
-    capture_running?: boolean;
-    capture_mode?: string;
-    target?: string;
-    region?: CaptureRegion | null;
-    targets?: CaptureTarget[];
+    state: string;
+    activity: string;
+    detail: string;
+    capture_running: boolean;
+    capture_mode: string;
+    target: string;
+    region: CaptureRegion | null;
+    targets: CaptureTarget[];
   };
   config: {
-    hover_delay_ms?: number;
-    hover_activation?: string;
-    lookup_preload?: string;
-    ocr_backend?: string;
-    theme?: string;
-    popup_default_size?: string;
-    technical_details?: string;
-    capture_mode?: string;
-    capture_monitor?: number | null;
-    capture_region?: CaptureRegion | null;
-    hotkey?: string;
-    hover_hotkey?: string;
-    capture_hotkey?: string;
-    [key: string]: unknown;
+    capture_hotkey: string;
+    capture_mode: string;
+    capture_monitor: number | null;
+    capture_region: CaptureRegion | null;
+    hotkey: string;
+    hover_activation: string;
+    hover_delay_ms: number;
+    hover_hotkey: string;
+    lookup_preload: string;
+    ocr_backend: string;
+    popup_enabled: boolean;
+    popup_default_size: string;
+    technical_details: string;
+    theme: string;
+    update_checks_enabled: boolean;
   };
   runtime: {
-    ocr_provider?: string | null;
-    ocr_backends?: string[];
-    app_version?: string | null;
-    hover_delay_bounds?: { min: number; max: number };
-    resources?: RuntimeResource[];
-    status?: { phase?: string; stage?: string; message?: string };
-    engine?: { state?: string; message?: string; preparing_sequence?: number };
-    hotkeys?: Record<string, string>;
-    log_path?: string | null;
+    ocr_provider: string | null;
+    ocr_backends: string[];
+    app_version: string | null;
+    hover_delay_bounds: { min: number; max: number };
+    resources: RuntimeResource[];
+    status: { phase: string; stage: string; message: string };
+    engine: { state: string; message: string; preparing_sequence?: number };
+    hotkeys: Record<string, string>;
+    log_path: string | null;
+    diagnostics: string[];
   };
-  updates?: UpdateState;
+  updates: UpdateState;
   permissions: {
     available?: boolean;
     message?: string;
-    supported?: boolean;
-    items?: PermissionItem[];
+    supported: boolean;
+    items: PermissionItem[];
   };
 }
 
@@ -106,9 +108,9 @@ export interface UpdateResource {
 }
 
 export interface UpdateState {
-  available?: boolean;
-  status?: string;
-  message?: string;
+  available: boolean;
+  status: string;
+  message: string;
   resources?: UpdateResource[];
   progress?: UpdateProgress | null;
   application?: UpdateApplication | null;
@@ -169,7 +171,13 @@ export interface PopupPayload extends PopupContent {
   expanded?: boolean;
   technical_details?: string;
   theme?: string;
-  config?: { technical_details?: string; theme?: string };
+  config?: { technical_details?: string; theme?: string; popup_default_size?: string };
+}
+
+export interface DesktopRegionEvent {
+  image?: string;
+  bounds: CaptureRegion;
+  monitors: CaptureTarget[];
 }
 
 export type DesktopPopupEvent =

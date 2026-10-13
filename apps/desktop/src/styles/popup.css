@@ -14,6 +14,7 @@ html[data-popup="true"] body {
 
 html[data-popup="true"] #root {
   display: inline-block;
+  height: auto;
   width: max-content;
   min-width: 100%;
   background: transparent;

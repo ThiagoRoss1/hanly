@@ -15,6 +15,11 @@ function popupContent(payload: PopupPayload): PopupContent {
   return payload.content ?? payload;
 }
 
+function initiallyExpanded(payload: PopupPayload): boolean {
+  if (typeof payload.expanded === "boolean") return payload.expanded;
+  return payload.config?.popup_default_size === "expanded";
+}
+
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -45,17 +50,18 @@ export function PopupPage() {
         if (event.sequence > currentSequence.current) {
           currentSequence.current = event.sequence;
           geometrySent.current = "";
-          if (event.type === "popup") setExpanded(Boolean(event.payload.expanded));
+          if (event.type === "popup") setExpanded(initiallyExpanded(event.payload));
         }
         setCurrent(event.type === "popup" ? event : null);
       },
-    }).then((dispose) => {
-      if (!active) dispose();
-      else unlisten = dispose;
+    }).then(async (dispose) => {
+      if (!active) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+      await markFrontendReady("popup");
     }).catch((reason: unknown) => {
-      if (active) setBridgeError(normalizeDesktopError(reason).message);
-    });
-    void markFrontendReady("popup").catch((reason: unknown) => {
       if (active) setBridgeError(normalizeDesktopError(reason).message);
     });
     return () => {

@@ -51,25 +51,25 @@ export function useDesktopState(view: "control_center") {
     let active = true;
     let unlisten: (() => void) | null = null;
 
-    void listenToDesktopEvents({
-      onState: acceptState,
-      onServiceStatus: (status) => {
-        dispatch({ type: "service-status", payload: status });
-      },
-    }).then((dispose) => {
-      if (!active) dispose();
-      else unlisten = dispose;
-    }).catch((error: unknown) => {
-      if (active) dispatch({ type: "connection-error", message: errorText(error) });
-    }).then(async () => {
-      if (!active) return;
+    void (async () => {
       try {
+        const dispose = await listenToDesktopEvents({
+          onState: acceptState,
+          onServiceStatus: (status) => {
+            dispatch({ type: "service-status", payload: status });
+          },
+        });
+        if (!active) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
         await markFrontendReady(view);
         acceptState(await getState());
       } catch (error) {
         if (active) dispatch({ type: "connection-error", message: errorText(error) });
       }
-    });
+    })();
 
     return () => {
       active = false;
@@ -81,14 +81,14 @@ export function useDesktopState(view: "control_center") {
     .some((phase) => phase === "preparing" || phase === "stopping");
 
   useEffect(() => {
-    if (!runtimePending && !isUpdating(state)) return;
+    if (connectionError || (!runtimePending && !isUpdating(state))) return;
     const timer = window.setInterval(() => {
       void getState().then(acceptState).catch((error: unknown) => {
         dispatch({ type: "connection-error", message: errorText(error) });
       });
     }, 900);
     return () => window.clearInterval(timer);
-  }, [acceptState, runtimePending, state]);
+  }, [acceptState, connectionError, runtimePending, state]);
 
   return { state, connectionError, serviceStatus, refreshing, refresh, runCommand };
 }

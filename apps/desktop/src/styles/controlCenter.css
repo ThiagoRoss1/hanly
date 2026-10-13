@@ -50,7 +50,7 @@
   --surface-hover: #F0EFEE;
   --text-primary: #202124;
   --text-secondary: #5F6268;
-  --text-muted: #6B6E75;
+  --text-muted: #696C73;
   --text-on-accent: #202124;
   --border: #D8D6D4;
   --border-soft: #E4E2E0;
@@ -153,6 +153,9 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* React adds a containing block between the document and the desktop shell. */
+#root { height: 100%; min-height: 0; }
+
 button, input, select { font-family: inherit; }
 
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
@@ -252,6 +255,7 @@ button, input, select { font-family: inherit; }
   padding: 16px 12px 12px;
   background: var(--surface-subtle);
   border-right: 1px solid var(--border);
+  overflow-y: auto;
 }
 
 .brand { display: flex; align-items: center; gap: 11px; padding: 2px 6px 20px; }
@@ -416,7 +420,7 @@ button, input, select { font-family: inherit; }
 
 /* ---- main ------------------------------------------------------------- */
 
-.main { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; }
+.main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 
 .page-head {
   display: flex;
@@ -623,13 +627,13 @@ button, input, select { font-family: inherit; }
  * band that its own border and shadow paint into.
  */
 
-.collapse {
+.region-collapse {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
 }
 
-.collapse[data-open="true"] { grid-template-rows: 1fr; }
+.region-collapse[data-open="true"] { grid-template-rows: 1fr; }
 
 .collapse-inner {
   min-height: 0;
@@ -643,7 +647,7 @@ button, input, select { font-family: inherit; }
     transform var(--acc-collapse) var(--acc-ease);
 }
 
-.collapse[data-open="true"] .collapse-inner {
+.region-collapse[data-open="true"] .collapse-inner {
   opacity: 1;
   filter: blur(0);
   transform: translate3d(0, 0, 0);
@@ -814,20 +818,23 @@ button, input, select { font-family: inherit; }
   border-radius: var(--radius-md);
 }
 
-.settings-head { display: flex; align-items: center; gap: 10px; }
+.settings-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 5px; }
 .settings-head .panel-title { color: var(--text-secondary); }
 .settings-aside { color: var(--text-muted); font-size: 11.5px; }
 
 .settings-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 108px minmax(200px, 280px) minmax(0, 1fr);
   align-items: center;
-  gap: 10px 14px;
-  margin-top: 11px;
+  gap: 6px 16px;
+  padding-block: 9px;
 }
 
-.settings-name { width: 88px; flex: none; font-size: 12px; font-weight: 600; }
-.settings-help { color: var(--text-muted); font-size: 11.5px; }
+.settings-name { font-size: 12px; font-weight: 600; }
+.settings-control { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.settings-control > .select { width: 100%; min-width: 0; }
+.settings-control > input[type="range"] { min-width: 0; width: 100%; }
+.settings-help { min-width: 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere; }
 
 input[type="range"] {
   flex: 1;
@@ -1187,6 +1194,46 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.12); }
 .banner[data-tone="warn"] { background: var(--warning-wash); color: var(--warning); border: 1px solid var(--warning); }
 .banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
+.choice-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 19, 22, .38);
+  backdrop-filter: blur(2px);
+}
+
+.choice-dialog {
+  width: min(440px, 100%);
+  padding: 22px;
+  box-shadow: var(--shadow-md);
+}
+
+.choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.permission-onboarding {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 14px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--permission);
+  border-radius: var(--radius-sm);
+  background: var(--permission-wash);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.permission-onboarding strong { color: var(--text-primary); font-size: 12px; }
+
 /* ---- narrow windows --------------------------------------------------- *
  * The supported minimum is 760x560. The sidebar stays fixed in concept and
  * only loses its labels, so nothing overlaps and no page scrolls sideways.
@@ -1198,6 +1245,8 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.12); }
   .page-head { flex-wrap: wrap; }
   .head-actions { margin-left: auto; }
   .readiness-label { width: 92px; }
+  .settings-row { grid-template-columns: 108px minmax(0, 1fr); gap: 4px 12px; padding-block: 10px; }
+  .settings-help { grid-column: 2; }
 }
 
 @media (max-width: 700px) {
@@ -1209,4 +1258,6 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.12); }
   .live-label { display: none; }
   .page-body { padding: 14px 16px 18px; }
   .page-head { padding: 14px 16px 12px; }
+  .settings-row { grid-template-columns: minmax(0, 1fr); }
+  .settings-help { grid-column: 1; }
 }
