@@ -1,43 +1,22 @@
-"""The Hanly command.
-
-This is the only entry point. The installed ``hanly`` script, ``python -m
-hanly_app``, and the packaged executable all call :func:`main`; there is no
-second way to start the desktop.
-"""
+"""The Python command forwards supported Hanly launch arguments to Tauri."""
 
 from __future__ import annotations
 
 import argparse
 import multiprocessing
 import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import NoReturn
 
-from hanly_app.control_center.bridge import ControlCenterUnavailable
-
-from .application import (
-    DesktopApplicationError,
-    report_startup_error,
-    resolve_runtime_config,
-    run_desktop,
-)
-from .diagnostics import DiagnosticLog, open_diagnostics
-from .first_run import FirstRunError
-from .runtime import RuntimeConfigError
-from .self_check import (
-    RUNTIME_SELF_CHECK_MODES,
-    SELF_CHECK_MODES,
-    report_self_check,
-)
-
-RuntimeResolver = Callable[[Path | None], Path]
-DesktopRunner = Callable[..., int]
-
-#: Written into the configuration's help text, and the default when the
-#: packaged executable is launched with no arguments at all.
 RUN_COMMAND = "run"
+NATIVE_EXECUTABLE_VARIABLE = "HANLY_DESKTOP_EXECUTABLE"
+SELF_CHECK_MODES = ("inventory", "ocr", "worker", "ui")
+
+ExecutableResolver = Callable[[], Path]
+NativeRunner = Callable[[Path, Sequence[str]], int]
 
 
 def parse_roi_size(value: str) -> tuple[int, int]:
@@ -46,13 +25,13 @@ def parse_roi_size(value: str) -> tuple[int, int]:
     width, separator, height = value.lower().partition("x")
     if not separator or not width.isdigit() or not height.isdigit():
         raise argparse.ArgumentTypeError("ROI size must look like 200x100")
-    if int(width) <= 0 or int(height) <= 0:
-        raise argparse.ArgumentTypeError("ROI dimensions must be positive")
+    if not all(0 < int(dimension) <= 4096 for dimension in (width, height)):
+        raise argparse.ArgumentTypeError("ROI dimensions must be between 1 and 4096")
     return int(width), int(height)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the one parser Hanly has."""
+    """Build the supported launch argument parser."""
 
     parser = argparse.ArgumentParser(
         prog="hanly",
@@ -65,44 +44,27 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(RUN_COMMAND,),
         help="start the desktop (the default, so plain `hanly` does the same)",
     )
-    parser.add_argument(
-        "--runtime-config",
-        type=Path,
-        help=(
-            "runtime/provider/resource JSON configuration "
-            "(default: runtime.json beside the executable or in the settings directory)"
-        ),
-    )
-    parser.add_argument(
-        "--app-config",
-        type=Path,
-        help="optional desktop preferences JSON path",
-    )
+    parser.add_argument("--runtime-config", type=Path, help="runtime/provider/resource JSON path")
+    parser.add_argument("--app-config", type=Path, help="desktop preferences JSON path")
     parser.add_argument(
         "--roi",
         type=parse_roi_size,
         dest="roi_size",
-        help="capture ROI as WIDTHxHEIGHT, for comparing detection areas",
+        help="capture ROI as WIDTHxHEIGHT",
     )
-    # Internal: an update handoff relaunches Hanly through this one entry point
-    # and reads back the version that came up. Nothing else writes this path.
+    parser.add_argument("--trace", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--update-ready",
         dest="update_ready",
         type=Path,
         help=argparse.SUPPRESS,
     )
-    # Internal: the same milestone, for a helper that wants the build to prove
-    # which build it is rather than which version. A separate argument so new
-    # intent is never guessed from a file an older helper happened to write.
     parser.add_argument(
         "--update-ready-v2",
         dest="update_challenge",
         type=Path,
         help=argparse.SUPPRESS,
     )
-    # Internal: the packaging harness drives the real runtime through this one
-    # entry point rather than through a second application.
     parser.add_argument(
         "--self-check",
         dest="self_check",
@@ -118,129 +80,122 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> NoReturn:
-    """Run Hanly, reporting a startup failure rather than raising, then leave."""
+def resolve_native_executable() -> Path:
+    """Find the existing Tauri executable; never build or fall back to Qt."""
 
-    # Before argument parsing and before anything is opened: a spawned child
-    # re-enters a frozen build through this same executable, and this is what
-    # diverts it into its own role instead of starting a second desktop.
-    multiprocessing.freeze_support()
-
-    args = build_parser().parse_args(list(argv) if argv is not None else sys.argv[1:])
-    # Opened before Qt so a native initialization failure is already being
-    # written somewhere the user can find it.
-    diagnostics = open_diagnostics()
-    try:
-        status = _start(
-            args,
-            runtime_resolver=resolve_runtime_config,
-            desktop_runner=run_desktop,
-            diagnostics=diagnostics,
+    override = os.environ.get(NATIVE_EXECUTABLE_VARIABLE)
+    if override:
+        executable = Path(override).expanduser().resolve()
+        if executable.is_file():
+            return executable
+        raise FileNotFoundError(
+            f"{NATIVE_EXECUTABLE_VARIABLE} does not name a file: {executable}"
         )
-    except (
-        ControlCenterUnavailable,
-        DesktopApplicationError,
-        FirstRunError,
-        RuntimeConfigError,
-        OSError,
-        ValueError,
-    ) as error:
-        diagnostics.report("Startup", error)
-        # A self-check is machine-driven: reporting it through a modal dialog
-        # would leave the process waiting for a click nobody is there to make.
-        report_startup_error(error, log_path=diagnostics.path, interactive=not args.self_check)
-        status = 2
-    _leave(status)
+
+    suffix = ".exe" if sys.platform == "win32" else ""
+    repository_root = Path(__file__).resolve().parents[4]
+    candidates = [
+        repository_root
+        / "apps"
+        / "desktop"
+        / "src-tauri"
+        / "target"
+        / "debug"
+        / f"hanly-desktop{suffix}"
+    ]
+    installed = shutil.which(f"hanly-desktop{suffix}")
+    if installed is not None:
+        candidates.append(Path(installed))
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+
+    raise FileNotFoundError(
+        "the Tauri executable is unavailable; build apps/desktop/src-tauri in debug "
+        f"mode or set {NATIVE_EXECUTABLE_VARIABLE} to an existing native executable"
+    )
 
 
-def _leave(status: int) -> NoReturn:
-    """End the process now, rather than during interpreter finalization."""
+def main(argv: Sequence[str] | None = None) -> int:
+    """Forward the single Python command to the native desktop root."""
 
-    # PyInstaller leaves both streams as None in a windowed build. Raising past
-    # this function leaves the bootloader holding a modal crash dialog, which is
-    # exactly what an update handoff is waiting for the process to stop doing.
-    for stream in (sys.stdout, sys.stderr):
-        if stream is None:
-            continue
-        try:
-            stream.flush()
-        except (OSError, ValueError, AttributeError):
-            pass
-    _terminate_without_unloading(status)
-    os._exit(status)
-
-
-def _terminate_without_unloading(status: int) -> None:
-    """End a Windows process without unloading the libraries it has loaded."""
-
-    if sys.platform != "win32":
-        return
-
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.windll.kernel32
-    # Untyped, the pseudo-handle is narrowed to 32 bits and the call fails.
-    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-    kernel32.TerminateProcess.restype = wintypes.BOOL
-    kernel32.TerminateProcess(kernel32.GetCurrentProcess(), status)
+    multiprocessing.freeze_support()
+    try:
+        return run_hanly(argv)
+    except OSError as error:
+        print(f"Hanly: {error}", file=sys.stderr)
+        return 2
 
 
 def run_hanly(
     argv: Sequence[str] | None = None,
     *,
-    runtime_resolver: RuntimeResolver = resolve_runtime_config,
-    desktop_runner: DesktopRunner = run_desktop,
+    executable_resolver: ExecutableResolver | None = None,
+    native_runner: NativeRunner | None = None,
 ) -> int:
-    """Injectable form of :func:`main` that lets a caller supply the seams."""
+    """Run the native executable with the parsed, explicitly supported flags."""
 
-    return _start(
-        build_parser().parse_args(list(argv or ())),
-        runtime_resolver=runtime_resolver,
-        desktop_runner=desktop_runner,
-    )
+    values = list(argv) if argv is not None else sys.argv[1:]
+    args = build_parser().parse_args(values)
+    executable = (executable_resolver or resolve_native_executable)()
+    runner = native_runner or launch_native_desktop
+    return runner(executable, _native_arguments(args))
 
 
-def _start(
-    args: argparse.Namespace,
-    *,
-    runtime_resolver: RuntimeResolver,
-    desktop_runner: DesktopRunner,
-    diagnostics: DiagnosticLog | None = None,
-) -> int:
-    """Start the desktop, or run the internal diagnostic mode.
+def _native_arguments(args: argparse.Namespace) -> list[str]:
+    """Translate parser values into the Rust launcher's narrow argument set."""
 
-    Nothing is asked before the interface opens. Resource resolution and
-    provisioning happen inside the desktop, behind an already-visible window,
-    so a launch cannot stall on a prompt or a download.
-    """
+    arguments: list[str] = []
+    for name in ("runtime_config", "app_config"):
+        path = getattr(args, name)
+        if path is not None:
+            flag = "--runtime-config" if name == "runtime_config" else "--app-config"
+            arguments.extend((flag, _absolute(path)))
+    roi = args.roi_size
+    if roi is not None:
+        arguments.extend(("--roi", f"{roi[0]}x{roi[1]}"))
+    if args.trace:
+        arguments.append("--trace")
+    for name, flag in (
+        ("update_ready", "--update-ready"),
+        ("update_challenge", "--update-ready-v2"),
+        ("self_check", "--self-check"),
+        ("self_check_image", "--self-check-image"),
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            arguments.extend((flag, _absolute(value) if isinstance(value, Path) else value))
+    return arguments
 
-    mode = getattr(args, "self_check", None)
-    if mode:
-        # The window check opens the shell before any resource exists, exactly
-        # as a launch does, so resolving one would provision what it must not.
-        return report_self_check(
-            runtime_resolver(args.runtime_config)
-            if mode in RUNTIME_SELF_CHECK_MODES
-            else None,
-            mode=mode,
-            image=getattr(args, "self_check_image", None),
-        )
 
-    return desktop_runner(
-        args.runtime_config,
-        app_config=args.app_config,
-        roi_size=args.roi_size,
-        diagnostics=diagnostics,
-        runtime_resolver=runtime_resolver,
-        update_ready=getattr(args, "update_ready", None),
-        update_challenge=getattr(args, "update_challenge", None),
-    )
+def _absolute(path: Path) -> str:
+    """Send local paths in the absolute form required by the private bridge."""
+
+    return str(path.expanduser().resolve())
+
+
+def launch_native_desktop(executable: Path, arguments: Sequence[str]) -> int:
+    """Replace this launcher on POSIX and wait for the native root on Windows."""
+
+    command = [str(executable), *arguments]
+    if sys.platform == "win32":
+        return subprocess.run(command, check=False).returncode
+    os.execv(str(executable), command)
+    raise AssertionError("execv returned without replacing the process")
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["build_parser", "main", "parse_roi_size", "run_hanly"]
+__all__ = [
+    "NATIVE_EXECUTABLE_VARIABLE",
+    "SELF_CHECK_MODES",
+    "build_parser",
+    "launch_native_desktop",
+    "main",
+    "parse_roi_size",
+    "resolve_native_executable",
+    "run_hanly",
+]

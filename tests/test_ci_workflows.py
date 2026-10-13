@@ -208,10 +208,8 @@ def test_every_pytest_job_declares_the_node_runtime_used_by_browser_tests(
     assert steps.index(setup) < steps.index(tests)
 
 
-def test_linux_build_installs_what_qts_xcb_platform_plugin_needs() -> None:
-    """PyInstaller collects a shared library only if the build machine has it,
-    so this list is not only the runner's display stack -- it is what ends up
-    inside the Linux artifact. Without it Qt aborts on an unloadable plugin."""
+def test_linux_build_installs_tauri_native_dependencies() -> None:
+    """The Linux release links the Tauri webview and native integrations."""
 
     steps = _steps(_workflow("build.yml"), "build")
     linux_dependencies = [
@@ -223,27 +221,15 @@ def test_linux_build_installs_what_qts_xcb_platform_plugin_needs() -> None:
     assert step["if"] == "matrix.platform == 'linux'"
     assert "sudo apt-get update" in step["run"]
     assert "--no-install-recommends" in step["run"]
-    # Every external soname of libqxcb.so and libQt6XcbQpa that an Ubuntu
-    # image does not already carry, plus libegl1 for PyInstaller's Qt
-    # collection and xvfb for the display the frozen window opens in.
     assert _installed_packages(step["run"]) == {
-        "libegl1",
-        "libgl1",
-        "libfontconfig1",
-        "libx11-xcb1",
-        "libxcb-cursor0",
-        "libxcb-icccm4",
-        "libxcb-image0",
-        "libxcb-keysyms1",
-        "libxcb-randr0",
-        "libxcb-render-util0",
-        "libxcb-shape0",
-        "libxcb-shm0",
-        "libxcb-sync1",
-        "libxcb-util1",
-        "libxcb-xfixes0",
-        "libxcb-xkb1",
-        "libxkbcommon-x11-0",
+        "build-essential",
+        "curl",
+        "file",
+        "libssl-dev",
+        "libxdo-dev",
+        "librsvg2-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
         "xvfb",
     }
     build = next(item for item in steps if item.get("name") == "Build application package")
@@ -255,6 +241,71 @@ def _installed_packages(run: str) -> set[str]:
 
     body = run.split("packages=(", 1)[1].split(")", 1)[0]
     return set(body.split())
+
+
+def test_linux_native_ci_installs_tauri_desktop_dependencies() -> None:
+    """The product's native UI and display adapters need their system libraries."""
+
+    step = next(
+        item
+        for item in _steps(_workflow("ci.yml"), "native")
+        if item.get("name") == "Install Linux desktop dependencies"
+    )
+
+    assert step["if"] == "matrix.platform == 'linux'"
+    packages = _installed_packages(step["run"])
+    assert {
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "librsvg2-dev",
+        "libxdo-dev",
+        "xvfb",
+    } <= packages
+    assert {"libegl1", "libxcb-xkb1", "libxkbcommon-x11-0"} <= packages
+
+
+def test_desktop_ci_runs_typescript_react_and_production_build_gates() -> None:
+    steps = _steps(_workflow("ci.yml"), "desktop")
+    commands = "\n".join(step.get("run", "") for step in steps)
+    names = [step.get("name", "") for step in steps]
+
+    assert "npm ci --prefix apps/desktop" in commands
+    assert "npm run --prefix apps/desktop check" in commands
+    assert "npm test --prefix apps/desktop" in commands
+    assert "npm run --prefix apps/desktop test:ui" in commands
+    assert "npm run --prefix apps/desktop build" in commands
+    assert names.index("Install desktop dependencies") < names.index("Check TypeScript")
+    assert names.index("Run React page tests") < names.index("Build the production frontend")
+
+
+def test_native_ci_runs_rust_format_tests_and_clippy_on_every_platform() -> None:
+    steps = _steps(_workflow("ci.yml"), "native")
+    commands = "\n".join(step.get("run", "") for step in steps)
+
+    setup = _step(_workflow("ci.yml"), "native", name="Set up Rust")
+    assert "rustup toolchain install 1.99.0 --profile minimal" in setup["run"]
+    assert "rustup default 1.99.0" in setup["run"]
+    assert "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check" in commands
+    assert "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked" in commands
+    assert (
+        "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked"
+        in commands
+    )
+    python_fixture = _step(
+        _workflow("ci.yml"),
+        "native",
+        name="Select the CI Python for Rust service fixtures",
+    )
+    assert "HANLY_TEST_PYTHON=" in python_fixture["run"]
+    assert "sys.executable" in python_fixture["run"]
+
+    packages = _step(
+        _workflow("ci.yml"), "native", name="Install packages with the desktop runtime"
+    )
+    native_tests = _step(_workflow("ci.yml"), "native", name="Test the native shell")
+    assert steps.index(packages) < steps.index(native_tests), (
+        "Rust fixtures start the installed Python service"
+    )
 
 
 def test_linux_build_uses_the_cpu_only_ocr_runtime() -> None:
@@ -685,9 +736,11 @@ def test_every_platform_that_can_run_native_cases_has_a_job_that_does() -> None:
     """A POSIX-only assumption is invisible on a Linux-only matrix until a tag
     build runs it, and a macOS-only one was invisible everywhere."""
 
-    native = _workflow("ci.yml")["jobs"]["native"]
+    workflow = _workflow("ci.yml")
+    native = workflow["jobs"]["native"]
     runners = [entry["runner"] for entry in native["strategy"]["matrix"]["include"]]
-    commands = "\n".join(step.get("run", "") for step in _steps(_workflow("ci.yml"), "native"))
+    steps = _steps(workflow, "native")
+    commands = "\n".join(step.get("run", "") for step in steps)
 
     assert native["strategy"]["fail-fast"] is False
     assert runners == ["windows-latest", "macos-latest", "ubuntu-latest"]
@@ -695,6 +748,12 @@ def test_every_platform_that_can_run_native_cases_has_a_job_that_does() -> None:
     # The real runtime, the real weights, and a real dictionary: without all
     # three these cases would have nothing to exercise but their own skips.
     assert 'python -m pip install --editable "packages/hanly-app[runtime]"' in commands
+    lab = _step(workflow, "native", name="Install Lab native UI dependency")
+    native_tests = next(
+        step for step in steps if "python -m pytest --suite native" in step.get("run", "")
+    )
+    assert lab["run"] == "python -m pip install --group lab"
+    assert steps.index(lab) < steps.index(native_tests)
     assert "tools/prepare_easyocr_models.py" in commands
     assert "tools/build_smoke_krdict.py" in commands
     assert "python -m pytest --suite native" in commands

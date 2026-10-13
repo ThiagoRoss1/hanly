@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from hanly.krdict_provider import KRDICTProvider
 from hanly.krdict_schema import KRDICT_SCHEMA_VERSION, validate_krdict_connection
-from hanly_app.self_check import DICTIONARY_PROBE
+from hanly_app.service.self_check import DICTIONARY_PROBE
 
 from tools.build_smoke_krdict import (
     PROBE_LEMMAS,

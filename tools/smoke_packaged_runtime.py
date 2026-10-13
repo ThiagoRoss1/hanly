@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic, sleep
 from typing import Any, cast
 
 #: Packages the desktop imports by name at runtime. Their absence is exactly
@@ -64,6 +65,8 @@ BUNDLE_SIGNATURE = "Contents/_CodeSignature/CodeResources"
 _COLLECTION_ROOTS = (
     (),
     (_INTERNAL_DIRECTORY,),
+    ("resources", "hanly-service", _INTERNAL_DIRECTORY),
+    ("Contents", "Resources", "hanly-service", _INTERNAL_DIRECTORY),
     ("Contents", "Frameworks"),
     ("Contents", "Frameworks", _INTERNAL_DIRECTORY),
     ("Contents", "Resources"),
@@ -73,6 +76,7 @@ _COLLECTION_ROOTS = (
 #: macOS's own tools, used only to reconstruct and inspect what was published.
 DITTO = "/usr/bin/ditto"
 HDIUTIL = "/usr/bin/hdiutil"
+OPEN = "/usr/bin/open"
 
 CommandRunner = Callable[..., Any]
 
@@ -83,6 +87,13 @@ DEFAULT_TIMEOUT_SECONDS = 1200
 #: The window builds no provider, but first-launch file reads can still take
 #: minutes before its warm path falls below a second.
 UI_TIMEOUT_SECONDS = 600
+
+# The native app has to create its real UI, receive its frontend-ready message,
+# and let the service answer an update challenge before this deadline.
+UPDATE_ACK_TIMEOUT_SECONDS = 180
+
+# A successful native launch is asked to exit normally before cleanup escalates.
+UPDATE_SHUTDOWN_SECONDS = 15
 
 #: How long the timed-out process tree is given to actually die. Reaping has
 #: already failed by this point, so this bounds the cleanup rather than the run.
@@ -100,13 +111,9 @@ EASYOCR_MODEL_SUBDIRECTORY = "model"
 #: Redirected so nothing resolves ``~`` back to the developer's account.
 HOME_VARIABLES = ("HOME", "USERPROFILE", "XDG_CACHE_HOME")
 
-#: Hosted Linux may advertise an unusable display. Inventory-only checks use
-#: a known platform plugin; window checks retain the real display.
-QT_PLATFORM_VARIABLE = "QT_QPA_PLATFORM"
-HEADLESS_QT_PLATFORM = "offscreen"
-
-#: Self-check modes that construct no window and must never need a display.
-HEADLESS_SELF_CHECK_MODES = ("worker",)
+#: These native-host modes dispatch directly to the Python service and need no
+#: display. ``ui`` builds a real Tauri window and must use the real display.
+HEADLESS_SELF_CHECK_MODES = ("inventory", "ocr", "worker")
 
 #: How much of a crashed run's output is repeated above the report. A fault
 #: handler traceback is why this is measured in lines rather than in one.
@@ -165,7 +172,7 @@ class BundleInventory:
 
 
 def inspect_bundle(application_directory: str | Path) -> BundleInventory:
-    """Report which required runtime dependencies the bundle carries."""
+    """Report the native root and the runtime dependencies its service carries."""
 
     root = Path(application_directory).resolve()
     if not root.is_dir():
@@ -190,6 +197,42 @@ def inspect_bundle(application_directory: str | Path) -> BundleInventory:
     for data_file in REQUIRED_DATA_FILES:
         (present if _find_data_file(root, data_file) is not None else missing).append(data_file)
 
+    program = _find_native_executable(root)
+    (present if program is not None else missing).append(
+        f"native executable ({APPLICATION_STEM})"
+    )
+    service_name = "hanly-service.exe" if sys.platform == "win32" else "hanly-service"
+    service = next(
+        (
+            candidate
+            for candidate in (
+                root / "resources" / "hanly-service" / service_name,
+                root / "Contents" / "Resources" / "hanly-service" / service_name,
+            )
+            if candidate.is_file()
+        ),
+        None,
+    )
+    if service is not None:
+        present.append(f"hanly-service/{service_name}")
+    else:
+        missing.append(f"hanly-service/{service_name}")
+
+    forbidden = ("pyqt", "pyside", "qtwebengine", "pywebview", "webview", "pystray")
+    forbidden_paths = sorted(
+        {
+            "/".join(path.relative_to(root).parts)
+            for path in root.rglob("*")
+            if any(
+                pattern in part.lower()
+                for pattern in forbidden
+                for part in path.relative_to(root).parts
+            )
+        }
+    )
+    if forbidden_paths:
+        missing.extend(f"forbidden runtime: {path}" for path in forbidden_paths)
+
     if root.suffix == ".app":
         # An application without one is not installable by Hanly's own updater,
         # and PyInstaller only warns when it could not sign the bundle.
@@ -197,6 +240,19 @@ def inspect_bundle(application_directory: str | Path) -> BundleInventory:
         (present if signature.is_file() else missing).append(BUNDLE_SIGNATURE)
 
     return BundleInventory(root, tuple(present), tuple(missing))
+
+
+def _find_native_executable(root: Path) -> Path | None:
+    """Find the Tauri root in a staged product or macOS application bundle."""
+
+    for candidate in (
+        root / f"{APPLICATION_STEM}.exe",
+        root / APPLICATION_STEM,
+        root.joinpath(*_BUNDLE_PROGRAM_PARTS),
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def run_packaged_self_check(
@@ -210,48 +266,74 @@ def run_packaged_self_check(
     krdict: str | Path | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
-    """Run one of the bundle's own ``--self-check`` modes and parse its report."""
+    """Run one of the native product's ``--self-check`` modes and parse its report."""
 
-    command = [str(Path(executable).resolve()), "--self-check", mode]
+    executable_path = Path(executable).resolve()
+    arguments = ["--self-check", mode]
     if runtime_config is not None:
-        command.extend(["--runtime-config", str(Path(runtime_config).resolve())])
+        arguments.extend(["--runtime-config", str(Path(runtime_config).resolve())])
     if image is not None:
-        command.extend(["--self-check-image", str(Path(image).resolve())])
+        arguments.extend(["--self-check-image", str(Path(image).resolve())])
 
-    with _ProfileContext(
-        profile,
-        model_cache=model_cache,
-        krdict=krdict,
-        headless=mode in HEADLESS_SELF_CHECK_MODES,
-    ) as (
+    with _ProfileContext(profile, model_cache=model_cache, krdict=krdict) as (
         environment,
         working_directory,
     ):
-        # Files, not pipes. Qt WebEngine spawns helper processes that inherit
-        # the child's stdout handle on Windows, so waiting for the pipe to
-        # close outlives the process being measured and looks like a hang.
+        # Files, not pipes. A frozen runtime can spawn helpers that inherit the
+        # child's stdout handle on Windows, delaying EOF after the root exits.
         output = working_directory / "self-check.out"
         errors = working_directory / "self-check.err"
         status: int | None = None
         timed_out = False
-        with output.open("w", encoding="utf-8") as out, errors.open("w", encoding="utf-8") as err:
+        command, bundle = _self_check_command(
+            executable_path,
+            arguments,
+            mode=mode,
+            stdout_path=output,
+            stderr_path=errors,
+        )
+        if bundle is None:
+            with output.open("w", encoding="utf-8") as out, errors.open(
+                "w", encoding="utf-8"
+            ) as err:
+                child = subprocess.Popen(
+                    command,
+                    stdout=out,
+                    stderr=err,
+                    env=environment,
+                    cwd=working_directory,
+                    # Its own process group, so a timeout can reach every process
+                    # the bundle started and not only the one launched here.
+                    start_new_session=sys.platform != "win32",
+                )
+                try:
+                    status = child.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    # Preserve partial output so a timeout still names the last known stage.
+                    timed_out = True
+                    _terminate_tree(child)
+        else:
+            # A macOS app must enter through LaunchServices to receive its
+            # bundle identity and an NSApplication context. Executing the Mach-O
+            # directly can abort before the native self-check reports anything.
+            output.touch()
+            errors.touch()
+            previous_processes = _bundle_process_ids(bundle)
             child = subprocess.Popen(
                 command,
-                stdout=out,
-                stderr=err,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 env=environment,
                 cwd=working_directory,
-                # Its own process group, so a timeout can reach every process
-                # the bundle started and not only the one launched here.
-                start_new_session=sys.platform != "win32",
+                start_new_session=True,
             )
             try:
                 status = child.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-    # Write the report before Qt shutdown to distinguish a failed window
-    # check from a successful check whose process cannot exit.
+                # Preserve partial output so a timeout still names the last known stage.
                 timed_out = True
                 _terminate_tree(child)
+                _terminate_bundle_processes(bundle, previous_processes)
         stdout = output.read_text(encoding="utf-8", errors="replace")
         stderr = errors.read_text(encoding="utf-8", errors="replace")
 
@@ -266,14 +348,287 @@ def run_packaged_self_check(
     return report
 
 
+def copy_packaged_application(source: str | Path, destination: str | Path) -> Path:
+    """Copy a packaged product into a test-owned installation directory."""
+
+    source_path = Path(source).resolve()
+    destination_path = Path(destination).resolve()
+    if destination_path.exists():
+        raise FileExistsError(f"test installation already exists: {destination_path}")
+
+    if sys.platform == "darwin" and source_path.suffix == ".app":
+        _run_native(
+            subprocess.run,
+            [DITTO, str(source_path), str(destination_path)],
+            f"could not copy packaged application {source_path.name}",
+        )
+        return destination_path
+
+    def link_or_copy(source_file: str, target_file: str) -> str:
+        try:
+            os.link(source_file, target_file)
+        except OSError:
+            shutil.copy2(source_file, target_file)
+        return target_file
+
+    shutil.copytree(source_path, destination_path, symlinks=True, copy_function=link_or_copy)
+    return destination_path
+
+
+def run_packaged_native_application(
+    executable: str | Path,
+    arguments: Sequence[str],
+    *,
+    environment: Mapping[str, str],
+    working_directory: str | Path,
+    acknowledgement: str | Path,
+    timeout: float = UPDATE_ACK_TIMEOUT_SECONDS,
+    shutdown_timeout: float = UPDATE_SHUTDOWN_SECONDS,
+) -> dict[str, object]:
+    """Launch the ordinary native UI, wait for its update proof, and stop it."""
+
+    executable_path = Path(executable).resolve()
+    work = Path(working_directory).resolve()
+    ack_path = Path(acknowledgement).resolve()
+    output = work / "update-ready.out"
+    errors = work / "update-ready.err"
+    output.touch()
+    errors.touch()
+    bundle = _macos_bundle_for_native_application(executable_path)
+    command: list[str]
+    if bundle is None:
+        command = [str(executable_path), *arguments]
+    else:
+        command = [
+            OPEN,
+            "-n",
+            "-W",
+            "--stdout",
+            str(output),
+            "--stderr",
+            str(errors),
+            str(bundle),
+            "--args",
+            *arguments,
+        ]
+
+    existing = _bundle_process_ids(bundle) if bundle is not None else set()
+    with output.open("w", encoding="utf-8") as stdout, errors.open(
+        "w", encoding="utf-8"
+    ) as stderr:
+        child = subprocess.Popen(
+            command,
+            stdout=stdout if bundle is None else subprocess.DEVNULL,
+            stderr=stderr if bundle is None else subprocess.DEVNULL,
+            env=dict(environment),
+            cwd=work,
+            start_new_session=sys.platform != "win32",
+        )
+        deadline = monotonic() + timeout
+        root_pid: int | None = child.pid if bundle is None else None
+        while monotonic() < deadline:
+            if ack_path.is_file():
+                break
+            if bundle is not None:
+                new_roots = _bundle_process_ids(bundle) - existing
+                root_pid = min(new_roots) if new_roots else root_pid
+            if child.poll() is not None:
+                break
+            sleep(0.1)
+
+        acknowledged = ack_path.is_file()
+        shutdown_requested = False
+        if root_pid is not None:
+            shutdown_requested = request_graceful_shutdown(root_pid)
+
+        status: int | None
+        if bundle is not None:
+            try:
+                status = child.wait(timeout=shutdown_timeout)
+            except subprocess.TimeoutExpired:
+                _terminate_bundle_processes(bundle, existing)
+                try:
+                    status = child.wait(timeout=shutdown_timeout)
+                except subprocess.TimeoutExpired:
+                    _terminate_tree(child)
+                    status = child.poll()
+        else:
+            try:
+                status = child.wait(timeout=shutdown_timeout)
+            except subprocess.TimeoutExpired:
+                _terminate_tree(child)
+                status = child.poll()
+
+    return {
+        "acknowledged": acknowledged,
+        "ack": ack_path.read_text(encoding="utf-8") if acknowledged else None,
+        "exit_code": status,
+        "exit_timeout": child.poll() is None,
+        "shutdown_requested": shutdown_requested,
+        "root_pid": root_pid,
+        "stdout": output.read_text(encoding="utf-8", errors="replace"),
+        "stderr": errors.read_text(encoding="utf-8", errors="replace"),
+    }
+
+
+def _macos_bundle_for_native_application(executable: Path) -> Path | None:
+    """Return the enclosing bundle for a native executable inside one."""
+
+    if sys.platform != "darwin" or executable.parent.name != "MacOS":
+        return None
+    bundle = executable.parent.parent.parent
+    return bundle if bundle.name.endswith(".app") else None
+
+
+def request_graceful_shutdown(process_id: int) -> bool:
+    """Ask the native root to exit through its normal signal handler."""
+
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        window_callback = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+        )
+        user32.EnumWindows.argtypes = [window_callback, wintypes.LPARAM]
+        user32.EnumWindows.restype = wintypes.BOOL
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.PostThreadMessageW.argtypes = [
+            wintypes.DWORD,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        user32.PostThreadMessageW.restype = wintypes.BOOL
+        thread_ids: set[int] = set()
+
+        @window_callback
+        def collect_thread(window: int, _parameter: int) -> bool:
+            owner = wintypes.DWORD()
+            thread_id = user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
+            if owner.value == process_id:
+                thread_ids.add(thread_id)
+            return True
+
+        if not user32.EnumWindows(collect_thread, 0):
+            return False
+        posted = False
+        for thread_id in thread_ids:
+            # WM_QUIT makes the native event loop finish and run its ordinary
+            # service/process cleanup, unlike terminating the GUI executable.
+            posted = bool(user32.PostThreadMessageW(thread_id, 0x0012, 0, 0)) or posted
+        return posted
+
+    try:
+        os.kill(process_id, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
+
+
+def _self_check_command(
+    executable: Path,
+    arguments: Sequence[str],
+    *,
+    mode: str,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> tuple[list[str], Path | None]:
+    """Build a direct service command or a LaunchServices UI command."""
+
+    bundle = _macos_bundle_for_ui_self_check(executable, mode)
+    if bundle is None:
+        return [str(executable), *arguments], None
+    return (
+        [
+            OPEN,
+            "-n",
+            "-W",
+            "--stdout",
+            str(stdout_path),
+            "--stderr",
+            str(stderr_path),
+            str(bundle),
+            "--args",
+            *arguments,
+        ],
+        bundle,
+    )
+
+
+def _macos_bundle_for_ui_self_check(executable: Path, mode: str) -> Path | None:
+    """Return the enclosing app only for a macOS UI self-check."""
+
+    if sys.platform != "darwin" or mode != "ui":
+        return None
+    if executable.parent.name != "MacOS":
+        return None
+    bundle = executable.parent.parent.parent
+    return bundle if bundle.name.endswith(".app") else None
+
+
+def _bundle_process_ids(bundle: Path) -> set[int]:
+    """Find native roots already running from this bundle before a smoke launch."""
+
+    try:
+        import psutil
+    except ImportError:
+        return set()
+
+    executable = (bundle / "Contents" / "MacOS" / APPLICATION_STEM).resolve()
+    running: set[int] = set()
+    for process in psutil.process_iter(["pid", "exe"]):
+        try:
+            if process.info["exe"] and Path(process.info["exe"]).resolve() == executable:
+                running.add(process.info["pid"])
+        except (OSError, psutil.Error, TypeError):
+            continue
+    return running
+
+
+def _terminate_bundle_processes(bundle: Path, existing: set[int]) -> None:
+    """Reap only the new app instance and descendants after a timed-out smoke."""
+
+    try:
+        import psutil
+    except ImportError:
+        return
+
+    roots = _bundle_process_ids(bundle) - existing
+    processes: dict[int, Any] = {}
+    for pid in roots:
+        try:
+            root = psutil.Process(pid)
+            for process in [*root.children(recursive=True), root]:
+                processes[process.pid] = process
+        except psutil.Error:
+            continue
+    ordered = list(processes.values())
+    for process in ordered:
+        try:
+            process.terminate()
+        except psutil.Error:
+            pass
+    _, alive = psutil.wait_procs(ordered, timeout=5)
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.Error:
+            pass
+
+
 def _terminate_tree(child: subprocess.Popen[bytes]) -> None:
     """Kill the timed-out process and everything it started.
 
     Killing only the process that was launched leaves its children holding the
     inherited output files, so the run's own working directory cannot be
-    removed and an abandoned bundle keeps running. The frozen desktop spawns
-    both the lookup child and Qt WebEngine's helpers, and on Windows the
-    launcher itself is a further process.
+    removed and an abandoned bundle keeps running. The frozen service can spawn
+    a lookup child, and on Windows the launcher itself is another process.
     """
 
     if sys.platform == "win32":
@@ -487,9 +842,9 @@ class _ProfileContext:
     """Isolate settings, home, work, and every model location outside the repository.
 
     Current frozen builds use shipped weights without downloads; ``model_cache``
-    only seeds legacy builds that resolve models through the environment. ``headless``
-    selects a loadable non-window Qt platform. An explicit ``krdict`` supplies the
-    licensed, unbundled database, avoiding first-run release-network dependency.
+    only seeds legacy builds that resolve models through the environment. An
+    explicit ``krdict`` supplies the licensed, unbundled database, avoiding
+    first-run release-network dependency.
     """
 
     def __init__(
@@ -498,12 +853,10 @@ class _ProfileContext:
         *,
         model_cache: str | Path | None = None,
         krdict: str | Path | None = None,
-        headless: bool = False,
     ) -> None:
         self._profile = None if profile is None else Path(profile).resolve()
         self._model_cache = None if model_cache is None else Path(model_cache).resolve()
         self._krdict = None if krdict is None else Path(krdict).resolve()
-        self._headless = headless
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> tuple[dict[str, str], Path]:
@@ -533,7 +886,6 @@ class _ProfileContext:
                 home,
                 models,
                 krdict=self._krdict,
-                headless=self._headless,
             ),
             work,
         )
@@ -725,7 +1077,6 @@ def isolated_environment(
     models: Path,
     *,
     krdict: Path | None = None,
-    headless: bool = False,
 ) -> dict[str, str]:
     """Build the child environment, with every developer path redirected."""
 
@@ -745,16 +1096,7 @@ def isolated_environment(
     # The report names Korean text; a Windows console codepage cannot.
     environment["PYTHONIOENCODING"] = "utf-8"
 
-    if headless:
-        _apply_headless_qt_platform(environment)
     return environment
-
-
-def _apply_headless_qt_platform(environment: dict[str, str]) -> None:
-    """Name the Qt platform a Linux check that opens no window must use."""
-
-    if sys.platform.startswith("linux"):
-        environment[QT_PLATFORM_VARIABLE] = HEADLESS_QT_PLATFORM
 
 
 def _parse_report(stdout: str) -> dict[str, object]:
@@ -1175,12 +1517,10 @@ __all__ = [
     "EASYOCR_MODEL_SUBDIRECTORY",
     "EXPECTED_SOURCE_VARIABLE",
     "EASYOCR_PATH_VARIABLES",
-    "HEADLESS_QT_PLATFORM",
     "HEADLESS_SELF_CHECK_MODES",
     "HOME_VARIABLES",
     "IDENTITY_PACKAGES",
     "LOCAL_KRDICT_VARIABLE",
-    "QT_PLATFORM_VARIABLE",
     "REQUIRED_DATA_FILES",
     "REQUIRED_EXTENSION_STEM",
     "REQUIRED_MODEL_FILES",
@@ -1190,14 +1530,19 @@ __all__ = [
     "STAGE_STARTED",
     "TREE_KILL_SECONDS",
     "UI_TIMEOUT_SECONDS",
+    "UPDATE_ACK_TIMEOUT_SECONDS",
+    "UPDATE_SHUTDOWN_SECONDS",
     "WINDOWS_FATAL_STATUS",
     "BundleInventory",
+    "copy_packaged_application",
     "inspect_bundle",
     "isolated_environment",
     "main",
     "read_progress",
     "reconstruct_application",
+    "request_graceful_shutdown",
     "run_packaged_self_check",
+    "run_packaged_native_application",
     "verify_disk_image",
     "verify_frozen_identity",
     "verify_source_identity",

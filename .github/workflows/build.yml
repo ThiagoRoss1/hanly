@@ -88,6 +88,11 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+
       # Written before the first install, so a run that dies later still names
       # the machine it died on.
       - name: Record the host fingerprint
@@ -101,14 +106,14 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           packages=(
-            libegl1 libgl1 libfontconfig1 libx11-xcb1
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
-            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
-            libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
-            libxkbcommon-x11-0 xvfb
+            build-essential curl file libssl-dev libxdo-dev librsvg2-dev
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev xvfb
           )
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends "${packages[@]}"
+
+      - name: Install desktop workspace dependencies
+        run: npm ci --prefix apps/desktop
 
       - name: Install development dependencies
         run: |

@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from hanly_app.updates.desktop_update import APPLICATION_STEM
@@ -100,6 +101,67 @@ def test_macos_relaunches_the_application_and_never_the_program_inside_it() -> N
 
     assert '/usr/bin/open "$install" --args' in script
     assert MACOS_PROGRAM not in script
+
+
+def test_windows_service_update_helper_breaks_out_of_its_supervised_job(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A helper that waits for Hanly to exit must survive job close."""
+
+    expected_breakaway = 0x01000000
+    popen = Mock(return_value=object())
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("hanly_app.updates.handoff.subprocess.Popen", popen)
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NEW_PROCESS_GROUP", 0x200, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NO_WINDOW", 0x800, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_BREAKAWAY_FROM_JOB",
+        expected_breakaway,
+        raising=False,
+    )
+    monkeypatch.setenv("HANLY_SUPERVISED_JOB", "1")
+    monkeypatch.setenv("HANLY_UPDATE_TEST_VALUE", "preserved")
+
+    from hanly_app.updates.handoff import spawn_detached
+
+    spawn_detached(["powershell.exe"], tmp_path)
+
+    options = popen.call_args.kwargs
+    assert options["creationflags"] == 0x200 | 0x800 | expected_breakaway
+    assert options["env"]["HANLY_UPDATE_TEST_VALUE"] == "preserved"
+    assert "HANLY_SUPERVISED_JOB" not in options["env"]
+
+
+def test_windows_unsupervised_update_helper_does_not_request_job_breakaway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    popen = Mock(return_value=object())
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("hanly_app.updates.handoff.subprocess.Popen", popen)
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NEW_PROCESS_GROUP", 0x200, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NO_WINDOW", 0x800, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_BREAKAWAY_FROM_JOB",
+        0x01000000,
+        raising=False,
+    )
+    monkeypatch.delenv("HANLY_SUPERVISED_JOB", raising=False)
+
+    from hanly_app.updates.handoff import spawn_detached
+
+    spawn_detached(["powershell.exe"], tmp_path)
+
+    options = popen.call_args.kwargs
+    assert options["creationflags"] == 0x200 | 0x800
+    assert options["env"] is None
 
 
 @pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])

@@ -28,7 +28,7 @@ EXIT_WAIT_SECONDS = 120
 SWAP_ATTEMPTS = 30
 
 #: Match the packaged UI smoke's cold-start allowance; a shorter deadline
-#: could roll back a working build during model and Qt initialization.
+#: could roll back a working build during model and desktop initialization.
 READY_WAIT_SECONDS = 600
 
 Spawn = Callable[[list[str], Path], object]
@@ -131,7 +131,21 @@ def spawn_detached(command: list[str], directory: Path) -> subprocess.Popen[byte
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
             subprocess, "CREATE_NO_WINDOW", 0
         )
-        return subprocess.Popen(command, cwd=directory, close_fds=True, creationflags=flags)
+        child_environment = None
+        if os.environ.get("HANLY_SUPERVISED_JOB") == "1":
+            breakaway_flag = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", None)
+            if breakaway_flag is None:
+                raise OSError("Windows does not expose the supervised updater breakaway flag")
+            flags |= breakaway_flag
+            child_environment = os.environ.copy()
+            child_environment.pop("HANLY_SUPERVISED_JOB", None)
+        return subprocess.Popen(
+            command,
+            cwd=directory,
+            close_fds=True,
+            creationflags=flags,
+            env=child_environment,
+        )
     return subprocess.Popen(command, cwd=directory, close_fds=True, start_new_session=True)
 
 
