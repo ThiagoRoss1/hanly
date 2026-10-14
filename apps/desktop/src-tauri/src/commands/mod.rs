@@ -94,14 +94,15 @@ fn popup_action(
     window: &WebviewWindow,
     service: &crate::lifecycle::Service,
     method: &str,
-    params: Value,
+    mut params: Value,
 ) -> Result<Value, BridgeError> {
-    crate::windows::local_action(
+    let applied = crate::windows::local_action(
         window,
         &app.state::<DesktopState>().presentation,
         method,
         &params,
     )?;
+    params["sequence"] = applied["sequence"].clone();
     let (native_method, native_params) = match method {
         "popup_close" => ("service.popup_close", params),
         "popup_expand" => ("service.popup_expand", params),

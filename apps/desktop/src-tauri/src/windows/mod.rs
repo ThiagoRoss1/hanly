@@ -10,6 +10,7 @@ pub struct Presentation {
     pub state: Option<Value>,
     pub popup: Option<Value>,
     pub sequence: u64,
+    sequence_base: u64,
     pub visible: bool,
     pub region: Option<Value>,
     queued: bool,
@@ -22,7 +23,15 @@ pub struct Presentation {
 pub type SharedPresentation = Arc<Mutex<Presentation>>;
 
 pub fn reset(presentation: &SharedPresentation) {
-    *presentation.lock().expect("presentation") = Presentation::default();
+    let mut state = presentation.lock().expect("presentation");
+    let sequence = state.sequence;
+    // React remains alive when Python restarts; its freshness counter must not
+    // move backwards with the replacement service's new wire event stream.
+    *state = Presentation {
+        sequence,
+        sequence_base: sequence,
+        ..Presentation::default()
+    };
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
@@ -73,9 +82,9 @@ pub fn event(
             state.state_pending = true;
         }
         "popup" | "popup_hide" => {
-            if sequence <= state.sequence {
+            let Some(sequence) = popup_event_sequence(&state, sequence) else {
                 return;
-            }
+            };
             state.sequence = sequence;
             state.visible = name == "popup";
             state.popup = Some(json!({"type":name,"sequence":sequence,"payload":payload}));
@@ -107,6 +116,12 @@ pub fn event(
     {
         presentation.lock().expect("presentation").queued = false;
     }
+}
+
+fn popup_event_sequence(state: &Presentation, wire_sequence: u64) -> Option<u64> {
+    wire_sequence
+        .checked_add(state.sequence_base)
+        .filter(|sequence| *sequence > state.sequence && *sequence <= crate::ipc::MAX_SEQUENCE)
 }
 
 fn flush_events(app: &AppHandle, presentation: &SharedPresentation) {
@@ -182,15 +197,10 @@ pub fn local_action(
         return Ok(json!({}));
     }
 
-    let message = {
+    let (message, service_sequence) = {
         let mut state = presentation.lock().expect("presentation");
-        if !state.visible || params["sequence"].as_u64() != Some(state.sequence) {
-            return Err(BridgeError::new(
-                "stale_popup",
-                "This popup has been superseded.",
-            ));
-        }
-        match method {
+        let service_sequence = popup_service_sequence(&state, params)?;
+        let message = match method {
             "popup_close" => {
                 state.visible = false;
                 let message = json!({"type":"popup_hide","sequence":state.sequence,"payload":{}});
@@ -205,7 +215,8 @@ pub fn local_action(
             }
             "popup_geometry" => None,
             _ => return Err(window_error()),
-        }
+        };
+        (message, service_sequence)
     };
 
     match method {
@@ -224,7 +235,24 @@ pub fn local_action(
         "popup_expand" => {}
         _ => return Err(window_error()),
     }
-    Ok(json!({}))
+    Ok(json!({"sequence":service_sequence}))
+}
+
+fn popup_service_sequence(state: &Presentation, params: &Value) -> Result<u64, BridgeError> {
+    if !state.visible || params["sequence"].as_u64() != Some(state.sequence) {
+        return Err(BridgeError::new(
+            "stale_popup",
+            "This popup has been superseded.",
+        ));
+    }
+    // The wire event counter orders all events; Python's counter identifies
+    // popup content only. Capture the translation under the freshness lock.
+    state
+        .popup
+        .as_ref()
+        .and_then(|message| message["payload"]["sequence"].as_u64())
+        .filter(|sequence| *sequence > 0)
+        .ok_or_else(window_error)
 }
 
 fn show_popup(window: &WebviewWindow, payload: &Value) -> Result<(), BridgeError> {
@@ -270,6 +298,50 @@ fn window_error() -> BridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_actions_translate_event_order_without_accepting_stale_content() {
+        let mut state = Presentation {
+            visible: true,
+            sequence: 212,
+            popup: Some(json!({"payload":{"sequence":3}})),
+            ..Presentation::default()
+        };
+        assert_eq!(
+            popup_service_sequence(&state, &json!({"sequence":212})).unwrap(),
+            3
+        );
+        assert_eq!(
+            popup_service_sequence(&state, &json!({"sequence":211}))
+                .unwrap_err()
+                .code,
+            "stale_popup"
+        );
+        state.visible = false;
+        assert!(popup_service_sequence(&state, &json!({"sequence":212})).is_err());
+        state.visible = true;
+        state.popup = Some(json!({"payload":{}}));
+        assert!(popup_service_sequence(&state, &json!({"sequence":212})).is_err());
+    }
+
+    #[test]
+    fn replacement_service_preserves_react_freshness_and_rejects_duplicate_events() {
+        let presentation = Arc::new(Mutex::new(Presentation {
+            sequence: 212,
+            visible: true,
+            popup: Some(json!({"payload":{"sequence":3}})),
+            ..Presentation::default()
+        }));
+        reset(&presentation);
+        let mut state = presentation.lock().unwrap();
+        assert!(!state.visible);
+        assert!(state.popup.is_none());
+        assert_eq!(popup_event_sequence(&state, 1), Some(213));
+        state.sequence = 213;
+        assert_eq!(popup_event_sequence(&state, 1), None);
+        assert_eq!(popup_event_sequence(&state, 2), Some(214));
+        assert_eq!(popup_event_sequence(&state, crate::ipc::MAX_SEQUENCE), None);
+    }
 
     #[test]
     fn geometry_preserves_fractional_and_negative_logical_positions() {
