@@ -1,6 +1,4 @@
 """Production seed builder tests over literal official-shape XML."""
-# ruff: noqa: E501 -- literal official-shape XML is intentionally unwrapped.
-
 from __future__ import annotations
 
 import sqlite3
@@ -15,19 +13,21 @@ from tools.krdict.build_seed import BuildError, build_database
 
 
 def _source(path: Path) -> Path:
-    xml = """<LexicalResource><Lexicon>
-<LexicalEntry att="id" val="10">
- <feat att="lexicalUnit" val="단어"/><feat att="homonym_number" val="0"/>
- <feat att="partOfSpeech" val="명사"/><feat att="vocabularyLevel" val="없음"/>
- <Lemma><feat att="writtenForm" val="책"/></Lemma>
- <WordForm><feat att="type" val="발음"/><feat att="pronunciation" val="책"/></WordForm>
- <feat att="semanticCategory" val="교육"/>
- <Sense att="id" val="100"><feat att="definition" val="글을 묶은 물건."/>
-  <SenseExample><feat att="type" val="문장"/><feat att="example" val="책을 읽다."/></SenseExample>
-  <Equivalent><feat att="language" val="영어"/><feat att="lemma" val="book"/><feat att="definition" val="A written work."/></Equivalent>
- </Sense>
-</LexicalEntry>
-</Lexicon></LexicalResource>""".encode()
+    xml = (
+        '<LexicalResource><Lexicon>\n<LexicalEntry att="id" val="10">\n '
+        '<feat att="lexicalUnit" val="단어"/><feat att="homonym_number" '
+        'val="0"/>\n <feat att="partOfSpeech" val="명사"/><feat '
+        'att="vocabularyLevel" val="없음"/>\n <Lemma><feat att="writtenForm" '
+        'val="책"/></Lemma>\n <WordForm><feat att="type" val="발음"/><feat '
+        'att="pronunciation" val="책"/></WordForm>\n <feat '
+        'att="semanticCategory" val="교육"/>\n <Sense att="id" val="100">'
+        '<feat att="definition" val="글을 묶은 물건."/>\n  <SenseExample><feat '
+        'att="type" val="문장"/><feat att="example" val="책을 읽다."/></'
+        'SenseExample>\n  <Equivalent><feat att="language" val="영어"/><feat '
+        'att="lemma" val="book"/><feat att="definition" val="A written '
+        'work."/></Equivalent>\n </Sense>\n</LexicalEntry>\n</Lexicon></'
+        'LexicalResource>'
+    ).encode()
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("one.xml", xml)
     return path
@@ -113,16 +113,16 @@ def test_builder_is_byte_deterministic_and_preserves_previous_output_on_failure(
 def test_builder_preserves_distinct_entries_that_reuse_raw_source_id(tmp_path: Path) -> None:
     """Removing either row would lose official base-word/idiom source data."""
 
-    xml = """<LexicalResource><Lexicon>
-<LexicalEntry att="id" val="77610">
- <feat att="lexicalUnit" val="단어"/><Lemma><feat att="writtenForm" val="첫"/></Lemma>
- <Sense att="id" val="1"><feat att="definition" val="맨 처음의."/></Sense>
-</LexicalEntry>
-<LexicalEntry att="id" val="77610">
- <feat att="lexicalUnit" val="관용구"/><Lemma><feat att="writtenForm" val="첫 단추를 끼우다"/></Lemma>
- <Sense att="id" val="1"><feat att="definition" val="일을 시작하다."/></Sense>
-</LexicalEntry>
-</Lexicon></LexicalResource>"""
+    xml = (
+        '<LexicalResource><Lexicon>\n<LexicalEntry att="id" val="77610">\n '
+        '<feat att="lexicalUnit" val="단어"/><Lemma><feat att="writtenForm" '
+        'val="첫"/></Lemma>\n <Sense att="id" val="1"><feat '
+        'att="definition" val="맨 처음의."/></Sense>\n</LexicalEntry>\n'
+        '<LexicalEntry att="id" val="77610">\n <feat att="lexicalUnit" '
+        'val="관용구"/><Lemma><feat att="writtenForm" val="첫 단추를 끼우다"/></'
+        'Lemma>\n <Sense att="id" val="1"><feat att="definition" val="일을 '
+        '시작하다."/></Sense>\n</LexicalEntry>\n</Lexicon></LexicalResource>'
+    )
     source = tmp_path / "reused-id.zip"
     with zipfile.ZipFile(source, "w") as archive:
         archive.writestr("reused.xml", xml)

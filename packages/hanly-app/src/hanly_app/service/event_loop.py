@@ -17,6 +17,16 @@ Callback = Callable[[], None]
 MAX_QUEUED_CALLBACKS = 64
 
 
+@dataclass(frozen=True, slots=True)
+class _RequestWork(Generic[T]):
+    request: T
+
+
+@dataclass(frozen=True, slots=True)
+class _CallbackWork:
+    callback: Callback
+
+
 class EventLoopOverloaded(RuntimeError):
     """Raised when a callback producer exceeds the bounded owner queue."""
 
@@ -176,7 +186,7 @@ class SerializedEventLoop(Generic[T]):
             raise TypeError("handle_request must be callable")
         self._owner_ident = threading.get_ident()
         while True:
-            item: tuple[str, object] | None
+            item: _RequestWork[T] | _CallbackWork | None
             with self._condition:
                 item = self._next_item_locked()
                 while item is None:
@@ -188,33 +198,27 @@ class SerializedEventLoop(Generic[T]):
                     self._condition.wait(timeout)
                     item = self._next_item_locked()
 
-            kind, value = item
-            if kind == "request":
-                handle_request(value)  # type: ignore[arg-type]
-            elif kind == "callback":
+            if isinstance(item, _RequestWork):
+                handle_request(item.request)
+            else:
                 try:
-                    value()  # type: ignore[operator]
+                    item.callback()
                 except Exception:
                     # The callback owner logs meaningful errors at its source.
                     # An uncaught observer must not kill protocol dispatch.
-                    continue
-            else:
-                try:
-                    value()  # type: ignore[operator]
-                except Exception:
                     continue
 
             with self._condition:
                 if self._fatal or self._stopped:
                     return not self._fatal
 
-    def _next_item_locked(self) -> tuple[str, object] | None:
+    def _next_item_locked(self) -> _RequestWork[T] | _CallbackWork | None:
         if self._fatal or self._stopped:
             return None
         if self._callbacks:
-            return ("callback", self._callbacks.popleft())
+            return _CallbackWork(self._callbacks.popleft())
         if self._requests:
-            return ("request", self._requests.popleft())
+            return _RequestWork(self._requests.popleft())
 
         now = monotonic()
         while self._timers and self._timers[0].handle.cancelled:
@@ -223,7 +227,7 @@ class SerializedEventLoop(Generic[T]):
             scheduled = heapq.heappop(self._timers)
             if scheduled.handle.cancelled:
                 return None
-            return ("timer", scheduled.callback)
+            return _CallbackWork(scheduled.callback)
         return None
 
     def _next_timeout_locked(self) -> float | None:

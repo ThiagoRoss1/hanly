@@ -1258,16 +1258,6 @@ class DesktopService:
         self._popup_actual_rect = None
         self._emit_event("popup_hide", {"sequence": sequence})
 
-    def _popup_sync_state(self) -> None:
-        if self._popup_result is None or self._popup_position is None:
-            return
-        request_id = (
-            None
-            if self._manual is None
-            else self._manual.controller.current_request_id
-        )
-        self._show_popup(self._popup_result, request_id)
-
     def _request_quit(self) -> None:
         self._emit_event("native_action", {"action": "quit"})
 

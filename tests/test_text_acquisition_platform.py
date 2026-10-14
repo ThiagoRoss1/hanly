@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import ast
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from hanly_app.acquisition import direct_text as text_acquisition
@@ -83,9 +85,15 @@ def test_selecting_a_reader_imports_only_that_host_s_adapter(
     loaded: list[str] = []
     real_import = __import__
 
-    def record(name: str, *rest: object, **kwargs: object) -> object:
+    def record(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
         loaded.append(name)
-        return real_import(name, *rest, **kwargs)  # type: ignore[arg-type]
+        return real_import(name, globals, locals, fromlist, level)
 
     for module in ("hanly_app.acquisition.uia", "hanly_app.acquisition.ax"):
         sys.modules.pop(module, None)

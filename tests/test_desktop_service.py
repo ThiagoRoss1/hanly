@@ -455,8 +455,8 @@ def test_trace_evidence_crosses_protocol_only_for_explicit_retention(
     tmp_path: Path,
 ) -> None:
     class ImmediateLoop:
-        def post(self, callback: object) -> None:
-            callback()  # type: ignore[operator]
+        def post(self, callback: Callable[[], None]) -> None:
+            callback()
 
     class TraceSink:
         def __init__(self, retain_evidence: bool) -> None:
@@ -472,7 +472,7 @@ def test_trace_evidence_crosses_protocol_only_for_explicit_retention(
             tmp_path / f"settings-{retain_evidence}.json",
             trace_sink=sink,
         )
-        service._loop = ImmediateLoop()  # type: ignore[assignment]
+        setattr(service, "_loop", ImmediateLoop())
         forwarded: list[tuple[str, dict[str, object]]] = []
         service.set_event_sink(
             lambda name, payload: forwarded.append((name, dict(payload)))

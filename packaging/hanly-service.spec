@@ -18,8 +18,11 @@ from PyInstaller.utils.hooks import (
     copy_metadata,
 )
 
+_spec_path = globals().get("SPECPATH")
+if not isinstance(_spec_path, str):
+    raise RuntimeError("PyInstaller did not provide SPECPATH")
 
-ROOT = Path(SPECPATH).resolve().parent  # type: ignore[name-defined]
+ROOT = Path(_spec_path).resolve().parent
 APP_SOURCE = ROOT / "packages" / "hanly-app" / "src"
 ENGINE_SOURCE = ROOT / "packages" / "hanly" / "src"
 ENTRYPOINT = ROOT / "packaging" / "service_entrypoint.py"

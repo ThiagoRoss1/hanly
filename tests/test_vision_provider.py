@@ -4,6 +4,7 @@ import sys
 
 import pytest
 from hanly import OCRProvider, PixelFormat, ROIImage
+from hanly.resource_manager import ResourceManager, ResourceManifest
 from hanly.vision_provider import (
     DEFAULT_INPUT_SCALE,
     MAX_INPUT_SCALE,
@@ -11,6 +12,8 @@ from hanly.vision_provider import (
     VisionProvider,
     VisionProviderError,
 )
+
+from tests.hanly_fixtures.runtime_input import invoke_with_runtime_values
 
 
 def _roi(width: int = 4, height: int = 2) -> ROIImage:
@@ -28,7 +31,7 @@ def test_availability_is_false_off_darwin_without_raising() -> None:
 
 def test_a_non_image_argument_is_a_type_error() -> None:
     with pytest.raises(TypeError):
-        VisionProvider().recognize("not an image")  # type: ignore[arg-type]
+        invoke_with_runtime_values(VisionProvider().recognize, "not an image")
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="covers the non-macOS path")
@@ -60,7 +63,7 @@ def test_pinning_vision_where_it_does_not_exist_is_a_configuration_error(
     monkeypatch.setattr(VisionProvider, "is_available", staticmethod(lambda: False))
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         ocr_backend=OCRBackend.VISION,
     )
@@ -79,7 +82,7 @@ def test_auto_falls_back_instead_of_refusing(
     monkeypatch.setattr(VisionProvider, "is_available", staticmethod(lambda: False))
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         ocr_backend=OCRBackend.AUTO,
         easyocr_config=EasyOCRConfig(),
@@ -102,7 +105,7 @@ def test_host_vision_capability_resolves_without_loading_the_framework(
     monkeypatch.setattr(VisionProvider, "is_available", staticmethod(unexpected_probe))
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         easyocr_config=EasyOCRConfig(),
         ocr_backend=OCRBackend.AUTO,
@@ -110,7 +113,7 @@ def test_host_vision_capability_resolves_without_loading_the_framework(
     )
     fallback = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         easyocr_config=EasyOCRConfig(),
         ocr_backend=OCRBackend.AUTO,
@@ -156,7 +159,7 @@ def test_the_runtime_sends_its_backend_to_the_child(tmp_path) -> None:
 
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         easyocr_config=EasyOCRConfig(),
         ocr_backend=OCRBackend.EASYOCR,
@@ -168,7 +171,7 @@ def test_the_runtime_sends_its_backend_to_the_child(tmp_path) -> None:
     assert (
         HanlyRuntime(
             config_path=tmp_path / "runtime.json",
-            resource_manager=object(),  # type: ignore[arg-type]
+            resource_manager=ResourceManager(ResourceManifest(())),
             krdict_path=tmp_path / "krdict.sqlite3",
             easyocr_config=EasyOCRConfig(),
             ocr_backend=OCRBackend.AUTO,
@@ -188,7 +191,7 @@ def test_the_recognizer_is_given_a_doubled_image_by_default() -> None:
 @pytest.mark.parametrize("scale", [0, -1, -100, 1.5, 2.0, True, False, "2", None])
 def test_a_nonsensical_input_scale_is_refused(scale: object) -> None:
     with pytest.raises(ValueError, match="input_scale"):
-        VisionConfig(input_scale=scale)  # type: ignore[arg-type]
+        invoke_with_runtime_values(VisionConfig, input_scale=scale)
 
 
 @pytest.mark.parametrize("scale", [MAX_INPUT_SCALE + 1, 64, 10**9])

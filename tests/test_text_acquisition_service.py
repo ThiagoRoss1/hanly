@@ -18,6 +18,7 @@ from hanly_app.acquisition.direct_text import (
     DirectTextCoordinator,
     DirectTextService,
     Outcome,
+    _Job,
 )
 
 _KOREAN = "초대받았어요"
@@ -258,7 +259,9 @@ def test_a_native_deadline_shorter_than_the_budget_leaves_room_to_classify() -> 
     assert 0 < _NATIVE_DEADLINE_SHARE < 1
 
 
-def test_the_watcher_stops_working_once_a_deadline_is_answered() -> None:
+def test_the_watcher_stops_working_once_a_deadline_is_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A blocked call must not keep the deadline watcher busy.
 
     The deadline has passed and the native call cannot be stopped, so there is
@@ -274,12 +277,12 @@ def test_the_watcher_stops_working_once_a_deadline_is_answered() -> None:
     attempts = 0
     original = service._deliver
 
-    def counting(job: object, outcome: Acquisition) -> None:
+    def counting(job: _Job, outcome: Acquisition) -> None:
         nonlocal attempts
         attempts += 1
-        original(job, outcome)  # type: ignore[arg-type]
+        original(job, outcome)
 
-    service._deliver = counting  # type: ignore[method-assign]
+    monkeypatch.setattr(service, "_deliver", counting)
     collector = _collect()
     try:
         service.submit(_POINT, collector)

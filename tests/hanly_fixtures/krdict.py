@@ -1,6 +1,4 @@
 """Small official-shape KRDICT artifacts shared by runtime tests."""
-# ruff: noqa: E501 -- literal XML is clearer when source elements stay intact.
-
 from __future__ import annotations
 
 import zipfile
@@ -29,58 +27,52 @@ def build_krdict_database(directory: Path, xml: str, database_name: str = "krdic
     return database
 
 
-FIXTURE_XML = """<?xml version="1.0" encoding="utf-8"?>
-<LexicalResource><Lexicon>
-  <LexicalEntry att="id" val="10">
-    <feat att="lexicalUnit" val="단어" />
-    <feat att="homonym_number" val="0" />
-    <feat att="partOfSpeech" val="동사" />
-    <Lemma><feat att="writtenForm" val="먹다" /></Lemma>
-    <WordForm><feat att="type" val="활용" /><feat att="writtenForm" val="먹어요" /></WordForm>
-    <Sense att="id" val="100">
-      <feat att="definition" val="음식을 입을 통하여 배 속에 들여보내다." />
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="eat" /><feat att="definition" val="to eat" /></Equivalent>
-    </Sense>
-  </LexicalEntry>
-  <LexicalEntry att="id" val="20">
-    <feat att="lexicalUnit" val="단어" />
-    <feat att="homonym_number" val="0" />
-    <feat att="partOfSpeech" val="명사" />
-    <Lemma><feat att="writtenForm" val="책" /></Lemma>
-    <Sense att="id" val="200">
-      <feat att="definition" val="글이나 그림을 인쇄하여 묶은 것." />
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="book" /><feat att="definition" val="a book" /></Equivalent>
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="volume" /><feat att="definition" val="book" /></Equivalent>
-    </Sense>
-  </LexicalEntry>
-  <LexicalEntry att="id" val="30">
-    <feat att="lexicalUnit" val="단어" />
-    <feat att="homonym_number" val="0" />
-    <feat att="partOfSpeech" val="동사" />
-    <Lemma><feat att="writtenForm" val="읽다" /></Lemma>
-    <Sense att="id" val="300">
-      <feat att="definition" val="글을 보고 뜻을 이해하다." />
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="read" /><feat att="definition" val="to read" /></Equivalent>
-    </Sense>
-  </LexicalEntry>
-</Lexicon></LexicalResource>
-"""
+FIXTURE_XML = (
+    '<?xml version="1.0" encoding="utf-8"?>\n<LexicalResource><Lexicon>'
+    '\n  <LexicalEntry att="id" val="10">\n    <feat att="lexicalUnit" '
+    'val="단어" />\n    <feat att="homonym_number" val="0" />\n    <feat '
+    'att="partOfSpeech" val="동사" />\n    <Lemma><feat '
+    'att="writtenForm" val="먹다" /></Lemma>\n    <WordForm><feat '
+    'att="type" val="활용" /><feat att="writtenForm" val="먹어요" /></'
+    'WordForm>\n    <Sense att="id" val="100">\n      <feat '
+    'att="definition" val="음식을 입을 통하여 배 속에 들여보내다." />\n      '
+    '<Equivalent><feat att="language" val="영어" /><feat att="lemma" '
+    'val="eat" /><feat att="definition" val="to eat" /></Equivalent>\n '
+    '   </Sense>\n  </LexicalEntry>\n  <LexicalEntry att="id" val="20">'
+    '\n    <feat att="lexicalUnit" val="단어" />\n    <feat '
+    'att="homonym_number" val="0" />\n    <feat att="partOfSpeech" '
+    'val="명사" />\n    <Lemma><feat att="writtenForm" val="책" /></Lemma>'
+    '\n    <Sense att="id" val="200">\n      <feat att="definition" '
+    'val="글이나 그림을 인쇄하여 묶은 것." />\n      <Equivalent><feat '
+    'att="language" val="영어" /><feat att="lemma" val="book" /><feat '
+    'att="definition" val="a book" /></Equivalent>\n      <Equivalent>'
+    '<feat att="language" val="영어" /><feat att="lemma" val="volume" />'
+    '<feat att="definition" val="book" /></Equivalent>\n    </Sense>\n '
+    ' </LexicalEntry>\n  <LexicalEntry att="id" val="30">\n    <feat '
+    'att="lexicalUnit" val="단어" />\n    <feat att="homonym_number" '
+    'val="0" />\n    <feat att="partOfSpeech" val="동사" />\n    <Lemma>'
+    '<feat att="writtenForm" val="읽다" /></Lemma>\n    <Sense att="id" '
+    'val="300">\n      <feat att="definition" val="글을 보고 뜻을 이해하다." />\n'
+    '      <Equivalent><feat att="language" val="영어" /><feat '
+    'att="lemma" val="read" /><feat att="definition" val="to read" /></'
+    'Equivalent>\n    </Sense>\n  </LexicalEntry>\n</Lexicon></'
+    'LexicalResource>\n'
+)
 
-SHARED_DEFINITION_XML = """<?xml version="1.0" encoding="utf-8"?>
-<LexicalResource><Lexicon>
-  <LexicalEntry att="id" val="40">
-    <feat att="lexicalUnit" val="단어" />
-    <feat att="homonym_number" val="0" />
-    <feat att="partOfSpeech" val="형용사" />
-    <Lemma><feat att="writtenForm" val="예쁘다" /></Lemma>
-    <Sense att="id" val="400">
-      <feat att="definition" val="보기에 좋다." />
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="pretty; beautiful" /><feat att="definition" val="looking good" /></Equivalent>
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="lovely" /><feat att="definition" val="looking good" /></Equivalent>
-    </Sense>
-  </LexicalEntry>
-</Lexicon></LexicalResource>
-"""
+SHARED_DEFINITION_XML = (
+    '<?xml version="1.0" encoding="utf-8"?>\n<LexicalResource><Lexicon>'
+    '\n  <LexicalEntry att="id" val="40">\n    <feat att="lexicalUnit" '
+    'val="단어" />\n    <feat att="homonym_number" val="0" />\n    <feat '
+    'att="partOfSpeech" val="형용사" />\n    <Lemma><feat '
+    'att="writtenForm" val="예쁘다" /></Lemma>\n    <Sense att="id" '
+    'val="400">\n      <feat att="definition" val="보기에 좋다." />\n      '
+    '<Equivalent><feat att="language" val="영어" /><feat att="lemma" '
+    'val="pretty; beautiful" /><feat att="definition" val="looking '
+    'good" /></Equivalent>\n      <Equivalent><feat att="language" '
+    'val="영어" /><feat att="lemma" val="lovely" /><feat '
+    'att="definition" val="looking good" /></Equivalent>\n    </Sense>'
+    '\n  </LexicalEntry>\n</Lexicon></LexicalResource>\n'
+)
 
 
 @cache

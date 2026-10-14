@@ -81,8 +81,7 @@ _METHOD_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "get_state": (frozenset(), frozenset()),
     "update_settings": (frozenset({"changes"}), frozenset()),
     "get_logs": (frozenset(), frozenset()),
-    # ControlCenterBridge actions retained as explicit, currently unavailable
-    # contracts until their corresponding desktop owners are ported.
+    # Product actions remain explicit rather than accepting arbitrary bridge calls.
     "start_capture": (frozenset(), frozenset()),
     "stop_capture": (frozenset(), frozenset()),
     "set_capture_mode": (frozenset({"mode"}), frozenset()),

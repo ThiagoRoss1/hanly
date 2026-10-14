@@ -178,6 +178,7 @@ def _unreachable_tag(code: int | None) -> Callable[[str], Mapping[str, Any]]:
     """A tagged release source that fails the way urllib reports it."""
 
     import urllib.error
+    from email.message import Message
 
     from hanly_app.updates.resource_service import RemoteManifestError
 
@@ -185,7 +186,9 @@ def _unreachable_tag(code: int | None) -> Callable[[str], Mapping[str, Any]]:
         cause: OSError = (
             urllib.error.URLError("connection refused")
             if code is None
-            else urllib.error.HTTPError("https://example.invalid", code, "status", {}, None)  # type: ignore[arg-type]
+            else urllib.error.HTTPError(
+                "https://example.invalid", code, "status", Message(), None
+            )
         )
         raise RemoteManifestError(f"could not read remote metadata: {cause}") from cause
 

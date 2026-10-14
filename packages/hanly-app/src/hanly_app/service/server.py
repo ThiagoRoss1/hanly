@@ -7,10 +7,10 @@ import os
 import re
 import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from .application import DesktopService, ServiceError
 from .event_loop import SerializedEventLoop
@@ -65,11 +65,11 @@ def _serve(args: argparse.Namespace, writer: BinaryIO) -> int:
     reader = _FrameReader(sys.stdin.fileno())
     event_sequence = 0
 
-    def write_event(name: str, payload: object) -> None:
+    def write_event(name: str, payload: Mapping[str, Any]) -> None:
         nonlocal event_sequence
         event_sequence += 1
         try:
-            frame = encode_event(event_sequence, name, payload)  # type: ignore[arg-type]
+            frame = encode_event(event_sequence, name, payload)
         except (TypeError, ValueError):
             _diagnostic("event_rejected")
             return

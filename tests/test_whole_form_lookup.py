@@ -43,11 +43,18 @@ class _Dictionary:
         return found if isinstance(found, tuple) else (found,)
 
 
-def _entry(headword: str, gloss: str, **kwargs: object) -> DictionaryEntry:
+def _entry(
+    headword: str,
+    gloss: str,
+    *,
+    vocabulary_level: str | None = None,
+    part_of_speech: str | None = None,
+) -> DictionaryEntry:
     return DictionaryEntry(
         headword=headword,
         senses=(DictionarySense(definition=f"{gloss} definition", gloss=gloss),),
-        **kwargs,  # type: ignore[arg-type]
+        vocabulary_level=vocabulary_level,
+        part_of_speech=part_of_speech,
     )
 
 

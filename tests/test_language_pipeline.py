@@ -9,6 +9,7 @@ the seam has failed at the only thing it exists to do.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import overload
 
 import pytest
 from hanly import (
@@ -31,6 +32,9 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly.errors import LookupCancelled
+from hanly.providers import DictionaryProvider, MorphologyProvider, OCRProvider
+
+from tests.hanly_fixtures.runtime_input import invoke_with_runtime_values
 
 _IMAGE = ROIImage(1, 1, PixelFormat.GRAYSCALE_8, b"\x00")
 #: One line of OCR text with the pointer inside the second word.
@@ -100,24 +104,79 @@ class _Dictionary:
         return ()
 
 
+@overload
+def _language() -> tuple[LanguagePipeline, _Morphology, _Dictionary]: ...
+
+
+@overload
 def _language(
-    morphology: _Morphology | None = None, dictionary: _Dictionary | None = None
-) -> tuple[LanguagePipeline, _Morphology, _Dictionary]:
+    *, morphology: MorphologyProvider, dictionary: None = None
+) -> tuple[LanguagePipeline, MorphologyProvider, _Dictionary]: ...
+
+
+@overload
+def _language(
+    *, morphology: None = None, dictionary: DictionaryProvider
+) -> tuple[LanguagePipeline, _Morphology, DictionaryProvider]: ...
+
+
+@overload
+def _language(
+    *, morphology: MorphologyProvider, dictionary: DictionaryProvider
+) -> tuple[LanguagePipeline, MorphologyProvider, DictionaryProvider]: ...
+
+
+def _language(
+    morphology: MorphologyProvider | None = None,
+    dictionary: DictionaryProvider | None = None,
+) -> tuple[LanguagePipeline, MorphologyProvider, DictionaryProvider]:
     m = morphology or _Morphology()
     d = dictionary or _Dictionary()
     return LanguagePipeline(m, d), m, d
 
 
+@overload
 def _pixel(
-    ocr: _OCR | None = None,
-    morphology: _Morphology | None = None,
-    dictionary: _Dictionary | None = None,
-    **options: object,
-) -> tuple[LookupPipeline, _OCR, _Morphology, _Dictionary]:
+    *, confidence_threshold: float | None = None
+) -> tuple[LookupPipeline, _OCR, _Morphology, _Dictionary]: ...
+
+
+@overload
+def _pixel(
+    ocr: OCRProvider,
+    morphology: None = None,
+    dictionary: None = None,
+    *,
+    confidence_threshold: float | None = None,
+) -> tuple[LookupPipeline, OCRProvider, _Morphology, _Dictionary]: ...
+
+
+@overload
+def _pixel(
+    ocr: OCRProvider | None = None,
+    morphology: MorphologyProvider | None = None,
+    dictionary: DictionaryProvider | None = None,
+    *,
+    confidence_threshold: float | None = None,
+) -> tuple[LookupPipeline, OCRProvider, MorphologyProvider, DictionaryProvider]: ...
+
+
+def _pixel(
+    ocr: OCRProvider | None = None,
+    morphology: MorphologyProvider | None = None,
+    dictionary: DictionaryProvider | None = None,
+    *,
+    confidence_threshold: float | None = None,
+) -> tuple[LookupPipeline, OCRProvider, MorphologyProvider, DictionaryProvider]:
     o = ocr or _OCR()
     m = morphology or _Morphology()
     d = dictionary or _Dictionary()
-    return LookupPipeline(o, m, d, **options), o, m, d  # type: ignore[arg-type]
+    return (
+        LookupPipeline(o, m, d, confidence_threshold=confidence_threshold),
+        o,
+        m,
+        d,
+    )
 
 
 # --- Parity: the whole point of the seam ------------------------------------
@@ -245,7 +304,7 @@ def test_empty_ocr_is_still_an_empty_pixel_result() -> None:
         def recognize(self, _image: ROIImage) -> tuple[OCRResult, ...]:
             return ()
 
-    pipeline, _o, _m, _d = _pixel(ocr=Blank())  # type: ignore[arg-type]
+    pipeline, _o, _m, _d = _pixel(ocr=Blank())
 
     result = pipeline.lookup(_IMAGE, _TARGET)
 
@@ -264,7 +323,7 @@ def test_low_confidence_remains_a_pixel_only_decision() -> None:
         return OCRResult(_LINE, value, Quad.from_bounding_box(BoundingBox(0, 0, 90, 10)))
 
     pipeline, _o, morphology, _d = _pixel(
-        ocr=Faint(), confidence_threshold=0.5  # type: ignore[arg-type]
+        ocr=Faint(), confidence_threshold=0.5
     )
 
     result = pipeline.lookup(_IMAGE, _TARGET)
@@ -288,10 +347,10 @@ def test_not_found_is_a_language_result_from_either_acquisition() -> None:
                 candidates=(LexicalCandidate(lemma="없는말", start=0, end=len(text)),),
             )
 
-    language, _m, dictionary = _language(morphology=OnlyUnknown())  # type: ignore[arg-type]
+    language, _m, dictionary = _language(morphology=OnlyUnknown())
     direct = language.lookup(TextSelection(_SURFACE, 0))
 
-    pipeline, _o, _pm, _pd = _pixel(morphology=OnlyUnknown())  # type: ignore[arg-type]
+    pipeline, _o, _pm, _pd = _pixel(morphology=OnlyUnknown())
     from_pixels = pipeline.lookup(_IMAGE, _TARGET)
 
     for result in (direct, from_pixels):
@@ -319,7 +378,7 @@ def test_a_morphology_provider_with_no_lemma_is_unusable_not_an_error() -> None:
         def analyze(self, _text: str) -> MorphologyAnalysis:
             return MorphologyAnalysis()
 
-    language, _m, dictionary = _language(morphology=Silent())  # type: ignore[arg-type]
+    language, _m, dictionary = _language(morphology=Silent())
 
     result = language.lookup(TextSelection(_SURFACE, 0))
 
@@ -335,7 +394,7 @@ def test_a_sequence_only_morphology_provider_still_works() -> None:
         def analyze(self, text: str) -> Sequence[TokenAnalysis]:
             return (TokenAnalysis(token=text, lemma="받다", start=0, length=len(text)),)
 
-    language, _m, dictionary = _language(morphology=Older())  # type: ignore[arg-type]
+    language, _m, dictionary = _language(morphology=Older())
 
     result = language.lookup(TextSelection(_SURFACE, 0))
 
@@ -360,8 +419,10 @@ def test_a_provider_failure_is_an_error_result_naming_its_stage(
         def lookup(self, _lemma: str) -> tuple[DictionaryEntry, ...]:
             raise RuntimeError("boom")
 
-    kwargs = {failing: Exploding()}
-    language, _m, _d = _language(**kwargs)  # type: ignore[arg-type]
+    if failing == "morphology":
+        language = _language(morphology=Exploding())[0]
+    else:
+        language = _language(dictionary=Exploding())[0]
 
     result = language.lookup(TextSelection(_SURFACE, 0))
 
@@ -383,7 +444,7 @@ def test_a_non_selection_argument_is_a_type_error() -> None:
     language, _m, _d = _language()
 
     with pytest.raises(TypeError, match="TextSelection"):
-        language.lookup("초대받았어요")  # type: ignore[arg-type]
+        invoke_with_runtime_values(language.lookup, "초대받았어요")
 
 
 # --- The engine stays acquisition-neutral -----------------------------------

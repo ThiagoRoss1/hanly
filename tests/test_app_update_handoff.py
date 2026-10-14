@@ -309,31 +309,31 @@ def test_the_script_is_written_outside_the_directory_it_removes(
 # --------------------------------------------------------------------------
 
 
-def _native(tmp_path: Path, **overrides: object) -> NativeTransaction:
-    values: dict[str, object] = {
-        "transaction_id": "t1",
-        "lock_path": tmp_path / "state" / "native-lock",
-        "install_path": tmp_path / "apps" / "hanly-desktop",
-        "staging_path": tmp_path / "apps" / ".hanly-update-t1",
-        "candidate_path": tmp_path / "apps" / ".hanly-update-t1" / "candidate",
-        "backup_path": tmp_path / "apps" / ".hanly-update-t1" / "previous",
-        "rejected_path": tmp_path / "apps" / ".hanly-update-t1" / "rejected",
-        "result_path": tmp_path / "apps" / ".hanly-update-t1" / "result",
-        "ack_path": tmp_path / "state" / "challenge-t1.ack",
-        "challenge_path": tmp_path / "state" / "challenge-t1.json",
-        "expected": "HANLY-READY-2\nt1\ndeadbeef\n",
-        "executable": "hanly-desktop",
-        "launch": LAUNCH_EXEC,
-        "parent_pid": 4321,
-        "exit_timeout": 120,
-        "ready_timeout": 600,
-        "install_device": 16777232,
-        "install_inode": 991122,
-        "candidate_device": 16777232,
-        "candidate_inode": 991123,
-    }
-    values.update(overrides)
-    return NativeTransaction(**values)  # type: ignore[arg-type]
+def _native(
+    tmp_path: Path, *, executable: str = "hanly-desktop"
+) -> NativeTransaction:
+    return NativeTransaction(
+        transaction_id="t1",
+        lock_path=tmp_path / "state" / "native-lock",
+        install_path=tmp_path / "apps" / "hanly-desktop",
+        staging_path=tmp_path / "apps" / ".hanly-update-t1",
+        candidate_path=tmp_path / "apps" / ".hanly-update-t1" / "candidate",
+        backup_path=tmp_path / "apps" / ".hanly-update-t1" / "previous",
+        rejected_path=tmp_path / "apps" / ".hanly-update-t1" / "rejected",
+        result_path=tmp_path / "apps" / ".hanly-update-t1" / "result",
+        ack_path=tmp_path / "state" / "challenge-t1.ack",
+        challenge_path=tmp_path / "state" / "challenge-t1.json",
+        expected="HANLY-READY-2\nt1\ndeadbeef\n",
+        executable=executable,
+        launch=LAUNCH_EXEC,
+        parent_pid=4321,
+        exit_timeout=120,
+        ready_timeout=600,
+        install_device=16777232,
+        install_inode=991122,
+        candidate_device=16777232,
+        candidate_inode=991123,
+    )
 
 
 def test_a_descriptor_round_trips_through_the_bytes_the_helper_reads(

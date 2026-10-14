@@ -18,9 +18,15 @@ from hanly_app.acquisition.direct_text import (
 
 _KOREAN = "초대받았어요"
 _BOUNDS = BoundingBox(left=100, top=100, right=200, bottom=120)
-_UNSET = object()
 _INSIDE = Point(150, 110)
 _OUTSIDE = Point(400, 400)
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 
 class _Provider:
@@ -31,7 +37,7 @@ class _Provider:
         reading: DirectText | None = None,
         error: Exception | None = None,
         *,
-        span_bounds: BoundingBox | None | object = _UNSET,
+        span_bounds: BoundingBox | None | _Unset = _UNSET,
     ):
         self.reading = reading
         self.error = error
@@ -51,25 +57,32 @@ class _Provider:
     ) -> BoundingBox | None:
         self.spans.append((start, end))
         self.lines.append(line)
-        if self._span_bounds is not _UNSET:
-            return self._span_bounds  # type: ignore[return-value]
+        if not isinstance(self._span_bounds, _Unset):
+            return self._span_bounds
         # A plausible sub-rectangle inside the line it came from.
         return _BOUNDS
 
 
-def _reading(**overrides: object) -> DirectText:
-    fields: dict[str, object] = {
-        "text": _KOREAN,
-        "cursor_index": 2,
-        "bounds": _BOUNDS,
-    }
-    fields.update(overrides)
-    return DirectText(**fields)  # type: ignore[arg-type]
+def _reading(
+    *,
+    text: str = _KOREAN,
+    cursor_index: int = 2,
+    bounds: BoundingBox | None = _BOUNDS,
+    secure: bool = False,
+    role: str | None = None,
+) -> DirectText:
+    return DirectText(
+        text=text,
+        cursor_index=cursor_index,
+        bounds=bounds,
+        secure=secure,
+        role=role,
+    )
 
 
-def _acquire(reading: DirectText | None = None, **kwargs: object) -> Acquisition:
+def _acquire(reading: DirectText | None = None) -> Acquisition:
     provider = _Provider(reading if reading is not None else _reading())
-    coordinator = DirectTextCoordinator(provider, **kwargs)  # type: ignore[arg-type]
+    coordinator = DirectTextCoordinator(provider)
     return coordinator.acquire(_INSIDE)
 
 
@@ -90,8 +103,9 @@ def test_containing_korean_text_is_used_directly() -> None:
 def test_the_selection_is_attributed_to_the_acquisition_that_read_it() -> None:
     """The one consumer of `TextSelection.source`: which path produced this."""
 
-    assert _acquire().selection is not None
-    assert _acquire().selection.source == "accessibility"  # type: ignore[union-attr]
+    result = _acquire()
+    assert result.selection is not None
+    assert result.selection.source == "accessibility"
 
 
 # --- everything else falls back ---------------------------------------------
@@ -266,7 +280,7 @@ def test_a_placeholder_under_the_pointer_is_left_to_ocr(placeholder: str) -> Non
 _WORD_BOUNDS = BoundingBox(left=150, top=100, right=190, bottom=120)
 
 
-def _mixed(span_bounds: BoundingBox | None | object = _UNSET) -> _Provider:
+def _mixed(span_bounds: BoundingBox | None | _Unset = _UNSET) -> _Provider:
     """`Hello 초대받았어요`, whose line rectangle spans the Latin too."""
 
     return _Provider(
@@ -300,8 +314,14 @@ def test_refinement_is_handed_the_exact_line_that_was_read() -> None:
 def test_a_reader_that_cannot_check_the_line_is_refused() -> None:
     """An adapter unaware of the line could return bounds for other content."""
 
-    class _Unchecked(_Provider):
-        def refine_bounds(  # type: ignore[override]
+    class _Unchecked:
+        def __init__(self, reading: DirectText) -> None:
+            self.reading = reading
+
+        def read_at(self, point: Point, *, timeout_ms: int) -> DirectText:
+            return self.reading
+
+        def refine_bounds(
             self, point: Point, start: int, end: int, *, timeout_ms: int
         ) -> BoundingBox | None:
             return _WORD_BOUNDS
@@ -356,7 +376,9 @@ def test_a_failure_while_asking_for_bounds_falls_back_to_ocr() -> None:
     )
 
 
-def test_asking_for_bounds_is_given_the_same_deadline() -> None:
+def test_asking_for_bounds_is_given_the_same_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _mixed(_WORD_BOUNDS)
     seen: list[int] = []
 
@@ -366,7 +388,7 @@ def test_asking_for_bounds_is_given_the_same_deadline() -> None:
         seen.append(timeout_ms)
         return _WORD_BOUNDS
 
-    provider.refine_bounds = refine  # type: ignore[method-assign]
+    monkeypatch.setattr(provider, "refine_bounds", refine)
 
     DirectTextCoordinator(provider, timeout_ms=25).acquire(_INSIDE)
 

@@ -1,6 +1,4 @@
 """UI-free image-to-LookupResult validation for the Hanly engine."""
-# ruff: noqa: E501 -- literal official-shape XML is intentionally unwrapped.
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -63,17 +61,16 @@ class _DeterministicOCR:
 
 # Deliberately smaller than the shared fixture: the not-found case needs a
 # dictionary that recognizes the verb but not the noun in the OCR line.
-_VERB_ONLY_XML = """<?xml version="1.0" encoding="utf-8"?>
-<LexicalResource><Lexicon>
-  <LexicalEntry att="id" val="1">
-    <feat att="lexicalUnit" val="단어" /><feat att="partOfSpeech" val="동사" />
-    <Lemma><feat att="writtenForm" val="읽다" /></Lemma>
-    <Sense att="id" val="11"><feat att="definition" val="글을 보고 뜻을 이해하다." />
-      <Equivalent><feat att="language" val="영어" /><feat att="lemma" val="read" /><feat att="definition" val="to read" /></Equivalent>
-    </Sense>
-  </LexicalEntry>
-</Lexicon></LexicalResource>
-"""
+_VERB_ONLY_XML = (
+    '<?xml version="1.0" encoding="utf-8"?>\n<LexicalResource><Lexicon>'
+    '\n  <LexicalEntry att="id" val="1">\n    <feat att="lexicalUnit" '
+    'val="단어" /><feat att="partOfSpeech" val="동사" />\n    <Lemma><feat '
+    'att="writtenForm" val="읽다" /></Lemma>\n    <Sense att="id" '
+    'val="11"><feat att="definition" val="글을 보고 뜻을 이해하다." />\n      '
+    '<Equivalent><feat att="language" val="영어" /><feat att="lemma" '
+    'val="read" /><feat att="definition" val="to read" /></Equivalent>'
+    '\n    </Sense>\n  </LexicalEntry>\n</Lexicon></LexicalResource>\n'
+)
 
 
 @pytest.fixture
