@@ -124,7 +124,7 @@ fn popup_action(
         }
         _ => return Err(BridgeError::new("not_allowed", "Unknown popup action.")),
     };
-    service.request("host", native_method, native_params)
+    service.request(window.label(), native_method, native_params)
 }
 
 fn update_hotkeys(
