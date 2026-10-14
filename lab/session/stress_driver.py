@@ -24,13 +24,12 @@ from typing import TYPE_CHECKING, Any
 from .browser_text import FOLDER, BrowserText, is_drawn
 from .driver import TourDriver, _Observation, outcome_record
 from .ownership import owner_at
+from .raster_ui import Point, Rect
 from .recorder import LabRecorder
 from .stress import StressItem
 from .stress_scoring import CORPUS_RULE, RULE, failing_stage, stress_verdict
 
 if TYPE_CHECKING:
-    from PyQt6.QtCore import QPoint, QRect
-
     from .stress_page import StressPage, StressPlaced
 
 #: How long a ``leave_early`` hover waits for its lookup to be submitted.
@@ -73,12 +72,10 @@ class StressDriver(TourDriver):
         self._retain_images = retain_fixture_images
         self._desktop_pid = next(iter(owned_pids or ()), None)
         self._allowed: set[int] = set()
-        self._last_popup: QRect | None = None
+        self._last_popup: Rect | None = None
         self._page_index = 0
         #: Where the pointer rests while the tour page is hidden; ``None`` uses the page.
         self._rest_override: tuple[int, int] | None = None
-        # Read once on the Qt thread that built the page.
-        self._page_handle = int(page.winId())
 
     # -- the run ------------------------------------------------------------------
 
@@ -137,7 +134,7 @@ class StressDriver(TourDriver):
             done = self._hover(placed, page, first)
         if not done:
             return False
-        self._last_popup = _own_popup_rect(self._page_handle, self._desktop_pid)
+        self._last_popup = _own_popup_rect(self._desktop_pid)
         self._move_to(self._page.to_global(self._page.pages[page].rest))
         self._popup_hidden.clear()
         self._popup_hidden.wait(0.8)
@@ -156,25 +153,22 @@ class StressDriver(TourDriver):
     def _at_previous_popup(self, placed: StressPlaced) -> StressPlaced:
         """Rest where the last answer was shown, if that spot is still on blank page."""
 
-        from PyQt6.QtCore import QRect
-
         rect = self._last_popup
         if rect is None:
             return placed
-        origin = self._page.geometry().topLeft()
-        centre = rect.center() - origin
+        centre = self._page.geometry.from_pointer((rect.center.x, rect.center.y))
         if not self._page.rect().contains(centre) or self._over_text(centre):
             return placed
-        return replace(placed, point=centre, word=QRect(centre.x() - 1, centre.y() - 1, 2, 2))
+        return replace(placed, point=centre, word=Rect(centre.x - 1, centre.y - 1, 2, 2))
 
     def _restore_page(self, page: int) -> None:
         # While the browser is read the page stays out of its way.
         if self._rest_override is None:
             super()._restore_page(page)
 
-    def _over_text(self, point: QPoint) -> bool:
+    def _over_text(self, point: Point) -> bool:
         placed = self._page.pages[self._page_index].placed
-        return any(item.word.adjusted(-30, -20, 30, 20).contains(point) for item in placed)
+        return any(item.word.expand(30, 20, 30, 20).contains(point) for item in placed)
 
     def _special(self, placed: StressPlaced, page: int, behavior: str) -> bool:
         x, y = self._page.to_global(placed.point)
@@ -239,8 +233,14 @@ class StressDriver(TourDriver):
 
         if not self._uia_items or sys.platform != "win32":
             return True
-        geometry = self._page.geometry()
-        window = (geometry.left() + 200, geometry.top() + 80, 900, 820)
+        geometry = self._page.geometry
+        origin = geometry.to_pointer(Point(200, 80))
+        window = (
+            origin[0],
+            origin[1],
+            round(900 * geometry.pointer_scale),
+            round(820 * geometry.pointer_scale),
+        )
         # Blank page inside the browser, below its last line: never anyone else's screen.
         rest = (window[0] + window[2] - 90, window[1] + window[3] - 60)
         # The tour page is always on top; it steps aside while the browser is read.
@@ -300,17 +300,14 @@ class StressDriver(TourDriver):
     def _hover_points(
         self, items: list[StressItem], points: list[tuple[int, int]], rest: tuple[int, int]
     ) -> bool:
-        from PyQt6.QtCore import QPoint, QRect
-
         from .stress_page import StressPlaced
 
-        origin = self._page.geometry().topLeft()
         self._move_to(rest)
         for item, (x, y) in zip(items, points, strict=False):
-            local = QPoint(x, y) - origin
+            local = self._page.geometry.from_pointer((x, y))
             placed = StressPlaced(
                 item.target,
-                QRect(local.x() - 2, local.y() - 2, 4, 4),
+                Rect(local.x - 2, local.y - 2, 4, 4),
                 local,
                 "Malgun Gothic",
                 30,
@@ -323,6 +320,7 @@ class StressDriver(TourDriver):
             self._popup_hidden.clear()
             self._popup_hidden.wait(0.8)
         return True
+
     # -- recording ----------------------------------------------------------------
 
     def _target_event(self, placed: Any, page: int, x: int, y: int) -> None:
@@ -451,16 +449,17 @@ class StressDriver(TourDriver):
         return owner_at(px, py) in self._allowed
 
     def _start_cover(self) -> subprocess.Popen[bytes]:
-        geometry = self._page.geometry()
+        geometry = self._page.geometry
+        left, top = geometry.to_pointer(Point(420, 180))
         cover = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
                 "lab.session.cover",
-                str(geometry.left() + 420),
-                str(geometry.top() + 180),
-                "640",
-                "380",
+                str(left),
+                str(top),
+                str(round(640 * geometry.pointer_scale)),
+                str(round(380 * geometry.pointer_scale)),
             ],
             cwd=str(Path(__file__).resolve().parents[2]),
         )
@@ -482,13 +481,11 @@ def _stop(process: subprocess.Popen[Any]) -> None:
             process.kill()
 
 
-def _own_popup_rect(page_handle: int, desktop_pid: int | None) -> QRect | None:
+def _own_popup_rect(desktop_pid: int | None) -> Rect | None:
     """Locate a compact native Hanly window without inspecting its contents."""
 
     if desktop_pid is None:
         return None
-    from PyQt6.QtCore import QRect
-
     if sys.platform == "darwin":
         try:
             import Quartz
@@ -504,7 +501,7 @@ def _own_popup_rect(page_handle: int, desktop_pid: int | None) -> QRect | None:
             bounds = window.get("kCGWindowBounds") or {}
             width, height = int(bounds.get("Width", 0)), int(bounds.get("Height", 0))
             if 40 < width < 900 and 30 < height < 900:
-                return QRect(
+                return Rect(
                     int(bounds.get("X", 0)),
                     int(bounds.get("Y", 0)),
                     width,
@@ -518,23 +515,24 @@ def _own_popup_rect(page_handle: int, desktop_pid: int | None) -> QRect | None:
 
     user32 = ctypes.windll.user32
     allowed = {desktop_pid}
-    found: list[QRect] = []
+    found: list[Rect] = []
 
     def visit(handle: int, _parameter: int) -> bool:
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
-        if pid.value not in allowed or handle == page_handle or not user32.IsWindowVisible(handle):
+        if pid.value not in allowed or not user32.IsWindowVisible(handle):
             return True
         rect = wintypes.RECT()
         user32.GetWindowRect(handle, ctypes.byref(rect))
         width, height = rect.right - rect.left, rect.bottom - rect.top
-        # The popup is a small window; the page and Qt's helper windows are not.
+        # The popup is a small window; the page and Lab helper windows are not.
         if 40 < width < 900 and 30 < height < 900:
-            found.append(QRect(rect.left, rect.top, width, height))
+            found.append(Rect(rect.left, rect.top, width, height))
         return True
 
     callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
     user32.EnumWindows(callback, 0)
     return found[0] if found else None
+
 
 __all__ = ["StressDriver"]

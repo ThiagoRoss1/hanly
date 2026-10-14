@@ -1,8 +1,8 @@
 """Launch the native desktop under observation and turn the session into a report.
 
 Hanly runs as an external Tauri process. Lab observes its bounded trace stream
-and samples the owned desktop family separately from the Qt fixture harness.
-Each run has a disposable profile; the selected runtime configuration and its
+and samples the owned desktop family separately from its raster fixtures. Each
+run has a disposable profile; the selected runtime configuration and its
 dictionary and OCR models are reused read only.
 """
 
@@ -114,9 +114,7 @@ def run_session(options: SessionOptions) -> int:
         )
 
     run_root = (
-        RUNS_ROOT
-        if options.output_root is None
-        else options.output_root.expanduser().resolve()
+        RUNS_ROOT if options.output_root is None else options.output_root.expanduser().resolve()
     )
     run_dir = run_root / f"{datetime.now():%Y%m%d-%H%M%S}-{options.mode}"
     profile = run_dir / "profile"
@@ -141,16 +139,14 @@ def run_session(options: SessionOptions) -> int:
 
     from .sampler import ProcessSampler
 
-    needs_qt = options.drives or options.hud
-    application = None
-    if needs_qt:
-        from .qt import create_application
+    needs_ui = options.drives or options.hud
+    ui = None
+    if needs_ui:
+        from .raster_ui import create_ui_host
 
-        application = create_application()
+        ui = create_ui_host()
 
-    sampler = ProcessSampler(
-        run_dir / "processes.jsonl", recorder.origin_ns, sample_parent=False
-    )
+    sampler = ProcessSampler(run_dir / "processes.jsonl", recorder.origin_ns, sample_parent=False)
     environment = _desktop_environment(profile, options, executable)
     desktop = DesktopProcess(
         executable,
@@ -164,12 +160,12 @@ def run_session(options: SessionOptions) -> int:
     )
     closers: list[Any] = []
     if options.hud:
-        if application is None:
-            raise RuntimeError("the Lab HUD requires its Qt harness")
+        if ui is None:
+            raise RuntimeError("the Lab HUD needs the Lab native window host")
         from ..hud.session import _resolved_backend
 
         for sink in _hud(
-            application,
+            ui,
             settings,
             closers,
             dwell_ms=options.hud_dwell_ms,
@@ -179,9 +175,11 @@ def run_session(options: SessionOptions) -> int:
             recorder.subscribe(_listener(sink))
     start_driver = None
     if options.mode == "tour":
-        start_driver = _start_tour(options, recorder, settings, runtime_config, closers)
+        assert ui is not None
+        start_driver = _start_tour(options, recorder, settings, runtime_config, ui, closers)
     elif plan is not None:
-        start_driver = _start_stress(options, plan, recorder, settings, run_dir, closers)
+        assert ui is not None
+        start_driver = _start_stress(options, plan, recorder, settings, run_dir, ui, closers)
 
     recorder.lab("session_started", mode=options.mode)
     exit_code = 1
@@ -194,30 +192,24 @@ def run_session(options: SessionOptions) -> int:
         )
         if start_driver is not None:
             start_driver(desktop)
-        if application is not None:
-            from PyQt6.QtCore import QTimer
-
-            poller = QTimer(application)
-            poller.setInterval(100)
-
-            def poll_desktop() -> None:
-                nonlocal exit_code
-                result = desktop.poll()
-                if result is None:
-                    return
-                exit_code = result
-                poller.stop()
-                application.quit()
-
-            poller.timeout.connect(poll_desktop)
-            poller.start()
+        if ui is not None:
             if options.duration:
+
                 def stop_after_duration() -> None:
                     recorder.lab("session_duration_reached", seconds=options.duration)
                     desktop.request_stop()
 
-                QTimer.singleShot(max(1, int(options.duration * 1000)), stop_after_duration)
-            application.exec()
+            else:
+
+                def stop_after_duration() -> None:
+                    return
+
+            exit_code = ui.run(
+                desktop.poll,
+                interval_ms=100,
+                duration_s=options.duration,
+                on_duration=stop_after_duration,
+            )
             if desktop.poll() is None:
                 desktop.request_stop()
             result = desktop.poll()
@@ -226,6 +218,7 @@ def run_session(options: SessionOptions) -> int:
             exit_code = result
         else:
             if options.duration:
+
                 def stop_after_duration() -> None:
                     recorder.lab("session_duration_reached", seconds=options.duration)
                     desktop.request_stop()
@@ -257,6 +250,11 @@ def run_session(options: SessionOptions) -> int:
                 close()
             except Exception:
                 continue
+        if ui is not None:
+            try:
+                ui.close()
+            except Exception:
+                pass
         sampler.stop()
         recorder.close()
         _write_json(
@@ -433,6 +431,7 @@ def _start_tour(
     recorder: LabRecorder,
     settings: AppConfig,
     runtime_config: Path,
+    ui: Any,
     closers: list[Any],
 ) -> Any:
     from .corpus import story_targets, word_targets
@@ -441,7 +440,7 @@ def _start_tour(
 
     story = story_targets() if options.story_sizes else []
     words = word_targets(_krdict(runtime_config), options.words, seed=options.seed)
-    page = TourPage()
+    page = TourPage(ui)
     page.lay_out(story, words, list(options.story_sizes), list(options.word_sizes))
     total = sum(len(p.placed) for p in page.pages)
     recorder.lab(
@@ -449,7 +448,7 @@ def _start_tour(
         pages=len(page.pages),
         targets=total,
         plan_fingerprint=plan_fingerprint(page.pages),
-        display_scale=page.devicePixelRatioF(),
+        display_scale=page.display_scale,
     )
     print(f"lab: tour of {total} hovers over {len(page.pages)} pages", flush=True)
     closers.append(page.close)
@@ -516,12 +515,13 @@ def _start_stress(
     recorder: LabRecorder,
     settings: AppConfig,
     run_dir: Path,
+    ui: Any,
     closers: list[Any],
 ) -> Any:
     from .stress_driver import StressDriver
     from .stress_page import StressPage
 
-    page = StressPage()
+    page = StressPage(ui)
     uia = [item for item in plan if item.family in {"uia_korean", "uia_latin"}]
     page.lay_out_plan(plan, options.seed)
     for omitted in page.omitted:
@@ -533,7 +533,7 @@ def _start_stress(
         targets=total,
         plan_fingerprint=plan_fingerprint(page.pages, uia),
         # Physical pixels per point of the page: what a 1:1 painted image is drawn at.
-        display_scale=page.devicePixelRatioF(),
+        display_scale=page.display_scale,
     )
     print(f"lab: stress campaign of {total} hovers over {len(page.pages)} pages", flush=True)
     closers.append(page.close)
@@ -630,7 +630,7 @@ def _listener(sink: Any) -> Any:
 
 
 def _hud(
-    application: Any,
+    ui: Any,
     settings: AppConfig,
     closers: list[Any],
     *,
@@ -638,25 +638,14 @@ def _hud(
     backend: str,
     show_roi: bool,
 ) -> list[Any]:
-    from PyQt6.QtCore import QRect
-
     from ..hud.capture_overlay import CaptureOverlay
     from ..hud.hover_hud import HoverHUD
 
-    panel = HoverHUD(dwell_ms=dwell_ms, backend=backend)
-    panel.show()
+    panel = HoverHUD(ui, dwell_ms=dwell_ms, backend=backend)
     sinks: list[Any] = [panel]
     closers.append(panel.close)
     if show_roi:
-        geometries = [screen.geometry() for screen in application.screens()]
-        if not geometries:
-            raise RuntimeError("no screen is available for the capture overlay")
-        left = min(geometry.left() for geometry in geometries)
-        top = min(geometry.top() for geometry in geometries)
-        right = max(geometry.right() for geometry in geometries)
-        bottom = max(geometry.bottom() for geometry in geometries)
-        overlay = CaptureOverlay(QRect(left, top, right - left + 1, bottom - top + 1))
-        overlay.show()
+        overlay = CaptureOverlay(ui)
         closers.append(overlay.close)
         sinks.append(overlay)
     return sinks

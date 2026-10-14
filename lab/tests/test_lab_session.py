@@ -105,9 +105,7 @@ def test_native_runtime_readiness_drives_timeline_and_startup_report() -> None:
     report = startup(events)
 
     assert [mark["label"] for mark in marks] == ["Desktop runtime ready"]
-    assert report["milestones"] == [
-        {"name": "desktop service ready", "at_ms": 37.0, "t": 47.0}
-    ]
+    assert report["milestones"] == [{"name": "desktop service ready", "at_ms": 37.0, "t": 47.0}]
     assert report["lab_driver_input_preflight"] == {
         "preflight_available": True,
         "post_event_access": False,
@@ -148,6 +146,7 @@ def test_tour_hotkey_synthesis_marks_each_press_and_release_without_key_content(
     driver._keys = Keys
     driver._keyboard = Keyboard()
     driver._recorder = Recorder()
+    monkeypatch.setattr("lab.session.mac_function_keys.sys.platform", "linux")
     monkeypatch.setattr("lab.session.driver.time.sleep", lambda _duration: None)
 
     driver._press_capture_hotkey()
@@ -172,6 +171,152 @@ def test_tour_hotkey_synthesis_marks_each_press_and_release_without_key_content(
     ]
     assert all("key" not in fields for _name, fields in driver._recorder.events)
     assert driver._keyboard.events == ["press"] * 3 + ["release"] * 3
+
+
+@pytest.mark.parametrize("number", range(1, 21))
+def test_macos_function_key_range_uses_public_pynput_virtual_codes(
+    monkeypatch: pytest.MonkeyPatch, number: int
+) -> None:
+    from lab.session.mac_function_keys import dispatch_key_edge
+
+    class KeyCode:
+        vk = 100 + number
+
+    class Key:
+        value = KeyCode()
+
+    class Quartz:
+        kCGEventFlagMaskSecondaryFn = 1 << 8
+        kCGHIDEventTap = 12
+        kCGEventFlagMaskControl = 1 << 0
+        kCGEventFlagMaskShift = 1 << 1
+        kCGEventFlagMaskAlternate = 1 << 2
+        kCGEventFlagMaskCommand = 1 << 3
+
+        def __init__(self) -> None:
+            self.events: list[tuple[object, ...]] = []
+
+        def CGEventCreateKeyboardEvent(
+            self, source: None, virtual_key: int, key_down: bool
+        ) -> object:
+            event = object()
+            self.events.append(("create", source, virtual_key, key_down, event))
+            return event
+
+        def CGEventSetFlags(self, event: object, flags: int) -> None:
+            self.events.append(("flags", event, flags))
+
+        def CGEventPost(self, tap: int, event: object) -> None:
+            self.events.append(("post", tap, event))
+
+    quartz = Quartz()
+    monkeypatch.setattr("lab.session.mac_function_keys.sys.platform", "darwin")
+
+    dispatch_key_edge(
+        object(),
+        Key(),
+        f"f{number}",
+        pressed=True,
+        modifier_names=("ctrl", "shift", "alt", "cmd"),
+        quartz_loader=lambda: quartz,
+    )
+
+    create = quartz.events[0]
+    flags = quartz.events[1]
+    post = quartz.events[2]
+    assert create[:4] == ("create", None, 100 + number, True)
+    assert flags[0] == "flags"
+    assert flags[1] is create[4]
+    assert flags[2] == 1 << 8 | 1 << 0 | 1 << 1 | 1 << 2 | 1 << 3
+    assert post == ("post", quartz.kCGHIDEventTap, create[4])
+
+
+def test_macos_function_key_chord_posts_balanced_edges_and_keeps_trace_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lab.session.driver import TourDriver
+
+    timeline: list[tuple[object, ...]] = []
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict[str, object]]] = []
+
+        def lab(self, name: str, /, **fields: object) -> None:
+            self.events.append((name, fields))
+
+    class Keys:
+        ctrl = object()
+        shift = object()
+
+        class F10:
+            class Value:
+                vk = 109
+
+            value = Value()
+
+        f10 = F10()
+
+    class Keyboard:
+        def press(self, key: object) -> None:
+            timeline.append(("pynput", "press", _key_name(key)))
+
+        def release(self, key: object) -> None:
+            timeline.append(("pynput", "release", _key_name(key)))
+
+    class Quartz:
+        kCGEventFlagMaskSecondaryFn = 1 << 8
+        kCGEventFlagMaskControl = 1 << 0
+        kCGEventFlagMaskShift = 1 << 1
+        kCGEventFlagMaskAlternate = 1 << 2
+        kCGEventFlagMaskCommand = 1 << 3
+        kCGHIDEventTap = 12
+
+        def CGEventCreateKeyboardEvent(
+            self, _source: None, virtual_key: int, key_down: bool
+        ) -> tuple[int, bool]:
+            event = (virtual_key, key_down)
+            timeline.append(("create", *event))
+            return event
+
+        def CGEventSetFlags(self, event: object, flags: int) -> None:
+            timeline.append(("flags", event, flags))
+
+        def CGEventPost(self, tap: int, event: object) -> None:
+            timeline.append(("post", tap, event))
+
+    def _key_name(key: object) -> str:
+        if key is Keys.ctrl:
+            return "ctrl"
+        if key is Keys.shift:
+            return "shift"
+        raise AssertionError("function key should use Quartz")
+
+    driver: Any = object.__new__(TourDriver)
+    driver._capture_hotkey = "ctrl+shift+f10"
+    driver._keys = Keys
+    driver._keyboard = Keyboard()
+    driver._recorder = Recorder()
+    monkeypatch.setattr("lab.session.mac_function_keys.sys.platform", "darwin")
+    monkeypatch.setattr("lab.session.mac_function_keys._load_quartz", Quartz)
+    monkeypatch.setattr("lab.session.driver.time.sleep", lambda _duration: None)
+
+    driver._press_capture_hotkey()
+
+    expected_flags = 1 << 8 | 1 << 0 | 1 << 1
+    assert timeline == [
+        ("pynput", "press", "ctrl"),
+        ("pynput", "press", "shift"),
+        ("create", 109, True),
+        ("flags", (109, True), expected_flags),
+        ("post", 12, (109, True)),
+        ("create", 109, False),
+        ("flags", (109, False), expected_flags),
+        ("post", 12, (109, False)),
+        ("pynput", "release", "shift"),
+        ("pynput", "release", "ctrl"),
+    ]
+    assert all("key" not in fields for _name, fields in driver._recorder.events)
 
 
 # -- binding and scoring a hover -----------------------------------------------------------
@@ -850,28 +995,34 @@ def test_capture_start_requires_a_native_hotkey_acknowledgement() -> None:
     observing = threading.Event()
     acknowledged = threading.Event()
     rejected = threading.Event()
-    assert ensure_capture(
-        observing,
-        lambda: None,
-        launch_grace=0,
-        after_press=1,
-        delivery_ack=acknowledged,
-        delivery_rejected=rejected,
-        acknowledgement_timeout=0.01,
-    ) == "input_unconfirmed"
+    assert (
+        ensure_capture(
+            observing,
+            lambda: None,
+            launch_grace=0,
+            after_press=1,
+            delivery_ack=acknowledged,
+            delivery_rejected=rejected,
+            acknowledgement_timeout=0.01,
+        )
+        == "input_unconfirmed"
+    )
 
     def reject() -> None:
         acknowledged.set()
         rejected.set()
 
-    assert ensure_capture(
-        observing,
-        reject,
-        launch_grace=0,
-        after_press=1,
-        delivery_ack=acknowledged,
-        delivery_rejected=rejected,
-    ) == "input_rejected"
+    assert (
+        ensure_capture(
+            observing,
+            reject,
+            launch_grace=0,
+            after_press=1,
+            delivery_ack=acknowledged,
+            delivery_rejected=rejected,
+        )
+        == "input_rejected"
+    )
 
 
 def test_native_input_ack_is_not_mistaken_for_capture_observation() -> None:
@@ -885,13 +1036,16 @@ def test_native_input_ack_is_not_mistaken_for_capture_observation() -> None:
     def delivered() -> None:
         acknowledged.set()
 
-    assert ensure_capture(
-        observing,
-        delivered,
-        launch_grace=0,
-        after_press=0.02,
-        delivery_ack=acknowledged,
-    ) == "never_started"
+    assert (
+        ensure_capture(
+            observing,
+            delivered,
+            launch_grace=0,
+            after_press=0.02,
+            delivery_ack=acknowledged,
+        )
+        == "never_started"
+    )
 
 
 def test_tour_consumes_common_runtime_and_native_input_trace_events() -> None:
@@ -936,9 +1090,7 @@ def test_tour_rejects_unregistered_native_capture_hotkey(tmp_path: Path) -> None
 
     from lab.session.driver import TourDriver
 
-    recorder = LabRecorder(
-        tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False
-    )
+    recorder = LabRecorder(tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False)
     driver = TourDriver.__new__(TourDriver)
     driver._recorder = recorder
     driver._native_context_seen = threading.Event()

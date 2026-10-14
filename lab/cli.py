@@ -142,9 +142,7 @@ def prepare_roi(
     crop_height = min(requested_height, source.height)
     crop_left = min(max(round(target.x - crop_width / 2), 0), source.width - crop_width)
     crop_top = min(max(round(target.y - crop_height / 2), 0), source.height - crop_height)
-    cropped = source.crop(
-        (crop_left, crop_top, crop_left + crop_width, crop_top + crop_height)
-    )
+    cropped = source.crop((crop_left, crop_top, crop_left + crop_width, crop_top + crop_height))
 
     pad_left = (requested_width - crop_width) // 2
     pad_top = (requested_height - crop_height) // 2
@@ -187,8 +185,6 @@ def _versions() -> dict[str, str]:
             "easyocr": "easyocr",
             "torch": "torch",
             "kiwipiepy": "kiwipiepy",
-            "PyQt6": "PyQt6",
-            "pywebview": "pywebview",
             "mss": "mss",
             "pynput": "pynput",
             "psutil": "psutil",
@@ -288,10 +284,7 @@ def _serialize_result(result: Any) -> dict[str, Any]:
                 {
                     "text": region.text,
                     "confidence": region.confidence,
-                    "quad": [
-                        {"x": point.x, "y": point.y}
-                        for point in region.quad.points
-                    ],
+                    "quad": [{"x": point.x, "y": point.y} for point in region.quad.points],
                 }
                 for region in context.ocr_results
             ],
@@ -343,6 +336,7 @@ def run_real_lookup(args: argparse.Namespace) -> int:
     morphology: Any | None = None
     dictionary: Any | None = None
     with stdout_path.open("w", encoding="utf-8", newline="\n") as log:
+
         def report(message: str) -> None:
             print(message)
             log.write(message + "\n")
@@ -397,12 +391,8 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                     confidence_threshold=runtime.confidence_threshold,
                 )
                 if args.idle_seconds > 0:
-                    report(
-                        f"observing resident-provider idle state for {args.idle_seconds:g}s"
-                    )
-                    ProcessSampler(run_dir / "process.csv", append=True).run(
-                        args.idle_seconds
-                    )
+                    report(f"observing resident-provider idle state for {args.idle_seconds:g}s")
+                    ProcessSampler(run_dir / "process.csv", append=True).run(args.idle_seconds)
                 results = run_lookup_campaign(
                     pipeline,
                     image,
@@ -443,13 +433,8 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                 result_payload = _serialize_result(results[-1])
                 _write_json(run_dir / "result.json", result_payload)
 
-                failed = sum(
-                    sample["correctness_status"] != "success"
-                    for sample in total_samples
-                )
-                report(
-                    f"completed {len(total_samples)} lookups; correctness failures={failed}"
-                )
+                failed = sum(sample["correctness_status"] != "success" for sample in total_samples)
+                report(f"completed {len(total_samples)} lookups; correctness failures={failed}")
                 if "total_pipeline" in summaries:
                     report(
                         "warm total p50={p50:.3f} ms p95={p95:.3f} ms".format(
@@ -664,16 +649,12 @@ def run_corpus_generate(args: argparse.Namespace) -> int:
         rendered = render_sample(spec)
         relative = f"generated/{spec.case_id}.png"
         write_sample(rendered, destination.parent / relative)
-        cases.append(
-            corpus_entry(rendered, relative, redistributable=resolved.redistributable)
-        )
+        cases.append(corpus_entry(rendered, relative, redistributable=resolved.redistributable))
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "distribution": "committed" if resolved.redistributable else "local",
-        "description": (
-            f"Synthetic Korean samples rendered from {font.name} ({font.licence})."
-        ),
+        "description": (f"Synthetic Korean samples rendered from {font.name} ({font.licence})."),
         "cases": cases,
     }
     _write_json(destination, manifest)
@@ -725,9 +706,7 @@ def run_package(args: argparse.Namespace) -> int:
         hash_max_bytes=args.hash_max_bytes,
         archive=args.archive,
     )
-    print(
-        f"analyzed {report['file_count']} files / {report['total_bytes']} bytes -> {args.output}"
-    )
+    print(f"analyzed {report['file_count']} files / {report['total_bytes']} bytes -> {args.output}")
     return 0
 
 
@@ -741,14 +720,14 @@ def run_hover_rate(args: argparse.Namespace) -> int:
 
 def run_desktop_capture(args: argparse.Namespace) -> int:
     from hanly_app.acquisition.capture import CaptureService
-    from PyQt6.QtGui import QCursor
+    from pynput import mouse
 
-    cursor = QCursor.pos()
+    cursor = mouse.Controller().position
     service = CaptureService(roi_size=args.roi_size)
     try:
         report = measure_capture_service(
             service,
-            cursor=Point(float(cursor.x()), float(cursor.y())),
+            cursor=Point(float(cursor[0]), float(cursor[1])),
             enumeration_samples=args.enumerations,
             capture_samples=args.captures,
         )
@@ -785,8 +764,8 @@ def run_real_hover(args: argparse.Namespace) -> int:
 def run_dev_hud(args: argparse.Namespace) -> int:
     """Start the real desktop with the on-screen HUD attached.
 
-    Imported here rather than at module scope: this is the only command that
-    needs Qt, and the others must stay runnable without it.
+    Imported here rather than at module scope: only this command needs to
+    create the native Lab image-window host.
     """
 
     from .hud.session import run_hud_session
@@ -813,7 +792,9 @@ def run_app_lab(args: argparse.Namespace) -> int:
     from .checks.runner import run_scenarios
 
     run_dir, summary = run_scenarios(
-        tuple(args.scenario), bundle=args.bundle, expected_commit=args.expected_commit,
+        tuple(args.scenario),
+        bundle=args.bundle,
+        expected_commit=args.expected_commit,
     )
     for item in summary["results"]:
         print(f"{item['id']}: {item['outcome']} ({item['reason']})")
@@ -943,9 +924,7 @@ def _parser() -> argparse.ArgumentParser:
     hover.add_argument("--warmup", type=int, default=2)
     hover.add_argument("--samples", type=int, default=10)
     hover.add_argument("--timeout", type=float, default=120.0)
-    hover.add_argument(
-        "--output-root", type=Path, default=Path("artifacts/lab/runs")
-    )
+    hover.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
     hover.set_defaults(handler=run_real_hover)
 
     live = subcommands.add_parser(
@@ -1079,17 +1058,13 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     ocr.add_argument("--cpu-threads", type=_parse_cpu_threads)
-    ocr.add_argument(
-        "--output-root", type=Path, default=Path("artifacts/lab/runs")
-    )
+    ocr.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
     ocr.set_defaults(handler=run_ocr_campaign)
 
     corpus = subcommands.add_parser(
         "ocr-corpus", help="enumerate a corpus without loading an OCR runtime"
     )
-    corpus.add_argument(
-        "--manifest", type=Path, default=Path("lab/fixtures/ocr/manifest.json")
-    )
+    corpus.add_argument("--manifest", type=Path, default=Path("lab/fixtures/ocr/manifest.json"))
     corpus.add_argument(
         "--fonts",
         action="store_true",
@@ -1111,12 +1086,8 @@ def _parser() -> argparse.ArgumentParser:
             "not permit redistribution."
         ),
     )
-    generate.add_argument(
-        "--generator", type=Path, default=Path("lab/fixtures/ocr/generator.json")
-    )
-    generate.add_argument(
-        "--output", type=Path, default=Path("lab/fixtures/ocr/manifest.json")
-    )
+    generate.add_argument("--generator", type=Path, default=Path("lab/fixtures/ocr/generator.json"))
+    generate.add_argument("--output", type=Path, default=Path("lab/fixtures/ocr/manifest.json"))
     generate.add_argument(
         "--profile",
         choices=("golden", "smoke", "balanced", "difficult"),
@@ -1182,9 +1153,7 @@ def _session_parsers(subcommands: Any) -> None:
         default=300,
         help="KRDICT headwords to hover (default: 300, the standard comparable tour)",
     )
-    tour.add_argument(
-        "--quick", action="store_true", help="a short smoke tour: 24 words, no story"
-    )
+    tour.add_argument("--quick", action="store_true", help="a short smoke tour: 24 words, no story")
     _baseline_option(tour, "tour")
     tour.add_argument(
         "--retain-fixture-text",
@@ -1201,7 +1170,9 @@ def _session_parsers(subcommands: Any) -> None:
         help="font pixel sizes for the story, comma separated; 0 skips it (default: 22)",
     )
     tour.add_argument(
-        "--word-sizes", type=_parse_sizes, default=(16, 22, 30, 40),
+        "--word-sizes",
+        type=_parse_sizes,
+        default=(16, 22, 30, 40),
         help="font pixel sizes cycled over words (default: 16,22,30,40)",
     )
     tour.add_argument("--seed", type=int, default=7, help="word sample seed (default: 7)")
@@ -1612,7 +1583,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "warmup", 0) < 0 or getattr(args, "samples", 0) < 0:
         raise SystemExit("--warmup and --samples must be non-negative")
     return int(args.handler(args))
-
 
 
 __all__ = [

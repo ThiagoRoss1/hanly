@@ -1,22 +1,22 @@
-"""The stress page paints a controlled image pixel for pixel and points where it says."""
+"""The native raster host paints the controlled corpus and owns its pixels."""
 
 from __future__ import annotations
 
+import os
+import sys
+import time
 from pathlib import Path
-from typing import Any
 
 import pytest
+from PIL import Image
 
 from lab.session.corpus import TourTarget
+from lab.session.raster_ui import create_ui_host
 from lab.session.stress import StressItem
-from tests.hanly_fixtures.capabilities import require_modules
+from lab.session.stress_page import StressPage
+from tests.hanly_fixtures.capabilities import require_display, require_modules, unavailable
 
-
-@pytest.fixture(scope="session")
-def qt_application() -> Any:
-    from lab.session.qt import create_application
-
-    return create_application()
+pytestmark = pytest.mark.native
 
 
 def _item(image: Path, target: str, point: tuple[float, float]) -> StressItem:
@@ -30,19 +30,24 @@ def _item(image: Path, target: str, point: tuple[float, float]) -> StressItem:
     )
 
 
-def test_corpus_images_are_placed_one_per_row_at_their_annotated_point(
-    qt_application: Any, tmp_path: Path
-) -> None:
-    require_modules("PyQt6.QtWidgets")
-    from PIL import Image
+def test_native_window_paints_corpus_pixels_and_is_owned(tmp_path: Path) -> None:
+    require_display()
+    require_modules("PIL")
+    mss = pytest.importorskip("mss")
+    if sys.platform == "darwin":
+        require_modules("AppKit", "Foundation", "PyObjCTools")
+    else:
+        require_modules("tkinter")
+    try:
+        ui = create_ui_host()
+    except RuntimeError as error:
+        unavailable(str(error))
 
-    # Imported here: the page module loads Qt, which this suite needs but no import may force.
-    from lab.session.stress_page import StressPage
-
-    small, huge = tmp_path / "small.png", tmp_path / "huge.png"
-    Image.new("L", (120, 40), 200).save(small)
-    Image.new("L", (40000, 40), 200).save(huge)
-    page = StressPage()
+    small = tmp_path / "small.png"
+    huge = tmp_path / "huge.png"
+    Image.new("RGB", (120, 40), "#dc2828").save(small)
+    Image.new("RGB", (40000, 40), "#28dc28").save(huge)
+    page = StressPage(ui)
     try:
         page.lay_out_plan(
             [
@@ -52,15 +57,32 @@ def test_corpus_images_are_placed_one_per_row_at_their_annotated_point(
             ],
             seed=1,
         )
-        ratio = page.devicePixelRatioF()
-        placed = [p for page_ in page.pages for p in page_.placed]
-
-        assert [p.target.id for p in placed] == ["a", "c"]
+        placed = [item for page_data in page.pages for item in page_data.placed]
+        assert [item.target.id for item in placed] == ["a", "c"]
         assert page.omitted == [{"target": "b", "reason": "image does not fit"}]
-        first, second = placed
-        assert abs(first.point.x() - (first.word.left() + 60 / ratio)) <= 1
-        assert abs(first.point.y() - (first.word.top() + 20 / ratio)) <= 1
-        # Far enough apart that a capture around one never reaches the next.
-        assert second.word.top() - first.word.bottom() >= 100
+        first = placed[0]
+        assert first.word.width == 120 / page.display_scale
+        assert first.word.height == 40 / page.display_scale
+        assert page.show_page(0)
+
+        started = time.monotonic()
+        ui.run(
+            lambda: 0 if time.monotonic() - started >= 0.25 else None,
+            interval_ms=20,
+            duration_s=None,
+            on_duration=lambda: None,
+        )
+        x, y = page.to_global(first.point)
+        if sys.platform in {"darwin", "win32"}:
+            from lab.session.ownership import owner_at
+
+            assert owner_at(x, y) == os.getpid()
+
+        with mss.mss() as screen:
+            pixel = screen.grab({"left": x - 2, "top": y - 2, "width": 5, "height": 5}).rgb
+        center = 2 * (5 * 3) + 2 * 3
+        red, green, blue = pixel[center : center + 3]
+        assert red > 180 and green < 80 and blue < 80
     finally:
         page.close()
+        ui.close()

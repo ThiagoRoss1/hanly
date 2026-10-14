@@ -15,9 +15,10 @@ from threading import Lock
 from typing import Any, Final
 
 from hanly_app.runtime_trace import JSONPrimitive
-from PyQt6.QtCore import QRectF, Qt, QTimer
-from PyQt6.QtGui import QColor, QFont, QPainter, QPaintEvent, QPen
-from PyQt6.QtWidgets import QWidget
+from PIL import Image, ImageDraw
+
+from ..session.raster_fonts import available_fonts, load_font
+from ..session.raster_ui import ImageWindow, Rect, UIHost
 
 # Stage order is the order work actually happens in, which is also the order
 # the timeline bar is drawn in.
@@ -72,13 +73,11 @@ class _Attempt:
         return sum(self.stages.values())
 
 
-class HoverHUD(QWidget):
+class HoverHUD:
     """Always-on-top panel showing the live and recent hover timelines.
 
     Trace events arrive on the mouse listener, worker, and UI threads, so they
-    are only queued here. A timer drains the queue on the UI thread, which
-    keeps every Qt call on the thread Qt requires without adding a second
-    cross-thread signalling path to the application.
+    are queued and rendered on Lab's native window thread.
     """
 
     #: Opts this sink into the region geometry the OCR trace can carry, which
@@ -86,20 +85,22 @@ class HoverHUD(QWidget):
     #: where text sits on someone's screen.
     retain_geometry = True
 
-    def __init__(self, *, dwell_ms: int, backend: str) -> None:
-        super().__init__(
-            None,
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool,
+    def __init__(self, ui: UIHost, *, dwell_ms: int, backend: str) -> None:
+        self._ui = ui
+        self._scale = ui.geometry.display_scale
+        desktop = ui.geometry.bounds
+        local_bounds = Rect(
+            desktop.width - _WIDTH - 18,
+            18,
+            _WIDTH,
+            _HEIGHT,
         )
-        # Deliberately opaque: Windows refuses to exclude a layered window
-        # from screen capture, and an overlay that is captured feeds its own
-        # pixels back into the OCR it is supposed to be reporting on.
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedSize(_WIDTH, _HEIGHT)
-
+        self._window: ImageWindow = ui.create_window(
+            ui.geometry.to_window(local_bounds), ignore_mouse=True
+        )
+        self._fonts = available_fonts(
+            ("Menlo", "Consolas", "Noto Sans Mono", "Apple SD Gothic Neo", "Malgun Gothic")
+        )
         self._dwell_ms = dwell_ms
         self._backend = backend
         self._lock = Lock()
@@ -112,10 +113,9 @@ class HoverHUD(QWidget):
         self._ocr_calls = 0
         self._worker_ready = False
         self._resources = _ProcessResources()
-
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._drain)
-        self._timer.start(_REFRESH_MS)
+        self._closed = False
+        self._refresh()
+        self._schedule_drain()
 
     def emit(self, event: Any) -> object:
         """Queue one trace event from whichever thread produced it."""
@@ -125,14 +125,16 @@ class HoverHUD(QWidget):
         return None
 
     def _drain(self) -> None:
+        if self._closed:
+            return
         with self._lock:
             events = list(self._pending)
             self._pending.clear()
-        if not events:
-            return
         for event in events:
             self._apply(event)
-        self.update()
+        if events:
+            self._refresh()
+        self._schedule_drain()
 
     def _apply(self, event: dict[str, JSONPrimitive]) -> None:
         kind = event.get("event_kind")
@@ -208,170 +210,148 @@ class HoverHUD(QWidget):
         self._history.append(attempt)
         self._current = None
 
-    def paintEvent(self, a0: QPaintEvent | None) -> None:
-        del a0
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor(17, 19, 24))
+    def _schedule_drain(self) -> None:
+        if not self._closed:
+            self._ui.call_later(_REFRESH_MS, self._drain)
 
-        self._paint_header(painter)
-        self._paint_timeline(painter)
-        self._paint_outcome(painter)
-        self._paint_summary(painter)
-        self._paint_roi_map(painter)
-        painter.end()
+    def _refresh(self) -> None:
+        scale = self._scale
+        image = Image.new("RGB", (round(_WIDTH * scale), round(_HEIGHT * scale)), "#111318")
+        draw = ImageDraw.Draw(image)
 
-    def _paint_header(self, painter: QPainter) -> None:
-        painter.setFont(_font(11, bold=True))
-        painter.setPen(QColor("#e5e7eb"))
-        painter.drawText(14, 24, "HANLY HOVER")
+        def text(
+            x: float, y: float, value: str, size: int, color: str, *, bold: bool = False
+        ) -> None:
+            font = load_font(self._fonts[0], round(size * scale))
+            draw.text(
+                (round(x * scale), round(y * scale)),
+                value,
+                font=font,
+                fill=color,
+                anchor="ls",
+                stroke_width=1 if bold else 0,
+            )
 
-        painter.setFont(_font(9))
-        painter.setPen(QColor("#9ca3af"))
+        text(14, 24, "HANLY HOVER", 11, "#e5e7eb", bold=True)
         state = "ready" if self._worker_ready else "warming"
-        painter.drawText(14, 42, f"{self._backend} · dwell {self._dwell_ms} ms · {state}")
-
+        text(14, 42, f"{self._backend} · dwell {self._dwell_ms} ms · {state}", 9, "#9ca3af")
         if self._ocr_running:
-            painter.setPen(QColor("#eb6834"))
-            painter.setFont(_font(9, bold=True))
-            painter.drawText(_WIDTH - 96, 24, "● OCR RUNNING")
+            text(_WIDTH - 96, 24, "● OCR RUNNING", 9, "#eb6834", bold=True)
 
-    def _paint_timeline(self, painter: QPainter) -> None:
         attempt = self._current or self._last
         top = 58.0
         if attempt is None:
-            painter.setFont(_font(9))
-            painter.setPen(QColor("#6b7280"))
-            painter.drawText(14, int(top) + 14, "waiting for a hover…")
-            return
+            text(14, top + 14, "waiting for a hover…", 9, "#6b7280")
+        else:
+            busiest = max([item.measured_ms for item in self._history] + [attempt.measured_ms])
+            timeline_scale = (_WIDTH - 28) / max(_MIN_TIMELINE_MS, busiest)
+            left = 14.0
+            for stage, color in _STAGES:
+                duration = attempt.stages.get(stage)
+                if duration is None:
+                    continue
+                width = max(2.0, duration * timeline_scale)
+                fill = color if stage != "ocr" or not attempt.ocr_cached else "#22c55e"
+                draw.rectangle(
+                    (
+                        round(left * scale),
+                        round(top * scale),
+                        round((left + width) * scale),
+                        round((top + 18) * scale),
+                    ),
+                    fill=fill,
+                )
+                left += width
+            row = int(top) + 46
+            for stage, color in _STAGES:
+                duration = attempt.stages.get(stage)
+                if duration is None or duration < 0.05:
+                    continue
+                label = (
+                    f"{stage} cached"
+                    if stage == "ocr" and attempt.ocr_cached
+                    else f"{stage} {duration:.1f}"
+                )
+                text(14, row, label, 8, color)
+                row += 13
 
-        # Scale against the busiest recent hover so bars stay comparable with
-        # each other while still filling the width. A fixed ceiling left a
-        # cached lookup drawn as a sliver against mostly empty space.
-        busiest = max(
-            [item.measured_ms for item in self._history] + [attempt.measured_ms]
-        )
-        scale = (_WIDTH - 28) / max(_MIN_TIMELINE_MS, busiest)
-        left = 14.0
-        for stage, color in _STAGES:
-            duration = attempt.stages.get(stage)
-            if duration is None:
-                continue
-            width = max(2.0, duration * scale)
-            painter.fillRect(
-                QRectF(left, top, width, 18.0),
-                QColor(color if stage != "ocr" or not attempt.ocr_cached else "#22c55e"),
-            )
-            left += width
+        last = self._last
+        if last is not None:
+            text(180, 106, last.status or "—", 10, _status_color(last.status), bold=True)
+            if last.note:
+                text(180, 124, last.note, 9, "#9ca3af")
+            if last.total_ms is not None:
+                total = f"total {last.total_ms:.1f} ms"
+                if last.retried:
+                    total += "  (keener retry)"
+                text(180, 142, total, 9, "#9ca3af")
+            self._draw_roi(draw, text, last, scale)
 
-        painter.setFont(_font(8))
-        row = int(top) + 34
-        for stage, color in _STAGES:
-            duration = attempt.stages.get(stage)
-            if duration is None or duration < 0.05:
-                continue
-            painter.setPen(QColor(color))
-            label = f"{stage} {duration:.1f}"
-            if stage == "ocr" and attempt.ocr_cached:
-                label = f"{stage} cached"
-            painter.drawText(14, row, label)
-            row += 13
-
-    def _paint_outcome(self, painter: QPainter) -> None:
-        attempt = self._last
-        if attempt is None:
-            return
-        painter.setFont(_font(10, bold=True))
-        painter.setPen(QColor(_status_color(attempt.status)))
-        painter.drawText(180, 106, attempt.status or "—")
-
-        painter.setFont(_font(9))
-        painter.setPen(QColor("#9ca3af"))
-        if attempt.note:
-            painter.drawText(180, 124, attempt.note)
-        if attempt.total_ms is not None:
-            total = f"total {attempt.total_ms:.1f} ms"
-            if attempt.retried:
-                total += "  (keener retry)"
-            painter.drawText(180, 142, total)
-
-    def _paint_roi_map(self, painter: QPainter) -> None:
-        """Draw the last ROI to scale, with the regions found inside it.
-
-        This lives in the panel rather than over the screen because anything
-        painted on the captured area is composited into the next capture of it.
-        """
-
-        attempt = self._last
-        if attempt is None:
-            return
-
-        roi_width, roi_height = attempt.roi
-        scale = min(_MAP_WIDTH / roi_width, _MAP_HEIGHT / roi_height)
-        width, height = int(roi_width * scale), int(roi_height * scale)
-        painter.setPen(QColor("#4b5563"))
-        painter.drawRect(_MAP_X, _MAP_Y, width, height)
-
-        painter.setFont(_font(7))
-        for order, (left, top, right, bottom) in enumerate(attempt.boxes, start=1):
-            painter.setPen(QColor(_REGION_COLOR))
-            box_x = _MAP_X + int(left * scale)
-            box_y = _MAP_Y + int(top * scale)
-            painter.drawRect(
-                box_x,
-                box_y,
-                max(1, int((right - left) * scale)),
-                max(1, int((bottom - top) * scale)),
-            )
-            painter.drawText(box_x + 1, box_y - 1, str(order))
-
-        if attempt.cursor is not None:
-            painter.setPen(QPen(QColor(_CURSOR_COLOR), 2))
-            x = _MAP_X + int(attempt.cursor[0] * scale)
-            y = _MAP_Y + int(attempt.cursor[1] * scale)
-            painter.drawLine(x - 4, y, x + 4, y)
-            painter.drawLine(x, y - 4, x, y + 4)
-
-        painter.setFont(_font(8))
-        painter.setPen(QColor("#6b7280"))
-        painter.drawText(
-            _MAP_X + width + 12,
-            _MAP_Y + 12,
-            f"roi {roi_width}x{roi_height}",
-        )
-        painter.drawText(
-            _MAP_X + width + 12,
-            _MAP_Y + 26,
-            f"{len(attempt.boxes)} region(s) read",
-        )
-
-    def _paint_summary(self, painter: QPainter) -> None:
-        painter.setPen(QColor("#374151"))
-        painter.drawLine(14, 176, _WIDTH - 14, 176)
-
+        draw.line((14 * scale, 176 * scale, (_WIDTH - 14) * scale, 176 * scale), fill="#374151")
         totals = [item.total_ms for item in self._history if item.total_ms is not None]
-        painter.setFont(_font(9))
-        painter.setPen(QColor("#9ca3af"))
         summary = f"last {len(self._history)}"
         if totals:
             summary += f" · p50 {median(totals):.0f} ms"
         if self._ocr_calls:
             summary += f" · ocr cache {self._ocr_hits}/{self._ocr_calls}"
-        painter.drawText(14, 196, summary)
-
-        # One glyph per recent attempt: the shape of a run is readable at a
-        # glance in a way a column of status words is not.
+        text(14, 196, summary, 9, "#9ca3af")
         history = [item for item in self._history if item.status]
         if history:
-            painter.drawText(14, 214, "recent")
+            text(14, 214, "recent", 8, "#9ca3af")
             left = 68
             for item in history[-24:]:
-                painter.setPen(QColor(_status_color(item.status)))
-                painter.drawText(left, 214, _status_glyph(item.status))
+                text(left, 214, _status_glyph(item.status), 8, _status_color(item.status))
                 left += 13
+        text(14, 236, self._resources.summary(), 8, "#6b7280")
+        self._window.set_image(image)
 
-        painter.setPen(QColor("#6b7280"))
-        painter.drawText(14, 236, self._resources.summary())
+    def _draw_roi(
+        self, draw: ImageDraw.ImageDraw, text: Any, attempt: _Attempt, scale: float
+    ) -> None:
+        roi_width, roi_height = attempt.roi
+        ratio = min(_MAP_WIDTH / roi_width, _MAP_HEIGHT / roi_height)
+        width, height = int(roi_width * ratio), int(roi_height * ratio)
+        draw.rectangle(
+            (_MAP_X * scale, _MAP_Y * scale, (_MAP_X + width) * scale, (_MAP_Y + height) * scale),
+            outline="#4b5563",
+            width=max(1, round(scale)),
+        )
+        for order, (left, top, right, bottom) in enumerate(attempt.boxes, start=1):
+            box_x = _MAP_X + int(left * ratio)
+            box_y = _MAP_Y + int(top * ratio)
+            draw.rectangle(
+                (
+                    box_x * scale,
+                    box_y * scale,
+                    (_MAP_X + int(right * ratio)) * scale,
+                    (_MAP_Y + int(bottom * ratio)) * scale,
+                ),
+                outline=_REGION_COLOR,
+                width=max(1, round(scale)),
+            )
+            text(box_x + 1, box_y - 1, str(order), 7, _REGION_COLOR)
+        if attempt.cursor is not None:
+            x = _MAP_X + int(attempt.cursor[0] * ratio)
+            y = _MAP_Y + int(attempt.cursor[1] * ratio)
+            draw.line(
+                ((x - 4) * scale, y * scale, (x + 4) * scale, y * scale),
+                fill=_CURSOR_COLOR,
+                width=max(1, round(scale * 2)),
+            )
+            draw.line(
+                (x * scale, (y - 4) * scale, x * scale, (y + 4) * scale),
+                fill=_CURSOR_COLOR,
+                width=max(1, round(scale * 2)),
+            )
+        text(_MAP_X + width + 12, _MAP_Y + 12, f"roi {roi_width}x{roi_height}", 8, "#6b7280")
+        text(_MAP_X + width + 12, _MAP_Y + 26, f"{len(attempt.boxes)} region(s) read", 8, "#6b7280")
+
+    def show(self) -> None:
+        self._window.show()
+
+    def close(self) -> None:
+        self._closed = True
+        self._window.close()
 
 
 class _ProcessResources:
@@ -455,13 +435,6 @@ def _status_color(status: str | None) -> str:
     if status in {"error", None}:
         return "#ef4444"
     return "#eab308"
-
-
-def _font(size: int, *, bold: bool = False) -> QFont:
-    font = QFont("Consolas", size)
-    font.setStyleHint(QFont.StyleHint.Monospace)
-    font.setBold(bold)
-    return font
 
 
 __all__ = ["HoverHUD"]

@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import psutil
 import pytest
 
 from lab.report.model import process_profile
@@ -124,9 +125,18 @@ def test_default_binary_resolution_and_debug_identity(tmp_path: Path) -> None:
     binary = root / "apps/desktop/src-tauri/target/debug/hanly-desktop"
     binary.parent.mkdir(parents=True)
     binary.touch()
+    bundle_binary = (
+        root
+        / "apps/desktop/src-tauri/target/debug/bundle/macos/Hanly.app/Contents/MacOS/hanly-desktop"
+    )
+    bundle_binary.parent.mkdir(parents=True)
+    bundle_binary.touch()
 
-    assert desktop_executable(None, root) == binary.resolve()
-    assert is_debug_executable(binary, root)
+    selected = desktop_executable(None, root)
+    assert selected == (
+        bundle_binary.resolve() if sys.platform == "darwin" else binary.resolve()
+    )
+    assert is_debug_executable(selected, root)
     assert not is_debug_executable(tmp_path / "release/hanly-desktop", root)
 
 
@@ -266,32 +276,126 @@ def test_lab_runtime_marker_uses_actual_service_status_without_text(
     assert "lab_capture" in protocol.EVENT_NAMES
 
 
-def test_macos_responsibility_launcher_compiles_and_probes_on_macos() -> None:
+def test_macos_launch_services_command_uses_a_private_trace_fifo(
+    tmp_path: Path,
+) -> None:
     if sys.platform != "darwin":
-        pytest.skip("the responsibility launcher is a macOS-only adapter")
+        pytest.skip("the LaunchServices adapter is macOS-only")
 
     from lab.session import desktop_process
 
-    command, attribution, directory = desktop_process._macos_launch_command(
-        ["/bin/true"]
+    bundle = tmp_path / "Hanly.app"
+    bundle.mkdir()
+    fifo = tmp_path / "trace.fifo"
+    environment = {
+        "HANLY_DESKTOP_SERVICE_MODULE": "lab.service_observer",
+        "HANLY_LAB_RETAIN_EVIDENCE": "1",
+        "XDG_CONFIG_HOME": str(tmp_path / "profile"),
+        "OMP_NUM_THREADS": "4",
+        "AWS_SECRET_ACCESS_KEY": "must-not-be-forwarded",
+    }
+    command = desktop_process._macos_launch_command(
+        bundle,
+        ["--runtime-config", str(tmp_path / "runtime.json"), "--trace"],
+        fifo,
+        environment,
     )
-    if attribution != "macos_responsibility" or directory is None:
-        pytest.skip("the compiler or macOS responsibility interface is unavailable")
 
-    try:
-        probe = subprocess.run(
-            [command[0], "--lab-probe"],
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=3,
-        )
-        assert probe.returncode == 0
-        assert probe.stdout.strip() == "available"
-        assert command[1:] == ["/bin/true"]
-    finally:
-        directory.cleanup()
-        desktop_process._MACOS_LAUNCHER_DIRECTORY = None
+    assert command[:2] == ["/usr/bin/open", "-n"]
+    assert "-W" in command
+    assert command[command.index("--stdout") + 1] == str(fifo)
+    assert command[-6:] == [
+        "-a",
+        str(bundle),
+        "--args",
+        "--runtime-config",
+        str(tmp_path / "runtime.json"),
+        "--trace",
+    ]
+    assert "HANLY_DESKTOP_SERVICE_MODULE=lab.service_observer" in command
+    assert "HANLY_LAB_RETAIN_EVIDENCE=1" in command
+    assert f"XDG_CONFIG_HOME={tmp_path / 'profile'}" in command
+    assert "OMP_NUM_THREADS=4" in command
+    assert not any("AWS_SECRET_ACCESS_KEY" in item for item in command)
+    child_environment = desktop_process._macos_child_environment(environment)
+    assert child_environment["HANLY_LAB_RETAIN_EVIDENCE"] == "1"
+    assert "AWS_SECRET_ACCESS_KEY" not in child_environment
+
+
+def test_macos_root_adoption_requires_fresh_exact_bundle_and_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if sys.platform != "darwin":
+        pytest.skip("the LaunchServices adapter is macOS-only")
+
+    from lab.session import desktop_process
+
+    executable = tmp_path / "Hanly.app/Contents/MacOS/hanly-desktop"
+    arguments = ["--runtime-config", str(tmp_path / "runtime.json"), "--trace"]
+
+    class _Candidate:
+        pid = 42
+        info = {"exe": str(executable)}
+
+        def cmdline(self) -> list[str]:
+            return [str(executable), "-psn_0_12345", *arguments]
+
+        def create_time(self) -> float:
+            return 100
+
+    candidate = cast(psutil.Process, _Candidate())
+    monkeypatch.setattr(
+        desktop_process.psutil,
+        "process_iter",
+        lambda **_kwargs: [candidate],
+    )
+    launcher = cast(
+        subprocess.Popen[bytes],
+        SimpleNamespace(pid=10, poll=lambda: None),
+    )
+
+    adopted = desktop_process._adopt_macos_process(
+        executable, arguments, {41}, launcher, timeout=1
+    )
+    handle = desktop_process._LaunchServicesProcess(adopted, launcher)
+
+    assert handle.pid == 42
+
+
+def test_failed_launch_services_command_releases_the_trace_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if sys.platform != "darwin":
+        pytest.skip("the LaunchServices adapter is macOS-only")
+
+    from lab.session import desktop_process
+
+    executable = tmp_path / "Hanly.app/Contents/MacOS/hanly-desktop"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    desktop = DesktopProcess(
+        executable,
+        runtime_config=tmp_path / "runtime.json",
+        app_config=tmp_path / "profile.json",
+        environment={},
+        recorder=LabRecorder(
+            tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False
+        ),
+        sampler=_Sampler(),
+        repo_root=tmp_path,
+    )
+
+    def fail_command(*_args: Any) -> list[str]:
+        raise OSError("LaunchServices command unavailable")
+
+    monkeypatch.setattr(desktop_process, "_macos_launch_command", fail_command)
+
+    with pytest.raises(OSError, match="LaunchServices command unavailable"):
+        desktop._start_with_launch_services([str(executable), "--trace"])
+
+    assert desktop._reader is not None
+    assert not desktop._reader.is_alive()
+    assert desktop._launcher_directory is None
 
 
 def test_process_profile_aggregates_native_host_and_helper_tree() -> None:

@@ -1,8 +1,8 @@
 """Human-operated benchmark over the real development hover path.
 
-Importing this module is safe and does not construct Qt, listeners, capture, or
-providers.  Those dependencies are imported lazily by :func:`run_live_hover`,
-which is invoked only by the explicit ``live-hover`` command.
+Importing this module is safe and does not construct a window host, listeners,
+capture, or providers. Those dependencies are imported lazily by
+:func:`run_live_hover`, which runs only for the explicit ``live-hover`` command.
 """
 
 from __future__ import annotations

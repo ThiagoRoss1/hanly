@@ -205,15 +205,17 @@ def _needs_the_runtime(path: Path) -> bool:
 
 def test_the_dev_group_does_not_quietly_carry_the_desktop_runtime() -> None:
     """This is the rule the portable matrix exists to keep: four Python
-    versions on a machine with no Qt, no Torch, and no display. What each
+    versions on a machine with no window server, no Torch, and no display. What each
     module may reach is asserted above; this is what the group itself installs.
     """
 
     declared = _declared_modules()
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     assert "PyQt6" not in declared
     assert "torch" not in declared
     assert "webview" not in declared
+    assert re.search(r"(?m)^lab\s*=", project) is None
 
 
 def test_the_python_runtime_does_not_install_ui_frameworks() -> None:
@@ -243,11 +245,7 @@ def test_an_importorskip_in_another_function_does_not_reach_across_scopes() -> N
         "def unguarded() -> None:\n"
         "    import polars\n"
     )
-    same_scope = (
-        "def guarded() -> None:\n"
-        "    pytest.importorskip('polars')\n"
-        "    import polars\n"
-    )
+    same_scope = "def guarded() -> None:\n    pytest.importorskip('polars')\n    import polars\n"
 
     assert _undeclared_modules(neighbour, set()) == {"polars"}
     assert _undeclared_modules(same_scope, set()) == set()

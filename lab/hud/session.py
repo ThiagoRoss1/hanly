@@ -1,4 +1,4 @@
-"""Attach Lab's Qt HUD to a supervised native Hanly desktop session."""
+"""Attach Lab's raster HUD to a supervised native Hanly desktop session."""
 
 from __future__ import annotations
 

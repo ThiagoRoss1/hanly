@@ -1,7 +1,7 @@
 """The HUD's provider label, which must name the recognizer actually selected.
 
-Importing the session module constructs no Qt object and loads no OCR runtime;
-only :func:`run_hud_session` reaches for those, and nothing here calls it.
+Importing the session module constructs no native window and loads no OCR
+runtime; only :func:`run_hud_session` reaches for those, and nothing here calls it.
 """
 
 from __future__ import annotations

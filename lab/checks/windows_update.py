@@ -139,8 +139,11 @@ def _isolate(run: _Run) -> None:
     os.environ["LOCALAPPDATA"] = str(run.profile)
     os.environ["TEMP"] = os.environ["TMP"] = str(run.temp)
     tempfile.tempdir = None
-    # The relaunched build inherits this through the helper, so the lab can quit it.
-    os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{run.port}"
+    # The relaunched WebView2 inherits this through the helper, so only this
+    # disposable installation exposes the Lab's loopback DevTools endpoint.
+    os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+        f"--remote-debugging-port={run.port} --remote-debugging-address=127.0.0.1"
+    )
     krdict = REPO_ROOT / "data" / "generated" / "krdict.sqlite3"
     if krdict.is_file() and "HANLY_KRDICT_DB" not in os.environ:
         os.environ["HANLY_KRDICT_DB"] = str(krdict)
@@ -441,7 +444,14 @@ def _owned(run: _Run) -> list[psutil.Process]:
 
 
 def _launch(run: _Run, application: Path) -> subprocess.Popen[bytes]:
-    started = subprocess.Popen([str(application / _EXECUTABLE)], cwd=application)
+    environment = os.environ.copy()
+    # Published predecessors may still use Qt. This is an exercised migration
+    # fixture, not a renderer available to the current product.
+    if (application / "_internal" / "PyQt6").is_dir():
+        environment["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{run.port}"
+    started = subprocess.Popen(
+        [str(application / _EXECUTABLE)], cwd=application, env=environment
+    )
     run.note("launched", version=_stamp(application)["version"])
     _await_page(run, 180)
     return started

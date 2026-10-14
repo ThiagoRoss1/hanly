@@ -11,17 +11,21 @@ is not part of either distribution.
 
 ## Setup
 
-Install the desktop and the portable development dependencies as described in
-the root `README.md`. Only install the separate `lab` group when using the
-Lab-authored Qt pages or developer HUD:
+Install the desktop and the development dependencies as described in the root
+`README.md`. Lab pages and HUDs use the desktop runtime's Pillow and capture
+dependencies; they do not add a separate UI toolkit dependency:
 
 ```bash
 python -m pip install --group dev
-python -m pip install --group lab
+python -m pip install --editable packages/hanly
+python -m pip install --editable "packages/hanly-app[runtime]"
 ```
 
-The `lab` group adds PyQt6 for Lab-owned fixture pages and the HUD. It is not a
-Hanly runtime dependency. Every command runs from the repository root.
+macOS uses the runtime's PyObjC frameworks to host Lab-owned image windows.
+Windows and Linux use Tk; the Python build must include Tk support. Linux
+fixture windows require an X11 display with Shape input-region support. Lab
+reports a clear prerequisite error when a platform host is unavailable.
+Every command runs from the repository root.
 
 ## The three commands
 
@@ -57,8 +61,8 @@ how that hover ended. Every target has a known answer:
   seed 7 and painted at 16, 22, 30 and 40 px across three themes and the
   installed Korean typefaces.
 
-The fixture page and HUD are Qt windows owned by Lab; the app being measured is
-the launched Tauri desktop. The plain command is the **standard tour**: the whole story and 300 words, about
+The fixture page and HUD are opaque raster windows owned by Lab; the app being
+measured is the launched Tauri desktop. The plain command is the **standard tour**: the whole story and 300 words, about
 three and a half minutes. Tours with the same settings are comparable;
 `--baseline <earlier-run>` adds a before/after table to the new report.
 `--quick` is a 40-second smoke run (24 words, no story); `--words`,
@@ -69,6 +73,12 @@ Text is painted, so each hover exercises capture and OCR. **Move the mouse
 yourself to stop the tour.** It checks that the capture shortcut is bound.
 Hanly reports required screen-capture or accessibility access in its native
 Permissions pane; the Lab does not grant or change OS permissions.
+
+On macOS, the Lab sends an F1–F20 primary key through Quartz with the public
+SecondaryFn flag, because pynput's function-key event can be interpreted as a
+hardware alternate action before reaching Hanly's shortcut listener. Other
+chord keys continue through pynput, and the Lab records only edge order and
+index, never key contents.
 
 #### Scoring
 
@@ -146,7 +156,7 @@ captured, re-grabbed from the lab's own page, and `python -m lab stress-replay
 re-capture replay.
 
 `--corpus <manifest> --repeats N` hovers a controlled-image corpus (below)
-instead of the seeded plan: each image is painted pixel for pixel on the lab's
+instead of the seeded plan: each image is painted pixel for pixel on the Lab's
 page, one per row, and hovered at its annotated point in N rounds, under the
 same ownership checks. Rule `corpus-surface-v1` judges these: a surface target
 passes when the selected word is the target, whatever the dictionary then
@@ -165,7 +175,7 @@ profile; the runtime configuration, dictionary and models are reused read-only):
 | File | |
 |---|---|
 | `events.jsonl` | every accepted trace event from the native desktop service and lookup child (content fields removed), plus Lab lifecycle and driver events, including each tour result as described above |
-| `processes.jsonl` | memory, CPU and threads for the native Tauri host and its owned Python service, lookup and webview helpers every 250 ms, sampled externally; macOS helper attribution uses the OS process-responsibility assignment only when the Lab launcher compiles and its runtime probe succeeds |
+| `processes.jsonl` | memory, CPU and threads for the native Tauri host and its owned Python service, lookup and webview helpers every 250 ms, sampled externally; macOS helper attribution uses the OS process-responsibility assignment when its runtime probe succeeds |
 | `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
 | `report.json`, `summary.md` | the same model for scripts and agents |
 
@@ -175,11 +185,12 @@ they are derived from the run, not hand-written.
 
 Measurement limits: trace timestamps share the service's monotonic clock (`perf_counter`
 is system-wide on every supported OS). RSS is resident, not private, memory and
-is sampled, so short spikes can be missed. On macOS, the Lab compiles its
-developer-only responsibility launcher and probes for the OS interface before
-using it to assign WebKit helpers. A missing compiler, compile/probe failure, or
-absent OS interface uses the process tree instead; each run records the chosen
-attribution path, and tree-only attribution may omit reparented helpers.
+is sampled, so short spikes can be missed. On macOS, Lab launches the app through
+public LaunchServices and adopts the exact fresh app PID. It probes the OS
+process-responsibility interface before assigning WebKit helpers. An absent OS
+interface uses the process tree instead; each run records the chosen attribution
+path, and tree-only attribution may omit reparented helpers. Protocol v3 separates
+these runs from the previous launcher and Qt-painted fixture recordings.
 
 ## Evidence: identity, baselines, comparison, storage
 

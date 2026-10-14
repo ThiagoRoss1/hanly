@@ -1,8 +1,9 @@
-"""Evaluate one expression in a Qt WebEngine page through its local DevTools port.
+"""Evaluate one expression in a Chromium page through its local DevTools port.
 
 Standard library only, so a packaged check needs no WebSocket dependency: one
 handshake, one masked text frame out, frames read until the matching reply.
-Qt WebEngine opens the port only when ``QTWEBENGINE_REMOTE_DEBUGGING`` names it.
+Chromium-based browsers expose the endpoint when started with
+``--remote-debugging-port``.
 """
 
 from __future__ import annotations

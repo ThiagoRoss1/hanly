@@ -748,12 +748,14 @@ def test_every_platform_that_can_run_native_cases_has_a_job_that_does() -> None:
     # The real runtime, the real weights, and a real dictionary: without all
     # three these cases would have nothing to exercise but their own skips.
     assert 'python -m pip install --editable "packages/hanly-app[runtime]"' in commands
-    lab = _step(workflow, "native", name="Install Lab native UI dependency")
+    desktop_dependencies = _step(workflow, "native", name="Install Linux desktop dependencies")
     native_tests = next(
         step for step in steps if "python -m pytest --suite native" in step.get("run", "")
     )
-    assert lab["run"] == "python -m pip install --group lab"
-    assert steps.index(lab) < steps.index(native_tests)
+    assert "python3-tk" in desktop_dependencies["run"]
+    assert "fonts-noto-cjk" in desktop_dependencies["run"]
+    assert steps.index(desktop_dependencies) < steps.index(native_tests)
+    assert "--group lab" not in commands
     assert "tools/prepare_easyocr_models.py" in commands
     assert "tools/build_smoke_krdict.py" in commands
     assert "python -m pytest --suite native" in commands

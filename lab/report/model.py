@@ -379,8 +379,7 @@ def process_profile(
         family = [
             row
             for row in sample.get("processes", ())
-            if str(row.get("role", "")) == "shell"
-            or str(row.get("role", "")).startswith("shell.")
+            if str(row.get("role", "")) == "shell" or str(row.get("role", "")).startswith("shell.")
         ]
         for row in sample.get("processes", ()):
             if "rss" not in row:
@@ -399,9 +398,7 @@ def process_profile(
                 (round(sample["t_ms"], 1), round(family_rss, 1), round(family_cpu, 1))
             )
             pids["desktop family"].update(int(row["pid"]) for row in family_rows)
-            peak = peaks.setdefault(
-                "desktop family", {"rss_mib": 0.0, "cpu": 0.0, "threads": 0}
-            )
+            peak = peaks.setdefault("desktop family", {"rss_mib": 0.0, "cpu": 0.0, "threads": 0})
             peak["rss_mib"] = max(peak["rss_mib"], round(family_rss, 1))
             peak["cpu"] = max(peak["cpu"], round(family_cpu, 1))
             peak["threads"] = max(peak["threads"], int(family_threads))
@@ -492,8 +489,7 @@ def startup(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     runtime_events = [
         event
         for event in events
-        if event["event"]
-        in {"runtime_preparation_completed", "runtime_preparation_failed"}
+        if event["event"] in {"runtime_preparation_completed", "runtime_preparation_failed"}
         and event.get("phase") == "runtime"
     ]
     for event in runtime_events:
@@ -564,9 +560,7 @@ def _structural(record: Mapping[str, Any]) -> dict[str, Any]:
 
     queries = record.get("queries") or ()
     return {
-        "recognized_regions": record.get(
-            "recognized_regions", len(record.get("recognized") or ())
-        ),
+        "recognized_regions": record.get("recognized_regions", len(record.get("recognized") or ())),
         "queries_tried": record.get("queries_tried", len(queries)),
         "queries_found": record.get(
             "queries_found", sum(1 for item in queries if len(item) > 1 and item[1])
@@ -580,9 +574,12 @@ def tour_completion(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     names = {event["event"] for event in events}
     planned = next((e.get("targets") for e in events if e["event"] == "tour_planned"), None)
     ended = (
-        "stopped_by_user" if "tour_stopped_by_user" in names
-        else "aborted" if "tour_aborted" in names
-        else "finished" if "tour_finished" in names
+        "stopped_by_user"
+        if "tour_stopped_by_user" in names
+        else "aborted"
+        if "tour_aborted" in names
+        else "finished"
+        if "tour_finished" in names
         else "interrupted"
     )
     return {
@@ -1074,7 +1071,10 @@ _WHERE = {
     "to_engine": "hanly_app/lookup/executor.py, lookup/transport.py",
     "ocr": "hanly/vision_provider.py, hanly/easyocr_provider.py",
     "language": "hanly/word_resolver.py, kiwi_provider.py, krdict_provider.py",
-    "to_popup": "hanly_app/lookup/controller.py, popup/qt.py",
+    "to_popup": (
+        "packages/hanly-app/src/hanly_app/service/application.py, "
+        "apps/desktop/src/pages/PopupPage.tsx"
+    ),
 }
 
 
@@ -1102,12 +1102,6 @@ def _percentile(values: Sequence[float], percent: float) -> float:
         return 0.0
     rank = max(1, math.ceil(percent / 100 * len(items)))
     return items[rank - 1]
-
-
-def _between(events: Sequence[Mapping[str, Any]], first: str, second: str) -> float | None:
-    start = next((e["t_ms"] for e in events if e["event"] == first), None)
-    end = next((e["t_ms"] for e in events if e["event"] == second), None)
-    return None if start is None or end is None else round(end - start, 1)
 
 
 def _ms(value: object) -> float | None:

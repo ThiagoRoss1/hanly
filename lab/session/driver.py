@@ -20,6 +20,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .mac_function_keys import dispatch_key_edge
 from .ownership import owner_at
 from .recorder import LabRecorder
 from .scoring import RULE, classify, derive_facts
@@ -127,7 +128,7 @@ class TourDriver:
         self._popup_hidden = threading.Event()
         self._expected: tuple[int, int] | None = None
         #: Captured images are in device pixels; the probe grid is in points.
-        self._scale = float(page.devicePixelRatioF() or 1.0)
+        self._scale = float(page.display_scale or 1.0)
         self.stopped_by_user = False
         self.completed = 0
         recorder.subscribe(self._observe)
@@ -337,17 +338,24 @@ class TourDriver:
         self._recorder.lab("tour_capture_input_started")
         parts = [part.strip().lower() for part in self._capture_hotkey.split("+")]
         aliases = {"control": "ctrl", "option": "alt", "command": "cmd"}
-        keys: list[Any] = []
+        keys: list[tuple[str, Any]] = []
         for part in parts:
             named = aliases.get(part, part)
-            keys.append(getattr(self._keys, named, None) or named)
+            keys.append((named, getattr(self._keys, named, None) or named))
+        modifier_names = tuple(
+            name for name, _key in keys if name in {"ctrl", "shift", "alt", "cmd"}
+        )
 
-        for index, key in enumerate(keys):
+        for index, (name, key) in enumerate(keys):
             edge_started = time.perf_counter_ns()
-            self._recorder.lab(
-                "tour_capture_key_dispatch_started", edge="press", index=index
+            self._recorder.lab("tour_capture_key_dispatch_started", edge="press", index=index)
+            dispatch_key_edge(
+                self._keyboard,
+                key,
+                name,
+                pressed=True,
+                modifier_names=modifier_names,
             )
-            self._keyboard.press(key)
             self._recorder.lab(
                 "tour_capture_key_dispatch_completed",
                 edge="press",
@@ -356,12 +364,16 @@ class TourDriver:
             )
             time.sleep(0.02)
 
-        for index, key in reversed(list(enumerate(keys))):
+        for index, (name, key) in reversed(list(enumerate(keys))):
             edge_started = time.perf_counter_ns()
-            self._recorder.lab(
-                "tour_capture_key_dispatch_started", edge="release", index=index
+            self._recorder.lab("tour_capture_key_dispatch_started", edge="release", index=index)
+            dispatch_key_edge(
+                self._keyboard,
+                key,
+                name,
+                pressed=False,
+                modifier_names=modifier_names,
             )
-            self._keyboard.release(key)
             self._recorder.lab(
                 "tour_capture_key_dispatch_completed",
                 edge="release",

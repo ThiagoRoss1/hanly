@@ -1,31 +1,25 @@
-"""The surface a tour hovers: one full-screen window of lab-authored Korean.
-
-Covering the whole available screen is a privacy property, not decoration: a
-tour retains recognized text, so every pixel the pointer can rest on must be
-the lab's own. Text is painted, not laid out as widgets, so nothing can be read
-through the accessibility API and each hover exercises capture and OCR.
-"""
+"""Raster-only, lab-authored pages for native desktop tours."""
 
 from __future__ import annotations
 
-import threading
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
-from PyQt6.QtCore import QPoint, QRect, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QPainter
-from PyQt6.QtWidgets import QApplication, QWidget
+from PIL import Image, ImageDraw, ImageFont
 
 from .corpus import TourTarget
+from .raster_fonts import RasterFont, available_fonts, load_font
+from .raster_ui import ImageWindow, Point, Rect, UIHost
 
-#: Korean faces tried in order; the first few installed are rotated per page.
 _FACES = (
     "Apple SD Gothic Neo",
     "AppleMyungjo",
     "Nanum Gothic",
     "NanumMyeongjo",
     "Malgun Gothic",
+    "Batang",
+    "Gulim",
+    "Dotum",
+    "Gungsuh",
     "Noto Sans KR",
     "Noto Sans CJK KR",
 )
@@ -35,18 +29,17 @@ _THEMES = {
     "sepia": ("#f4ecd8", "#3b2f1e"),
 }
 _MARGIN = 48
-#: Wider than half the capture region, so a word at the edge is never read with what lies beyond.
 _SIDE = 112
 _HEADER = 40
 
 
 @dataclass(frozen=True)
 class Placed:
-    """A target as painted: its word rectangle and the point the pointer rests on."""
+    """A target as rasterized and the logical point where the pointer rests."""
 
     target: TourTarget
-    word: QRect
-    point: QPoint
+    word: Rect
+    point: Point
     font_family: str
     font_px: int
     theme: str
@@ -55,11 +48,19 @@ class Placed:
 @dataclass
 class _Run:
     text: str
-    x: int
-    y: int
-    font: QFont
-    #: Its own colour, where a cell's theme differs from the page's.
+    x: float
+    baseline: float
+    face: RasterFont
+    size: int
     ink: str | None = None
+
+
+@dataclass(frozen=True)
+class RasterExtra:
+    image: Image.Image
+    origin: Point
+    #: Corpus files are already in physical pixels and must remain 1:1.
+    physical: bool = False
 
 
 @dataclass
@@ -67,42 +68,34 @@ class Page:
     theme: str
     runs: list[_Run]
     placed: list[Placed]
-    #: Where the pointer waits between targets: guaranteed free of text.
-    rest: QPoint
-    #: Painted beneath the text: cell backgrounds, pictures, icons.
-    extras: list[Callable[[QPainter], None]] = field(default_factory=list)
+    rest: Point
+    extras: list[RasterExtra] = field(default_factory=list)
 
 
-class TourPage(QWidget):
-    """Shows one page at a time; ``show_page`` is safe to call from any thread."""
+class TourPage:
+    """Own the full-desktop fixture image and expose a small raster layout API."""
 
-    _requested = pyqtSignal(int)
-
-    def __init__(self) -> None:
-        super().__init__(
-            None,
-            # Keep the fixture visible while the native desktop receives input.
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint,
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        screens = QApplication.screens()
-        if not screens:
-            raise RuntimeError("no screen is available for a tour")
-        geometries = [screen.geometry() for screen in screens]
-        left = min(geometry.left() for geometry in geometries)
-        top = min(geometry.top() for geometry in geometries)
-        right = max(geometry.right() for geometry in geometries)
-        bottom = max(geometry.bottom() for geometry in geometries)
-        self.setGeometry(left, top, right - left + 1, bottom - top + 1)
+    def __init__(self, ui: UIHost) -> None:
+        self.ui = ui
+        self.geometry = ui.geometry
+        self.display_scale = ui.geometry.display_scale
+        self._width = int(round(ui.geometry.bounds.width))
+        self._height = int(round(ui.geometry.bounds.height))
+        if self._width <= 0 or self._height <= 0:
+            raise RuntimeError("the Lab fixture has no usable desktop bounds")
+        self._window: ImageWindow = ui.create_window(ui.geometry.bounds, ignore_mouse=True)
+        self._fonts = available_fonts(_FACES)
         self.pages: list[Page] = []
         self.status = ""
         self._current: Page | None = None
-        self._painted = threading.Event()
-        # show_page emits from the driver thread; Qt's automatic connection queues
-        # that onto this widget's thread, where painting belongs.
-        self._requested.connect(self._show)
 
-    # -- layout ---------------------------------------------------------------
+    def rect(self) -> Rect:
+        """The local logical area covered by the fixture."""
+
+        return Rect(0, 0, self._width, self._height)
+
+    def to_global(self, point: Point) -> tuple[int, int]:
+        return self.geometry.to_pointer(point)
 
     def lay_out(
         self,
@@ -111,52 +104,62 @@ class TourPage(QWidget):
         story_sizes: list[int],
         word_sizes: list[int],
     ) -> None:
-        """Story pages first, once per size, then the word grid."""
+        """Story pages first, once per size, followed by the word grid."""
 
-        faces = [face for face in _FACES if face in set(QFontDatabase.families())] or [
-            QFont().family()
-        ]
         themes = list(_THEMES)
         pages: list[Page] = []
         for index, size in enumerate(story_sizes):
             pages.extend(
-                self._story_pages(story, size, faces[index % len(faces)], themes[index % 3])
+                self._story_pages(
+                    story, size, self._fonts[index % len(self._fonts)], themes[index % 3]
+                )
             )
-        word_pages = self._word_pages(words, word_sizes, faces, themes)
-        self.pages = pages + word_pages
+        pages.extend(self._word_pages(words, word_sizes, themes))
+        self.pages = pages
 
     def _story_pages(
-        self, targets: list[TourTarget], size: int, face: str, theme: str
+        self, targets: list[TourTarget], size: int, face: RasterFont, theme: str
     ) -> list[Page]:
-        font = QFont(face)
-        font.setPixelSize(size)
-        metrics = QFontMetrics(font)
-        line_height = int(size * 2.6)
+        font = load_font(face, self._font_pixels(size))
+        ascent, descent = font.getmetrics()
+        line_height = size * 2.6
         by_line: dict[str, list[TourTarget]] = {}
         for target in targets:
             by_line.setdefault(target.line, []).append(target)
-        area = self.rect().adjusted(_SIDE, _MARGIN + _HEADER, -_SIDE, -_MARGIN * 2)
+        area = self.rect().inset(_SIDE, _MARGIN + _HEADER, _SIDE, _MARGIN * 2)
         pages: list[Page] = []
         page = self._blank_page(theme)
-        y = area.top()
+        y = area.top
         for line, members in by_line.items():
-            if y + line_height > area.bottom():
-                pages.append(page)
-                page, y = self._blank_page(theme), area.top()
-            baseline = y + metrics.ascent()
-            page.runs.append(_Run(line, area.left(), baseline, font))
+            if y + line_height > area.bottom:
+                if page.placed:
+                    pages.append(page)
+                page, y = self._blank_page(theme), area.top
+            baseline = y + ascent / self.display_scale
+            page.runs.append(_Run(line, area.left, baseline, face, size))
             for target in members:
-                left = area.left() + metrics.horizontalAdvance(line[: target.start])
-                width = metrics.horizontalAdvance(target.surface)
-                rest_char = line[target.start + target.cursor]
+                left = area.left + _advance(font, line[: target.start], self.display_scale)
+                width = _advance(font, target.surface, self.display_scale)
                 cursor_x = (
-                    area.left()
-                    + metrics.horizontalAdvance(line[: target.start + target.cursor])
-                    + metrics.horizontalAdvance(rest_char) // 2
+                    area.left
+                    + _advance(font, line[: target.start + target.cursor], self.display_scale)
+                    + _advance(
+                        font,
+                        line[target.start + target.cursor],
+                        self.display_scale,
+                    )
+                    / 2
                 )
-                word = QRect(left, y, width, metrics.height())
+                word = Rect(left, y, width, (ascent + descent) / self.display_scale)
                 page.placed.append(
-                    Placed(target, word, QPoint(cursor_x, word.center().y()), face, size, theme)
+                    Placed(
+                        target,
+                        word,
+                        Point(cursor_x, word.center.y),
+                        face.family,
+                        size,
+                        theme,
+                    )
                 )
             y += line_height
         if page.placed:
@@ -164,90 +167,130 @@ class TourPage(QWidget):
         return pages
 
     def _word_pages(
-        self, targets: list[TourTarget], sizes: list[int], faces: list[str], themes: list[str]
+        self, targets: list[TourTarget], sizes: list[int], themes: list[str]
     ) -> list[Page]:
-        area = self.rect().adjusted(_SIDE, _MARGIN + _HEADER, -_SIDE, -_MARGIN * 2)
-        # Cells wide and tall enough that a popup over one word rarely covers the next.
+        if not targets:
+            return []
+        area = self.rect().inset(_SIDE, _MARGIN + _HEADER, _SIDE, _MARGIN * 2)
         cell_w, cell_h = 300, 150
-        columns = max(1, area.width() // cell_w)
-        rows = max(1, area.height() // cell_h)
+        columns = max(1, int(area.width // cell_w))
+        rows = max(1, int(area.height // cell_h))
         per_page = columns * rows
         pages: list[Page] = []
         for page_index, offset in enumerate(range(0, len(targets), per_page)):
             theme = themes[page_index % len(themes)]
             page = self._blank_page(theme)
             chunk = targets[offset : offset + per_page]
-            # Column-major with a stride, so consecutive targets sit far apart.
             order = sorted(range(len(chunk)), key=lambda i: (i % 2, i))
             for slot, target_index in enumerate(order):
                 target = chunk[target_index]
                 size = sizes[(offset + target_index) % len(sizes)]
-                face = faces[(offset + target_index) % len(faces)]
-                font = QFont(face)
-                font.setPixelSize(size)
-                metrics = QFontMetrics(font)
+                face = self._fonts[(offset + target_index) % len(self._fonts)]
+                font = load_font(face, self._font_pixels(size))
+                ascent, descent = font.getmetrics()
+                height = (ascent + descent) / self.display_scale
                 column, row = slot % columns, slot // columns
-                left = area.left() + column * cell_w + 12
-                top = area.top() + row * cell_h + (cell_h - metrics.height()) // 2
-                page.runs.append(_Run(target.surface, left, top + metrics.ascent(), font))
-                width = metrics.horizontalAdvance(target.surface)
-                char = target.surface[target.cursor]
+                left = area.left + column * cell_w + 12
+                top = area.top + row * cell_h + (cell_h - height) / 2
+                page.runs.append(
+                    _Run(target.surface, left, top + ascent / self.display_scale, face, size)
+                )
+                width = _advance(font, target.surface, self.display_scale)
                 cursor_x = (
                     left
-                    + metrics.horizontalAdvance(target.surface[: target.cursor])
-                    + metrics.horizontalAdvance(char) // 2
+                    + _advance(font, target.surface[: target.cursor], self.display_scale)
+                    + _advance(font, target.surface[target.cursor], self.display_scale) / 2
                 )
-                word = QRect(left, top, width, metrics.height())
+                word = Rect(left, top, width, height)
                 page.placed.append(
-                    Placed(target, word, QPoint(cursor_x, word.center().y()), face, size, theme)
+                    Placed(target, word, Point(cursor_x, word.center.y), face.family, size, theme)
                 )
             pages.append(page)
         return pages
 
     def _blank_page(self, theme: str) -> Page:
-        geometry = self.rect()
-        return Page(theme, [], [], QPoint(geometry.width() // 2, geometry.height() - _MARGIN // 2))
-
-    # -- showing --------------------------------------------------------------
+        return Page(
+            theme,
+            [],
+            [],
+            Point(self._width / 2, self._height - _MARGIN / 2),
+        )
 
     def show_page(self, index: int, timeout: float = 5.0) -> bool:
-        """Show a page and wait until it has been painted."""
+        """Render and show a page before the driver begins a hover."""
 
-        self._painted.clear()
-        self._requested.emit(index)
-        return self._painted.wait(timeout)
-
-    def to_global(self, point: QPoint) -> tuple[int, int]:
-        origin = self.geometry().topLeft()
-        return origin.x() + point.x(), origin.y() + point.y()
-
-    def _show(self, index: int) -> None:
-        self._current = self.pages[index]
+        del timeout
+        page = self.pages[index]
+        self._current = page
         self.status = f"Hanly Lab tour - page {index + 1} of {len(self.pages)}"
-        if not self.isVisible():
-            self.show()
-        self.raise_()
-        self.repaint()
+        self._window.set_image(self._render(page))
+        self._window.show()
+        return True
 
-    def paintEvent(self, _event: Any) -> None:
-        page = self._current
-        painter = QPainter(self)
-        background, ink = _THEMES[page.theme if page is not None else "light"]
-        painter.fillRect(self.rect(), QColor(background))
-        painter.setPen(QColor(ink))
-        header = QFont()
-        header.setPixelSize(13)
-        painter.setFont(header)
-        painter.drawText(_MARGIN, _MARGIN, f"{self.status}   (move the mouse yourself to stop)")
-        if page is not None:
-            for extra in page.extras:
-                extra(painter)
-            for run in page.runs:
-                painter.setFont(run.font)
-                painter.setPen(QColor(run.ink or ink))
-                painter.drawText(run.x, run.y, run.text)
-        painter.end()
-        self._painted.set()
+    def set_shown(self, shown: bool) -> None:
+        if shown and self._current is not None:
+            self._window.show()
+        elif not shown:
+            self._window.hide()
+
+    def swap(self, page_index: int, run_index: int, text: str) -> None:
+        """Replace one run and synchronously refresh its raster."""
+
+        page = self.pages[page_index]
+        target = page.runs[run_index]
+        page.runs[run_index] = _Run(
+            text, target.x, target.baseline, target.face, target.size, target.ink
+        )
+        if self._current is page:
+            self._window.set_image(self._render(page))
+
+    def close(self) -> None:
+        self._window.close()
+
+    def _render(self, page: Page) -> Image.Image:
+        scale = self.display_scale
+        image = Image.new(
+            "RGB",
+            (max(1, round(self._width * scale)), max(1, round(self._height * scale))),
+            _THEMES[page.theme][0],
+        )
+        draw = ImageDraw.Draw(image)
+        _background, ink = _THEMES[page.theme]
+        draw.text(
+            (round(_MARGIN * scale), round(_MARGIN * scale)),
+            self.status,
+            font=load_font(self._fonts[0], round(13 * scale)),
+            fill=ink,
+            anchor="lt",
+        )
+        for extra in page.extras:
+            if extra.physical:
+                position = (round(extra.origin.x * scale), round(extra.origin.y * scale))
+                image.paste(extra.image.convert("RGB"), position)
+            else:
+                layer = extra.image.convert("RGB")
+                if layer.size != (round(layer.width * scale), round(layer.height * scale)):
+                    layer = layer.resize(
+                        (max(1, round(layer.width * scale)), max(1, round(layer.height * scale))),
+                        Image.Resampling.LANCZOS,
+                    )
+                image.paste(layer, (round(extra.origin.x * scale), round(extra.origin.y * scale)))
+        for run in page.runs:
+            draw.text(
+                (round(run.x * scale), round(run.baseline * scale)),
+                run.text,
+                font=load_font(run.face, round(run.size * scale)),
+                fill=run.ink or ink,
+                anchor="ls",
+            )
+        return image
+
+    def _font_pixels(self, logical_size: int) -> int:
+        return max(1, round(logical_size * self.display_scale))
 
 
-__all__ = ["Placed", "TourPage"]
+def _advance(font: ImageFont.FreeTypeFont, text: str, scale: float) -> float:
+    return float(font.getlength(text)) / scale
+
+
+__all__ = ["Page", "Placed", "RasterExtra", "TourPage", "_Run"]

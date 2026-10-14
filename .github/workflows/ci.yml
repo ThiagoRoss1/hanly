@@ -108,7 +108,7 @@ jobs:
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
             libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
-            libxkbcommon-x11-0 xvfb
+            libxkbcommon-x11-0 fonts-noto-cjk python3-tk xvfb
           )
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends "${packages[@]}"
@@ -117,9 +117,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --group dev
-
-      - name: Install Lab native UI dependency
-        run: python -m pip install --group lab
 
       - name: Install CPU-only OCR runtime on Linux
         if: matrix.platform == 'linux'
