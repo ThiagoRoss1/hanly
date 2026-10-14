@@ -342,11 +342,10 @@ class DesktopProcess:
         )
         self._reader.start()
 
+        app_arguments = command[1:]
+        known_pids: set[int] = set()
         try:
-            app_arguments = command[1:]
-            known_pids = set(
-                _matching_bundle_processes(self.executable, app_arguments)
-            )
+            known_pids = set(_matching_bundle_processes(self.executable, app_arguments))
             launch_command = _macos_launch_command(
                 bundle, app_arguments, fifo, self.environment
             )
@@ -368,8 +367,23 @@ class DesktopProcess:
                 timeout=_MACOS_ROOT_DISCOVERY_SECONDS,
             )
         except BaseException:
-            if self._launcher is not None:
-                _stop_launcher(self._launcher)
+            failed_launcher = self._launcher
+            if failed_launcher is not None:
+                # A timeout can race with the final exec. Recover only roots
+                # matching this run's exact executable and private argv.
+                candidates = [
+                    process
+                    for pid, process in _matching_bundle_processes(
+                        self.executable, app_arguments
+                    ).items()
+                    if pid not in known_pids
+                ]
+                if candidates:
+                    root = min(candidates, key=lambda process: process.create_time())
+                    self.process = _LaunchServicesProcess(root, failed_launcher)
+                    self.cleanup()
+                else:
+                    _stop_launcher(failed_launcher)
             self._release_trace_reader()
             self._remove_launcher_directory()
             self._launcher = None
@@ -642,12 +656,12 @@ def _matching_bundle_processes(
     expected_arguments = list(app_arguments)
     matches: dict[int, psutil.Process] = {}
     try:
-        processes = psutil.process_iter(attrs=["exe"])
-        for process in processes:
+        for cached in psutil.process_iter():
             try:
-                process_executable = process.info.get("exe")
-                if process_executable is None:
-                    continue
+                # process_iter reuses handles whose executable cache can still
+                # describe the LaunchServices helper before it execs Hanly.
+                process = psutil.Process(cached.pid)
+                process_executable = process.exe()
                 if Path(process_executable).resolve() != expected_executable:
                     continue
                 command_line = process.cmdline()

@@ -335,7 +335,10 @@ def test_macos_root_adoption_requires_fresh_exact_bundle_and_arguments(
 
     class _Candidate:
         pid = 42
-        info = {"exe": str(executable)}
+        info = {"exe": "/usr/libexec/launchservices-helper"}
+
+        def exe(self) -> str:
+            return str(executable)
 
         def cmdline(self) -> list[str]:
             return [str(executable), "-psn_0_12345", *arguments]
@@ -349,6 +352,7 @@ def test_macos_root_adoption_requires_fresh_exact_bundle_and_arguments(
         "process_iter",
         lambda **_kwargs: [candidate],
     )
+    monkeypatch.setattr(desktop_process.psutil, "Process", lambda _pid: candidate)
     launcher = cast(
         subprocess.Popen[bytes],
         SimpleNamespace(pid=10, poll=lambda: None),
@@ -360,6 +364,53 @@ def test_macos_root_adoption_requires_fresh_exact_bundle_and_arguments(
     handle = desktop_process._LaunchServicesProcess(adopted, launcher)
 
     assert handle.pid == 42
+
+
+def test_adoption_timeout_reaps_only_the_fresh_exact_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if sys.platform != "darwin":
+        pytest.skip("the LaunchServices adapter is macOS-only")
+
+    from lab.session import desktop_process
+
+    executable = tmp_path / "Hanly.app/Contents/MacOS/hanly-desktop"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    desktop = DesktopProcess(
+        executable, runtime_config=tmp_path / "runtime.json",
+        app_config=tmp_path / "private-profile.json", environment={},
+        recorder=LabRecorder(
+            tmp_path / "events.jsonl", retain_evidence=False, retain_geometry=False
+        ),
+        sampler=_Sampler(), repo_root=tmp_path,
+    )
+    older = cast(psutil.Process, SimpleNamespace(pid=41, create_time=lambda: 100))
+    fresh = cast(psutil.Process, SimpleNamespace(pid=42, create_time=lambda: 101))
+    snapshots = iter(({41: older}, {41: older, 42: fresh}))
+    monkeypatch.setattr(
+        desktop_process, "_matching_bundle_processes", lambda *_args: next(snapshots)
+    )
+    launcher = cast(subprocess.Popen[bytes], SimpleNamespace(pid=10))
+    monkeypatch.setattr(desktop_process.subprocess, "Popen", lambda *_args, **_kwargs: launcher)
+
+    def timed_out(*_args: Any, **_kwargs: Any) -> None:
+        raise TimeoutError("late exec")
+
+    monkeypatch.setattr(desktop_process, "_adopt_macos_process", timed_out)
+    cleaned: list[int] = []
+
+    def cleanup() -> dict[str, int]:
+        assert desktop.process is not None
+        cleaned.append(desktop.process.pid)
+        return {"survivors": 0, "forced": 0}
+
+    monkeypatch.setattr(desktop, "cleanup", cleanup)
+    with pytest.raises(TimeoutError, match="late exec"):
+        desktop._start_with_launch_services([str(executable), "--trace"])
+    assert cleaned == [42]
+    assert desktop._reader is not None and not desktop._reader.is_alive()
+    assert desktop._launcher_directory is None
 
 
 def test_failed_launch_services_command_releases_the_trace_reader(
