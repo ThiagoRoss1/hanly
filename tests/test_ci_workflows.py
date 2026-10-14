@@ -261,7 +261,8 @@ def test_linux_native_ci_installs_tauri_desktop_dependencies() -> None:
         "libxdo-dev",
         "xvfb",
     } <= packages
-    assert {"libegl1", "libxcb-xkb1", "libxkbcommon-x11-0"} <= packages
+    assert {"libegl1", "libx11-6", "libxext6", "fonts-noto-cjk", "python3-tk"} <= packages
+    assert "libxcb-cursor0" not in packages
 
 
 def test_desktop_ci_runs_typescript_react_and_production_build_gates() -> None:

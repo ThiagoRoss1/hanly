@@ -104,11 +104,8 @@ jobs:
           packages=(
             build-essential curl file libssl-dev libxdo-dev librsvg2-dev
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev
-            libegl1 libgl1 libfontconfig1 libx11-xcb1
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
-            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
-            libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
-            libxkbcommon-x11-0 fonts-noto-cjk python3-tk xvfb
+            libegl1 libgl1 libfontconfig1 libx11-6 libxext6
+            fonts-noto-cjk python3-tk xvfb
           )
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends "${packages[@]}"

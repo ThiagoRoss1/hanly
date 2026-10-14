@@ -578,32 +578,43 @@ def _tk_ignore_mouse(window: Any, tkinter: Any, bounds: Rect) -> None:
         windll = getattr(ctypes, "windll", None)
         if windll is None:
             raise RuntimeError("Lab could not access Windows window styles")
-        hwnd = int(windll.user32.GetAncestor(hwnd, 2) or hwnd)
-        get_long = windll.user32.GetWindowLongPtrW
-        set_long = windll.user32.SetWindowLongPtrW
+        user32 = windll.user32
+        ancestor = user32.GetAncestor
+        ancestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        ancestor.restype = ctypes.c_void_p
+        hwnd = int(ancestor(hwnd, 2) or hwnd)
+        get_long = user32.GetWindowLongPtrW
+        get_long.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        get_long.restype = ctypes.c_ssize_t
+        set_long = user32.SetWindowLongPtrW
+        set_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        set_long.restype = ctypes.c_ssize_t
         style = get_long(hwnd, -20)
         set_long(hwnd, -20, style | 0x00000020 | 0x00080000)
-        if not windll.user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x00000002):
+        layered = user32.SetLayeredWindowAttributes
+        layered.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_ubyte, ctypes.c_uint32]
+        layered.restype = ctypes.c_int
+        if not layered(hwnd, 0, 255, 0x00000002):
             raise RuntimeError("Lab could not enable opaque pointer-transparent fixtures")
         return
 
     if sys.platform != "linux":
         raise RuntimeError("Tk pointer pass-through is unavailable on this platform")
 
-    import ctypes
-    import ctypes.util
+    from ctypes import util as ctypes_util
 
-    x11_name = ctypes.util.find_library("X11")
-    xext_name = ctypes.util.find_library("Xext")
+    x11_name = ctypes_util.find_library("X11")
+    xext_name = ctypes_util.find_library("Xext")
     if not x11_name or not xext_name:
         raise RuntimeError("Lab needs X11 Shape support for pointer-transparent fixtures")
     x11 = ctypes.CDLL(x11_name)
     xext = ctypes.CDLL(xext_name)
-    display = x11.XOpenDisplay(os.environ.get("DISPLAY", "").encode() or None)
-    if not display:
-        raise RuntimeError("Lab cannot open the X11 display for pointer-transparent fixtures")
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
     x11.XFlush.argtypes = [ctypes.c_void_p]
+    x11.XFlush.restype = ctypes.c_int
     x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.restype = ctypes.c_int
     xext.XShapeCombineRectangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_ulong,
@@ -615,11 +626,17 @@ def _tk_ignore_mouse(window: Any, tkinter: Any, bounds: Rect) -> None:
         ctypes.c_int,
         ctypes.c_int,
     ]
-    display_handle = int(window.winfo_id())
-    # ShapeInput with an empty rectangle list gives the window no hit-test area.
-    xext.XShapeCombineRectangles(display, display_handle, 2, 0, 0, None, 0, 0, 0)
-    x11.XFlush(display)
-    x11.XCloseDisplay(display)
+    xext.XShapeCombineRectangles.restype = None
+    display = x11.XOpenDisplay(os.environ.get("DISPLAY", "").encode() or None)
+    if not display:
+        raise RuntimeError("Lab cannot open the X11 display for pointer-transparent fixtures")
+    try:
+        display_handle = int(window.winfo_id())
+        # ShapeInput with an empty rectangle list gives the window no hit-test area.
+        xext.XShapeCombineRectangles(display, display_handle, 2, 0, 0, None, 0, 0, 0)
+        x11.XFlush(display)
+    finally:
+        x11.XCloseDisplay(display)
 
 
 def _enable_windows_dpi_awareness() -> None:
@@ -629,11 +646,14 @@ def _enable_windows_dpi_awareness() -> None:
     if windll is None:
         raise RuntimeError("Lab could not access the Windows DPI APIs")
     try:
-        result = windll.shcore.SetProcessDpiAwareness(2)
+        awareness = windll.shcore.SetProcessDpiAwareness
     except AttributeError:
         if not windll.user32.SetProcessDPIAware():
             raise RuntimeError("Lab could not enable per-monitor DPI awareness")
         return
+    awareness.argtypes = [ctypes.c_int]
+    awareness.restype = ctypes.c_int32
+    result = int(awareness(2)) & 0xFFFFFFFF
     if result not in (0, 0x80070005):
         raise RuntimeError(f"Lab could not enable per-monitor DPI awareness ({result:#x})")
 
