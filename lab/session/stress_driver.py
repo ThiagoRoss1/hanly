@@ -65,6 +65,7 @@ class StressDriver(TourDriver):
             settle_timeout=settle_timeout,
             first_timeout=first_timeout,
             retain_fixture_text=retain_fixture_text,
+            owned_pids=owned_pids,
         )
         self._stress_page = page
         self._uia_items = uia_items
