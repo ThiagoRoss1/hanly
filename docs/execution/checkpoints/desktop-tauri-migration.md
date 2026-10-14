@@ -1,133 +1,118 @@
 # Hanly Desktop Tauri migration checkpoint
 
 Status: the implementation, requested cleanup and Codex code review are committed
-through product `0b8a9f4` and Lab `e6250f7`. Final Mac package/archive checks pass
-on build `7569005a`. Native
-acceptance is in progress. Do not call
-native hover acceptance complete from automated gates alone.
+through product `0b8a9f4` and Lab `8ea89d8`. Final Mac package/archive checks pass
+on build `7569005a`. The implementation handoff is closed with explicit human/
+hardware acceptance limits. No Hanly test process or fixture server is running.
+Do not call the entire Mac native matrix accepted from automated gates alone.
 
 ## Current continuation — 2026-10-14
 
-- Removed all inline Python `noqa`/`type: ignore` suppressions through typed
-  fixtures, explicit invalid-runtime-input boundaries, narrowing and teardown.
-  Production event-loop work retains its generic type; obsolete popup/report
-  helpers are removed. No engine source changed.
-- Removed the remaining Lab Qt fixtures, HUD adapters, dependency group and
-  private responsibility launcher. Pillow/AppKit/Tk now paint owned raster
-  fixtures. The Mac loop returns through cleanup/report generation; failed
-  launch FIFO release is bounded. Native Windows/X11 pointer signatures and
-  signed DPI results are covered by portable seam tests.
-- Public LaunchServices launches the exact fresh app PID, with allowlisted Lab
-  environment and mode-0600 FIFO tracing. Private fixture evidence stays in
-  memory; the sampler records actual root responsibility attribution. Protocol
-  v3 separates this launcher/raster workload from former recordings.
-- The shortcut investigation identified missing SecondaryFn interpretation in
-  Lab's synthetic macOS function keys. Both press/release edges and the actual
-  Start Capture action reached the packaged app using the corrected driver.
-  Letter chords work through either Carbon target. No production shortcut
-  backend change was justified or adopted. Physical keyboard/held push-to-hover
-  confirmation remains distinct from that synthesized-input evidence.
-- Popup actions now retain their authorized window identity, translate wire
-  event sequence to Python popup content sequence and preserve increasing React
-  freshness across replacement services. Rust regression coverage includes
-  stale actions, duplicate events and restart counters.
-- Actual release popup verification exposed a missing presentation trace after
-  Qt retirement. `0b8a9f4` emits `popup_visible` only after React's rendered
-  geometry completes a native resize, deduplicates expansion/repeated geometry,
-  rejects stale result acknowledgements and preserves the request identity
-  through expansion. No text or pixels enter that trace. The 77 focused
-  service/popup/retention/loop checks and full portable/native/package gates pass.
-- React code is formatted and unused local/parameter checks are enforced.
-  All six pages and the responsive, full-height layout retain the approved
-  Hanly appearance; hidden region controls are inert and absent from AX.
-- Latest gates: portable Python 2,602 passed / 2 skipped; macOS native 86 passed;
-  latest portable Lab 549 passed; real raster painting/ownership passed; Ruff
-  and mypy clean (342 files); React 40 + Node 9, TypeScript/build passed; Rust
-  17 + Clippy/rustfmt passed; workflow/raster focused 94 and packaging/
-  architecture focused 169 passed. Native/process gates used host access.
-- The earlier canonical packaged app's authorized Screen Recording and
-  Accessibility registrations were refreshed for its new ad-hoc signature.
-  Actual Start Capture reached Armed on the `a54784c` build.
-  The human subsequently approved the debug Lab bundle's same two grants;
-  both current identities still need their native registration refresh.
-- Actual Retina selection previously saved logical 225/225/300/200 from a
-  physical 450/450→1050/850 drag; Escape retained it. Only one display is
-  connected, so real mixed-display claims remain unavailable.
-- `20261013-232232-tour` adopted the debug root through LaunchServices, forwarded
-  debug evidence through its FIFO and received both native capture edges, but
-  capture was denied. It scored no successful hovers. Earlier failed/aborted
-  tours and startup-only recordings remain historical evidence, not passes.
+Implementation, legacy removal, the requested code/optimization review and the
+final product gates are complete. Product source is `0b8a9f4`; latest Lab-only
+fix is `8ea89d8`. The one detailed handoff is
+`docs/execution/review-handoffs/desktop-tauri-migration.md`.
 
-- The `2b93252` package showed actual 학교 / school content from a controlled
-  Safari OCR hover, including Hanja, definitions, Expand and Close. Incorrect
-  initial global coordinates were rejected, not counted as passes. Actual native
-  geometry forwarding raised TypeError because fractional coordinates entered
-  integer ScreenRect; `a54784c` encloses them with floor/ceil. Its 70 focused and
-  full portable tests pass; the corrected final bundle is built.
-- Final build `7569005a-6a5a-4efc-9739-a54266b2855a` embeds product source
-  `0b8a9f4f9a6a33fdfdc4bb4846e0f3a5e28cfba9`. All seven packaged gates passed
-  in 190.70s, including real React readiness, frozen OCR/lookup, updater root
-  acknowledgement and failed-root POSIX-helper rollback. ZIP and DMG each
-  match all 3,762 manifest entries; inventory and strict deep signatures pass.
-- Root 14424 from the earlier `2b93252` build exited on SIGINT; all ten
-  sampler-attributed native/service/lookup/WebKit PIDs were confirmed gone.
-- Recording `20261014-040129-run` found a dictionary entry through Vision and
-  recorded current delivery, but had no visual verification before shutdown.
-  Its zero-popup summary cannot establish staleness: the presentation trace was
-  missing. Automatic shutdown reported no survivors or forced kills.
-- The Dock focus probe timed out in computer-use. Safari owned the actual
-  controlled hover point, but active-app/nonactivation was not established.
-  No native AX or focus pass is inferred from the successful OCR popup.
+### Verified closure
 
-Remaining on final build `7569005a`: verify rendered-popup acknowledgement;
-run the controlled Safari AX/raster/
-negative, popup focus/crossing/expand/close and first/warm/family measurements.
-Run the scored debug tour after its permission answer. Update this checkpoint
-and the existing handoff with final provenance and exact remaining limits.
-The current Safari test is obstructed by Codex's foreground window; the owner
-check refuses to hover over it. Computer-use explicitly forbids controlling
-Codex's own app, so bringing the controlled Safari window forward requires the
-human. No other interface is used to bypass that restriction.
-`20261014-040730-run` ended automatically after 604.5s with no lookup attempted,
-zero dropped events, exit zero, no surviving descendants and no forced kills.
-Its family peak was 205.5 MiB and whole-session mean summed CPU was 1.6%; this
-idle/armed recording does not establish lookup latency or workload acceptance.
-Windows/Linux physical native acceptance remains host-dependent. Playwright
-planning stays deferred until native migration acceptance. No push, merge, tag
-or release is authorized.
+- Final arm64 Mac app: `dist/macos/Hanly.app`, v1.1.0,
+  build `7569005a-6a5a-4efc-9739-a54266b2855a`, product stamp
+  `0b8a9f4f9a6a33fdfdc4bb4846e0f3a5e28cfba9`. All seven packaged gates pass.
+  ZIP/DMG each match all 3,762 manifest entries, inventories and strict deep
+  ad-hoc signatures. Later Lab/docs commits do not change that product identity.
+- Product gates: portable Python 2,602 passed / two existing skips, macOS native
+  86 passed, React 40 UI + nine Node contracts, strict TypeScript/build, Rust
+  17 + Clippy/rustfmt. Latest Lab ownership/FFI regressions: 106 focused checks,
+  full Ruff and full mypy (344 files) pass. Earlier full portable Lab: 549 passed.
+- Production and Lab Qt/WebEngine/pywebview implementations and dependencies
+  are removed. Engine source is unchanged. Active Python/TS/Rust sources have
+  no inline lint/type suppression. Historical spike and explicit compatibility
+  fixtures remain intentional.
+- Both approved grants were refreshed for the exact signing identities through
+  Hanly's Permissions actions and the native macOS picker. After debug tests,
+  registrations were returned to the final release. A normal restart verified
+  both Screen Recording and Accessibility granted inside the canonical app.
+  No third product permission was needed.
+- Final release `20261014-183030-run`: actual 학교 / school / Hanja and
+  definition, compact/expanded/Close, nearest-edge transfer, protected movement,
+  negative refusal, stationary held chord, release/sticky readability, cache,
+  F9 pause/resume and F10 capture stop/start. Render acknowledgement correctly
+  records each answer once. Confirmed normal Quit: exit zero, no surviving or
+  forced children, zero dropped events.
+- That 449.4s release session has three answered hover observations: median
+  340.2ms, first-cold maximum 4,750.7ms; family peak 751.7MiB, mean summed CPU
+  3.2%. It includes waiting/manual UI and is not a general workload benchmark.
+- Debug `20261014-183954-tour`: 153 executed, 139/143 scored correct (97.2%),
+  ten excluded. The four scored misses are retained and explained in the
+  handoff. No engine correction or relaxed timeout/ownership gate was added.
+  Exit zero, zero surviving/forced children and dropped events.
+- An initial stress smoke exposed missing root-PID forwarding into the shared
+  driver. `16348d3` fixes that Lab-only attribution and tests owned/foreign/
+  unknown window handling. Corrected `20261014-184549-stress`: 60 planned,
+  54 executed, 33/33 scored correct, 21 excluded/informational; six Windows UIA
+  cases did not run on Mac. Zero false presentations across 14 scored negatives.
+  Multiple sizes/themes, rapid targets and late withholding exercised. Exit
+  zero, no surviving/forced children or dropped events; source clean/unchanged.
+- The earlier bare debug root PID 37654 was independently identified and closed
+  through normal SIGINT. It was not attributed to a new Lab family. Never infer
+  all Hanly instances are gone from one run's cleanup result alone.
+- `8ea89d8` completes the Windows Lab FFI declarations for ownership, popup and
+  browser-window probes. Actual ctypes callback regressions preserve high-bit
+  parent/child handles and negative geometry; native Windows behavior still
+  requires the host checklist below. No production build changed.
+- `20261014-185330-run` verified restored canonical grants, then ended at its
+  bounded 1,200s duration normally, with zero surviving/forced children. A stale
+  CUA binding subsequently reopened a normal instance; it was closed via Quit
+  without editing its preferences. Check live process identity before binding
+  a closed app. Do not reopen a stale binding merely to inspect cleanup.
 
-The resumed `20261014-144716-run` used the `a54784c` frozen product. Its actual
-Lab-authored raster 학교 showed school, Hanja and the expected definition;
-Expand, Close and transfer through the nearest popup edge worked. Fourteen
-pointer samples stayed protected without another lookup. A large diagonal jump
-outside the narrow transfer corridor dismissed the popup as expected. The
-summary's zero-popups/unseen-OCR explanations are invalidated by the missing
-presentation trace. Confirmed normal Quit ended the 918.8s session with exit
-zero, no survivors/forced kills and no dropped events. CUA app observations do
-not establish native foreground focus. Safari, debug-grant refresh and
-physical key input remain pending. The debug bundle was rebuilt from current
-Rust/React source before applying any grant.
+### Final closure and native limitations
 
-The final `7569005a` canonical and debug apps still show both required, although
-macOS lists Hanly enabled. Both identities are now explicitly authorized by the
-human. Native picker confirmation remains incomplete through automation, and
-human completion was requested. The human also requires every necessary grant
-to be actionable from Hanly's Permissions page. The existing two-grant flow
-already requests OS consent, opens the correct privacy pane and rechecks on
-focus return; no third product grant was found. No grant refresh is claimed.
-Both latest permission-only probes exited normally with zero surviving/forced
-children. No passwords were entered or requested in chat.
+`20261014-203458-run` used the final release, approved grants, private runtime
+and disposable profile. It reached Armed with the Control Center hidden. The
+human was asked to activate Safari's authored “Hanly controlled Mac acceptance”
+window and physically press Control+Shift+F9/F10 twice each. Their uncertain
+done reply was checked: no native shortcut edge had arrived. A clarification
+specified Safari's Window menu and Fn. The bounded prerequisite observer still
+could not confirm both Safari foreground and hardware edges, drove no controlled
+pointer input and ended with `human_foreground_and_keyboard_not_confirmed`.
+Neither that uncertain reply nor background AX clicks are counted as a pass.
 
-`20261014-152133-run` exposed failed Lab adoption while a root actually ran;
-its cleanup implication is invalid. Root 34394 was independently stopped with
-zero survivors. `e6250f7` refreshes executable/argv identity across exec and
-reaps only a fresh exact-profile root after failed adoption. All 549 portable
-Lab tests, 13 focused process checks, Ruff and mypy pass. The corrected native
-retry `20261014-152757-run` adopted root 35074 in 4.44s, attributed its helpers
-through macOS responsibility, and ended after 186.2s with no surviving/forced
-children. That startup/idle run contains the then-uncommitted Lab fix and no
-capture; no lookup latency or RAM saving follows. Lab is not shipped, so its
-later commit does not change the sealed `0b8a9f4` product identity.
+The recording began at clean `16348d3`; Windows-only Lab FFI and docs changed
+during it. Its rebuilt report is at `8ea89d8` with dirty docs, while the frozen
+product remains `0b8a9f4`. It supplies input/cleanup evidence, not a controlled
+latency or accuracy benchmark. Normal SIGINT ended the 846.6s recording with
+2,768 events, zero dropped events, exit zero, no surviving/forced children.
+All eleven sampled PIDs were independently absent afterwards. A separate process
+scan found no Hanly root. The exact task-owned loopback server, prerequisite
+observer and earlier bare debug root were absent too. No background task is
+still waiting or running.
+
+Remaining acceptance boundaries, explicitly recorded in the one handoff:
+
+1. Real Safari activation, controlled native AX versus OCR, and foreground
+   preservation across popup presentation. CUA can operate a Safari text box
+   while macOS still reports another app foreground; that action is insufficient
+   focus evidence. Do not bypass the tool limit with alternate desktop control.
+2. Physical default shortcuts and actual Dock/Cmd+Tab activation. Synthesized
+   held edges/actions and normal close/reopen already pass; hardware input was
+   not observed in the last user-assisted attempt.
+3. Additional physical displays, then Windows/Linux native behavior on their
+   own hosts. Retina drag/cancel and shared geometry/FFI contracts already pass;
+   one connected Mac display cannot establish mixed-monitor behavior.
+
+No additional implementation decision or permission approval is needed for the
+completed Mac code work. Canonical Screen Recording and Accessibility grants
+are already approved and verified; do not ask again for the same grants. Any
+future physical acceptance attempt must launch a fresh isolated run and confirm
+its live PID before binding CUA. Do not reopen a stale binding after its bounded
+session ended. Only an actual OS credential/Touch ID prompt requires takeover.
+
+Registered October 7 Qt recordings are incompatible with protocol-v3 launch/
+raster measurements; no general RAM savings claim is supported. The code and
+optimization review, logical local commits, process teardown and comprehensive
+handoff are complete within these explicit native limitations. Playwright
+planning remains a separate follow-up. No push, merge, tag or release.
 
 Branch: `desktop/tauri-migration`, based on `main` at `0902075`. Preserve
 `spike/desktop-renderers` at preservation commit `39fc4e7` until the official
@@ -138,7 +123,7 @@ Qt-free runtime, complete packaging, updater compatibility or Windows behavior.
 
 ## Local commit map
 
-| Commit | Completed boundary and verification | Remaining responsibility |
+| Commit | Completed boundary and verification | Evidence at that historical boundary |
 |---|---|---|
 | `39fc4e7` on `spike/desktop-renderers` | Preserved spike sources/docs only; 14 focused Python and 6 Electron tests, Lab Ruff and full Python mypy passed before switching. | Experimental Qt-hosted renderer evidence stays separate; no spike merge. |
 | `c4cbb97` | Approved ownership overlays and synchronized architecture visuals; 6 invariant tests passed. | Replace baseline descriptions when the actual production migration reaches parity. |
@@ -157,6 +142,10 @@ Qt-free runtime, complete packaging, updater compatibility or Windows behavior.
 | `8b9a4ed` | React formatting and enforced unused declarations. | React 40, Node 9, TypeScript/build pass. |
 | `ff64a87`, `2b93252` | Qt-free Lab, public Mac launch/FIFO, Fn input, report cleanup and native FFI signatures. | Lab 548 portable + actual Mac raster/ownership pass; scored capture tour needs debug grants. |
 | `dc8d6f4` | Current runtime/setup/code-map and synchronized architecture guidance. | Architecture/packaging focused gates pass. |
+| `0b8a9f4` | Rendered popup acknowledgement, request freshness and expansion identity. | Final portable/native/seven packaged gates and live release popup pass. |
+| `e6250f7` | Fresh process identity and failed-adoption cleanup. | 549 portable Lab checks and actual corrected native adoption/cleanup. |
+| `16348d3` | Stress desktop ownership forwarding. | 97 focused checks and corrected 33/33 scored stress smoke. |
+| `8ea89d8` | Windows Lab window-query handle/callback signatures. | 106 focused checks, full Ruff and mypy over 344 files. |
 
 The human explicitly requested the cleanup, code review and optimization
 continuation. Codex performed that requested review in this resumed run. No
@@ -285,10 +274,10 @@ build`, `pytest tests/test_control_center.py tests/test_theme_contrast.py -q`
 |---|---|---|
 | A | Inventory, approved ownership/IPC contracts and synchronized invariants. | None. |
 | B | Asynchronous service, runtime/lookup composition, bounded IPC and family supervision. | None in verified Mac scenarios. |
-| C | All React surfaces and interactions; corrected full-height shell and settings grid. | Live popup and selector screen-content acceptance. |
-| D | Native windows, tray/reopen, shortcuts, permissions, timers and shutdown adapters. | Real shortcut press/release, popup nonactivation/crossing, mixed-monitor selection. |
+| C | All React surfaces and interactions; actual popup/selector and corrected shell/settings layout. | Native foreground/AX reader confirmation. |
+| D | Native windows, tray/reopen, synthetic held shortcuts, permissions, timers, crossing and shutdown. | Physical keyboard, Dock/Cmd+Tab, popup nonactivation and mixed-monitor hardware. |
 | E | Coordinated Tauri/Python product, existing updater transition/ack/rollback and CI. | Windows/Linux host execution. |
-| F | Lab root/family attribution, privacy, legacy removal, runbooks and final handoff. | Permission/input-dependent native workload acceptance. |
+| F | Lab attribution/privacy, scored tour/stress, legacy retirement, detailed handoff and independent zero-survivor closure. | Human/hardware acceptance limits above. |
 
 ## Native Windows continuation checklist
 
@@ -386,7 +375,7 @@ when available, and mark absent compositor/portal/tray checks unverified.
 This Mac session cannot claim Linux native acceptance. A passing Ubuntu/Xvfb
 job is build/virtual-display evidence, not cross-desktop equivalence.
 
-## Current verification and remaining work — 2026-10-13
+## Historical initial verification — 2026-10-13
 
 The latest continuation results and active steps are listed at the top. Older
 Phase A build `77d09d75-bbc9-4565-98d0-6ebb7f6304ad` from product commit
