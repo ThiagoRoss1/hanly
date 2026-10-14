@@ -123,9 +123,9 @@ LookupController → JobExecutor / Worker → LookupPipeline
 ### User interface
 
 - `PopupController` receives a completed `LookupResult`, decides placement, and owns popup lifecycle.
-- The PyQt6 popup renders successful and normal non-success result states. It knows nothing about EasyOCR, Kiwi, or KRDICT.
-- The Control Center uses pywebview with HTML, CSS, and JavaScript. It exposes capture start / stop, target / region selection, settings, application and resource status, dictionary status, OCR implementation status, update controls, diagnostics, preferences, hover delay, and hotkeys. JavaScript contains no linguistic logic and talks to Python through the pywebview bridge.
-- `TrayService`, initially using pystray, exposes application status, pause / resume, opening the Control Center, and quit.
+- The React popup in a Tauri-owned native window renders successful and normal non-success result states. It knows nothing about EasyOCR, Kiwi, or KRDICT.
+- The Control Center uses React and TypeScript in a Tauri-owned system webview. It exposes capture start / stop, target / region selection, settings, application and resource status, dictionary status, OCR implementation status, update controls, diagnostics, preferences, hover delay, and hotkeys. TypeScript contains no linguistic logic and reaches the Python service through restricted native IPC.
+- The Tauri native tray exposes application status, pause / resume, opening the Control Center, and quit.
 
 ### Resource delivery
 

@@ -377,6 +377,7 @@ the migration routes.
 | `apps/desktop/src-tauri/src/platform/` | Public OS adapters, monitor context and native shortcut transactions |
 | `apps/desktop/src-tauri/src/windows/` | Window lifecycle, coalesced presentation and selector geometry |
 | `apps/desktop/tests/`, `tests/test_desktop_service.py` | React interactions, state/contract checks and service behavior |
+| `lab/session/raster_ui.py`, `raster_fonts.py` | Developer-only AppKit/Tk image windows, explicit coordinate transforms and Pillow font resolution |
 
 Current acceptance evidence and outstanding gates live in the single
 [migration checkpoint](execution/checkpoints/desktop-tauri-migration.md).

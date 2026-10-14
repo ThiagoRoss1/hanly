@@ -171,7 +171,8 @@ and user-data paths.
 The product bundles Python, the engine, providers and OCR models. It does not
 bundle the licensed KRDICT database; first-run provisioning acquires and
 validates it through the existing resource flow. The production UI is Tauri and
-React; Qt is confined to the developer-only Lab dependency group. The product
+React. Lab fixtures render with Pillow in native AppKit windows on macOS and
+Tk windows on Windows/Linux; neither the product nor Lab needs Qt. The product
 build and updater release flow are documented in
 [`packaging/README.md`](packaging/README.md).
 
@@ -201,12 +202,9 @@ python -m mypy packages packaging tests tools lab
 
 `python -m pytest --suite portable` selects tests that need no native window
 server or OCR runtime. `--suite native` exercises host desktop behavior and
-`--suite packaged` checks a freshly built product. Some Lab page tests in the
-native suite need the developer-only UI dependency group:
-
-```bash
-python -m pip install --group lab
-```
+`--suite packaged` checks a freshly built product. Lab's native raster fixtures
+use Pillow with AppKit on macOS and Tk on Windows/Linux. The desktop runtime
+provides the macOS frameworks; other hosts need a Python build with Tk support.
 
 See [`packaging/README.md`](packaging/README.md) for host requirements and
 packaged validation details. Build the frontend with `npm`. From
