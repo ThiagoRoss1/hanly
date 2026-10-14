@@ -55,6 +55,10 @@ def _windows_owner(x: float, y: float) -> int | None:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
+    user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     handle = user32.WindowFromPoint(wintypes.POINT(int(x), int(y)))
     if not handle:
         return None

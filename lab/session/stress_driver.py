@@ -515,6 +515,15 @@ def _own_popup_rect(desktop_pid: int | None) -> Rect | None:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
     allowed = {desktop_pid}
     found: list[Rect] = []
 
@@ -531,7 +540,7 @@ def _own_popup_rect(desktop_pid: int | None) -> Rect | None:
             found.append(Rect(rect.left, rect.top, width, height))
         return True
 
-    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+    callback = callback_type(visit)
     user32.EnumWindows(callback, 0)
     return found[0] if found else None
 

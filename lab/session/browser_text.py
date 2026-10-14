@@ -146,6 +146,24 @@ def _content_origin(root_pid: int) -> tuple[tuple[int, int], int] | None:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.EnumChildWindows.argtypes = [wintypes.HWND, callback_type, wintypes.LPARAM]
+    user32.EnumChildWindows.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
     owned = {root_pid}
     try:
         owned |= {child.pid for child in psutil.Process(root_pid).children(recursive=True)}
@@ -162,7 +180,7 @@ def _content_origin(root_pid: int) -> tuple[tuple[int, int], int] | None:
             found.append(((rect.left, rect.top), top_pid))
         return True
 
-    child_callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(child)
+    child_callback = callback_type(child)
 
     def top(handle: int, _parameter: int) -> bool:
         pid = wintypes.DWORD()
@@ -175,9 +193,7 @@ def _content_origin(root_pid: int) -> tuple[tuple[int, int], int] | None:
                 user32.SetWindowPos(handle, _HWND_TOPMOST, 0, 0, 0, 0, _SWP_KEEP)
         return True
 
-    user32.EnumWindows(
-        ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(top), 0
-    )
+    user32.EnumWindows(callback_type(top), 0)
     return found[0] if found else None
 
 
@@ -190,6 +206,10 @@ def _class_at(x: int, y: int) -> str:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
+    user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
     handle = user32.WindowFromPoint(wintypes.POINT(x, y))
     name = ctypes.create_unicode_buffer(64)
     user32.GetClassNameW(handle, name, 64)
