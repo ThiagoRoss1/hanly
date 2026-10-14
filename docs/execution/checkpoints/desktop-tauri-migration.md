@@ -48,8 +48,8 @@ native hover acceptance complete from automated gates alone.
 - The earlier canonical packaged app's authorized Screen Recording and
   Accessibility registrations were refreshed for its new ad-hoc signature.
   Actual Start Capture reached Armed on the `a54784c` build.
-  A separate permission request for the debug Lab bundle is pending. Do not
-  change its grants without the user's answer.
+  The human subsequently approved the debug Lab bundle's same two grants;
+  both current identities still need their native registration refresh.
 - Actual Retina selection previously saved logical 225/225/300/200 from a
   physical 450/450→1050/850 drag; Escape retained it. Only one display is
   connected, so real mixed-display claims remain unavailable.
@@ -104,15 +104,19 @@ outside the narrow transfer corridor dismissed the popup as expected. The
 summary's zero-popups/unseen-OCR explanations are invalidated by the missing
 presentation trace. Confirmed normal Quit ended the 918.8s session with exit
 zero, no survivors/forced kills and no dropped events. CUA app observations do
-not establish native foreground focus. Safari, debug-grant authorization and
+not establish native foreground focus. Safari, debug-grant refresh and
 physical key input remain pending. The debug bundle was rebuilt from current
 Rust/React source before applying any grant.
 
-The final `7569005a` canonical app shows both permissions required after its
-new ad-hoc signature. Its already-authorized registration refresh reached the
-Mac authentication dialog and waits for the human. The debug app separately
-shows both required and still lacks explicit grant authorization. No passwords
-were entered or requested in chat, and no debug grants were changed.
+The final `7569005a` canonical and debug apps still show both required, although
+macOS lists Hanly enabled. Both identities are now explicitly authorized by the
+human. Native picker confirmation remains incomplete through automation, and
+human completion was requested. The human also requires every necessary grant
+to be actionable from Hanly's Permissions page. The existing two-grant flow
+already requests OS consent, opens the correct privacy pane and rechecks on
+focus return; no third product grant was found. No grant refresh is claimed.
+Both latest permission-only probes exited normally with zero surviving/forced
+children. No passwords were entered or requested in chat.
 
 `20261014-152133-run` exposed failed Lab adoption while a root actually ran;
 its cleanup implication is invalid. Root 34394 was independently stopped with

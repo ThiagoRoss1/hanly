@@ -92,11 +92,20 @@ both granted; real Start Capture reached Armed/Running, Stop returned Stopped.
 Changing the ad-hoc signature required refreshing the exact registrations
 despite ON switches. The earlier build `437cbe90` registrations were refreshed;
 actual Start Capture reached Armed with the corrected frozen service.
-The successor `7569005a` shows both required again. Restoring the already
-authorized canonical registration reached macOS's authentication dialog; it
-remains waiting for the human, with no credentials entered by the agent.
-The rebuilt debug bundle independently shows both required. Its separate grant
-authorization is unanswered; those permissions were not changed.
+The successor `7569005a` and rebuilt debug bundle both still report required
+despite macOS listing Hanly as enabled. The human has now approved both app
+identities' grants. The exact canonical app is selected through the System
+Settings picker, but automation has not reliably confirmed that native picker;
+human completion was requested. No grant refresh is claimed yet. The release
+and debug probes `20261014-175027-run` and `20261014-180055-run` stopped normally
+with exit zero and no surviving/forced children; neither started capture.
+
+The human's permission UX requirement is explicit: every required product grant
+must be listed and actionable in Hanly's Permissions page. The current two
+grants already follow that flow: OS request, direct privacy-pane link and
+focus-return recheck; granted items stay visible. Screen Recording's actual
+button opened the correct pane. The same two grants apply to the debug identity;
+no third production grant was identified. macOS retains the final authorization.
 
 The input investigation proved that ordinary synthetic function keys omitted
 macOS SecondaryFn interpretation. Corrected Lab input delivered native press
@@ -163,9 +172,10 @@ after React reports rendered geometry and the native resize succeeds, once per
 answer. Stale acknowledgements and repeated geometry/expansion cannot emit it
 again; expansion keeps the original request identity. The trace contains only
 request ID and result status. The 77 focused service/popup/retention/loop checks
-pass; full portable/native and final package/archive gates pass. The debug bundle was
-rebuilt from current Rust/React source; its grants still require the unanswered
-human authorization. No successful scored tour is inferred from release UI.
+pass; full portable/native and final package/archive gates pass. The debug
+bundle was rebuilt from current Rust/React source; its approved grants still
+need the native registration refresh. No successful scored tour is inferred
+from release UI.
 
 The final release probe `20261014-152133-run` exposed a Lab discovery timeout
 with a root actually running. Cached psutil handles can describe a pre-exec

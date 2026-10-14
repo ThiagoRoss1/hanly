@@ -99,6 +99,14 @@ drag, and the choice is saved for next time. Cancelling changes nothing.
 First start takes a few seconds longer, because the dictionary has to be
 installed and validated. Later starts skip the install.
 
+### macOS access
+
+Use Hanly's **Permissions** page to grant **Screen Recording** and
+**Accessibility**. Each required grant has an **Open settings** action that
+starts macOS's permission flow and opens its specific privacy pane. Complete
+the macOS confirmation there; Hanly checks again when you return to its window.
+Both grants remain listed after approval so their current state stays visible.
+
 ### Using it
 
 Three global shortcuts, and each one does exactly one thing:
