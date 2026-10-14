@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
-import { desktopRequest, markFrontendReady } from "../services/desktopBridge.ts";
+import {
+  desktopRequest,
+  markFrontendReady,
+} from "../services/desktopBridge.ts";
 import { listenToDesktopEvents } from "../services/desktopEvents.ts";
 import { normalizeDesktopError } from "../services/desktopBridgeCore.ts";
-import type { CaptureRegion, DesktopRegionEvent } from "../contracts/desktop.ts";
+import type {
+  CaptureRegion,
+  DesktopRegionEvent,
+} from "../contracts/desktop.ts";
 
 interface PointerPoint {
   x: number;
@@ -43,16 +49,18 @@ export function RegionSelectorPage() {
           origin.current = null;
         }
       },
-    }).then(async (dispose) => {
-      if (!active) {
-        dispose();
-        return;
-      }
-      unlisten = dispose;
-      await markFrontendReady("region_selector");
-    }).catch((reason: unknown) => {
-      if (active) setError(normalizeDesktopError(reason).message);
-    });
+    })
+      .then(async (dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+        await markFrontendReady("region_selector");
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(normalizeDesktopError(reason).message);
+      });
 
     return () => {
       active = false;
@@ -86,13 +94,14 @@ export function RegionSelectorPage() {
     };
   }, [cancel]);
 
-function pointFromEvent(event: PointerEvent<HTMLElement>): PointerPoint {
+  function pointFromEvent(event: PointerEvent<HTMLElement>): PointerPoint {
     const bounds = event.currentTarget.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   }
 
   function startSelection(event: PointerEvent<HTMLElement>) {
-    if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button"))
+      return;
     const start = pointFromEvent(event);
     origin.current = start;
     setSelection(normalizedBox(start, start));
@@ -126,15 +135,19 @@ function pointFromEvent(event: PointerEvent<HTMLElement>): PointerPoint {
     }
   }
 
-  const boxStyle = selection ? {
-    left: `${selection.left}px`,
-    top: `${selection.top}px`,
-    width: `${selection.width}px`,
-    height: `${selection.height}px`,
-  } : undefined;
-  const instruction = error ?? (desktop
-    ? `Drag across ${desktop.monitors.length} ${desktop.monitors.length === 1 ? "display" : "displays"} · Esc or right-click to cancel`
-    : "Drag across the screen · Esc or right-click to cancel");
+  const boxStyle = selection
+    ? {
+        left: `${selection.left}px`,
+        top: `${selection.top}px`,
+        width: `${selection.width}px`,
+        height: `${selection.height}px`,
+      }
+    : undefined;
+  const instruction =
+    error ??
+    (desktop
+      ? `Drag across ${desktop.monitors.length} ${desktop.monitors.length === 1 ? "display" : "displays"} · Esc or right-click to cancel`
+      : "Drag across the screen · Esc or right-click to cancel");
 
   return (
     <main
@@ -145,18 +158,38 @@ function pointFromEvent(event: PointerEvent<HTMLElement>): PointerPoint {
       onPointerMove={moveSelection}
       onPointerUp={(event) => void finishSelection(event)}
     >
-      {desktop?.image && <img alt="" aria-hidden="true" className="region-backdrop" src={desktop.image} />}
-      <div aria-hidden="true" className="region-selection" data-active={Boolean(selection)} style={boxStyle}>
+      {desktop?.image && (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="region-backdrop"
+          src={desktop.image}
+        />
+      )}
+      <div
+        aria-hidden="true"
+        className="region-selection"
+        data-active={Boolean(selection)}
+        style={boxStyle}
+      >
         {selection && (
-          <span className="region-selection-size">{selection.width} × {selection.height}</span>
+          <span className="region-selection-size">
+            {selection.width} × {selection.height}
+          </span>
         )}
       </div>
       <section aria-live="polite" className="region-instructions">
         <div className="region-instruction-copy">
-          <div className="region-instruction-title">Choose where Hanly reads</div>
+          <div className="region-instruction-title">
+            Choose where Hanly reads
+          </div>
           <div className="region-instruction-hint">{instruction}</div>
         </div>
-        <button className="btn btn-sm btn-quiet region-cancel" onClick={() => void cancel()} type="button">
+        <button
+          className="btn btn-sm btn-quiet region-cancel"
+          onClick={() => void cancel()}
+          type="button"
+        >
           Cancel
         </button>
       </section>

@@ -31,13 +31,20 @@ export type DesktopMethod =
   | "popup_geometry";
 
 export type DesktopParams = Record<string, unknown>;
-export type InvokeCommand = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+export type InvokeCommand = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
 
 export class DesktopBridgeError extends Error {
   readonly code: string;
   readonly details?: unknown;
 
-  constructor(message: string, code = "DESKTOP_BRIDGE_ERROR", details?: unknown) {
+  constructor(
+    message: string,
+    code = "DESKTOP_BRIDGE_ERROR",
+    details?: unknown,
+  ) {
     super(message);
     this.name = "DesktopBridgeError";
     this.code = code;
@@ -53,16 +60,23 @@ export function normalizeDesktopError(error: unknown): DesktopBridgeError {
   if (typeof error === "string") {
     try {
       const parsed: unknown = JSON.parse(error);
-      if (parsed && typeof parsed === "object") return normalizeDesktopError(parsed);
+      if (parsed && typeof parsed === "object")
+        return normalizeDesktopError(parsed);
     } catch {
       return new DesktopBridgeError(error);
     }
     return new DesktopBridgeError(error);
   }
   if (error && typeof error === "object") {
-    const item = error as { code?: unknown; message?: unknown; details?: unknown };
+    const item = error as {
+      code?: unknown;
+      message?: unknown;
+      details?: unknown;
+    };
     return new DesktopBridgeError(
-      typeof item.message === "string" ? item.message : "Hanly could not complete that action.",
+      typeof item.message === "string"
+        ? item.message
+        : "Hanly could not complete that action.",
       typeof item.code === "string" ? item.code : "DESKTOP_BRIDGE_ERROR",
       item.details,
     );
@@ -72,7 +86,10 @@ export function normalizeDesktopError(error: unknown): DesktopBridgeError {
 
 export function createDesktopBridge(invokeCommand: InvokeCommand) {
   return {
-    async request<T>(method: DesktopMethod, params: DesktopParams = {}): Promise<T> {
+    async request<T>(
+      method: DesktopMethod,
+      params: DesktopParams = {},
+    ): Promise<T> {
       try {
         return await invokeCommand<T>("desktop_request", { method, params });
       } catch (error) {

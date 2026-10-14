@@ -4,10 +4,12 @@ export interface NumericBounds {
 }
 
 export type HoverDelayValidation =
-  | { valid: true; value: number }
-  | { valid: false; message: string };
+  { valid: true; value: number } | { valid: false; message: string };
 
-export function validateHoverDelay(raw: string, bounds: NumericBounds): HoverDelayValidation {
+export function validateHoverDelay(
+  raw: string,
+  bounds: NumericBounds,
+): HoverDelayValidation {
   const value = Number(raw);
   if (!Number.isInteger(value) || value < bounds.min || value > bounds.max) {
     return {
@@ -36,8 +38,12 @@ const KEY_NAMES: Record<string, string> = {
   pagedown: "pagedown",
 };
 
-export function hotkeyFromKeyboardEvent(event: Pick<KeyboardEvent,
-  "key" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey">): string | null {
+export function hotkeyFromKeyboardEvent(
+  event: Pick<
+    KeyboardEvent,
+    "key" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey"
+  >,
+): string | null {
   const key = event.key.toLowerCase();
   if (MODIFIER_KEYS.has(key)) return null;
 

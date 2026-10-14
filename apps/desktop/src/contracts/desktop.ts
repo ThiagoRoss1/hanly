@@ -171,7 +171,11 @@ export interface PopupPayload extends PopupContent {
   expanded?: boolean;
   technical_details?: string;
   theme?: string;
-  config?: { technical_details?: string; theme?: string; popup_default_size?: string };
+  config?: {
+    technical_details?: string;
+    theme?: string;
+    popup_default_size?: string;
+  };
 }
 
 export interface DesktopRegionEvent {

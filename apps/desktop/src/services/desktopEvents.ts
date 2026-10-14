@@ -7,12 +7,17 @@ import {
   type DesktopEventPayloads,
 } from "./desktopEventsCore.ts";
 
-export function listenToDesktopEvents(handlers: DesktopEventHandlers): Promise<() => void> {
+export function listenToDesktopEvents(
+  handlers: DesktopEventHandlers,
+): Promise<() => void> {
   return subscribeToDesktopEvents(
     async <Name extends DesktopEventName>(
       name: Name,
       callback: (payload: DesktopEventPayloads[Name]) => void,
-    ) => listen(name, (event: Event<DesktopEventPayloads[Name]>) => callback(event.payload)),
+    ) =>
+      listen(name, (event: Event<DesktopEventPayloads[Name]>) =>
+        callback(event.payload),
+      ),
     handlers,
   );
 }

@@ -5,7 +5,11 @@ import type {
   HanlyState,
 } from "../contracts/desktop.ts";
 
-export type DesktopEventName = "desktop-state" | "desktop-popup" | "desktop-service-status" | "desktop-region";
+export type DesktopEventName =
+  | "desktop-state"
+  | "desktop-popup"
+  | "desktop-service-status"
+  | "desktop-region";
 export type DesktopEventPayloads = {
   "desktop-state": HanlyState;
   "desktop-popup": DesktopPopupEvent;
@@ -38,7 +42,9 @@ export async function subscribeToDesktopEvents(
       unlisten.push(await register("desktop-popup", handlers.onPopup));
     }
     if (handlers.onServiceStatus) {
-      unlisten.push(await register("desktop-service-status", handlers.onServiceStatus));
+      unlisten.push(
+        await register("desktop-service-status", handlers.onServiceStatus),
+      );
     }
     if (handlers.onRegion) {
       unlisten.push(await register("desktop-region", handlers.onRegion));
