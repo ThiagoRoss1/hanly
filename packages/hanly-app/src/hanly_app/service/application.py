@@ -12,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hanly import BoundingBox, Point
+from hanly import BoundingBox, LookupResult, Point
 
 from hanly_app.acquisition.capture import (
     DEFAULT_ROI_GRID,
@@ -326,7 +326,9 @@ class DesktopService:
         self._monitors: list[dict[str, Any]] = []
         self._registered_hotkey_context: dict[str, str] = {}
         self._popup_sequence = 0
-        self._popup_result: Any | None = None
+        self._popup_result: LookupResult | None = None
+        self._popup_request_id: int | None = None
+        self._popup_presented = False
         self._popup_position: PopupPosition | None = None
         self._popup_size = PopupSize()
         self._popup_expanded = False
@@ -762,6 +764,7 @@ class DesktopService:
             bottom = math.ceil(params["y"] + params["height"])
             rect = ScreenRect(left, top, right - left, bottom - top)
             self._set_popup_geometry(sequence, rect)
+            self._note_popup_visible()
             return {"accepted": True}
         if method == "service.popup_close":
             self._hide_popup(sequence)
@@ -769,14 +772,9 @@ class DesktopService:
         self._popup_expanded = params["expanded"]
         self._popup_size = _popup_size(self._popup_expanded)
         if self._popup_result is not None and self._cursor is not None:
-            request_id = (
-                None
-                if self._manual is None
-                else self._manual.controller.current_request_id
-            )
             self._show_popup(
                 self._popup_result,
-                request_id,
+                self._popup_request_id,
                 expanded=self._popup_expanded,
             )
         return {"accepted": True}
@@ -1160,7 +1158,7 @@ class DesktopService:
 
     def _show_popup(
         self,
-        result: Any,
+        result: LookupResult,
         request_id: int | None,
         *,
         expanded: bool | None = None,
@@ -1188,7 +1186,10 @@ class DesktopService:
         )
         popup_controller = PopupController(_PopupModelView(), popup_size=size)
         position = popup_controller.open(result, cursor, screen, anchor=anchor)
+        if self._popup_result is not result or self._popup_request_id != request_id:
+            self._popup_presented = False
         self._popup_result = result
+        self._popup_request_id = request_id
         self._popup_position = position
         self._popup_size = size
         self._popup_expanded = expanded
@@ -1250,6 +1251,29 @@ class DesktopService:
         if self._manual is not None:
             self._manual.update_popup_geometry(rect)
 
+    def _note_popup_visible(self) -> None:
+        """Record one current answer after React reports its native frame."""
+
+        result = self._popup_result
+        if result is None or self._popup_presented:
+            return
+        request_id = self._popup_request_id
+        if request_id is not None and (
+            self._manual is None
+            or request_id != self._manual.controller.current_request_id
+        ):
+            return
+        # Geometry follows rendering and a successful native resize. Publishing
+        # the service event alone cannot establish presentation.
+        self._popup_presented = True
+        emit_trace(
+            self._trace_sink,
+            "popup_visible",
+            stage="popup_visible",
+            lookup_request_id=request_id,
+            result_status=result.status.value,
+        )
+
     def _hide_current_popup(self) -> None:
         if self._popup_sequence:
             self._hide_popup(self._popup_sequence)
@@ -1260,6 +1284,8 @@ class DesktopService:
         if self._manual is not None and self._manual.hover_runtime is not None:
             self._manual.hover_runtime.clear_target()
         self._popup_result = None
+        self._popup_request_id = None
+        self._popup_presented = False
         self._popup_actual_rect = None
         self._emit_event("popup_hide", {"sequence": sequence})
 

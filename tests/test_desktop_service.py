@@ -15,7 +15,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from hanly import LookupResult, LookupStatus, Point
+from hanly import DictionaryEntry, LookupResult, LookupStatus, Point
 from hanly_app import permissions as permissions_module
 from hanly_app import service as service_module
 from hanly_app.acquisition.capture import (
@@ -91,6 +91,69 @@ def _message(
         "params": {} if params is None else params,
         "window": window,
     }
+
+
+def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identity(
+    tmp_path: Path,
+) -> None:
+    events: list[dict[str, object]] = []
+
+    class TraceSink:
+        def emit(self, event: object) -> None:
+            assert isinstance(event, dict)
+            events.append(dict(event))
+
+    service = DesktopService(tmp_path / "config.json", trace_sink=TraceSink())
+    controller = SimpleNamespace(current_request_id=9)
+    service._manual = SimpleNamespace(
+        controller=controller,
+        word_rect=lambda _result, _request: ScreenRect(20, 30, 40, 20),
+        update_popup_geometry=lambda _rect: None,
+        hover_runtime=None,
+    )
+    service._cursor = Point(30, 40)
+    service._monitors = [{"bounds": {"left": 0, "top": 0, "width": 1000, "height": 800}}]
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(DictionaryEntry(headword="학교", definitions=("school",)),),
+    )
+
+    def geometry(sequence: int) -> dict[str, Any]:
+        return service.dispatch(parse_request(_frame(_message(
+            method="service.popup_geometry", window="popup",
+            params={"sequence": sequence, "x": 20.5, "y": 54.5, "width": 340, "height": 200},
+        ))))
+
+    try:
+        service._show_popup(result, 9)
+        assert events == []
+        assert geometry(1) == {"accepted": True}
+        assert [(event["event_kind"], event["lookup_request_id"]) for event in events] == [
+            ("popup_visible", 9),
+        ]
+        assert events[0]["result_status"] == "SUCCESS"
+        assert "학교" not in json.dumps(events)
+
+        geometry(1)
+        service._popup_sync("service.popup_expand", {"sequence": 1, "expanded": True})
+        assert service._popup_sequence == 2
+        assert geometry(1) == {"accepted": False, "stale": True}
+        geometry(2)
+        assert len(events) == 1
+
+        controller.current_request_id = 10
+        service._show_popup(result, 10)
+        controller.current_request_id = 11
+        geometry(3)
+        assert len(events) == 1
+
+        service._hide_popup(3)
+        geometry(3)
+        assert len(events) == 1
+        assert service._popup_request_id is None
+    finally:
+        service._manual = None
+        service.close()
 
 
 def _frame(value: object) -> bytes:
@@ -416,7 +479,10 @@ def test_selection_backdrop_is_scoped_temporary_and_protocol_bounded(
         )
     )
     service._popup_sequence = 4
-    service._popup_result = {"private": "previous popup"}
+    service._popup_result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(DictionaryEntry(headword="previous popup", definitions=("private",)),),
+    )
 
     snapshot_request = parse_request(
         _frame(
@@ -458,13 +524,15 @@ def test_selection_backdrop_is_scoped_temporary_and_protocol_bounded(
     image = Image.open(BytesIO(jpeg))
     assert image.size == (screen.width, screen.height)
     image.close()
+    log_path = service.log.path
+    assert log_path is not None
     serialized_public_data = json.dumps(
         {
             "state": service._state(),
             "logs": service._logs(),
             "events": events,
             "trace": trace_events,
-            "log_file": service.log.path.read_text(encoding="utf-8"),
+            "log_file": log_path.read_text(encoding="utf-8"),
         }
     )
     assert image_uri not in serialized_public_data
