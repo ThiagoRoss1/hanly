@@ -46,6 +46,36 @@ from hanly_app.service.snapshot import MAX_JPEG_BYTES, _encode_jpeg
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize(
+    ("coordinates", "expected"),
+    [
+        ((-40.5, -3.25, 380, 180), ScreenRect(-41, -4, 381, 181)),
+        ((40.0, 30.0, 380, 180), ScreenRect(40, 30, 380, 180)),
+    ],
+)
+def test_popup_geometry_encloses_fractional_native_positions_without_accepting_stale_updates(
+    tmp_path: Path, coordinates: tuple[float, float, int, int], expected: ScreenRect,
+) -> None:
+    service = DesktopService(tmp_path / "config.json")
+    service._popup_sequence = 7
+    x, y, width, height = coordinates
+    params = {"sequence": 7, "x": x, "y": y, "width": width, "height": height}
+    try:
+        request = parse_request(_frame(_message(
+            method="service.popup_geometry", window="popup", params=params,
+        )))
+        assert service.dispatch(request) == {"accepted": True}
+        assert service._popup_actual_rect == expected
+
+        stale = parse_request(_frame(_message(
+            method="service.popup_geometry", window="popup", params={**params, "sequence": 6},
+        )))
+        assert service.dispatch(stale) == {"accepted": False, "stale": True}
+        assert service._popup_actual_rect == expected
+    finally:
+        service.close()
+
+
 def _message(
     *,
     method: str = "service.hello",

@@ -755,7 +755,12 @@ class DesktopService:
         if sequence != self._popup_sequence:
             return {"accepted": False, "stale": True}
         if method == "service.popup_geometry":
-            rect = ScreenRect(params["x"], params["y"], params["width"], params["height"])
+            left, top = math.floor(params["x"]), math.floor(params["y"])
+            # Native logical positions can fall between device pixels. Retain
+            # the smallest integer rectangle containing the whole popup.
+            right = math.ceil(params["x"] + params["width"])
+            bottom = math.ceil(params["y"] + params["height"])
+            rect = ScreenRect(left, top, right - left, bottom - top)
             self._set_popup_geometry(sequence, rect)
             return {"accepted": True}
         if method == "service.popup_close":
