@@ -36,7 +36,7 @@ from hanly_app.config import (
 )
 from hanly_app.desktop_controller import DesktopState
 from hanly_app.diagnostics import LEVELS, DiagnosticLog, diagnostics_bundle
-from hanly_app.hotkeys import HotkeyError, validate_binding
+from hanly_app.hotkeys import HotkeyError, canonical_hotkey
 from hanly_app.permissions import (
     START_CAPTURE_PERMISSIONS,
     PermissionService,
@@ -957,17 +957,17 @@ def _validated_binding(binding: object, field: str) -> str:
 
 
 def _validated_hotkey(hotkey: object) -> str:
-    """Reject a combination this machine's own backend could not register.
+    """Reject a spelling that is not a key combination.
 
-    Checking the spelling alone would let a user save something that silently
-    does nothing, because the running platform has no key at that position.
+    Whether this machine can register it is the native host's answer, given
+    before the setting is persisted.
     """
 
     if not isinstance(hotkey, str):
         raise ValueError("hotkey must be a string")
     try:
-        validate_binding(hotkey)
-    except (HotkeyError, RuntimeError) as error:
+        canonical_hotkey(hotkey)
+    except HotkeyError as error:
         raise ValueError(f"unsupported hotkey: {error}") from error
     return hotkey
 

@@ -1083,11 +1083,7 @@ def test_push_to_hover_rejects_stale_cursor_when_native_read_fails(
         trace_sink=trace_sink,
     )
     actions: list[tuple[object, object]] = []
-    native = service._make_hotkey_runtime(
-        lambda action, edge: actions.append((action, edge)),
-        {},
-        lambda callback: callback(),
-    )
+    native = service._make_hotkey_runtime(lambda action, edge: actions.append((action, edge)))
     native.apply_registered({"push_to_hover": "Ctrl+Shift+Space"})
     service._native_hotkeys = native
     service._cursor = Point(25, 35)
@@ -1158,7 +1154,7 @@ def test_capture_shortcut_permission_refusal_has_safe_trace_code(
             except service_module.application.ControlCenterUnavailable:
                 pass
 
-    hotkeys = service._make_hotkey_runtime(apply_capture_action, {}, lambda callback: callback())
+    hotkeys = service._make_hotkey_runtime(apply_capture_action)
     hotkeys.apply_registered({"toggle_capture": "Ctrl+Shift+F12"})
     service._native_hotkeys = hotkeys
 

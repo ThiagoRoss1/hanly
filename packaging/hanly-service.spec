@@ -114,6 +114,8 @@ for package_name in MANDATORY_PACKAGES:
 hiddenimports.extend(MANDATORY_EXTENSION_MODULES)
 hiddenimports.extend(["mss"])
 
+# Only the mouse observer uses pynput, but its package __init__ imports the
+# keyboard module too, which resolves a platform backend at import time.
 if sys.platform == "win32":
     hiddenimports.extend(["pynput.keyboard._win32", "pynput.mouse._win32"])
 elif sys.platform == "darwin":

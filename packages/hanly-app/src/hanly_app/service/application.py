@@ -139,7 +139,6 @@ class _NativeHotkeyRuntime:
     def __init__(self, handler: Callable[[HotkeyAction, HotkeyEdge], None]) -> None:
         self._handler = handler
         self._actual: dict[str, str] = {}
-        self._configured: dict[HotkeyAction, str] = {}
         self._closed = False
 
     @property
@@ -156,12 +155,6 @@ class _NativeHotkeyRuntime:
 
     def register(self) -> None:
         """Confirm the host owns registrations; never register OS keys here."""
-
-    def rebind(self, action: HotkeyAction, binding: str) -> None:
-        self._configured[action] = binding
-
-    def unbind(self, action: HotkeyAction) -> None:
-        self._configured.pop(action, None)
 
     def apply_registered(self, bindings: Mapping[str, str]) -> None:
         self._actual = dict(bindings)
@@ -1119,8 +1112,6 @@ class DesktopService:
     def _make_hotkey_runtime(
         self,
         handler: Callable[[HotkeyAction, HotkeyEdge], None],
-        _bindings: Mapping[HotkeyAction | str, str],
-        _dispatcher: Callable[[Callable[[], None]], None],
     ) -> _NativeHotkeyRuntime:
         self._native_hotkeys = _NativeHotkeyRuntime(handler)
         return self._native_hotkeys
@@ -1443,7 +1434,7 @@ class DesktopService:
 
 
 def _validate_shortcut_set(config: AppConfig) -> None:
-    from hanly_app.hotkeys import validate_binding
+    from hanly_app.hotkeys import canonical_hotkey
 
     bindings: dict[str, str] = {}
     for name, value in (
@@ -1453,7 +1444,7 @@ def _validate_shortcut_set(config: AppConfig) -> None:
     ):
         if not value.strip():
             continue
-        normalized = validate_binding(value)
+        normalized = canonical_hotkey(value)
         if normalized in bindings:
             raise ValueError("Two actions cannot use the same shortcut.")
         bindings[normalized] = name

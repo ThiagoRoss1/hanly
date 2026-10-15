@@ -24,8 +24,9 @@ from hanly.word_resolver import WordResolver
 from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.composition import create_lookup_controller
 from hanly_app.config import AppConfig, HoverActivation
-from hanly_app.hotkeys import HotkeyAction
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
+
+from tests.hanly_fixtures.hotkeys import FakeHotkeys
 
 _UI_POINT = Point(120, 80)
 _SECOND_POINT = Point(220, 180)
@@ -111,26 +112,6 @@ class _MouseListenerFactory:
         listener = _MouseListener(on_move)
         self.listeners.append(listener)
         return listener
-
-
-class _HotkeyRuntime:
-    @property
-    def bindings(self) -> Mapping[HotkeyAction, str]:
-        return {HotkeyAction.LOOKUP: "<ctrl>+<shift>+<space>"}
-
-    @property
-    def registered(self) -> bool:
-        return True
-
-    def register(self) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
-
-
-def _hotkey_factory(_handler: object, _bindings: object, _dispatcher: object) -> _HotkeyRuntime:
-    return _HotkeyRuntime()
 
 
 class _Capture:
@@ -295,7 +276,7 @@ def _runtime(
         close_popup=popup.close,
         current_cursor=lambda: _UI_POINT,
         dispatcher=dispatcher,
-        hotkey_factory=_hotkey_factory,
+        hotkey_factory=FakeHotkeys(),
         shutdown_scheduler=lambda callback: callback(),
         hover_enabled=True,
         hover_delay_ms=175,

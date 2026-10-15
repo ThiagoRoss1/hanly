@@ -84,13 +84,7 @@ if TYPE_CHECKING:
     )
     from .desktop_controller import DesktopController, DesktopState, LookupRuntime
     from .diagnostics import RotatingLogFile, open_diagnostics
-    from .hotkeys import (
-        DEFAULT_HOTKEYS,
-        DuplicateHotkeyError,
-        HotkeyAction,
-        HotkeyError,
-        HotkeyService,
-    )
+    from .hotkeys import HotkeyAction, HotkeyError
     from .manual_lookup import (
         ManualLookupRuntime,
         ManualLookupStartupError,
@@ -133,16 +127,13 @@ _EXPORTS: dict[str, str] = {
     "ConfiguredCaptureService": "acquisition.capture",
     "ControlCenterBridge": "control_center.bridge",
     "ControlCenterUnavailable": "control_center.bridge",
-    "DEFAULT_HOTKEYS": "hotkeys",
     "DesktopController": "desktop_controller",
     "DesktopState": "desktop_controller",
     "DownloadProgress": "updates.resource_service",
-    "DuplicateHotkeyError": "hotkeys",
     "GitHubReleaseFetcher": "updates.resource_service",
     "HanlyRuntime": "runtime",
     "HotkeyAction": "hotkeys",
     "HotkeyError": "hotkeys",
-    "HotkeyService": "hotkeys",
     "HoverActivation": "config",
     "HoverController": "hover.controller",
     "HoverLookupRuntime": "hover.lookup",
@@ -238,16 +229,13 @@ __all__ = [
     "ConfigManager",
     "ControlCenterBridge",
     "ControlCenterUnavailable",
-    "DEFAULT_HOTKEYS",
     "DesktopController",
     "DesktopState",
     "DownloadProgress",
-    "DuplicateHotkeyError",
     "HanlyRuntime",
     "GitHubReleaseFetcher",
     "HotkeyAction",
     "HotkeyError",
-    "HotkeyService",
     "HoverController",
     "HoverLookupRuntime",
     "HoverRequest",

@@ -8,32 +8,22 @@ one hotkey lookup from holding a gigabyte for the rest of the session.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
 from hanly import DictionaryEntry, LookupResult, LookupStatus, PixelFormat, Point, ROIImage
 from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation, LookupPreload
-from hanly_app.hotkeys import (
-    HotkeyAction,
-    HotkeyEdge,
-    HotkeyEdgeHandler,
-    HotkeyService,
-    canonical_hotkey,
-)
+from hanly_app.hotkeys import HotkeyAction
 from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
+
+from tests.hanly_fixtures.hotkeys import FakeHotkeys
 
 _IMAGE = ROIImage(2, 1, PixelFormat.RGB_888, b"\x00\x00\x00\xff\xff\xff")
 _CURSOR = Point(120.0, 80.0)
 _CAPTURE = CaptureResult(_IMAGE, ScreenRect(20, 30, 2, 1), Point(1.0, 0.5))
-#: The one-shot lookup has no default shortcut any more, so the tests that
-#: drive that path bind one, the way an embedding client would.
-_LOOKUP_HOTKEY = "ctrl+alt+space"
-_LOOKUP_BINDING = "<ctrl>+<alt>+<space>"
-_PUSH_BINDING = canonical_hotkey(AppConfig().hotkey)
-_TOGGLE_BINDING = canonical_hotkey(AppConfig().hover_hotkey)
 
 
 class _Engine:
@@ -107,45 +97,6 @@ class _Dispatcher:
             self.pending.pop(0)()
 
 
-class _Listener:
-    def __init__(self, callbacks: Mapping[str, HotkeyEdgeHandler]) -> None:
-        self.callbacks = dict(callbacks)
-        self.started = 0
-        self.stopped = 0
-
-    def start(self) -> None:
-        self.started += 1
-
-    def stop(self) -> None:
-        self.stopped += 1
-
-    def join(self, timeout: float | None = None) -> None:
-        del timeout
-
-    def press(self, binding: str, edge: HotkeyEdge = HotkeyEdge.DOWN) -> None:
-        self.callbacks[binding](edge)
-
-    def release(self, binding: str) -> None:
-        self.callbacks[binding](HotkeyEdge.UP)
-
-
-class _Hotkeys:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.listener: _Listener | None = None
-        self._fail = fail
-
-    def __call__(self, on_action: Any, bindings: Any, dispatcher: Any) -> HotkeyService:
-        def factory(callbacks: Mapping[str, HotkeyEdgeHandler]) -> _Listener:
-            if self._fail:
-                raise RuntimeError("another application already uses that shortcut")
-            self.listener = _Listener(callbacks)
-            return self.listener
-
-        return HotkeyService(
-            on_action, bindings=bindings, dispatcher=dispatcher, listener_factory=factory
-        )
-
-
 class _Capture:
     def __init__(self) -> None:
         self.captures = 0
@@ -204,15 +155,16 @@ class _Runtime:
 def _session(
     *,
     preload: LookupPreload = LookupPreload.WHEN_CAPTURE_STARTS,
-    hotkeys: _Hotkeys | None = None,
+    hotkeys: FakeHotkeys | None = None,
     capture_refusal: Callable[[], str | None] | None = None,
     on_toggle_hover: Callable[[], None] | None = None,
     on_error: Callable[[str, BaseException], None] | None = None,
-) -> tuple[ManualLookupRuntime, _Engine, _Clock, _Dispatcher, _Hotkeys, list[LookupResult]]:
+) -> tuple[ManualLookupRuntime, _Engine, _Clock, _Dispatcher, FakeHotkeys, list[LookupResult]]:
     engine = _Engine()
     clock = _Clock()
     dispatcher = _Dispatcher()
-    factory = hotkeys or _Hotkeys()
+    factory = hotkeys or FakeHotkeys()
+    factory.dispatcher = dispatcher
     results: list[LookupResult] = []
     manual = create_manual_lookup(
         cast(Any, _Runtime(engine)),
@@ -228,14 +180,12 @@ def _session(
         on_toggle_hover=on_toggle_hover,
         on_error=on_error,
         capture_refusal=capture_refusal,
-        lookup_hotkey=_LOOKUP_HOTKEY,
     )
     return manual, engine, clock, dispatcher, factory, results
 
 
-def _press(factory: _Hotkeys, dispatcher: _Dispatcher, binding: str) -> None:
-    assert factory.listener is not None
-    factory.listener.press(binding)
+def _press(factory: FakeHotkeys, dispatcher: _Dispatcher, action: HotkeyAction) -> None:
+    factory.trigger(action)
     dispatcher.drain()
 
 
@@ -256,8 +206,7 @@ def test_shortcuts_are_registered_with_the_session_not_with_capture() -> None:
     manual, _engine, _clock, _dispatcher, factory, _results = _session()
     manual.prepare()
 
-    assert factory.listener is not None
-    assert factory.listener.started == 1
+    assert factory.started == 1
     assert manual.started is False
     manual.shutdown()
 
@@ -265,7 +214,7 @@ def test_shortcuts_are_registered_with_the_session_not_with_capture() -> None:
 def test_a_shortcut_another_application_owns_leaves_the_session_running() -> None:
     reported: list[str] = []
     manual, _engine, _clock, _dispatcher, _factory, _results = _session(
-        hotkeys=_Hotkeys(fail=True),
+        hotkeys=FakeHotkeys(fail="another application already uses that shortcut"),
         on_error=lambda stage, error: reported.append(f"{stage}: {error}"),
     )
 
@@ -390,7 +339,7 @@ def test_a_manual_lookup_with_capture_off_expires_the_engine_when_idle() -> None
     manual, engine, clock, dispatcher, factory, results = _session()
     manual.prepare()
 
-    _press(factory, dispatcher, _LOOKUP_BINDING)
+    _press(factory, dispatcher, HotkeyAction.LOOKUP)
     _await_result(dispatcher, results)
 
     timer = clock.live
@@ -407,7 +356,7 @@ def test_a_manual_lookup_with_capture_off_expires_the_engine_when_idle() -> None
 def test_an_engine_used_again_before_expiry_waits_out_the_rest() -> None:
     manual, engine, clock, dispatcher, factory, _results = _session()
     manual.prepare()
-    _press(factory, dispatcher, _LOOKUP_BINDING)
+    _press(factory, dispatcher, HotkeyAction.LOOKUP)
 
     engine.idle = 25.0
     clock.fire()
@@ -424,7 +373,7 @@ def test_capture_that_is_already_watching_keeps_the_engine_warm() -> None:
     manual, _engine, clock, dispatcher, factory, _results = _session()
     manual.start()
 
-    _press(factory, dispatcher, _LOOKUP_BINDING)
+    _press(factory, dispatcher, HotkeyAction.LOOKUP)
 
     assert clock.live is None
     manual.shutdown()
@@ -440,7 +389,7 @@ def test_the_toggle_shortcut_asks_whoever_owns_the_capture_lifecycle() -> None:
     )
     manual.prepare()
 
-    _press(factory, dispatcher, _TOGGLE_BINDING)
+    _press(factory, dispatcher, HotkeyAction.TOGGLE_HOVER)
 
     assert toggles == [1]
     manual.shutdown()
@@ -455,7 +404,7 @@ def test_a_manual_lookup_without_screen_permission_says_so() -> None:
     )
     manual.prepare()
 
-    _press(factory, dispatcher, _LOOKUP_BINDING)
+    _press(factory, dispatcher, HotkeyAction.LOOKUP)
 
     assert len(results) == 1
     assert results[0].status is LookupStatus.UNUSABLE
@@ -492,7 +441,7 @@ def test_a_policy_change_during_a_manual_session_leaves_it_alone() -> None:
 
     manual, engine, _clock, dispatcher, factory, results = _session()
     manual.prepare()
-    _press(factory, dispatcher, _LOOKUP_BINDING)
+    _press(factory, dispatcher, HotkeyAction.LOOKUP)
     _await_result(dispatcher, results)
     engine.calls.clear()
 
@@ -511,9 +460,7 @@ def test_changing_a_binding_alone_does_not_disturb_a_running_session() -> None:
 
     assert manual.started is True
     assert engine.calls == []
-    assert factory.listener is not None
-    assert "<ctrl>+<alt>+k" in factory.listener.callbacks
-    assert manual.hotkeys.bindings[HotkeyAction.TOGGLE_HOVER] == _TOGGLE_BINDING
+    assert manual.hotkeys.registered
     manual.shutdown()
 
 
@@ -539,7 +486,7 @@ def test_stop_returns_before_the_lookup_child_has_been_joined() -> None:
         close_popup=lambda: None,
         current_cursor=lambda: _CURSOR,
         dispatcher=_Dispatcher(),
-        hotkey_factory=_Hotkeys(),
+        hotkey_factory=FakeHotkeys(),
         shutdown_scheduler=retirements.append,
         app_config=AppConfig(),
         idle_scheduler=_Clock(),

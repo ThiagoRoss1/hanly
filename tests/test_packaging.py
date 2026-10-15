@@ -1109,8 +1109,7 @@ def test_lookup_child_does_not_own_desktop_lifecycle() -> None:
         "provision_runtime_config",
         "confirm_started",
         "run_desktop",
-        "HotkeyService",
-        "hotkeys.register",
+        "hanly_app.hotkeys",
     )
     app = ROOT / "packages" / "hanly-app" / "src" / "hanly_app"
     assert not (app / "control_center" / "process.py").exists()

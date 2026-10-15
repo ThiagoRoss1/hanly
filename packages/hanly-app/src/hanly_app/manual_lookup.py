@@ -34,21 +34,14 @@ from hanly_app.popup.presentation import should_present
 
 from .config import (
     DEFAULT_CAPTURE_HOTKEY,
+    DEFAULT_HOLD_HOTKEY,
     DEFAULT_HOVER_HOTKEY,
     AppConfig,
     CaptureMode,
     HoverActivation,
     LookupPreload,
 )
-from .hotkeys import (
-    DEFAULT_HOTKEYS,
-    HotkeyAction,
-    HotkeyBindings,
-    HotkeyDispatcher,
-    HotkeyEdge,
-    HotkeyHandler,
-    HotkeyService,
-)
+from .hotkeys import HotkeyAction, HotkeyEdge, HotkeyHandler
 from .runtime_trace import RuntimeTraceSink, emit_trace
 
 
@@ -87,7 +80,7 @@ class HotkeyRuntime(Protocol):
         """Whether the operating system actually accepted those combinations."""
 
     def register(self) -> None:
-        """Start listening for the configured shortcuts."""
+        """Begin accepting the host's shortcut edges."""
 
     def shutdown(self) -> None:
         """Stop listening and release the listener."""
@@ -127,9 +120,8 @@ PopupPreferenceApplier: TypeAlias = Callable[[AppConfig], None]
 InitializationErrorHandler: TypeAlias = Callable[[BaseException], None]
 CursorProvider: TypeAlias = Callable[[], Point]
 ShutdownScheduler: TypeAlias = Callable[[Callable[[], None]], None]
-HotkeyFactory: TypeAlias = Callable[
-    [HotkeyHandler, HotkeyBindings, HotkeyDispatcher], HotkeyRuntime
-]
+#: The native host owns registration; the runtime only delivers its edges.
+HotkeyFactory: TypeAlias = Callable[[HotkeyHandler], HotkeyRuntime]
 ErrorReporter: TypeAlias = Callable[[str, BaseException], None]
 #: Returns why the screen cannot be captured right now, or ``None``. Composition
 #: supplies it because only the desktop knows the platform's privacy model.
@@ -141,34 +133,6 @@ IdleScheduler: TypeAlias = Callable[[float, Callable[[], None]], Cancellable]
 #: preference: it exists so a single hotkey lookup does not hold a gigabyte for
 #: the rest of the session, and a user has no way to reason about the number.
 IDLE_TIMEOUT_SECONDS = 60.0
-
-
-def _session_bindings(
-    hotkey: str,
-    hover_hotkey: str,
-    capture_hotkey: str,
-    lookup_hotkey: str = "",
-) -> dict[HotkeyAction | str, str]:
-    """The shortcuts a session registers, minus any that is unbound.
-
-    The desktop's three are the hold, the hover mute, and the capture session.
-    The one-shot lookup is bindable for a client that wants it and unbound by
-    default, because the combination it used to own is now the hold.
-    """
-
-    configured: dict[HotkeyAction | str, str] = {
-        HotkeyAction.PUSH_TO_HOVER: hotkey,
-        HotkeyAction.TOGGLE_HOVER: hover_hotkey,
-        HotkeyAction.TOGGLE_CAPTURE: capture_hotkey,
-        HotkeyAction.LOOKUP: lookup_hotkey,
-    }
-    return {
-        action: binding for action, binding in configured.items() if binding.strip()
-    }
-
-
-def _hotkey_action(value: HotkeyAction | str) -> HotkeyAction:
-    return value if isinstance(value, HotkeyAction) else HotkeyAction(value)
 
 
 def _schedule_idle(seconds: float, callback: Callable[[], None]) -> Cancellable:
@@ -197,13 +161,12 @@ class ManualLookupRuntime:
         current_cursor: CursorProvider,
         dispatcher: ResultDispatcher,
         clear_popup: Callable[[], None] | None = None,
-        hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.PUSH_TO_HOVER],
+        hotkey_factory: HotkeyFactory,
+        hotkey: str = DEFAULT_HOLD_HOTKEY,
         hover_hotkey: str = DEFAULT_HOVER_HOTKEY,
         capture_hotkey: str = DEFAULT_CAPTURE_HOTKEY,
-        lookup_hotkey: str = "",
         activation: HoverActivation = HoverActivation.PUSH_TO_HOVER,
         on_toggle_capture: Callable[[], None] | None = None,
-        hotkey_factory: HotkeyFactory | None = None,
         shutdown_scheduler: ShutdownScheduler | None = None,
         trace_sink: RuntimeTraceSink | None = None,
         capture_observer: CaptureObserver | None = None,
@@ -266,19 +229,12 @@ class ManualLookupRuntime:
         self._apply_popup_preferences = apply_popup_preferences
         self._activation = activation
         self._on_toggle_capture = on_toggle_capture
-        self._hotkeys = (hotkey_factory or _create_hotkey)(
-            self._handle_action,
-            _session_bindings(hotkey, hover_hotkey, capture_hotkey, lookup_hotkey),
-            dispatcher,
-        )
+        self._hotkeys = hotkey_factory(self._handle_action)
         self._lock = RLock()
         self._prepared = False
         self._started = False
         self._closed = False
-        self._hotkey = hotkey
-        self._hover_hotkey = hover_hotkey
-        self._capture_hotkey = capture_hotkey
-        self._lookup_hotkey = lookup_hotkey
+        self._bindings = (hotkey, hover_hotkey, capture_hotkey)
         self._push_held = False
         self._capture_mode = CaptureMode.FULL_MONITOR
         self._idle_timer: Cancellable | None = None
@@ -319,29 +275,15 @@ class ManualLookupRuntime:
         with self._lock:
             if self._closed:
                 return
-            changed = _session_bindings(
-                config.hotkey,
-                config.hover_hotkey,
-                config.capture_hotkey,
-                self._lookup_hotkey,
-            )
-            current = _session_bindings(
-                self._hotkey,
-                self._hover_hotkey,
-                self._capture_hotkey,
-                self._lookup_hotkey,
-            )
+            bindings = (config.hotkey, config.hover_hotkey, config.capture_hotkey)
+            rebound = bindings != self._bindings
+            self._bindings = bindings
             hover_runtime = self._hover_runtime
 
-        # A binding that moves takes the held state with it: the key the user
-        # is still holding is no longer the one this action listens to.
-        for action, binding in changed.items():
-            if current.get(action) != binding:
-                self._release_push()
-                self._rebind(_hotkey_action(action), binding)
-        for action in current.keys() - changed.keys():
+        # A binding that moves takes the held state with it: the native host
+        # re-registers the keys, so the release of the old chord never arrives.
+        if rebound:
             self._release_push()
-            self._unbind(_hotkey_action(action))
 
         if hover_runtime is not None:
             hover_runtime.set_delay_ms(float(config.hover_delay_ms))
@@ -360,28 +302,6 @@ class ManualLookupRuntime:
             self._release_push()
             self._activation = config.hover_activation
             self._apply_activation_mode()
-        with self._lock:
-            self._hotkey = config.hotkey
-            self._hover_hotkey = config.hover_hotkey
-            self._capture_hotkey = config.capture_hotkey
-
-    def _rebind(self, action: HotkeyAction, binding: str) -> None:
-        """Replace one live binding, or refuse if the backend cannot."""
-
-        rebind = getattr(self._hotkeys, "rebind", None)
-        if callable(rebind):
-            rebind(action, binding)
-            return
-        with self._lock:
-            if self._prepared:
-                raise RuntimeError("configured hotkey cannot be changed while running")
-
-    def _unbind(self, action: HotkeyAction) -> None:
-        """Give up one action's shortcut, which a migration may have left free."""
-
-        unbind = getattr(self._hotkeys, "unbind", None)
-        if callable(unbind):
-            unbind(action)
 
     def _apply_preload_change(self, preload: LookupPreload) -> None:
         """Apply a policy change immediately, without disturbing capture.
@@ -1145,8 +1065,8 @@ def create_manual_lookup(
     current_cursor: CursorProvider,
     dispatcher: ResultDispatcher,
     clear_popup: Callable[[], None] | None = None,
-    hotkey: str = DEFAULT_HOTKEYS[HotkeyAction.PUSH_TO_HOVER],
-    hotkey_factory: HotkeyFactory | None = None,
+    hotkey_factory: HotkeyFactory,
+    hotkey: str = DEFAULT_HOLD_HOTKEY,
     shutdown_scheduler: ShutdownScheduler | None = None,
     hover_enabled: bool = False,
     hover_delay_ms: float | None = None,
@@ -1166,7 +1086,6 @@ def create_manual_lookup(
     idle_scheduler: IdleScheduler | None = None,
     on_stopped: Callable[[], None] | None = None,
     on_toggle_capture: Callable[[], None] | None = None,
-    lookup_hotkey: str = "",
 ) -> ManualLookupRuntime:
     """Compose a manual path from the existing runtime and desktop seams."""
 
@@ -1215,7 +1134,6 @@ def create_manual_lookup(
         hotkey=configured_hotkey,
         hover_hotkey=_configured_hover_hotkey(app_config),
         capture_hotkey=_configured_capture_hotkey(app_config),
-        lookup_hotkey=lookup_hotkey,
         activation=_configured_activation(app_config),
         on_toggle_capture=on_toggle_capture,
         hotkey_factory=hotkey_factory,
@@ -1358,13 +1276,6 @@ def _create_runtime_controller(
         **options,
     )
 
-
-def _create_hotkey(
-    on_action: HotkeyHandler,
-    bindings: HotkeyBindings,
-    dispatcher: HotkeyDispatcher,
-) -> HotkeyRuntime:
-    return HotkeyService(on_action, bindings=bindings, dispatcher=dispatcher)
 
 
 def _trace_suppressed(

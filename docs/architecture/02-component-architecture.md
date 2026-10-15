@@ -108,7 +108,7 @@ The V1 plan distinguishes four ownership layers: provider and engine implementat
 - `MouseObserver` observes global cursor movement and position and emits events to `HoverController`.
 - `HoverController` owns debounce, hover delay, cursor stability, and the decision to start a lookup. It performs no OCR.
 - `CaptureService` captures screenshots and ROIs. Hover prefers a small ROI around the cursor over continuous full-screen OCR.
-- `HotkeyService` registers and handles global hotkeys for manual lookup, start / pause capture, and future actions.
+- Global shortcuts are registered by the native root, which reports each press and release; the service maps them to hold-to-hover, hover toggle and capture toggle actions.
 
 ### Lookup execution
 
