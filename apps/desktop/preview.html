@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en" data-mode="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Hanly preview</title>
+    <style>
+      /* A neutral backdrop shows the popup card's corners and border in both themes. */
+      html[data-preview="popup"] {
+        background: repeating-conic-gradient(#9aa0a8 0 25%, #b7bcc3 0 50%) 0 0 / 16px 16px !important;
+        padding: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/preview/main.ts"></script>
+  </body>
+</html>

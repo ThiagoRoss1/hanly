@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host localhost",
+    "preview:mock": "vite --host localhost --open /preview.html",
     "build": "tsc -p tsconfig.json && vite build",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",

@@ -55,6 +55,14 @@ For the live Vite development workflow only, use `npm run tauri -- dev` from
 this directory after installing frontend dependencies. This command uses a
 local development server; it is not the product's user launch path.
 
+`npm run preview:mock` opens `preview.html`, which renders the React views in
+a browser against fixture state through Tauri's `mockIPC`. Choose a view with
+`?view=popup|region_selector`, a popup with `&sample=school|long|refusal` and
+`&theme=light|dark`; the popup's measured size appears in the tab title. Use
+Safari for WebKit-faithful metrics. It checks layout and content only: native
+frames, clipping, focus, shortcuts and permissions need the real desktop app.
+Vite builds only `index.html`, so the preview never ships.
+
 The native Lab page test needs the separate developer-only UI dependency:
 
 ```sh
