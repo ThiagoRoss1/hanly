@@ -1,11 +1,52 @@
 # Hanly Desktop Tauri migration checkpoint
 
-Historical closure (reopened for the evening popup/shortcut fixes below):
-the implementation, requested cleanup and Codex code review were committed
-through product `0b8a9f4` and Lab `8ea89d8`. Final Mac package/archive checks pass
-on build `7569005a`. The implementation handoff is closed with explicit human/
-hardware acceptance limits. No Hanly test process or fixture server is running.
-Do not call the entire Mac native matrix accepted from automated gates alone.
+## Current stop boundary — 2026-10-15
+
+The human reported Mac disruption and asked to finish within the remaining budget
+or update the handoff and stop. This run takes the explicit handoff fallback.
+No rebuild or permission cycle was started at closure. No root/service/lookup,
+fixture, HTTP server or package/build job remained at the host process check.
+
+- Product commit **ccf230da1e3076c25359467ecc8a9f3fc738984a** fixes a real Mac
+  popup race: Tao size/position setters queue work while show is synchronous.
+  One public AppKit frame is now committed before non-key presentation.
+- **20 Rust tests pass**, all-target Clippy `-D warnings` passes; fmt/diff clean.
+  No Python, React, capture/engine or shortcut change in this last correction.
+- **Not built/live-verified yet.** Canonical sealed app/ZIP/DMG still source
+  `96868d8`, build `284bd3e3-bef5-406f-8e16-6add3184a5c1`; its seven packaged
+  checks and both archive inventories/signatures passed. Do not call it current
+  with respect to the final native-frame fix.
+- Human explicitly approved Screen Recording restore plus stale Accessibility
+  re-add for that old canonical build. Done via normal Hanly/Settings actions;
+  no new authentication prompt. After normal restart, both read granted inside
+  Hanly in `20261015-000248-run`. No more reset without new explanation/approval
+  while present. No TCC reset/database manipulation in app/tests.
+- That run finished: 371.6s, 7,958 events, zero drops, Vision observed. Starts
+  `76ef35ae9b75` clean, changed during recording, observed binary `96868d8`.
+  Mixed manual pointer activity prevents treating aggregate latency as a baseline.
+- Live old-build popup: rounded native compact 340×282; expansion 460×282 and
+  collapse retain X111/Y134. Nonactivation observed. Adjacent changes exposed
+  ~19ms old-frame-first race (fixed in source above) and two misses at 0.9s;
+  those trials are not all green. Human's broader Mac disruption cause unknown.
+- Keyboard question (Control–Command P twice/R twice) had no answer and zero
+  native edges at closure. Physical input/Safari foreground/AX still unverified.
+- Saved PIDs 55125/55152 and sessions 48163/9043 are historical, not live.
+  Do not target them without fresh identity/ownership checks.
+
+The **single detailed handoff** is
+`docs/execution/review-handoffs/desktop-tauri-migration.md`. Its final section
+contains exact completed evidence, private fixture pointers, rebuild commands
+and all six remaining steps: official fresh `--no-clean` build at the full hash
+above; seven packaged + both new archives; recheck grants/ask only if needed;
+bounded live popup/transition/negative/retention checks; real native shortcuts
+and controlled Safari foreground/AX/OCR; same-build persistence/whole-family
+cleanup and final documentation/local commits. Old private Safari/verifier
+scripts contain stale run/build IDs; update and revalidate before reuse.
+
+Windows/Linux hardware acceptance, mixed monitors, Developer ID credentials/
+notarization and Playwright planning remain explicit boundaries. No push, merge,
+tag or public release. Historical sections below are preserved for provenance;
+they do not override this current stop boundary.
 
 ## Popup and Mac shortcuts continuation — 2026-10-14 evening
 

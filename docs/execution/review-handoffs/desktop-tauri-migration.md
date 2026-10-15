@@ -1,24 +1,27 @@
 # Desktop Tauri Migration Review Handoff
 
-> Reopened on 2026-10-14 evening at the human's request for Mac letter shortcuts,
-> popup border/flicker fixes, capture/performance investigation, fresh packaging
-> and this expanded handoff. Product fixes are committed through `96868d8`;
-> the final build and every automated/package/archive gate passed. Native popup
-> acceptance is awaiting the explicitly requested permission-refresh approval.
-> The prior closure/evidence below
-> belongs to the earlier `0b8a9f4` product until explicitly superseded.
+**Current status — 2026-10-15:** paused at the human's explicit remaining-budget
+boundary. Migration, legacy cleanup, requested code review, Mac shortcuts and
+popup corrections are implemented. Latest product commit is `ccf230d`; its
+20 Rust tests, all-target Clippy with warnings denied, rustfmt and diff checks
+pass. **The newest native-frame fix has not been rebuilt or tested live. The
+migration must not be called fully accepted yet.** The sealed local app/archives
+still contain `96868d8`, build `284bd3e3-bef5-406f-8e16-6add3184a5c1`.
 
+Both permissions were restored with explicit human approval and verified granted
+inside that sealed app after normal restart. Live popup evidence found and
+motivated the latest fix. No Hanly root/service/lookup, acceptance fixture,
+loopback fixture server or package/build job was running at the final host
+process check. No permission entry was changed during this budget-limited close.
+The human reported that the Mac was disrupted during the preceding test work;
+the cause of that machine-wide symptom has not been established. Do not claim
+that the latest popup correction proves that broader symptom resolved.
 
-Branch `desktop/tauri-migration`, implementation and resumed cleanup/review on
-2026-10-13–14. Implementation, code cleanup and the human-requested Codex review
-are complete. The local implementation handoff closes with the explicit native
-acceptance limits below; no Hanly or test-helper process is left running.
-Final source-stamped Mac package/archive checks passed on `0b8a9f4`; the latest
-Lab-only correction is `8ea89d8`. Both macOS grants were refreshed and verified
-inside the final release. Live release popup/retention/held-shortcut checks and
-scored debug tour/stress runs are recorded below. Physical keyboard and native
-Safari foreground/AX acceptance still need human input. Those checks are not
-established by automation, a readiness handshake or successful OCR alone.
+Branch `desktop/tauri-migration`; all commits remain local. No push, merge, tag
+or public release. This is the single cumulative handoff. The final section
+records the newest live evidence and the complete remaining work. Earlier
+`0b8a9f4`/`96868d8` results below retain their original provenance and are
+historical where superseded; they are not results for `ccf230d`.
 
 ## Implemented behavior and ownership
 
@@ -69,6 +72,7 @@ old-product updater fixtures; there is no hidden legacy UI fallback.
 | `dc8d6f4` | Runtime/setup/code-map and synchronized architecture guidance. |
 | `776a7ef`, `19d5d67` | Mac letter defaults, native labels, conservative profile migration and platform-aware behavior fixtures. |
 | `96868d8` | Measured popup presentation, public Mac corner clipping, anchored expansion and current-frame geometry. |
+| `ccf230d` | Synchronous public AppKit frame commit before nonactivating popup show; negative-origin conversion coverage. |
 
 Spike `39fc4e7` remains preserved on `spike/desktop-renderers`; it was not merged.
 All commits are local under the explicit implementation authorization. No push,
@@ -722,43 +726,142 @@ in [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-co
 and [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac).
 
 
-### Exact remaining local acceptance after the permission approval
+### Latest live continuation and bounded close — 2026-10-15
 
-All implementation, static, automated, frozen product and archive work for this
-follow-up is complete. The pending question asks the human to confirm presence
-and authorize restoration/refresh for the canonical bundle. Elapsed time, a
-successful build or the earlier authentication does not answer that new question.
-No reset was performed after it, and all task-owned app/test processes are closed.
+The permission question was answered explicitly: “Yes, restore both; I’m here.”
+For only the canonical `dist/macos/Hanly.app`, Screen Recording was added through
+Hanly's Permissions action and the normal Settings picker; the stale enabled
+Accessibility entry was removed/re-added under that same approval. No additional
+authentication prompt appeared in this approved refresh. The OS reopen prompt
+was deferred so the app could close normally and relaunch under isolation.
+`20261014-235747-run` closed; `20261015-000248-run` launched the same sealed build.
+Both grants then read **granted inside Hanly**. This establishes same-build
+restart persistence, not persistence between independent ad-hoc rebuilds.
+The earlier statement that Accessibility had not been removed described the
+state before this subsequently approved refresh.
 
-Continue with the existing sealed package; documentation edits do not require
-another rebuild or another signing identity. Launch a new isolated Lab session
-using the current package, the existing read-only runtime config and private
-Mac-default profile. Recheck first: if the grants are already valid, make no OS
-changes. Otherwise complete only the specifically approved normal permission
-flow from Hanly's Permissions buttons and the native pane; the human handles
-any authentication. Never reset a TCC entry as routine test setup.
+The latter recording finished normally: 371.6s, 7,958 events, zero drops, Vision
+observed. Provenance starts at `76ef35ae9b75`, clean at launch and changed during
+the run; the observed executable remains source `96868d8`, not the source being
+edited. Its summary was read before the raw trace. Mixed interactive pointer
+activity makes its aggregate latency unsuitable as a controlled baseline or
+Qt/Tauri comparison. Recorded uncached answered-hover segments include capture
+66.8ms, OCR 37.0ms, back-to-shell/popup 15.5ms and dwell 84ms; provider preparation
+was 7.0s. These are descriptive samples, not a performance acceptance threshold.
+No capture/engine behavior was altered to improve those numbers.
 
-Then verify the live popup's rounded native border/shadow, show/hide without a
-persistent blank frame, adjacent and rapid word transitions, final-result
-freshness, compact/expanded/collapsed geometry, Close, negative refusal, word-to-
-popup crossing and held-read release. The private controlled fixture is ready
-under `/private/tmp/hanly-popup-fix-acceptance/`; ownership checks remain required.
-Measure cold provider preparation separately from warm/cached hover and native
-presentation, without comparing this run with the incompatible Qt baselines.
-The registry still points to October 7 Qt tour/stress baselines; no new baseline
-was registered and no RAM/latency improvement is claimed from this follow-up.
+An owned raster fixture under `/private/tmp/hanly-popup-fix-acceptance/` displayed
+학교 / 단축키 / 한국어 plus Latin negative text. Native ownership was checked before
+cursor moves; only this authored fixture was observed for controlled content.
+Stable school lookup showed a compact 340×282 popup, correct Hanja/definition,
+rounded clipped corners and native shadow without the previous opaque square
+surround. Expansion to 460×282 and collapse to 340×282 preserved X=111/Y=134.
+Foreground application identity was unchanged by the observed popup show.
+Closing the Control Center's native window exposed the popup accessibility
+surface for visual inspection; binding by native window ID is unsupported by
+this Mac CUA backend. No screenshots, user video, private profile or recognized
+text were added to Git.
 
-Check native letter key edges and the corresponding pause/capture behavior;
-registration alone is insufficient. The already documented reader foreground/AX
-check still requires actual controlled Safari foreground, which background AX
-operations did not establish previously. A user key/activation check can complete
-that evidence while present. Close/reopen the same final bundle and confirm its
-grants persist without resetting them, then close normally and independently
-verify the whole sampled family is gone. Update this same handoff/checkpoint
-with the actual results and any precise remaining limits.
+Adjacent-word trials exposed a remaining **real native ordering race**. For one
+observed ~19ms step, the new visible answer used the preceding answer's rectangle:
+111/134/340/282 before 187/134/340/365. Tao 0.37.1's Mac setters queue size and
+position, while showing is synchronous. Putting those calls inside a main-thread
+callback therefore did not ensure the frame was committed before show. Two
+shortcut targets also had no visible popup at their 0.9s observation; that trial
+was not declared green and production timeouts were not relaxed.
 
-Windows/Linux physical acceptance, mixed-display hardware, Developer ID release
-credentials/notarization and the deferred Playwright discussion retain the
-explicit boundaries documented above. No push, merge, tag or public release was
-performed. This local handoff does not claim full Mac visual/native acceptance
-while the final live permission-dependent check remains unobserved.
+`ccf230da1e3076c25359467ecc8a9f3fc738984a` corrects the frame race in
+`platform::present_popup_frame`: on the main thread, set one public AppKit
+`NSWindow.setFrame_display`, lay out content and invalidate its shadow, then
+order the non-key window front. Logical coordinates are converted against the
+primary screen, with negative/fractional-origin unit coverage. Other hosts retain
+the existing Tauri adapter. No dependency, Python/React, provider, capture,
+request-currency or shortcut change is part of this last correction. Rust:
+20 tests passed (final rerun 10.13s); all-target Clippy `-D warnings`, rustfmt and
+`git diff --check` pass. **No fresh release, archive or live result exists for
+this commit.**
+
+The human was asked for Control–Command P twice and R twice. No reply and no
+`native_hotkey_edge` events were recorded in this run at closure. Registration,
+synthetic checks and asking for a keypress do not establish physical keyboard
+acceptance. The old F9/F10 attempt likewise remains unverified. Do not leave a
+new session waiting silently for these inputs.
+
+The human then requested a bounded close because limits were almost exhausted.
+No new rebuild or permission cycle was started. Host process inspection found
+no remaining Hanly executable/service/lookup, private acceptance fixture,
+loopback HTTP server or package/build job. Rust verification launched during
+closure also completed. The old root/fixture PIDs 55125/55152 are historical;
+never kill by a saved PID without rechecking its current executable/ownership.
+
+### Complete remaining work, in execution order
+
+1. **Build the latest committed fix once.** Use the coordinated builder and the
+   full product hash below, with Cargo on PATH. `--no-clean` may reuse unchanged
+   Python freeze analysis; the official builder still stages/signs/manifests the
+   complete product. Do not hand-edit a sealed bundle. Documentation-only commits
+   do not require another build. Record the new UUID, source identity and hashes;
+   do not reuse the current `284bd3e3` identity as proof for `ccf230d`.
+2. **Verify that exact new product.** Run all seven packaged checks against its
+   source hash; extract/verify ZIP and DMG against the new manifest, bundle
+   identity, inventory and strict signatures. The private archive verifier
+   currently asserts the old UUID and must be updated before use. Prior full
+   Python/frontend/native gates remain recorded above; rerun affected checks for
+   any further source change rather than repeating unrelated gates without cause.
+3. **Check grants on the new canonical bundle before changing anything.** If
+   already valid, do nothing. If its new ad-hoc identity invalidates grants,
+   explain the concrete need and ask the human to be present and approve the
+   refresh. Past approval for the previous build is not blanket reset authority.
+   Use Hanly's Permissions actions and normal OS approval. Never reset TCC as
+   routine setup, swap grants to debug, modify its database or weaken signatures.
+4. **Bounded final live popup acceptance on that release.** Use an isolated Lab
+   profile and an owned authored page, with no competing pointer driver. Verify
+   rounded borders/shadow and no stale/blank rectangle on first show, repeated
+   adjacent-word changes and rapid changes. Specifically confirm that the new
+   answer's first visible native frame has its final position/size. Recheck the
+   two previously missed shortcut-word observations and inspect their trace if
+   they recur; do not silently extend a timeout and call the old trial a pass.
+   Check latest-result freshness, anchored expand/collapse, Close, Latin/blank
+   refusal, word-to-popup crossing/retention and held-read release. Keep cold
+   provider preparation separate from warm/cache/presentation timing. Investigate
+   the reported Mac disruption if reproduced; no machine-wide fix is proven yet.
+5. **Actual native input/reader evidence.** Verify Control–Command H held/released,
+   P pause/resume and R capture toggles, with native edges and resulting state.
+   Obtain the bounded real keyboard confirmation while the human is present.
+   For Safari, verify the controlled authored page is actually the foreground
+   application, then exercise direct AX text and raster OCR fallback without
+   popup activation. Background AX actions did not establish foreground in prior
+   attempts. The prepared private Safari script references a closed run and must
+   be repointed and ownership checked before use. Keep the exact failed/missing
+   prerequisites visible rather than substituting synthetic evidence.
+6. **Close the final acceptance.** Normal quit/restart of the same new bundle,
+   grants retained without reset, then normal quit and independent whole-family/
+   fixture/server cleanup. Read each compact Lab summary and provenance first.
+   Update this same handoff/checkpoint with actual new identity, results, precise
+   residual limits and authorized local commits. No indefinite waiting sessions.
+
+```sh
+PATH=/Users/thiago/.cargo/bin:$PATH CARGO_BUILD_JOBS=2 \
+  .venv/bin/python tools/build_package.py --no-clean \
+  --source-commit ccf230da1e3076c25359467ecc8a9f3fc738984a
+HANLY_REQUIRE_PACKAGED=1 \
+HANLY_EXPECTED_SOURCE_COMMIT=ccf230da1e3076c25359467ecc8a9f3fc738984a \
+  .venv/bin/python -m pytest --suite packaged
+```
+
+Private continuation material, if still available: fixture/controller scripts,
+`final-fixture.jsonl`, `verify-archives.py`, `archive-results.json`, build logs
+under `/private/tmp/hanly-popup-fix-acceptance/`; controlled Safari HTML under
+`/private/tmp/hanly-final-native-acceptance/safari/`. These paths are disposable,
+not repository dependencies. Check provenance and stale run IDs before reuse.
+The recorded Lab run under gitignored `artifacts/lab/runs/20261015-000248-run/`
+contains summary, metadata, process samples and ordinary privacy-safe events.
+
+Windows/Linux native acceptance, real mixed-display hardware, Developer ID
+signing/notarization credentials and the deferred Playwright planning remain
+outside completion on this Mac. They are not silently waived. Existing Windows
+PowerShell continuation and platform matrix above still apply. The user can
+run Hanly as `Hanly.app` or `hanly`; npm remains a developer tool. No push, merge,
+tag or public release is authorized or performed. This handoff ends the current
+budget-limited run with the newest implementation committed and acceptance
+explicitly unfinished.
