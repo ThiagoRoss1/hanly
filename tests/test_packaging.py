@@ -1754,30 +1754,3 @@ def test_the_windows_reader_needs_no_dependency_and_no_hidden_import() -> None:
     assert 'collect_submodules("hanly_app.lookup")' in source
     assert 'collect_submodules("hanly_app.service")' in source
     assert 'collect_submodules("hanly_app")' not in source
-
-
-@pytest.mark.parametrize("size", (16, 20, 24))
-def test_a_bundle_missing_a_window_face_fails_its_inventory(tmp_path: Path, size: int) -> None:
-    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
-    relative = f"hanly_app/assets/icons/window-face-{size}.png"
-    bundle.joinpath(
-        "resources", "hanly-service", "_internal", *relative.split("/")
-    ).unlink()
-
-    inventory = inspect_bundle(bundle)
-
-    assert not inventory.ok
-    assert inventory.missing == (relative,)
-
-
-def test_a_bundle_missing_the_macos_icon_fails_its_inventory(tmp_path: Path) -> None:
-    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
-    relative = "hanly_app/assets/icons/hanly-macos-icon.png"
-    bundle.joinpath(
-        "resources", "hanly-service", "_internal", *relative.split("/")
-    ).unlink()
-
-    inventory = inspect_bundle(bundle)
-
-    assert not inventory.ok
-    assert inventory.missing == (relative,)

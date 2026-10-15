@@ -34,7 +34,5 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 hanly_app = [
-    "assets/icons/*.png",
-    "assets/icons/*.ico",
     "assets/hanly-build.json",
 ]

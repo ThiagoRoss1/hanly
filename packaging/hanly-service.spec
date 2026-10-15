@@ -75,8 +75,6 @@ if missing_models:
 datas = collect_data_files(
     "hanly_app",
     includes=[
-        "assets/icons/*.png",
-        "assets/icons/*.ico",
         "assets/easyocr_models/*.pth",
         "assets/hanly-build.json",
     ],
