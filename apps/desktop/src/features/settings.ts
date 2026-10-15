@@ -25,15 +25,36 @@ export function formatHotkey(
   platform = typeof navigator === "undefined" ? "" : navigator.platform,
 ): string[] {
   const mac = /mac/i.test(platform);
+  // The bare ⌃ reads as an arrow key to people who don't know it, so each
+  // modifier keeps its name beside the symbol.
   const symbols: Record<string, string> = {
-    ctrl: "⌃", control: "⌃", cmd: "⌘", meta: "⌘", super: "⌘",
-    alt: "⌥", option: "⌥", shift: "⇧", space: "Space",
+    ctrl: "⌃ Control", control: "⌃ Control", cmd: "⌘ Command",
+    meta: "⌘ Command", super: "⌘ Command", alt: "⌥ Option",
+    option: "⌥ Option", shift: "⇧ Shift", space: "Space",
   };
+  return hotkeyParts(binding)
+    .map((part) => mac ? (symbols[part.toLowerCase()] ?? part.toUpperCase()) : part);
+}
+
+/** Whether a binding is the platform's one-modifier application shortcut form,
+ * such as ⌘R on macOS or Ctrl+R elsewhere, which a global shortcut takes away
+ * from every other application while Hanly runs. */
+export function sharesAppShortcut(
+  binding: string | undefined,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): boolean {
+  const parts = hotkeyParts(binding).map((part) => part.toLowerCase());
+  const primary = /mac/i.test(platform)
+    ? new Set(["cmd", "meta", "super"])
+    : new Set(["ctrl", "control"]);
+  return parts.length === 2 && primary.has(parts[0] ?? "");
+}
+
+function hotkeyParts(binding: string | undefined): string[] {
   return (binding ?? "")
     .split("+")
     .map((part) => part.replace(/^<|>$/g, "").trim())
-    .filter(Boolean)
-    .map((part) => mac ? (symbols[part.toLowerCase()] ?? part.toUpperCase()) : part);
+    .filter(Boolean);
 }
 
 const MODIFIER_KEYS = new Set(["control", "shift", "alt", "meta", "os"]);

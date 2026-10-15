@@ -59,6 +59,13 @@ DITTO = "/usr/bin/ditto"
 HDIUTIL = "/usr/bin/hdiutil"
 CODESIGN = "/usr/bin/codesign"
 
+#: The bundle's designated requirement. An ad-hoc signature otherwise derives
+#: one from its cdhash, so every rebuild or update would be a new app to macOS
+#: privacy controls and lose the user's Screen Recording and Accessibility
+#: grants. Naming the bundle identifier keeps them, without a paid identity.
+BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
+DESIGNATED_REQUIREMENT = f'designated => identifier "{BUNDLE_IDENTIFIER}"'
+
 #: The native updater, and how it is built. Warnings are errors: it runs when
 #: the application it is repairing cannot, so a compiler diagnostic in it is
 #: not something to notice later.
@@ -354,6 +361,16 @@ def sign_macos_bundle(
         [CODESIGN, "--force", "--deep", "--sign", "-", "--timestamp=none", str(bundle)],
         "could not sign the Tauri application bundle",
     )
+    # Only the outer bundle carries the requirement: nested code keeps its own
+    # identifier, and --deep would impose this one on it.
+    _run_native(
+        runner,
+        [
+            CODESIGN, "--force", "--sign", "-", "--timestamp=none",
+            f"-r={DESIGNATED_REQUIREMENT}", str(bundle),
+        ],
+        "could not set the Tauri application bundle's designated requirement",
+    )
     _run_native(
         runner,
         [CODESIGN, "--verify", "--deep", "--strict", str(bundle)],
@@ -417,7 +434,7 @@ def _verify_product_runtime(layout: PackageLayout) -> None:
             raise PackagingError(f"could not read Tauri app identity: {error}") from error
         expected = product_version()
         if (
-            info.get("CFBundleIdentifier") != "io.github.thiagoross1.hanly"
+            info.get("CFBundleIdentifier") != BUNDLE_IDENTIFIER
             or info.get("CFBundleShortVersionString") != expected
             or info.get("CFBundleVersion") != expected
         ):

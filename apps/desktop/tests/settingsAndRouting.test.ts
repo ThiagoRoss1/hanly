@@ -3,7 +3,12 @@ import { test } from "node:test";
 import { APP_ROUTES, resolveInitialRoute } from "../src/contracts/routes.ts";
 import type { HanlyState } from "../src/contracts/desktop.ts";
 import { desktopStateReducer, initialDesktopState } from "../src/features/desktopState.ts";
-import { formatHotkey, hotkeyFromKeyboardEvent, validateHoverDelay } from "../src/features/settings.ts";
+import {
+  formatHotkey,
+  hotkeyFromKeyboardEvent,
+  sharesAppShortcut,
+  validateHoverDelay,
+} from "../src/features/settings.ts";
 
 test("all native window views resolve to explicit React routes", () => {
   assert.equal(resolveInitialRoute(""), APP_ROUTES.controlCenter);
@@ -74,8 +79,17 @@ test("a snapshot older than the shown one is dropped, but a restarted service is
   assert.equal(restarted.state?.app.capture_running, false);
 });
 
-test("Mac shortcut labels use native symbols while storage remains portable", () => {
-  assert.deepEqual(formatHotkey("ctrl+cmd+h", "MacIntel"), ["⌃", "⌘", "H"]);
-  assert.deepEqual(formatHotkey("ctrl+shift+f9", "MacIntel"), ["⌃", "⇧", "F9"]);
+test("Mac shortcut labels name each native symbol while storage remains portable", () => {
+  assert.deepEqual(formatHotkey("ctrl+cmd+h", "MacIntel"), ["⌃ Control", "⌘ Command", "H"]);
+  assert.deepEqual(formatHotkey("ctrl+shift+f9", "MacIntel"), ["⌃ Control", "⇧ Shift", "F9"]);
   assert.deepEqual(formatHotkey("ctrl+shift+f9", "Win32"), ["ctrl", "shift", "f9"]);
+});
+
+test("one-modifier application shortcuts are recognised per platform", () => {
+  assert.equal(sharesAppShortcut("cmd+r", "MacIntel"), true);
+  assert.equal(sharesAppShortcut("ctrl+cmd+r", "MacIntel"), false);
+  assert.equal(sharesAppShortcut("ctrl+r", "MacIntel"), false);
+  assert.equal(sharesAppShortcut("<ctrl>+r", "Win32"), true);
+  assert.equal(sharesAppShortcut("ctrl+shift+r", "Win32"), false);
+  assert.equal(sharesAppShortcut(undefined, "MacIntel"), false);
 });

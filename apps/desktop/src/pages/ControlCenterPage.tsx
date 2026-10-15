@@ -17,6 +17,7 @@ import {
 import {
   hotkeyFromKeyboardEvent,
   formatHotkey,
+  sharesAppShortcut,
   validateHoverDelay,
 } from "../features/settings.ts";
 import { useDesktopState } from "../hooks/useDesktopState.ts";
@@ -1213,7 +1214,13 @@ function ShortcutsPage({
                     title: "Not registered.",
                     text: "Another application may already own this combination, so your keyboard does not do this yet.",
                   }
-                : null);
+                : sharesAppShortcut(stored)
+                  ? {
+                      tone: "warn",
+                      title: "Used by other apps.",
+                      text: "Most apps already use this combination, and Hanly takes it from all of them while it runs. Add another modifier key.",
+                    }
+                  : null);
         return (
           <section
             className="panel"

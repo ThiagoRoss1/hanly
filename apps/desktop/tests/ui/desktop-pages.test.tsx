@@ -665,6 +665,26 @@ describe("desktop React routes", () => {
     }));
   });
 
+  it("warns when a registered shortcut is an ordinary application shortcut", async () => {
+    const user = userEvent.setup();
+    state = {
+      ...state,
+      config: { ...state.config, capture_hotkey: "ctrl+r", hover_hotkey: "ctrl+shift+p" },
+      runtime: {
+        ...state.runtime,
+        hotkeys: { toggle_capture: "ctrl+r", toggle_hover: "ctrl+shift+p" },
+      },
+    };
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Shortcuts" }));
+
+    const capture = screen.getByText("Start / stop capture").closest("section") as HTMLElement;
+    expect(within(capture).getByText("Used by other apps.")).toBeTruthy();
+    const pause = screen.getByText("Pause automatic hover").closest("section") as HTMLElement;
+    expect(within(pause).queryByText("Used by other apps.")).toBeNull();
+  });
+
   it("saves pause and capture shortcut bindings as settings", async () => {
     const user = userEvent.setup();
     renderRoute("/");

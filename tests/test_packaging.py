@@ -196,7 +196,7 @@ def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
 
 
 def test_macos_bundle_signing_stays_ad_hoc_without_hardened_runtime_options() -> None:
-    """The local unsigned release needs a verifiable ad-hoc bundle signature."""
+    """The local unsigned release needs an ad-hoc signature whose identity survives rebuilds."""
 
     commands: list[list[str]] = []
 
@@ -207,7 +207,12 @@ def test_macos_bundle_signing_stays_ad_hoc_without_hardened_runtime_options() ->
     build_package.sign_macos_bundle(ROOT / "dist/Hanly.app", runner=run)
 
     assert commands[0][1:6] == ["--force", "--deep", "--sign", "-", "--timestamp=none"]
-    assert commands[1][1:4] == ["--verify", "--deep", "--strict"]
+    assert commands[1][1:] == [
+        "--force", "--sign", "-", "--timestamp=none",
+        '-r=designated => identifier "io.github.thiagoross1.hanly"',
+        str(ROOT / "dist/Hanly.app"),
+    ]
+    assert commands[2][1:4] == ["--verify", "--deep", "--strict"]
     assert not any(
         "runtime" in argument or "entitlements" in argument
         for command in commands
