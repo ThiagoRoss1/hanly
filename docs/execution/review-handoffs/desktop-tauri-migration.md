@@ -1,5 +1,12 @@
 # Desktop Tauri Migration Review Handoff
 
+**Current status — 2026-10-15, after Phase B follow-up.** Product commit
+`acd3c28` is built as `44161ec2-7c78-4765-a996-a231953b4f18`. It passes the
+four headless packaged checks and both archive verifications. The three
+window-opening packaged checks and all live acceptance still need the human
+present. The grants from the previous ad-hoc build do not carry over to this
+cdhash. See "Phase B follow-up" at the end.
+
 **Phase B review — 2026-10-15 (supersedes the status line below where they differ).**
 Reviewer: Claude (Opus 5.5), chosen by the human, reviewing `0902075..0c93861`.
 The human then authorized fixing the findings. The fixes are uncommitted in the
@@ -975,3 +982,82 @@ SHA-256 values match the `96868d8` values above.
 
 Windows/Linux native acceptance, mixed-display hardware and Developer ID
 signing/notarization remain outside this Mac completion.
+
+## Phase B follow-up — cleanup, build and headless verification (2026-10-15)
+
+The human authorized local commits, with no agent attribution in messages
+(now a rule in `CLAUDE.md` and `AGENTS.md`). Push, merge and permission changes
+were not authorized and were not performed.
+
+### Commits after `0c93861`
+
+| Commit | Change |
+|---|---|
+| `5f6e75c`, `e700d10`, `3024397`, `7acd74a` | The review fixes and mock preview recorded above. |
+| `4fb9fba` | Removed the Python global keyboard listener: `HotkeyService`, the pynput/Carbon listeners, `hotkeys_darwin.py` and their tests (about 2,100 lines). `hotkeys.py` keeps the action names and canonical spelling. `ManualLookupRuntime` now requires the host's hotkey runtime and drops the dead rebind/unbind path and the never-bound one-shot `lookup_hotkey`. `lookup_at_cursor()` is kept. Tests use `tests/hanly_fixtures/hotkeys.py`, which delivers edges the way the host does. The architecture doc and its visual were corrected. The frozen spec keeps pynput's keyboard backend import, because `pynput/__init__` imports `keyboard` even for the mouse observer. |
+| `f63ebb3` | Deleted `app_icon.py`, the Qt tray and title-bar loader. The frozen service and wheel no longer copy icons, and the packaged inventory no longer requires them. The native root still embeds `hanly-icon-128.png` and `hanly-macos-icon.png` from source. The `window-face-*` and `favicon.ico` art is kept because the design README calls it approved identity, but no surface uses it now. That is the human's call. |
+| `bce8f98` | The desktop README no longer cites the removed Lab PyQt dependency group. |
+| `cbda0f9` | The tray has one capture item that reads Start or Stop capture from the published state and sends the matching request. The static "Pause capture" item actually stopped capture. |
+| `acd3c28` | Every service state snapshot, including bridge replies, carries `revision: {series, number}` from the serialized loop. React drops an older snapshot of the same series; a restarted service starts a new series. |
+
+Remaining Python UI mentions are intentional guards: the frozen-build exclusion
+list, the forbidden-runtime checks, and updater fixtures that clean V1 installs
+that shipped PyQt6.
+
+### Gates on `acd3c28`
+
+Ruff; mypy (342 files); full portable Python 2,570 passed with 2 skips (fewer
+because the deleted listener's tests went with it); tsc; 11 Node and 40 UI
+tests; Vite build; rustfmt; Clippy `-D warnings`; 22 Rust tests.
+
+### Build and verification
+
+`tools/build_package.py --no-clean --source-commit acd3c28…` produced build
+`44161ec2-7c78-4765-a996-a231953b4f18` (arm64, ad-hoc,
+`designated => cdhash H"0542aab3…1931"`).
+
+- ZIP SHA-256 `339cb8be60fe6982c018eeaa2e77f891f610bef6ee745aa2c287028a82d5a503`
+- DMG SHA-256 `93e196c5378032ca43ceb679f44586814bd1bfa109caf5c2a91db0960336a370`
+
+Packaged checks passed with `HANLY_EXPECTED_SOURCE_COMMIT=acd3c28…`, headless only:
+
+- runtime dependencies;
+- source identity;
+- the isolated OCR self-check;
+- helper restore after the root rejects startup.
+
+The archive verifier was run as a copy that takes the build ID as an argument.
+ZIP and DMG each had 3,748 entries; manifest match, inventory and strict
+signature all passed.
+
+Not run, because each opens Hanly windows:
+
+- `test_the_tauri_root_is_the_only_foreground_app_and_owns_the_service` (`open -n`);
+- `test_the_native_window_waits_for_react_and_answers_its_state_bridge`;
+- `test_the_packaged_native_root_acknowledges_only_after_its_real_ui_is_ready`.
+
+Observation: after the build and these checks, the `dist` DMG was found
+attached with no mount point. It was detached. Re-running the updater's
+`acquire_disk_image` alone left nothing attached, and so did detaching by
+volume or by mount point. The source of that attachment is not isolated, so
+there was no code change for it. On the next build, check `hdiutil info`
+before and after.
+
+### Remaining work (needs the human present)
+
+1. Run the three window-opening packaged checks above against `acd3c28`.
+2. Open `dist/macos/Hanly.app`. Its new cdhash needs Screen Recording and
+   Accessibility approval through Hanly's Permissions actions. The human
+   performs this; no TCC reset.
+3. Run the live popup pass from step 4 of the previous list:
+   - the lower-third word stays visible above the card, before and after Expand;
+   - adjacent and rapid changes;
+   - the two 0.9 s misses, with a trace;
+   - Expand and Close keep the reader app frontmost;
+   - the tray item reads Start or Stop capture correctly.
+4. Physical ⌃⌘H hold/release, ⌃⌘P and ⌃⌘R; controlled Safari AX and OCR.
+5. Quit and restart with grants retained; quit; check that the family has
+   ended; record the results here.
+
+Deferred, not blocking: Playwright/visual tests over `preview/`; Windows and
+Linux native acceptance; Developer ID signing.

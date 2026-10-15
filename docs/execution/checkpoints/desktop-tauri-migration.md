@@ -1,9 +1,24 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Phase B follow-up — built and headless-verified (2026-10-15)
+
+- Product commit **acd3c2841d9bfd8e96e16f456f141c6a8f39fead**, build
+  **44161ec2-7c78-4765-a996-a231953b4f18** (arm64, ad-hoc). ZIP
+  `339cb8be…5a503`, DMG `93e196c5…a370`. This build supersedes `96868d8` /
+  `284bd3e3…`.
+- Committed with the human's authorization: the review fixes below, removal of
+  the Python keyboard listener (`HotkeyService`, `hotkeys_darwin.py`), service
+  icons and `app_icon.py`, a state-aware tray capture item, and ordered state
+  snapshots (series + number).
+- Passed: the four headless packaged checks and the ZIP/DMG verification
+  (3,748 entries each, manifest, inventory, strict signature). Not run yet: the three
+  packaged checks that open windows, and every live step. Its ad-hoc cdhash
+  requirement means the previous build's grants do not carry over.
+
 ## Phase B review — 2026-10-15
 
 - Claude reviewed `0902075..0c93861` and, with authorization, fixed the
-  following. These are uncommitted and unit-verified, with no build or live run.
+  following. They were later committed and built; see the follow-up above.
 - Fixed: a group SIGKILL after the leader was reaped, which risked hitting a
   recycled PID (Rust supervisor). Fixed: the popup drew over its word when the
   measured height exceeded the 180 pt estimate. Removed: the dead
