@@ -1,6 +1,14 @@
 # Desktop Tauri Migration Review Handoff
 
-**Current status — 2026-10-15:** paused at the human's explicit remaining-budget
+**Phase B review — 2026-10-15 (supersedes the status line below where they differ).**
+Reviewer: Claude (Opus 5.5), chosen by the human, reviewing `0902075..0c93861`.
+The human then authorized fixing the findings. The fixes are uncommitted in the
+working tree on top of `0c93861`. **The sealed app/archives are unchanged
+(`96868d8`, build `284bd3e3…`)**, and none of these fixes has been built or
+tested live. See "Phase B review findings and fixes" at the end. Remaining
+work step 1 must now build the reviewed tree, not `ccf230d`.
+
+**Previous status — 2026-10-15:** paused at the human's explicit remaining-budget
 boundary. Migration, legacy cleanup, requested code review, Mac shortcuts and
 popup corrections are implemented. Latest product commit is `ccf230d`; its
 20 Rust tests, all-target Clippy with warnings denied, rustfmt and diff checks
@@ -865,3 +873,105 @@ run Hanly as `Hanly.app` or `hanly`; npm remains a developer tool. No push, merg
 tag or public release is authorized or performed. This handoff ends the current
 budget-limited run with the newest implementation committed and acceptance
 explicitly unfinished.
+
+## Phase B review findings and fixes — 2026-10-15
+
+Scope: the complete migration `0902075..0c93861` (256 files), not only `ccf230d`.
+These were read: Rust root/IPC/lifecycle/windows/platform/hotkeys/selector,
+the Python service (application, protocol, server, event loop), the React
+popup/state/selector and Control Center effects, the updater handoff, the
+permissions module, the Lab process-control paths and the latest Lab summary.
+The engine (`packages/hanly`), `acquisition/capture.py` and `direct_text.py`
+are byte-identical to the base. No desktop, cursor, shortcut or permission
+action was performed. No process was launched apart from unit fixtures and a
+headless Vite server that was stopped afterwards.
+
+### Fixed (uncommitted, unit-verified, not yet in a sealed build)
+
+| Grade | Defect | Change |
+|---|---|---|
+| B | `lifecycle/mod.rs`: `Service::stop()` and the watcher sent `kill(-pgid, SIGKILL)` after `try_wait()` had reaped the leader. `Drop` repeated `stop()`, and Retry or Exit after a crash signalled the saved PID again, possibly minutes later. Once reaped, that ID can name an unrelated process group (macOS app leaders own their group). | A `Family` signals the group only while the exited leader is an unreaped zombie (`waitid(WEXITED\|WNOHANG\|WNOWAIT)`), then reaps it once. Later `terminate`/`stop` are no-ops. New regression: a leader that exits leaves a grandchild, the grandchild is ended, and a double `stop()` is harmless. |
+| B | Popup placement used Python's estimated 180 pt height. React measures about 282–365 pt, and Rust kept the estimated top-left. On a 900 pt display, any word in roughly the lower 280 pt got a card drawn over it. Above-placement grew down over the word, and below-placement was clamped up onto it. Base Qt re-placed through `PopupController._handle_resize` with the real size, so this is a migration regression. | Python publishes the word's vertical `band` (shared `PopupController.vertical_band`, also used by `_place`). Rust `place_measured` chooses below/above from the measured height. It keeps that side for the same answer's expansion and clamps to the display. A payload without a band keeps the old clamping. Rust and service tests cover it. |
+| C | `native.context.popup_rect` was accepted and handled by Python, but the host never sends it. | Removed from the protocol and the service. |
+| — | Requested: browser visual iteration of the React views. | `npm run preview:mock` serves `apps/desktop/preview.html` through Tauri `mockIPC` fixtures (popup samples/themes, Control Center, selector). It is not part of `vite build`, which emits only `index.html`. It covers web layout only. |
+
+### Open findings (not changed)
+
+- **C, cleanup:** the pynput/Carbon keyboard `HotkeyService` (`hotkeys.py`) and
+  `hotkeys_darwin.py` (about 1,100 lines) are dead in production, because Rust
+  owns registration and the service always injects `_NativeHotkeyRuntime`. They
+  are reachable only as `manual_lookup._create_hotkey`'s default, which would
+  install a global keyboard hook (Input Monitoring) if a composition omitted
+  `hotkey_factory`. Remove them together with their test fixtures in a
+  dedicated change. The earlier "obsolete adapters removed" statement is
+  therefore incomplete.
+- **C:** React applies pushed `desktop-state`, request replies and 900 ms polls
+  without ordering. A reply computed before a newer event can briefly show
+  older state until the next event or poll. A monotonic state revision from
+  Python would make this exact.
+- **C:** the tray's labels are static. "Pause capture" actually stops capture
+  and does not reflect the current state.
+- **Hypotheses needing live evidence:** (1) Hiding a replaced answer until
+  React measures the next one can produce a brief blank gap between adjacent
+  words; this is preferred over a wrong frame, but is still visible. (2) A
+  long-hidden WKWebView may be throttled, which could add latency to the first
+  show; this is unproven and could relate to the two 0.9 s misses. (3) Clicking
+  Expand or Close in the non-key NSWindow may activate Hanly; only *show*
+  nonactivation has been observed. Recorded run `20261015-000248-run` has no
+  service warnings or errors, so owner-queue overload is not supported as the
+  cause of those misses.
+- **Checked, no defect:** the IPC framing, limits, schemas, duplicate-key
+  rejection and per-window allowlists on both sides. Also checked:
+  stale-sequence handling for popup close, expand and geometry; navigation/CSP
+  and capability scope; updater handoff path confinement; public permission
+  APIs only, with no TCC use in the app or its tests. The Lab kills only
+  psutil-snapshotted owned descendants. The `ccf230d` frame commit runs on the
+  main thread (`MainThreadMarker` enforced). It converts against
+  `NSScreen.screens[0]`, matching Tao's `CGDisplay::main()` read-back, on a
+  borderless window where frame equals content.
+
+### Checks run in this review
+
+Baseline at `0c93861`: all of Ruff, mypy (344 files), tsc, 10 Node and 40 UI
+tests, all-target Clippy `-D warnings` and 20 Rust tests passed. After the
+fixes: Ruff, mypy (344), tsc, Vite build, 10 Node + 40 UI, rustfmt, Clippy
+`-D warnings` and 22 Rust tests passed. Full portable Python passed: 2,611
+with 2 existing skips. The sealed bundle stamp was read directly, and both archive
+SHA-256 values match the `96868d8` values above.
+
+### Stale or unsupported statements elsewhere in this file
+
+- The first "Reproduction" block builds `--source-commit 96868d8…`. Use the
+  final reviewed commit instead.
+- "Obsolete adapters … removed" does not cover the dead keyboard
+  `HotkeyService`/`hotkeys_darwin` path above.
+- Rust test counts of 17, 19 and 20 are historical. Now 22.
+- "Measured frames are constrained to their native display" was true, but it
+  did not prevent the overlap fixed above.
+
+### Complete remaining Mac work (deduplicated; replaces the earlier six steps)
+
+1. The human reviews and commits these fixes. Build once at that commit with the
+   coordinated builder, then record the new UUID and hashes.
+2. Run the seven packaged checks and both archive verifications against that
+   build. Update the private verifier's expected UUID first.
+3. Check grants on the new canonical bundle. Change nothing if they are
+   valid; otherwise explain, then wait for the human's presence and approval.
+4. Run the bounded live popup pass on the new release. Check the first
+   visible frame at the final rectangle, then rounded clipping and shadow.
+   Check adjacent and rapid word changes, and recheck the two 0.9 s misses
+   with a trace. **Hover words in the lower third of the screen and confirm
+   the card sits above the word without covering it, including after
+   Expand.** Check that clicking Expand/Close keeps the reader app frontmost.
+   Also check Close, Latin/blank refusal, crossing and retention, and
+   held-read release.
+5. Verify physical ⌃⌘H hold/release, ⌃⌘P and ⌃⌘R with native edges. Then the
+   controlled Safari foreground: direct AX text, OCR fallback and nonactivation.
+6. Quit and restart the same bundle with grants retained, then quit and confirm
+   whole-family/fixture cleanup. Update this file and the checkpoint.
+7. Follow-ups that do not block acceptance: remove the dead keyboard adapter;
+   add a state revision; make the tray labels state-aware; extend the mock
+   preview into the deferred Playwright/visual tests.
+
+Windows/Linux native acceptance, mixed-display hardware and Developer ID
+signing/notarization remain outside this Mac completion.

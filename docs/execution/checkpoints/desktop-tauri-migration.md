@@ -1,5 +1,20 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Phase B review — 2026-10-15
+
+- Claude reviewed `0902075..0c93861` and, with authorization, fixed the
+  following. These are uncommitted and unit-verified, with no build or live run.
+- Fixed: a group SIGKILL after the leader was reaped, which risked hitting a
+  recycled PID (Rust supervisor). Fixed: the popup drew over its word when the
+  measured height exceeded the 180 pt estimate. Removed: the dead
+  `popup_rect` field. Added: a dev-only `npm run preview:mock` for the React
+  views.
+- Open: remove the dead keyboard `HotkeyService`/`hotkeys_darwin`; add a state
+  revision; make tray labels state-aware.
+- The sealed product is still `96868d8` / `284bd3e3…`. Build the committed
+  review fixes next. Full findings and the deduplicated remaining work are at
+  the end of the review handoff.
+
 ## Current stop boundary — 2026-10-15
 
 The human reported Mac disruption and asked to finish within the remaining budget
