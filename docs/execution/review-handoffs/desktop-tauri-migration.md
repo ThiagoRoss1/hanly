@@ -1,5 +1,14 @@
 # Desktop Tauri Migration Review Handoff
 
+> Reopened on 2026-10-14 evening at the human's request for Mac letter shortcuts,
+> popup border/flicker fixes, capture/performance investigation, fresh packaging
+> and this expanded handoff. Product fixes are committed through `96868d8`;
+> the final build and every automated/package/archive gate passed. Native popup
+> acceptance is awaiting the explicitly requested permission-refresh approval.
+> The prior closure/evidence below
+> belongs to the earlier `0b8a9f4` product until explicitly superseded.
+
+
 Branch `desktop/tauri-migration`, implementation and resumed cleanup/review on
 2026-10-13–14. Implementation, code cleanup and the human-requested Codex review
 are complete. The local implementation handoff closes with the explicit native
@@ -58,6 +67,8 @@ old-product updater fixtures; there is no hidden legacy UI fallback.
 | `8b9a4ed` | Readable React sources and enforced unused declarations. |
 | `ff64a87`, `2b93252` | Qt-free Lab, public launch/FIFO, function-key input, cleanup and native handle contracts. |
 | `dc8d6f4` | Runtime/setup/code-map and synchronized architecture guidance. |
+| `776a7ef`, `19d5d67` | Mac letter defaults, native labels, conservative profile migration and platform-aware behavior fixtures. |
+| `96868d8` | Measured popup presentation, public Mac corner clipping, anchored expansion and current-frame geometry. |
 
 Spike `39fc4e7` remains preserved on `spike/desktop-renderers`; it was not merged.
 All commits are local under the explicit implementation authorization. No push,
@@ -526,8 +537,8 @@ npm run --prefix apps/desktop build
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
 cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
-.venv/bin/python tools/build_package.py --source-commit 0b8a9f4f9a6a33fdfdc4bb4846e0f3a5e28cfba9
-HANLY_REQUIRE_PACKAGED=1 HANLY_EXPECTED_SOURCE_COMMIT=0b8a9f4f9a6a33fdfdc4bb4846e0f3a5e28cfba9 \
+.venv/bin/python tools/build_package.py --source-commit 96868d8f78ed30f42c78450f2b0ac6b9310f298e
+HANLY_REQUIRE_PACKAGED=1 HANLY_EXPECTED_SOURCE_COMMIT=96868d8f78ed30f42c78450f2b0ac6b9310f298e \
   .venv/bin/python -m pytest --suite packaged
 .venv/bin/python -m lab tour --config /path/to/runtime.json --quick --no-open
 .venv/bin/python -m lab stress --config /path/to/runtime.json --per-family 3 --no-open
@@ -553,3 +564,201 @@ old-layout update verification, acknowledgement and rollback. Linux CI/build
 compatibility is retained; this Mac cannot prove its compositor, accessibility,
 Wayland portals, tray or actual monitor behavior. Neither platform is accepted
 from portable seams or cross-compilation alone.
+
+
+## Evening follow-up: Mac shortcuts and recorded popup defects
+
+The human approved replacing media/function-key-dependent Mac defaults and
+provided a 45.6-second screen recording. They specifically requested visual
+border fixes, removal of entry/word-to-word flicker and blank/error behavior,
+a capture/performance investigation without changing capture, and a detailed
+update to this same handoff. They later clarified that permission entries must
+not be reset by either the product or its tests, and that any proposed manual
+reset must first be explained and approved while they are present. Independent
+work must continue while an OS authentication step waits.
+
+### Changes and intended behavior
+
+`776a7ef` gives Mac the following defaults:
+
+| Action | macOS | Windows/Linux |
+|---|---|---|
+| Hold to read | Control–Command–H (`⌃⌘H`) | Control–Shift–Space |
+| Pause/resume hover | Control–Command–P (`⌃⌘P`) | Control–Shift–F9 |
+| Start/stop capture | Control–Command–R (`⌃⌘R`) | Control–Shift–F10 |
+
+The stored protocol remains `ctrl+cmd+h` etc.; React formats Mac modifiers with
+native symbols. The existing shortcut recorder still stores normalized portable
+bindings. A full profile with the exact old three defaults is recognizable and
+migrates to the Mac set; missing keys use current host defaults. Partial profiles,
+custom keys and deliberate unbinding retain every explicitly stored binding.
+This avoids silently replacing someone's chosen shortcut. Windows/Linux keep
+their desktop defaults. `19d5d67` updates the hover/residency behavior tests to
+press the binding their fixture actually configures, preserving activation,
+release, capture and resource-residency assertions.
+
+`96868d8` corrects the popup presentation sequence. Previously the native shell
+positioned, resized to an estimated Python height and showed the window before
+emitting the new React content. React then waited for an animation frame to
+measure and resize it again. The recording visibly contains rounded cards in
+opaque rectangular windows and tall blank native frames during transitions.
+Showing old/empty content before rendering and relying on a hidden webview's
+animation callback were concrete lifecycle hazards; the recording alone does
+not distinguish every asynchronous interleaving that produced each bad frame.
+
+New replacements remain hidden until React has committed and measured the
+current content. Measurement runs directly in the layout effect, also works
+when animation frames are suspended, rounds up fractional pixels and retains
+size/sequence deduplication. Native popup actions execute on the main event loop
+and revalidate freshness there. Geometry is applied before visibility; obsolete
+snapshots/actions cannot intentionally show a superseded answer. Measured frames
+are constrained to their native display, including negative logical origins.
+Already-visible same-answer expansion does not reorder/show the window again.
+
+Expansion no longer changes React optimistically and then changes it again when
+Python publishes the authoritative expanded content. It also preserves the
+original answer position instead of following the cursor that clicked its footer.
+Native appearance updates are applied only when the configured theme changes.
+The provider child, lookup outcomes, final request-currency gate, popup crossing
+rules and debounce/prewarming settings are preserved.
+
+On macOS the entire native content view is clipped to the same 14-point radius
+as the React card with public AppKit/Core Animation APIs. The native background
+is clear and its native shadow is enabled. CSS no longer draws a shadow beyond
+the exact-size window, and viewport minimum-size rules no longer keep empty
+content at the previous native extent. No private WKWebView transparency API,
+new permission or new production dependency was introduced. Other platforms'
+actual native corner/compositor behavior still requires their own host checks.
+
+### Capture and performance scope
+
+`packages/hanly-app/src/hanly_app/acquisition/capture.py` and the complete engine
+source have no changes against base `0902075`. Screen acquisition still prefers
+native accessible text and falls back to small cursor-centered ROI capture;
+this follow-up changes no capture algorithm, OCR backend/provider, dictionary,
+hover delay or preload choice. The Tauri migration does replace Qt dispatch,
+timers and window presentation, so unchanged OCR/capture code alone cannot prove
+equivalent end-to-end latency. The investigated extra resize/show/theme work is
+in that presentation path. Native capture/Vision tests pass separately.
+
+The fresh release is v1.1.0 arm64, source
+`96868d8f78ed30f42c78450f2b0ac6b9310f298e`, build
+`284bd3e3-bef5-406f-8e16-6add3184a5c1`, stamped at
+2026-10-15T01:08:09Z (2026-10-14 local). It replaces the earlier `0b8a9f4`
+package as the current local product. The coordinated build completed normally.
+All seven packaged gates passed in 200.61s, covering dependency/source identity,
+frozen real OCR/lookup, Tauri foreground ownership, actual React bridge readiness,
+root acknowledgement and failed-root rollback. Extracted ZIP and DMG each match
+all 3,762 manifest entries and pass runtime inventory, bundle identity and strict
+deep signature verification.
+
+| Follow-up gate | Result |
+|---|---|
+| Full portable Python | 2,611 passed, two existing skips, 553.11s. |
+| macOS native | 86 passed, 146.48s; one existing MSS deprecation warning. |
+| Focused config/hotkey/service | 104 passed; final service focus 39 passed. |
+| Hover/residency behavior | 45 passed after platform binding fixture correction. |
+| Frontend | 40 UI + ten Node contracts; TypeScript/Vite production build passed. |
+| Rust | 19 passed; all-target Clippy with warnings denied and rustfmt passed. |
+| Static Python | Full Ruff clean; mypy clean across 344 files. |
+| Frozen packaged product | Seven passed on the exact source/build above. |
+| Both archives | 3,762/3,762 entries match; inventory and strict signatures pass. |
+
+Archive SHA-256:
+
+- ZIP: `0e389f3ca8a0cd1348ddec8a5c36d8495475ae18f9d4ab263f49235a54b04d8e`
+- DMG: `becdfa726658f2237cf20ead6ef727cfdcadfea1c658cab77ddadb63122c8072`
+
+The initial full run had eight obsolete shortcut expectations. An overlapping
+rerun collected one fixture before its final correction and failed that fixture;
+both are superseded by the final full passing run above. No production timeouts,
+assertions, ownership gates or test requirements were weakened.
+
+Native recording `20261014-222748-run` launches the exact canonical bundle with
+a disposable profile. Runtime is ready/providers sleeping. Actual packaged
+Shortcuts UI shows `⌃⌘H`, `⌃⌘P`, `⌃⌘R` with all three native registrations accepted.
+Both permissions report required, so capture was not started and no positive
+popup/flicker/performance pass is claimed yet. The human was asked to confirm
+presence and approve restoring Screen Recording plus the stale Accessibility
+entry. No new permission reset has been performed after that explicit policy.
+The session was then closed through React's confirmed Quit. It ran 241.8s,
+recorded ten events and zero drops, and performed zero captures/lookups. Every
+one of its nine sampled PIDs was independently absent afterwards; a separate
+process scan found no Hanly root. This is startup/UI/registration/cleanup evidence,
+not popup acceptance. Fresh live workload results must be added after that
+approval dependency is satisfied. No test session remains silently waiting.
+Do not reuse the earlier release/debug timing as measurements of this new build.
+The temporary debug recording `20261014-215948-run` performed zero lookups because
+grants were required; it provides startup/shutdown evidence only, not popup
+correctness, capture acceptance or a performance comparison.
+
+### Permission identity and the human's explicit reset policy
+
+The source/test scan contains no TCC reset command or database modification.
+Hanly uses the public screen-capture/Accessibility request/preflight APIs and
+opens the exact System Settings privacy pane from its Permissions page; granted
+items remain visible and status rechecks when returning. macOS owns the actual
+security approval. The app does not grant itself access or change global
+security settings.
+
+The repeated registration refreshes in this session were manual agent actions
+while switching ad-hoc-signed debug/release identities, not resets performed by
+Hanly. During this continuation the agent removed the stale Screen Recording
+entry, macOS prompted for authentication, and the human completed it. The human
+then explicitly prohibited repeating such resets without a prior explanation
+and approval while present. No Accessibility removal happened in this follow-up.
+The next grant should target only the final canonical bundle; do not repeat
+registration switching between variants or conceal a waiting OS prompt.
+
+`security find-identity -v -p codesigning` reports zero valid signing identities
+on this host. The current builder produces ad-hoc signatures. It is therefore
+incorrect to promise that independently rebuilt debug/release products or later
+updates retain one TCC identity. Stable release signing credentials and compatible
+designated requirements are needed for that release guarantee; no credentials
+were created, no trust policy was weakened and no identifier-only requirement
+was substituted. Same-build relaunch persistence must be checked independently.
+Apple documents privacy-resource identity and compatible designated requirements
+in [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)
+and [distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac).
+
+
+### Exact remaining local acceptance after the permission approval
+
+All implementation, static, automated, frozen product and archive work for this
+follow-up is complete. The pending question asks the human to confirm presence
+and authorize restoration/refresh for the canonical bundle. Elapsed time, a
+successful build or the earlier authentication does not answer that new question.
+No reset was performed after it, and all task-owned app/test processes are closed.
+
+Continue with the existing sealed package; documentation edits do not require
+another rebuild or another signing identity. Launch a new isolated Lab session
+using the current package, the existing read-only runtime config and private
+Mac-default profile. Recheck first: if the grants are already valid, make no OS
+changes. Otherwise complete only the specifically approved normal permission
+flow from Hanly's Permissions buttons and the native pane; the human handles
+any authentication. Never reset a TCC entry as routine test setup.
+
+Then verify the live popup's rounded native border/shadow, show/hide without a
+persistent blank frame, adjacent and rapid word transitions, final-result
+freshness, compact/expanded/collapsed geometry, Close, negative refusal, word-to-
+popup crossing and held-read release. The private controlled fixture is ready
+under `/private/tmp/hanly-popup-fix-acceptance/`; ownership checks remain required.
+Measure cold provider preparation separately from warm/cached hover and native
+presentation, without comparing this run with the incompatible Qt baselines.
+The registry still points to October 7 Qt tour/stress baselines; no new baseline
+was registered and no RAM/latency improvement is claimed from this follow-up.
+
+Check native letter key edges and the corresponding pause/capture behavior;
+registration alone is insufficient. The already documented reader foreground/AX
+check still requires actual controlled Safari foreground, which background AX
+operations did not establish previously. A user key/activation check can complete
+that evidence while present. Close/reopen the same final bundle and confirm its
+grants persist without resetting them, then close normally and independently
+verify the whole sampled family is gone. Update this same handoff/checkpoint
+with the actual results and any precise remaining limits.
+
+Windows/Linux physical acceptance, mixed-display hardware, Developer ID release
+credentials/notarization and the deferred Playwright discussion retain the
+explicit boundaries documented above. No push, merge, tag or public release was
+performed. This local handoff does not claim full Mac visual/native acceptance
+while the final live permission-dependent check remains unobserved.

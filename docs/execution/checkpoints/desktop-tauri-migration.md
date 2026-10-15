@@ -1,10 +1,96 @@
 # Hanly Desktop Tauri migration checkpoint
 
-Status: the implementation, requested cleanup and Codex code review are committed
+Historical closure (reopened for the evening popup/shortcut fixes below):
+the implementation, requested cleanup and Codex code review were committed
 through product `0b8a9f4` and Lab `8ea89d8`. Final Mac package/archive checks pass
 on build `7569005a`. The implementation handoff is closed with explicit human/
 hardware acceptance limits. No Hanly test process or fixture server is running.
 Do not call the entire Mac native matrix accepted from automated gates alone.
+
+## Popup and Mac shortcuts continuation — 2026-10-14 evening
+
+Reopened by explicit human request after the earlier handoff. Current product
+source is `96868d8f78ed30f42c78450f2b0ac6b9310f298e`.
+
+- `776a7ef`: Mac defaults Control–Command H/P/R, native symbols, complete legacy
+  default-set migration only; custom/partial/unbound profiles are preserved.
+- `19d5d67`: hover/residency tests follow their configured platform bindings.
+- `96868d8`: render/measure before native show, current actions on the native
+  thread, rounded native Mac clipping/shadow with public APIs, expansion stays
+  anchored and follows authoritative content, actual-size display clamp,
+  ceiling-rounded measurements and unchanged-theme deduplication.
+- Inspected the user's 45.6s recording locally. Visible defects include opaque
+  square corners around the rounded card and a tall blank native window during
+  transitions. No user recording or extracted frames are in Git.
+- CaptureService and engine source remain byte-identical to `0902075`; no
+  provider, ROI capture, hover debounce or prewarming policy change was made.
+- Checks so far: 104 focused config/hotkey/service, 45 hover/residency, 40 React
+  UI, 10 Node contracts, strict TypeScript/Vite, 19 Rust + Clippy, full Ruff and
+  mypy (344 files); macOS native 86 passed. Final full portable passed
+  2,611 with two existing skips in 553.11s;
+  its first run exposed eight hardcoded old binding assumptions, corrected in
+  `19d5d67`. The subsequent full run collected one fixture before its final
+  correction; it is superseded by the final passing run.
+- Fresh coordinated Mac build completed successfully with full source hash above and
+  CARGO_BUILD_JOBS=2. Log: `/private/tmp/hanly-popup-fix-acceptance/build.log`.
+  New build ID: `284bd3e3-bef5-406f-8e16-6add3184a5c1`.
+  All seven packaged checks passed in 200.61s. ZIP and DMG each match all 3,762
+  manifest entries and pass inventory/strict signatures. New hashes and the
+  exact identity are recorded in the evening handoff section. The package is
+  current; bounded live popup acceptance remains explicitly pending.
+
+### Permission handling: explicit human instruction
+
+Do not reset, remove or re-add a permission entry for testing without first
+explaining why it could help and receiving approval while the human is present.
+If authentication is needed, clearly report the dependency and keep doing
+independent work. Do not leave a silent, stalled test session running.
+
+Hanly and the test code contain no TCC reset/database manipulation. During this
+continuation the agent manually removed the stale Hanly Screen Recording entry
+while switching release/debug signatures; macOS required authentication, which
+the human completed. This was a manual test action, not app behavior. The entry
+is currently absent and must be restored for the final canonical app through
+normal Hanly/System Settings actions when the human is present. Do not keep
+switching grants to the debug variant. Accessibility has not been reset in this
+continuation. No installed valid code-signing identity exists (`security
+find-identity -v -p codesigning`: zero); ad-hoc rebuilds do not establish stable
+cross-update TCC identity. Developer ID signing requires release credentials;
+never weaken designated requirements or bypass TCC to conceal that limitation.
+Normal same-build restart persistence must be checked after the final grant.
+
+### Native sessions and continuation
+
+- Old bare debug PID 45099 was identified and stopped with normal SIGINT.
+- Disposable debug Lab run `20261014-215948-run` reached runtime ready, but
+  permissions were required; it captured no text/pixels and ran no lookups.
+  Closed normally (root PID 48292); all ten sampled PIDs independently absent
+  afterwards, and no Hanly root running. Read its summary before using it.
+  It is not popup acceptance or performance evidence.
+- Prepared private controlled raster fixture and Mac-default profile under
+  `/private/tmp/hanly-popup-fix-acceptance/`: `fixture.py`, `config.json`.
+  Three adjacent targets 학교 / 단축키 / 한국어, a Latin negative, geometry-change
+  observation and commands `school`, `shortcut`, `korean`, `hello`, `rest`,
+  `chord` (Control–Command + letter), `enter_popup`, `stop`.
+  Command writes must be atomic; inspect native ownership before each move.
+- Final canonical Lab run `20261014-222748-run`, root PID 52072, closed normally
+  through confirmed Quit: 241.8s, ten events, zero drops and zero captures/lookups.
+  Actual packaged UI verified runtime ready/providers sleeping, native shortcut
+  symbols and all registrations accepted. Both permissions last reported required.
+  All nine sampled PIDs independently absent, and no Hanly root remains.
+  Explicit presence/refresh question is pending; do not act without the human's
+  answer. All other gates passed. CUA binding `canonicalPopupFix` is now stale:
+  do not query it and accidentally reopen an unisolated app.
+- Next: launch a fresh isolated session using the existing sealed canonical
+  build (do not rebuild just for docs). Recheck grants first; if already valid,
+  change nothing. Otherwise restore the final canonical grant only with the
+  human's approval/presence, then test popup borders, repeated transitions,
+  expand/collapse/Close, negative refusal, native letter shortcuts, retention,
+  normal restart permission persistence and whole-family cleanup. Record exact
+  observed timing/limits; do not infer visual/physical acceptance from unit tests.
+- The same comprehensive handoff is updated through all completed gates and
+  exact remaining native acceptance. Add the live results after approval and
+  preserve historical evidence with explicit previous-build labels. No push/merge/tag/public release. No Playwright work in this scope.
 
 ## Current continuation — 2026-10-14
 
