@@ -416,6 +416,13 @@ def test_the_packaged_native_helper_restores_after_the_root_rejects_startup(
     assert hashlib.sha256((install_root / relative_executable).read_bytes()).hexdigest() == (
         original_executable_digest
     )
+    # The helper returns once the detached relaunch has exec'd, so the launcher
+    # may record that relaunch only after the helper has already exited.
+    deadline = time.monotonic() + 5
+    while len(launch_log.read_text(encoding="utf-8").splitlines()) < 2:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
     assert launch_log.read_text(encoding="utf-8").splitlines() == ["2", "0"]
 
     launched_pids = [int(value) for value in process_ids.read_text(encoding="utf-8").splitlines()]
