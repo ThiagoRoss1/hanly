@@ -196,7 +196,7 @@ def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
 
 
 def test_macos_bundle_signing_stays_ad_hoc_without_hardened_runtime_options() -> None:
-    """The local unsigned release needs an ad-hoc signature whose identity survives rebuilds."""
+    """The local unsigned release keeps the ad-hoc, cdhash-bound designated requirement."""
 
     commands: list[list[str]] = []
 
@@ -207,12 +207,11 @@ def test_macos_bundle_signing_stays_ad_hoc_without_hardened_runtime_options() ->
     build_package.sign_macos_bundle(ROOT / "dist/Hanly.app", runner=run)
 
     assert commands[0][1:6] == ["--force", "--deep", "--sign", "-", "--timestamp=none"]
-    assert commands[1][1:] == [
-        "--force", "--sign", "-", "--timestamp=none",
-        '-r=designated => identifier "io.github.thiagoross1.hanly"',
-        str(ROOT / "dist/Hanly.app"),
-    ]
-    assert commands[2][1:4] == ["--verify", "--deep", "--strict"]
+    assert commands[1][1:4] == ["--verify", "--deep", "--strict"]
+    assert len(commands) == 2
+    # An explicit requirement such as `identifier "…"` would let any ad-hoc
+    # code naming that identifier inherit Hanly's privacy grants.
+    assert not any(argument.startswith(("-r", "--requirements")) for argument in commands[0])
     assert not any(
         "runtime" in argument or "entitlements" in argument
         for command in commands

@@ -21,13 +21,12 @@ The build inventory rejects a missing service payload or required provider
 inputs and rejects collected Qt, WebEngine, pywebview, and pystray modules.
 
 macOS products are ad-hoc signed after the service and helper are staged, then
-checked with `codesign --verify --deep --strict`. The outer bundle is re-signed
-with the designated requirement `identifier "io.github.thiagoross1.hanly"`.
-An ad-hoc signature otherwise identifies the app by its cdhash, so each rebuild
-or update would lose the user's Screen Recording and Accessibility grants. The
-trade-off: any code signed with that identifier satisfies the requirement, which
-only a Developer ID team requirement would close. This is an unnotarized local
-and release build. Developer ID signing and notarization need separate release
+checked with `codesign --verify --deep --strict`. The designated requirement is
+the default ad-hoc one, the build's cdhash, so each rebuild or update needs
+Screen Recording and Accessibility granted again. An identifier-only
+requirement must not replace it: any ad-hoc code naming that identifier would
+satisfy it and inherit the grants. This is an unnotarized local and release
+build. Developer ID signing and notarization need separate release
 credentials and configuration; the Python freezer does not force the hardened
 runtime on this product.
 
