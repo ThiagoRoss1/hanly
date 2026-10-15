@@ -20,11 +20,20 @@ export function validateHoverDelay(
   return { valid: true, value };
 }
 
-export function formatHotkey(binding: string | undefined): string[] {
+export function formatHotkey(
+  binding: string | undefined,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): string[] {
+  const mac = /mac/i.test(platform);
+  const symbols: Record<string, string> = {
+    ctrl: "⌃", control: "⌃", cmd: "⌘", meta: "⌘", super: "⌘",
+    alt: "⌥", option: "⌥", shift: "⇧", space: "Space",
+  };
   return (binding ?? "")
     .split("+")
     .map((part) => part.replace(/^<|>$/g, "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((part) => mac ? (symbols[part.toLowerCase()] ?? part.toUpperCase()) : part);
 }
 
 const MODIFIER_KEYS = new Set(["control", "shift", "alt", "meta", "os"]);

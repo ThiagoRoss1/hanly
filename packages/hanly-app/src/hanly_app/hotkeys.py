@@ -85,16 +85,27 @@ HotkeyListenerFactory: TypeAlias = Callable[
 ]
 HotkeyBindings: TypeAlias = Mapping[HotkeyAction | str, str]
 
+def desktop_shortcut_defaults(platform: str) -> tuple[str, str, str]:
+    """Return hold, hover toggle and capture toggle defaults for the host."""
+
+    if platform == "darwin":
+        return "ctrl+cmd+h", "ctrl+cmd+p", "ctrl+cmd+r"
+    return "ctrl+shift+space", "ctrl+shift+f9", "ctrl+shift+f10"
+
+
+_DEFAULT_HOLD, _DEFAULT_HOVER, _DEFAULT_CAPTURE = desktop_shortcut_defaults(sys.platform)
+
 DEFAULT_HOTKEYS: Mapping[HotkeyAction | str, str] = MappingProxyType(
     {
-# These bindings must coexist. One-shot lookup remains bindable but is not
-# registered: its former shortcut now belongs to the hold action.
+        # Legacy actions remain independently bindable alongside the three desktop actions.
         HotkeyAction.LOOKUP: "ctrl+alt+space",
         HotkeyAction.START_CAPTURE: "ctrl+shift+f9",
         HotkeyAction.PAUSE_CAPTURE: "ctrl+shift+f10",
-        HotkeyAction.PUSH_TO_HOVER: "ctrl+shift+space",
-        HotkeyAction.TOGGLE_HOVER: "ctrl+shift+f11",
-        HotkeyAction.TOGGLE_CAPTURE: "ctrl+shift+f12",
+        HotkeyAction.PUSH_TO_HOVER: _DEFAULT_HOLD,
+        HotkeyAction.TOGGLE_HOVER: _DEFAULT_HOVER if sys.platform == "darwin" else "ctrl+shift+f11",
+        HotkeyAction.TOGGLE_CAPTURE: (
+            _DEFAULT_CAPTURE if sys.platform == "darwin" else "ctrl+shift+f12"
+        ),
     }
 )
 

@@ -65,14 +65,18 @@ def test_registers_all_actions_with_normalized_pynput_bindings() -> None:
 
     assert service.registered is True
     assert listeners[0].started == 1
-    assert set(listeners[0].callbacks) == {
-        "<ctrl>+<alt>+<space>",
-        "<ctrl>+<shift>+<space>",
-        "<ctrl>+<shift>+<f9>",
-        "<ctrl>+<shift>+<f10>",
-        "<ctrl>+<shift>+<f11>",
-        "<ctrl>+<shift>+<f12>",
-    }
+    if sys.platform == "darwin":
+        expected = {
+            "<ctrl>+<alt>+<space>", "<ctrl>+<shift>+<f9>", "<ctrl>+<shift>+<f10>",
+            "<ctrl>+<cmd>+h", "<ctrl>+<cmd>+p", "<ctrl>+<cmd>+r",
+        }
+    else:
+        expected = {
+            "<ctrl>+<alt>+<space>", "<ctrl>+<shift>+<space>", "<ctrl>+<shift>+<f9>",
+            "<ctrl>+<shift>+<f10>", "<ctrl>+<shift>+<f11>", "<ctrl>+<shift>+<f12>",
+        }
+    assert set(listeners[0].callbacks) == expected
+
 
 
 def test_trigger_delivers_normalized_actions_and_both_edges() -> None:
@@ -377,3 +381,14 @@ def test_unbind_uses_native_rebind_without_duplicate_registration() -> None:
     assert service.registered
     assert list(listeners[0].callbacks) == ["<ctrl>+<shift>+<space>"]
     service.shutdown()
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+def test_desktop_defaults_match_platform_without_function_keys_on_mac(platform: str) -> None:
+    from hanly_app.hotkeys import desktop_shortcut_defaults
+
+    expected = (
+        ("ctrl+cmd+h", "ctrl+cmd+p", "ctrl+cmd+r") if platform == "darwin"
+        else ("ctrl+shift+space", "ctrl+shift+f9", "ctrl+shift+f10")
+    )
+    assert desktop_shortcut_defaults(platform) == expected

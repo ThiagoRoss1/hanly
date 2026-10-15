@@ -22,7 +22,7 @@ test("hover delay settings honor runtime bounds and whole milliseconds", () => {
 test("shortcut capture keeps native key names in Hanly's stored format", () => {
   assert.equal(hotkeyFromKeyboardEvent({ key: "ArrowLeft", ctrlKey: true, shiftKey: false, altKey: false, metaKey: true }), "ctrl+cmd+left");
   assert.equal(hotkeyFromKeyboardEvent({ key: "Shift", ctrlKey: false, shiftKey: true, altKey: false, metaKey: false }), null);
-  assert.deepEqual(formatHotkey("<ctrl>+<shift>+space"), ["ctrl", "shift", "space"]);
+  assert.deepEqual(formatHotkey("<ctrl>+<shift>+space", "Win32"), ["ctrl", "shift", "space"]);
 });
 
 test("desktop state events validate full snapshots and keep service failures visible", () => {
@@ -56,4 +56,10 @@ test("desktop state events validate full snapshots and keep service failures vis
   const invalid = desktopStateReducer(failed, { type: "state-received", payload: { app: {} } });
   assert.equal(invalid.state, state);
   assert.equal(invalid.connectionError, "Hanly returned an incomplete desktop state.");
+});
+
+test("Mac shortcut labels use native symbols while storage remains portable", () => {
+  assert.deepEqual(formatHotkey("ctrl+cmd+h", "MacIntel"), ["⌃", "⌘", "H"]);
+  assert.deepEqual(formatHotkey("ctrl+shift+f9", "MacIntel"), ["⌃", "⇧", "F9"]);
+  assert.deepEqual(formatHotkey("ctrl+shift+f9", "Win32"), ["ctrl", "shift", "f9"]);
 });

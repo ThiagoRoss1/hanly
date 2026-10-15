@@ -238,6 +238,21 @@ fn invalid() -> BridgeError {
 mod tests {
     use super::*;
     #[test]
+    fn mac_letter_defaults_keep_control_and_command_as_distinct_modifiers() {
+        let list = bindings(&json!({
+            "hotkey":"ctrl+cmd+h", "hover_hotkey":"ctrl+cmd+p", "capture_hotkey":"ctrl+cmd+r"
+        }))
+        .unwrap();
+        assert_eq!(list.len(), 3);
+        for (binding, key) in list.iter().zip(["H", "P", "R"]) {
+            assert_eq!(
+                binding.shortcut,
+                Shortcut::from_str(&format!("Control+Super+{key}")).unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn preserves_control_chords_and_rejects_duplicates() {
         let config = json!({"hotkey":"ctrl+shift+space","hover_hotkey":"ctrl+shift+f9","capture_hotkey":"ctrl+shift+f10"});
         let list = bindings(&config).unwrap();

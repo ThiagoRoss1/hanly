@@ -111,13 +111,17 @@ Both grants remain listed after approval so their current state stays visible.
 
 Three global shortcuts, and each one does exactly one thing:
 
-- **`Ctrl+Shift+F10`** starts and stops watching the screen. Stopping gives the
+On macOS, `⌃` means Control and `⌘` means Command. These defaults use letters
+so the media/function-key setting does not affect them. Custom bindings are kept;
+the complete old default set migrates to the Mac defaults automatically.
+
+- **`⌃⌘R` on macOS / `Ctrl+Shift+F10` on Windows and Linux** starts and stops watching the screen. Stopping gives the
   lookup engine's memory back; nothing is watched until you start again.
-- **`Ctrl+Shift+Space`** is **Push to Hover**: hold it, and hovering over
+- **`⌃⌘H` on macOS / `Ctrl+Shift+Space` on Windows and Linux** is **Push to Hover**: hold it, and hovering over
   Korean text for ~80 ms looks the word up. Let go and Hanly stops looking.
   An answer already on screen stays until you move away from its word, so you
   can read it, click it, and copy from it with the keys released.
-- **`Ctrl+Shift+F9`** pauses and continues hover without stopping capture. It
+- **`⌃⌘P` on macOS / `Ctrl+Shift+F9` on Windows and Linux** pauses and continues hover without stopping capture. It
   matters in **Whenever capture is running** mode, where hover has no key to
   let go of; in Push to Hover the chord is already the switch.
 

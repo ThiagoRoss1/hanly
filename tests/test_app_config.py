@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 from hanly_app.config import (
+    CAPTURE_HOTKEY_FALLBACKS,
     DEFAULT_CAPTURE_HOTKEY,
     DEFAULT_HOVER_HOTKEY,
     HOVER_HOTKEY_FALLBACKS,
@@ -294,22 +295,22 @@ def test_start_stop_capture_gets_its_own_shortcut_without_moving_the_others(
     assert manager.migrations == ()
 
 
-def test_a_profile_occupying_every_candidate_leaves_start_stop_unbound(
+def test_an_occupied_capture_default_chooses_the_next_free_binding(
     tmp_path: Path,
 ) -> None:
     """Losing one shortcut beats resetting preferences to make room for it."""
 
     path = tmp_path / "config.json"
     path.write_text(
-        json.dumps({"hotkey": "ctrl+shift+f10", "hover_hotkey": "ctrl+shift+f11"}),
+        json.dumps({"hotkey": DEFAULT_CAPTURE_HOTKEY, "hover_hotkey": CAPTURE_HOTKEY_FALLBACKS[1]}),
         encoding="utf-8",
     )
     manager = ConfigManager(path)
 
     config = manager.load()
 
-    assert config.hotkey == "ctrl+shift+f10"
-    assert config.hover_hotkey == "ctrl+shift+f11"
+    assert config.hotkey == DEFAULT_CAPTURE_HOTKEY
+    assert config.hover_hotkey == CAPTURE_HOTKEY_FALLBACKS[1]
     assert config.capture_hotkey == "ctrl+shift+f12"
     assert any("f12" in note for note in manager.migrations)
 
@@ -369,3 +370,33 @@ def test_a_settable_field_actually_survives_being_set(
 
     assert getattr(updated, field) == value, f"{field} was dropped by candidate()"
     assert getattr(ConfigManager(tmp_path / "settings.json").load(), field) == value
+
+
+def test_mac_migration_changes_only_the_complete_legacy_default_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hanly_app.config as config_module
+
+    monkeypatch.setattr(config_module.sys, "platform", "darwin")
+    legacy = {
+        "hotkey": "ctrl+shift+space", "hover_hotkey": "ctrl+shift+f9",
+        "capture_hotkey": "ctrl+shift+f10", "hover_delay_ms": 140,
+    }
+    migrated, notes = AppConfig.migrate(legacy)
+    assert (migrated.hotkey, migrated.hover_hotkey, migrated.capture_hotkey) == (
+        "ctrl+cmd+h", "ctrl+cmd+p", "ctrl+cmd+r",
+    )
+    assert migrated.hover_delay_ms == 140
+    assert notes
+    assert AppConfig.migrate(migrated.to_dict()) == (migrated, ())
+
+    for changes in (
+        {"hotkey": "ctrl+alt+k"}, {"capture_hotkey": ""}, {"hover_hotkey": "ctrl+alt+j"},
+    ):
+        custom = {**legacy, **changes}
+        loaded, notes = AppConfig.migrate(custom)
+        assert all(
+            loaded.to_dict()[key] == custom[key]
+            for key in ("hotkey", "hover_hotkey", "capture_hotkey")
+        )
+        assert notes == ()
