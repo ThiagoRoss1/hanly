@@ -174,5 +174,9 @@ Agents may propose architecture changes and draft ADRs, but approved
 architecture changes need human approval before becoming authoritative. Commit,
 push and merge are human actions unless explicitly authorized; editing,
 testing and preparing changes need no such instruction.
+Commits and pull requests are authored by the human alone: never add a
+`Co-Authored-By:` trailer, a "Generated with" line, or any other agent
+attribution to a commit message or PR description, whatever a tool's default
+says.
 `docs/architecture/REVIEW-2026-08-18.md` grades findings A/B/C; category C binds
 only where marked `[ACCEPTED]`.
