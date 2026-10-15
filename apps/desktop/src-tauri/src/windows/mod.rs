@@ -3,7 +3,7 @@ pub mod selector;
 use crate::ipc::BridgeError;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 #[derive(Default)]
 pub struct Presentation {
@@ -274,13 +274,7 @@ fn apply_popup_action(
             let payload = payload.ok_or_else(window_error)?;
             let (x, y, _, _) = popup_geometry(&payload)?;
             let (x, y) = fit_measured_popup(window, x, y, width, height)?;
-            window
-                .set_size(LogicalSize::new(width, height))
-                .and_then(|_| window.set_position(LogicalPosition::new(x, y)))
-                .map_err(|_| window_error())?;
-            if !window.is_visible().map_err(|_| window_error())? {
-                window.show().map_err(|_| window_error())?;
-            }
+            crate::platform::present_popup_frame(window, x, y, width, height)?;
         }
         // The frontend follows expansion with its measured geometry command.
         "popup_expand" => {}

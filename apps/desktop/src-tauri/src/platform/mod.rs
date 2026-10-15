@@ -103,9 +103,87 @@ pub fn configure_popup(window: &WebviewWindow) -> Result<(), BridgeError> {
     window.set_focusable(false).map_err(|_| window_error())
 }
 
+pub fn present_popup_frame(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), BridgeError> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSScreen, NSWindow};
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let mtm = MainThreadMarker::new().ok_or_else(window_error)?;
+        let primary = NSScreen::screens(mtm)
+            .firstObject()
+            .ok_or_else(window_error)?;
+        let primary_frame = primary.frame();
+        let (left, bottom) = cocoa_popup_origin(
+            x,
+            y,
+            height,
+            primary_frame.origin.y + primary_frame.size.height,
+        );
+        let raw = window.ns_window().map_err(|_| window_error())?;
+        // Tao queues size/position setters but shows synchronously on macOS.
+        // Commit one public AppKit frame before ordering it onto the screen.
+        unsafe {
+            let native = &*(raw as *const NSWindow);
+            native.setFrame_display(
+                NSRect::new(NSPoint::new(left, bottom), NSSize::new(width, height)),
+                true,
+            );
+            if let Some(content) = native.contentView() {
+                content.layoutSubtreeIfNeeded();
+            }
+            native.invalidateShadow();
+            if !native.isVisible() {
+                native.orderFrontRegardless();
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window
+            .set_size(tauri::LogicalSize::new(width, height))
+            .and_then(|_| window.set_position(tauri::LogicalPosition::new(x, y)))
+            .map_err(|_| window_error())?;
+        if !window.is_visible().map_err(|_| window_error())? {
+            window.show().map_err(|_| window_error())?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn cocoa_popup_origin(x: f64, y: f64, height: f64, primary_top: f64) -> (f64, f64) {
+    (x, primary_top - y - height)
+}
+
 fn window_error() -> BridgeError {
     BridgeError::new(
         "platform_error",
         "Hanly could not read the native desktop geometry.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cocoa_popup_origin;
+
+    #[test]
+    fn cocoa_frame_preserves_top_left_and_negative_display_origins() {
+        assert_eq!(
+            cocoa_popup_origin(111.0, 134.0, 365.0, 881.0),
+            (111.0, 382.0)
+        );
+        assert_eq!(
+            cocoa_popup_origin(-460.5, -200.0, 560.0, 900.0),
+            (-460.5, 540.0)
+        );
+    }
 }
