@@ -75,7 +75,7 @@ fn vision_available() -> bool {
 pub fn configure_popup(window: &WebviewWindow) -> Result<(), BridgeError> {
     #[cfg(target_os = "macos")]
     {
-        use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+        use objc2_app_kit::{NSColor, NSWindow, NSWindowCollectionBehavior};
         let raw = window.ns_window().map_err(|_| window_error())?;
         // Public AppKit behavior keeps a non-key floating window visible while another app is active.
         unsafe {
@@ -86,6 +86,18 @@ pub fn configure_popup(window: &WebviewWindow) -> Result<(), BridgeError> {
                     | NSWindowCollectionBehavior::FullScreenAuxiliary,
             );
             window.setLevel(3);
+            window.setOpaque(false);
+            window.setBackgroundColor(Some(&NSColor::clearColor()));
+            // Clip the entire native content, including the opaque webview, to
+            // the card. Public AppKit/Core Animation avoids WKWebView private APIs.
+            if let Some(content) = window.contentView() {
+                content.setWantsLayer(true);
+                if let Some(layer) = content.layer() {
+                    layer.setCornerRadius(14.0);
+                    layer.setMasksToBounds(true);
+                }
+            }
+            window.setHasShadow(true);
         }
     }
     window.set_focusable(false).map_err(|_| window_error())

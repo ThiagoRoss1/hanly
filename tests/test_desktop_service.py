@@ -125,7 +125,11 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         ))))
 
     try:
+        published: list[tuple[str, dict[str, Any]]] = []
+        service.set_event_sink(lambda name, payload: published.append((name, dict(payload))))
         service._show_popup(result, 9)
+        assert published[-1][1]["replacement"] is True
+        original_position = published[-1][1]["position"]
         assert events == []
         assert geometry(1) == {"accepted": True}
         assert [(event["event_kind"], event["lookup_request_id"]) for event in events] == [
@@ -135,7 +139,10 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         assert "학교" not in json.dumps(events)
 
         geometry(1)
+        service._cursor = Point(600, 600)
         service._popup_sync("service.popup_expand", {"sequence": 1, "expanded": True})
+        assert published[-1][1]["replacement"] is False
+        assert published[-1][1]["position"] == original_position
         assert service._popup_sequence == 2
         assert geometry(1) == {"accepted": False, "stale": True}
         geometry(2)

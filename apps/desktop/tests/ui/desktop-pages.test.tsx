@@ -933,9 +933,15 @@ describe("desktop React routes", () => {
   });
 
   it("ignores stale popup events and reports measured geometry for the current entry", async () => {
+    // Hidden WKWebView animation callbacks may never run until it is shown.
+    const animationFrame = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+    const rectangle = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 340.25, bottom: 218.5,
+      width: 340.25, height: 218.5, toJSON: () => ({}),
+    });
     renderRoute("/popup");
     await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
-    const emit = (sequence: number, headword: string) => eventHandlers.get("desktop-popup")?.({
+    const emit = (sequence: number, headword: string, expanded = false) => eventHandlers.get("desktop-popup")?.({
       payload: {
         type: "popup",
         sequence,
@@ -944,7 +950,7 @@ describe("desktop React routes", () => {
           entry: { headword, senses: [{ gloss: "school" }, { gloss: "academy" }, { gloss: "institution" }] },
           analysis: [{ text: "학", role: "noun" }],
           other_entries: [{ headword: "學校", part_of_speech: "noun", senses: [{ gloss: "school" }] }],
-          expanded: false,
+          expanded,
           technical_details: "full",
           technical_lines: ["source: test"],
         },
@@ -956,8 +962,16 @@ describe("desktop React routes", () => {
     expect(await screen.findByRole("heading", { name: "학교" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "stale" })).toBeNull();
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "popup_geometry" })));
+    expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "popup_geometry", params: { sequence: 5, width: 341, height: 219 },
+    });
     await userEvent.setup().click(screen.getByRole("button", { name: "Expand" }));
+    expect(invokeMock).toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "popup_expand", params: { sequence: 5, expanded: true } }));
+    expect(screen.queryByText("institution")).toBeNull();
+    emit(6, "학교", true);
     expect(await screen.findByText("institution")).toBeTruthy();
     expect(screen.getByText("學校 · noun · school")).toBeTruthy();
+    animationFrame.mockRestore();
+    rectangle.mockRestore();
   });
 });

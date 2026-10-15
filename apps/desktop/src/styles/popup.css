@@ -1,9 +1,9 @@
 html[data-popup="true"],
 html[data-popup="true"] body {
   width: max-content;
-  min-width: 100%;
+  min-width: 0;
   height: auto;
-  min-height: 100%;
+  min-height: 0;
   overflow: hidden;
   background: transparent;
 }
@@ -16,7 +16,7 @@ html[data-popup="true"] #root {
   display: inline-block;
   height: auto;
   width: max-content;
-  min-width: 100%;
+  min-width: 0;
   background: transparent;
 }
 
@@ -29,7 +29,8 @@ html[data-popup="true"] #root {
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: var(--shadow-md);
+  /* The native window owns the shadow; a CSS shadow would be clipped. */
+  box-shadow: none;
 }
 
 .popup-scroll {

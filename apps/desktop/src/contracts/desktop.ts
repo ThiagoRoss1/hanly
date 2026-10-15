@@ -169,6 +169,7 @@ export interface PopupPayload extends PopupContent {
   position?: { x: number; y: number };
   size?: { width: number; height: number };
   expanded?: boolean;
+  replacement?: boolean;
   technical_details?: string;
   theme?: string;
   config?: {

@@ -1165,6 +1165,7 @@ class DesktopService:
     ) -> None:
         if not self.config_manager.config.popup_enabled:
             return
+        replacement = self._popup_result is not result or self._popup_request_id != request_id
         cursor = self._current_cursor()
         screen = self._screen_for(cursor)
         config = self.config_manager.config
@@ -1186,7 +1187,10 @@ class DesktopService:
         )
         popup_controller = PopupController(_PopupModelView(), popup_size=size)
         position = popup_controller.open(result, cursor, screen, anchor=anchor)
-        if self._popup_result is not result or self._popup_request_id != request_id:
+        if not replacement and self._popup_position is not None:
+            # Expanding an answer must not relocate it to the footer's cursor.
+            position = self._popup_position
+        if replacement:
             self._popup_presented = False
         self._popup_result = result
         self._popup_request_id = request_id
@@ -1200,6 +1204,7 @@ class DesktopService:
             "popup",
             {
                 "sequence": self._popup_sequence,
+                "replacement": replacement,
                 "content": _plain(content),
                 "position": {"x": position.x, "y": position.y},
                 "size": {"width": size.width, "height": size.height},

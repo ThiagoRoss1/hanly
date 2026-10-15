@@ -88,21 +88,18 @@ export function PopupPage() {
   }, []);
 
   const reportGeometry = useCallback((sequence: number) => {
-    const frame = window.requestAnimationFrame(() => {
-      if (currentSequence.current !== sequence) return;
-      const card = cardRef.current;
-      if (!card) return;
-      const rect = card.getBoundingClientRect();
-      const width = Math.max(1, Math.round(rect.width));
-      const height = Math.max(1, Math.round(rect.height));
-      const key = `${sequence}:${width}:${height}`;
-      if (geometrySent.current === key) return;
-      geometrySent.current = key;
-      void desktopRequest("popup_geometry", { sequence, width, height }).catch(
-        () => undefined,
-      );
-    });
-    return () => window.cancelAnimationFrame(frame);
+    if (currentSequence.current !== sequence) return;
+    const card = cardRef.current;
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const width = Math.max(1, Math.ceil(rect.width));
+    const height = Math.max(1, Math.ceil(rect.height));
+    const key = `${sequence}:${width}:${height}`;
+    if (geometrySent.current === key) return;
+    geometrySent.current = key;
+    void desktopRequest("popup_geometry", { sequence, width, height }).catch(
+      () => undefined,
+    );
   }, []);
 
   const payload = current?.payload;
@@ -127,7 +124,7 @@ export function PopupPage() {
       otherEntries.length > 0 ||
       (content?.analysis?.length ?? 0) > 0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.popup = "true";
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -141,14 +138,15 @@ export function PopupPage() {
 
   useLayoutEffect(() => {
     if (sequence === undefined || !content) return;
-    const cancelFrame = reportGeometry(sequence);
+    // Hidden webviews may throttle animation frames. Measure the committed DOM
+    // directly; native presentation waits for this current result's geometry.
+    reportGeometry(sequence);
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(() => reportGeometry(sequence));
     if (cardRef.current) observer?.observe(cardRef.current);
     return () => {
-      cancelFrame();
       observer?.disconnect();
     };
   }, [content, expanded, reportGeometry, sequence]);
@@ -163,10 +161,8 @@ export function PopupPage() {
   async function toggleExpanded() {
     if (sequence === undefined) return;
     const next = !expanded;
-    setExpanded(next);
     await desktopRequest("popup_expand", { sequence, expanded: next }).catch(
       (reason: unknown) => {
-        setExpanded(!next);
         setBridgeError(normalizeDesktopError(reason).message);
       },
     );

@@ -13,6 +13,7 @@ pub struct Presentation {
     sequence_base: u64,
     pub visible: bool,
     pub region: Option<Value>,
+    applied_theme: Option<Option<tauri::Theme>>,
     queued: bool,
     state_pending: bool,
     popup_pending: bool,
@@ -146,8 +147,16 @@ fn flush_events(app: &AppHandle, presentation: &SharedPresentation) {
             Some("light") => Some(tauri::Theme::Light),
             _ => None,
         };
-        for window in app.webview_windows().values() {
-            let _ = window.set_theme(theme);
+        let changed = {
+            let mut state = presentation.lock().expect("presentation");
+            let changed = state.applied_theme != Some(theme);
+            state.applied_theme = Some(theme);
+            changed
+        };
+        if changed {
+            for window in app.webview_windows().values() {
+                let _ = window.set_theme(theme);
+            }
         }
         let _ = app.emit_to("control-center", "desktop-state", snapshot);
     }
@@ -155,10 +164,18 @@ fn flush_events(app: &AppHandle, presentation: &SharedPresentation) {
         let _ = app.emit_to("control-center", "desktop-service-status", status);
     }
     if let Some((visible, message)) = popup {
+        let current = presentation.lock().expect("presentation").popup == message;
+        if !current {
+            return;
+        }
         if let Some(window) = app.get_webview_window("popup") {
             if visible {
                 if let Some(message) = &message {
-                    let _ = show_popup(&window, &message["payload"]);
+                    // Never expose stale or empty DOM at an estimated size.
+                    // Expansion of the same answer can remain on screen.
+                    if message["payload"]["replacement"].as_bool() != Some(false) {
+                        let _ = window.hide();
+                    }
                 }
             } else {
                 let _ = window.hide();
@@ -197,7 +214,30 @@ pub fn local_action(
         return Ok(json!({}));
     }
 
-    let (message, service_sequence) = {
+    let window = window.clone();
+    let presentation = presentation.clone();
+    let method = method.to_owned();
+    let params = params.clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let dispatch_window = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let result = apply_popup_action(&dispatch_window, &presentation, &method, &params);
+            let _ = sender.send(result);
+        })
+        .map_err(|_| window_error())?;
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .map_err(|_| window_error())?
+}
+
+fn apply_popup_action(
+    window: &WebviewWindow,
+    presentation: &SharedPresentation,
+    method: &str,
+    params: &Value,
+) -> Result<Value, BridgeError> {
+    let (message, service_sequence, payload) = {
         let mut state = presentation.lock().expect("presentation");
         let service_sequence = popup_service_sequence(&state, params)?;
         let message = match method {
@@ -216,7 +256,11 @@ pub fn local_action(
             "popup_geometry" => None,
             _ => return Err(window_error()),
         };
-        (message, service_sequence)
+        let payload = state
+            .popup
+            .as_ref()
+            .map(|message| message["payload"].clone());
+        (message, service_sequence, payload)
     };
 
     match method {
@@ -227,9 +271,16 @@ pub fn local_action(
         "popup_geometry" => {
             let width = params["width"].as_f64().ok_or_else(window_error)?;
             let height = params["height"].as_f64().ok_or_else(window_error)?;
+            let payload = payload.ok_or_else(window_error)?;
+            let (x, y, _, _) = popup_geometry(&payload)?;
+            let (x, y) = fit_measured_popup(window, x, y, width, height)?;
             window
                 .set_size(LogicalSize::new(width, height))
+                .and_then(|_| window.set_position(LogicalPosition::new(x, y)))
                 .map_err(|_| window_error())?;
+            if !window.is_visible().map_err(|_| window_error())? {
+                window.show().map_err(|_| window_error())?;
+            }
         }
         // The frontend follows expansion with its measured geometry command.
         "popup_expand" => {}
@@ -255,13 +306,41 @@ fn popup_service_sequence(state: &Presentation, params: &Value) -> Result<u64, B
         .ok_or_else(window_error)
 }
 
-fn show_popup(window: &WebviewWindow, payload: &Value) -> Result<(), BridgeError> {
-    let geometry = popup_geometry(payload)?;
-    window
-        .set_position(LogicalPosition::new(geometry.0, geometry.1))
-        .and_then(|_| window.set_size(LogicalSize::new(geometry.2, geometry.3)))
-        .and_then(|_| window.show())
-        .map_err(|_| window_error())
+fn fit_measured_popup(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(f64, f64), BridgeError> {
+    for monitor in window.available_monitors().map_err(|_| window_error())? {
+        let origin = monitor.position().to_logical::<f64>(monitor.scale_factor());
+        let size = monitor.size().to_logical::<f64>(monitor.scale_factor());
+        if x >= origin.x && x < origin.x + size.width && y >= origin.y && y < origin.y + size.height
+        {
+            return Ok(fit_position(
+                (x, y),
+                (width, height),
+                (origin.x, origin.y, size.width, size.height),
+            ));
+        }
+    }
+    Ok((x, y))
+}
+
+fn fit_position(
+    position: (f64, f64),
+    size: (f64, f64),
+    bounds: (f64, f64, f64, f64),
+) -> (f64, f64) {
+    (
+        position
+            .0
+            .clamp(bounds.0, (bounds.0 + bounds.2 - size.0).max(bounds.0)),
+        position
+            .1
+            .clamp(bounds.1, (bounds.1 + bounds.3 - size.1).max(bounds.1)),
+    )
 }
 
 fn popup_geometry(payload: &Value) -> Result<(f64, f64, f64, f64), BridgeError> {
@@ -298,6 +377,22 @@ fn window_error() -> BridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measured_expansion_stays_on_its_negative_origin_display() {
+        assert_eq!(
+            fit_position(
+                (-100.5, 700.0),
+                (460.0, 560.0),
+                (-1440.0, 0.0, 1440.0, 900.0)
+            ),
+            (-460.0, 340.0)
+        );
+        assert_eq!(
+            fit_position((40.5, 54.5), (340.0, 219.0), (0.0, 0.0, 1440.0, 900.0)),
+            (40.5, 54.5)
+        );
+    }
 
     #[test]
     fn popup_actions_translate_event_order_without_accepting_stale_content() {
