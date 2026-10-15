@@ -59,7 +59,7 @@ _METHOD_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "native.input": (frozenset({"action", "edge"}), frozenset()),
     "native.context": (
         frozenset({"cursor", "monitors"}),
-        frozenset({"popup_rect", "registered_hotkeys", "vision_available"}),
+        frozenset({"registered_hotkeys", "vision_available"}),
     ),
     "native.selection": (frozenset({"active"}), frozenset()),
     "native.selection_snapshot": (frozenset({"bounds"}), frozenset()),
@@ -508,8 +508,6 @@ def _validate_param_values(
             fail("monitors must be a list containing at most 32 displays.")
         for monitor in monitors:
             _validate_monitor(monitor, fail)
-        if "popup_rect" in params:
-            _validate_rect(params["popup_rect"], fail, "popup_rect")
         if "registered_hotkeys" in params:
             _validate_registered_hotkeys(params["registered_hotkeys"], fail)
         if "vision_available" in params and type(params["vision_available"]) is not bool:

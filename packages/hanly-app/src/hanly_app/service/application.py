@@ -628,12 +628,6 @@ class DesktopService:
             generation, runtime, runtime_path = pending
             if generation == self._startup_generation and not self._shutdown_requested:
                 self._runtime_loaded(generation, runtime, runtime_path)
-        if "popup_rect" in params and self._popup_sequence:
-            rect = params["popup_rect"]
-            self._set_popup_geometry(
-                self._popup_sequence,
-                ScreenRect(rect["left"], rect["top"], rect["width"], rect["height"]),
-            )
         self._publish_state()
         return {"accepted": True}
 
