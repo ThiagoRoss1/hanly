@@ -87,6 +87,17 @@ export function PopupPage() {
     };
   }, []);
 
+  useEffect(() => {
+    // The popup is never key, so its context menu is the only way to copy a
+    // selection. Elsewhere WebKit's menu offers Reload, which would blank the
+    // card, and its modal tracking would hold the native event loop.
+    const onContextMenu = (event: MouseEvent) => {
+      if (!window.getSelection()?.toString()) event.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   const reportGeometry = useCallback((sequence: number) => {
     if (currentSequence.current !== sequence) return;
     const card = cardRef.current;

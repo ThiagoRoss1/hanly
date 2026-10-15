@@ -460,6 +460,28 @@ describe("desktop React routes", () => {
     expect(screen.getByText("school")).toBeTruthy();
   });
 
+  it("keeps the popup context menu for a selection only", async () => {
+    renderRoute("/popup");
+    await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
+    eventHandlers.get("desktop-popup")?.({
+      payload: {
+        type: "popup",
+        sequence: 1,
+        payload: { status: "success", entry: { headword: "학교", senses: [{ gloss: "school" }] } },
+      },
+    });
+    const gloss = await screen.findByText("school");
+
+    window.getSelection()?.removeAllRanges();
+    expect(fireEvent.contextMenu(gloss)).toBe(false);
+
+    const range = document.createRange();
+    range.selectNodeContents(gloss);
+    window.getSelection()?.addRange(range);
+    expect(fireEvent.contextMenu(gloss)).toBe(true);
+    window.getSelection()?.removeAllRanges();
+  });
+
   it.each([
     ["/popup", "desktop-popup", "popup"],
     ["/region-selector", "desktop-region", "region_selector"],
