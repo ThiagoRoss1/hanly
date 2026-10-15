@@ -1,6 +1,14 @@
 # Desktop Tauri Migration Review Handoff
 
-**Current status — 2026-10-15, after Phase B follow-up.** Product commit
+**Current status — 2026-10-15, after the live acceptance pass.** Product
+commit `e7ef391` is built as `20284932-80c5-4086-9015-5092705d6714` and
+installed as `/Applications/Hanly.app`. All seven packaged checks and both
+archive verifications pass. The live popup, shortcut, tray, Safari/TextEdit
+and quit checks pass on the debug build of the same source. Only two things
+are still open: the human's one-time grant for this build, and physical
+keyboard confirmation. See "Live acceptance pass" at the end.
+
+**Earlier status — 2026-10-15, after Phase B follow-up.** Product commit
 `acd3c28` is built as `44161ec2-7c78-4765-a996-a231953b4f18`. It passes the
 four headless packaged checks and both archive verifications. The three
 window-opening packaged checks and all live acceptance still need the human
@@ -1061,3 +1069,144 @@ before and after.
 
 Deferred, not blocking: Playwright/visual tests over `preview/`; Windows and
 Linux native acceptance; Developer ID signing.
+
+## Live acceptance pass (2026-10-15)
+
+The human approved the build-grant-finish sequence, then left. They asked
+for everything else to be finished without another grant in this session.
+
+### Commits after `63e988b`
+
+| Commit | Change |
+|---|---|
+| `d9a7520` | The permission action is labelled Grant access; it already runs Apple's request first |
+| `148cd7c` | The helper-restore packaged check waits for the detached relaunch instead of reading once |
+| `aa7dadf` | CI installs `rustfmt` and `clippy` with the pinned 1.99.0 toolchain |
+| `a1a2a14` | `lab/session/desktop_process.py` types the stream as `IO[bytes]` and guards its FIFO paths as macOS-only |
+| `fea73a9` | The Permissions page explains a switched-on entry that belongs to an earlier build |
+| `e7ef391` | The popup suppresses WebKit's context menu unless text is selected |
+
+### Root causes found
+
+- **"Granted in System Settings, required in Hanly."** Before any change,
+  macOS's TCC log showed both entries rejected with `authReason=5`. The
+  stored requirement was `cdhash H"1e6db425…"`, which is build `284bd3e3`
+  (`96868d8`) from the earlier session. Switching an existing entry on does
+  not rebind it to a new build. Each ad-hoc rebuild is a new identity, which
+  is also why system prompts repeated. Responsibility was checked and is
+  correct: the service is attributed to the Hanly root.
+- **CI on `0c93861`.** The `--profile minimal` toolchain lacked `rustfmt`, so
+  the native job stopped at the format check on all three platforms. On Linux,
+  mypy checks the non-macOS branch of `desktop_process.py`, where `Popen`'s
+  `IO[bytes]` failed the `BinaryIO` protocol. No other job or step failed.
+- **Popup context menu.** A right-click opened WebKit's menu, including
+  Reload. While that menu tracks, the native event loop does not process a
+  quit request: an observed SIGTERM waited until the menu closed. The
+  first sighting came from a harness Control-click; the menu itself is
+  product behaviour.
+- **`hanly` with a blank window.** A plain `cargo build` produced a debug root
+  without the `custom-protocol` feature, so it expected the Vite dev server.
+  It was rebuilt the README's way. The debug bundle is also current.
+
+### Not changed, with reason
+
+- **Stable local signing identity.** This would make rebuilds keep one TCC
+  identity. Creating a self-signed identity in a dedicated keychain was
+  blocked by this session's permission policy, so nothing was created. It
+  remains the human's decision. Until then, every new ad-hoc build needs one
+  fresh grant.
+- **`acceptFirstMouse` on the popup.** It was tested and dropped. With clean
+  modifiers, Expand, Collapse and Close work without it. The earlier failure
+  was a Control-click from the harness.
+
+### Live evidence
+
+These runs used the debug root at the same source. It was started directly,
+so the service inherits the terminal's existing grants. The frozen product
+cannot be live-tested that way. macOS attributes the packaged root and service
+to the `io.github.thiagoross1.hanly` bundle (seen in the TCC log), which is
+correct production behaviour. Its capture therefore needs the human's grant.
+
+**Lab tours** (summaries read first; commit `fea73a9`, clean, Vision observed):
+
+| Run | Result |
+|---|---|
+| `20261015-050500-tour` | Quick: 24/24; median answer 159 ms; cold first answer 6.2 s |
+| `20261015-050610-tour` | Quick, compared with baseline `20261007-194130-tour`: not comparable (plan and protocol differ); raw 23/24 → 24/24 |
+| `20261015-050824-tour` | Story: 175/177; the misses are `누군가` (wrong lemma) and `드리다` (alternate reading), both engine-level |
+
+**Frame race (`ccf230d`).** WindowServer frames were sampled every 3 ms through
+two tours: 24 shows, then 168 shows over adjacent story words. There were
+zero frame changes while a popup was visible, and no show reused the
+previous answer's rectangle or origin. Every first visible frame was final.
+
+**Authored Safari page.** All words were read through AX frames. Every result
+held with Safari frontmost.
+
+| Check | Result |
+|---|---|
+| ⌃⌘R | `native_hotkey_edge` press/release; capture starts and stops |
+| ⌃⌘P | Hover pauses (no popup) and resumes |
+| ⌃⌘H in push-to-hover (product default) | A held, stationary pointer opens the answer, which stays readable after release. When capture is stopped, a press is ignored by design |
+| Adjacent words, ×3 each way, plus 4 rapid sweeps | Popup in 0.24–0.29 s, frame correct for each word |
+| Lower-third word | Card bottom 706 above word top 709; Expand grows upward to 460×539 with the bottom unchanged |
+| Expand / Collapse / Close | 340→460→340, anchored; Close hides in 0.03 s |
+| Right-click on blank popup space | No menu (`e7ef391`) |
+| Latin word | No popup |
+| Canvas word (no AX text) | Direct text `unsupported` → OCR → popup |
+| Safari DOM text | Direct text `unsupported` → OCR. This matches `mac-campaign-2026-09-21` ("Safari: 0 direct") |
+| TextEdit (authored RTF) | 2 of 3 words read directly (no capture, no OCR); the first was the discarded cold AX call |
+| Tray | Reads "Start capture" when stopped and "Stop capture" when running |
+| Quit | Tray Quit exits 0 in 1.0 s; SIGTERM exits 0 in 0.7 s; no root, service or lookup process remains |
+
+The previously recorded 0.9 s shortcut-word misses did not recur. In the
+runs above, every warm target answered.
+
+**Harness artefacts, not product defects.**
+- Hanly was launched from a background process, which macOS's cooperative
+  activation refuses. The Control Center's launch request to take focus was
+  then honoured at the first popup click. That brought the Control Center in
+  front of Safari, and a canvas lookup read Hanly's own window (`EMPTY`).
+- With Safari activated per trial, no popup click took focus, measured
+  between mouse-down and mouse-up.
+
+A real launch activates Hanly immediately, so this sequence does not arise.
+
+### Final build
+
+- Build `20284932-80c5-4086-9015-5092705d6714` from
+  `e7ef391f8adb3be72851f855d9bf2da94e596df2`.
+- ZIP SHA-256 `3d5cf2578208cb887b2ac733c810bb07dd10f84fcaeb2adbaaeaf46803dfd35e`.
+- DMG SHA-256 `bc0a09e02915285dd2da6a78419546fceaad508b11b7a2680dc2c337051f5fe7`.
+- Ad-hoc signature, `designated => cdhash H"70ed70a16dc3019c4ff98e00943ea18e6c35a5c9"`.
+- All seven packaged checks pass, and both archives verify (3,748 entries;
+  inventory and strict signatures).
+- No `dist` DMG was left attached on this build.
+
+The intermediate builds were:
+- `ef5503aa` (`63e988b`): 7/7 on the second run. Its first run lost one
+  SIGTERM in the native-UI check and left a test root; that root then
+  exited on a manual SIGTERM.
+- `135355e5` (`d9a7520`): 6/7, then the helper test fix above; the fixed
+  check passed 3/3.
+
+Installed state:
+- `/Applications/Hanly.app` is this build.
+- The two mounted 0.1.2 installer volumes were ejected; the `.dmg` stays in
+  `~/Downloads`.
+- LaunchServices was cleaned so that only `/Applications/Hanly.app` is
+  registered. A rebuilt debug bundle registers itself again.
+
+### Remaining
+
+1. **The human:** in Hanly → Permissions, use Grant access for Screen
+   Recording and Accessibility. If the old entry is still switched on,
+   remove it with − first, because it belongs to `284bd3e3`. Then quit and
+   reopen Hanly. No TCC reset.
+2. **The human:** press ⌃⌘H, ⌃⌘P and ⌃⌘R on the physical keyboard once.
+   Synthetic HID chords are verified above; physical input is not.
+3. Optional: decide on a stable local signing identity so later rebuilds
+   keep the grant.
+
+Deferred, not blocking: Playwright over `preview/`, Windows/Linux native
+acceptance, and Developer ID signing. No push, merge or tag.

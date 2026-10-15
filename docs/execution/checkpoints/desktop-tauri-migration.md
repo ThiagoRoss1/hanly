@@ -1,5 +1,31 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Live acceptance pass — final build installed (2026-10-15)
+
+- Product commit **e7ef391f8adb3be72851f855d9bf2da94e596df2**, build
+  **20284932-80c5-4086-9015-5092705d6714**. ZIP `3d5cf257…dfd35e`, DMG
+  `bc0a09e0…f5fe7`. Installed as `/Applications/Hanly.app`, and only that
+  copy is registered with LaunchServices.
+- Passed:
+  - all 7 packaged checks;
+  - ZIP and DMG verification;
+  - three Lab tours (24/24, 24/24, 175/177);
+  - a 3 ms frame sample over 192 shows (zero stale frames);
+  - every live Safari/TextEdit, shortcut, tray and quit check, on the
+    debug root at the same source.
+- Fixed:
+  - the CI failures (rustfmt toolchain component; mypy on Linux);
+  - a flaky packaged check;
+  - the popup's WebKit context menu, which blocked the event loop;
+  - the Grant access label, and a hint for stale entries.
+- Root cause of "granted but required": the enabled TCC entries belong to
+  build `284bd3e3` (`cdhash 1e6db425…`). Each ad-hoc build is a new
+  identity. Creating a stable local signing identity was blocked by this
+  session's policy and remains the human's decision.
+- Open:
+  - the human's one-time grant on this build (remove the old entry first);
+  - one physical press each of ⌃⌘H, ⌃⌘P and ⌃⌘R.
+
 ## Phase B follow-up — built and headless-verified (2026-10-15)
 
 - Product commit **acd3c2841d9bfd8e96e16f456f141c6a8f39fead**, build
