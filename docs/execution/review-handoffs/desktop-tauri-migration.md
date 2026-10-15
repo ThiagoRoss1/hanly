@@ -4,9 +4,9 @@
 commit `e7ef391` is built as `20284932-80c5-4086-9015-5092705d6714` and
 installed as `/Applications/Hanly.app`. All seven packaged checks and both
 archive verifications pass. The live popup, shortcut, tray, Safari/TextEdit
-and quit checks pass on the debug build of the same source. Only two things
-are still open: the human's one-time grant for this build, and physical
-keyboard confirmation. See "Live acceptance pass" at the end.
+and quit checks pass on the debug build of the same source. The human
+granted the installed build at 17:47; tccd confirms it. Only physical
+keyboard confirmation is still open. See "Live acceptance pass" at the end.
 
 **Earlier status — 2026-10-15, after Phase B follow-up.** Product commit
 `acd3c28` is built as `44161ec2-7c78-4765-a996-a231953b4f18`. It passes the
@@ -1199,10 +1199,11 @@ Installed state:
 
 ### Remaining
 
-1. **The human:** in Hanly → Permissions, use Grant access for Screen
-   Recording and Accessibility. If the old entry is still switched on,
-   remove it with − first, because it belongs to `284bd3e3`. Then quit and
-   reopen Hanly. No TCC reset.
+1. Done by the human: the stale `284bd3e3` entries were removed and the
+   installed build (cdhash `70ed70a1…`) was granted from Hanly's Permissions
+   page. tccd at 17:47:22 allowed Screen Recording, Accessibility and Input
+   Monitoring for `/Applications/Hanly.app` (`authValue=2, authReason=4`).
+   No TCC reset was used.
 2. **The human:** press ⌃⌘H, ⌃⌘P and ⌃⌘R on the physical keyboard once.
    Synthetic HID chords are verified above; physical input is not.
 3. Optional: decide on a stable local signing identity so later rebuilds
