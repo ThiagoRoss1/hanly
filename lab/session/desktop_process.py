@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, BinaryIO, Protocol
+from typing import IO, Any, Protocol
 
 import psutil
 
@@ -64,7 +64,7 @@ class _DesktopProcess(Protocol):
     """Process operations shared by direct children and LaunchServices roots."""
 
     pid: int
-    stdout: BinaryIO | None
+    stdout: IO[bytes] | None
 
     @property
     def returncode(self) -> int | None: ...
@@ -91,7 +91,7 @@ class _LaunchServicesProcess:
         self._root = root
         self._launcher = launcher
         self.pid = root.pid
-        self.stdout: BinaryIO | None = None
+        self.stdout: IO[bytes] | None = None
 
     @property
     def returncode(self) -> int | None:
@@ -322,6 +322,8 @@ class DesktopProcess:
         )
 
     def _start_with_launch_services(self, command: list[str]) -> None:
+        if sys.platform == "win32":
+            raise RuntimeError("LaunchServices launches exist only on macOS")
         bundle = _app_bundle_for_executable(self.executable)
         if bundle is None:
             raise RuntimeError(
@@ -395,6 +397,8 @@ class DesktopProcess:
     def _release_trace_reader(self) -> None:
         """Pair a blocked FIFO reader with a writer when LaunchServices fails."""
 
+        if sys.platform == "win32":
+            return
         fifo = self._trace_fifo
         reader = self._reader
         if fifo is None or reader is None or not reader.is_alive():
@@ -528,7 +532,7 @@ class DesktopProcess:
             return
         self._consume_trace(stdout_stream)
 
-    def _consume_trace(self, stream: BinaryIO) -> None:
+    def _consume_trace(self, stream: IO[bytes]) -> None:
         while True:
             line = stream.readline(MAX_TRACE_LINE_BYTES + 1)
             if not line:
