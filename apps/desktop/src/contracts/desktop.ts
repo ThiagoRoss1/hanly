@@ -167,6 +167,7 @@ export interface PopupContent {
 export interface PopupPayload extends PopupContent {
   content?: PopupContent;
   position?: { x: number; y: number };
+  band?: { top: number; bottom: number };
   size?: { width: number; height: number };
   expanded?: boolean;
   replacement?: boolean;

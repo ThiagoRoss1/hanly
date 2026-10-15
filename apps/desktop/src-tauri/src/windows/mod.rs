@@ -14,6 +14,8 @@ pub struct Presentation {
     pub visible: bool,
     pub region: Option<Value>,
     applied_theme: Option<Option<tauri::Theme>>,
+    /// The side a presented answer took; expansion keeps it.
+    placed_above: Option<bool>,
     queued: bool,
     state_pending: bool,
     popup_pending: bool,
@@ -88,6 +90,9 @@ pub fn event(
             };
             state.sequence = sequence;
             state.visible = name == "popup";
+            if name == "popup_hide" || payload["replacement"].as_bool() != Some(false) {
+                state.placed_above = None;
+            }
             state.popup = Some(json!({"type":name,"sequence":sequence,"payload":payload}));
             state.popup_pending = true;
         }
@@ -237,7 +242,7 @@ fn apply_popup_action(
     method: &str,
     params: &Value,
 ) -> Result<Value, BridgeError> {
-    let (message, service_sequence, payload) = {
+    let (message, service_sequence, payload, placed_above) = {
         let mut state = presentation.lock().expect("presentation");
         let service_sequence = popup_service_sequence(&state, params)?;
         let message = match method {
@@ -260,7 +265,7 @@ fn apply_popup_action(
             .popup
             .as_ref()
             .map(|message| message["payload"].clone());
-        (message, service_sequence, payload)
+        (message, service_sequence, payload, state.placed_above)
     };
 
     match method {
@@ -273,8 +278,14 @@ fn apply_popup_action(
             let height = params["height"].as_f64().ok_or_else(window_error)?;
             let payload = payload.ok_or_else(window_error)?;
             let (x, y, _, _) = popup_geometry(&payload)?;
-            let (x, y) = fit_measured_popup(window, x, y, width, height)?;
+            let band = popup_band(&payload)?;
+            let ((x, y), above) =
+                fit_measured_popup(window, (x, y), (width, height), band, placed_above)?;
             crate::platform::present_popup_frame(window, x, y, width, height)?;
+            let mut state = presentation.lock().expect("presentation");
+            if state.visible && params["sequence"].as_u64() == Some(state.sequence) {
+                state.placed_above = above;
+            }
         }
         // The frontend follows expansion with its measured geometry command.
         "popup_expand" => {}
@@ -300,26 +311,48 @@ fn popup_service_sequence(state: &Presentation, params: &Value) -> Result<u64, B
         .ok_or_else(window_error)
 }
 
+type Placement = ((f64, f64), Option<bool>);
+
 fn fit_measured_popup(
     window: &WebviewWindow,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-) -> Result<(f64, f64), BridgeError> {
+    (x, y): (f64, f64),
+    size: (f64, f64),
+    band: Option<(f64, f64)>,
+    above: Option<bool>,
+) -> Result<Placement, BridgeError> {
     for monitor in window.available_monitors().map_err(|_| window_error())? {
         let origin = monitor.position().to_logical::<f64>(monitor.scale_factor());
-        let size = monitor.size().to_logical::<f64>(monitor.scale_factor());
-        if x >= origin.x && x < origin.x + size.width && y >= origin.y && y < origin.y + size.height
+        let extent = monitor.size().to_logical::<f64>(monitor.scale_factor());
+        if x >= origin.x
+            && x < origin.x + extent.width
+            && y >= origin.y
+            && y < origin.y + extent.height
         {
-            return Ok(fit_position(
-                (x, y),
-                (width, height),
-                (origin.x, origin.y, size.width, size.height),
-            ));
+            let bounds = (origin.x, origin.y, extent.width, extent.height);
+            return Ok(place_measured((x, y), size, bounds, band, above));
         }
     }
-    Ok((x, y))
+    Ok(((x, y), above))
+}
+
+/// Put the measured card beside the word band, keeping a side already chosen.
+fn place_measured(
+    (x, y): (f64, f64),
+    size: (f64, f64),
+    bounds: (f64, f64, f64, f64),
+    band: Option<(f64, f64)>,
+    above: Option<bool>,
+) -> Placement {
+    let Some((band_top, band_bottom)) = band else {
+        return (fit_position((x, y), size, bounds), above);
+    };
+    let above = above.unwrap_or(band_bottom.floor() + size.1 > bounds.1 + bounds.3);
+    let y = if above {
+        (band_top - size.1).floor()
+    } else {
+        band_bottom.floor()
+    };
+    (fit_position((x, y), size, bounds), Some(above))
 }
 
 fn fit_position(
@@ -350,6 +383,24 @@ fn popup_geometry(payload: &Value) -> Result<(f64, f64, f64, f64), BridgeError> 
         coordinate(&payload["size"]["width"], 1.0, 1000.0)?,
         coordinate(&payload["size"]["height"], 1.0, 1000.0)?,
     ))
+}
+
+fn popup_band(payload: &Value) -> Result<Option<(f64, f64)>, BridgeError> {
+    let band = &payload["band"];
+    if band.is_null() {
+        return Ok(None);
+    }
+    let edge = |value: &Value| {
+        value
+            .as_f64()
+            .filter(|v| v.is_finite() && (-100_000.0..=100_000.0).contains(v))
+            .ok_or_else(window_error)
+    };
+    let (top, bottom) = (edge(&band["top"])?, edge(&band["bottom"])?);
+    if top > bottom {
+        return Err(window_error());
+    }
+    Ok(Some((top, bottom)))
 }
 
 fn allowed_navigation(url: &tauri::Url) -> bool {
@@ -385,6 +436,38 @@ mod tests {
         assert_eq!(
             fit_position((40.5, 54.5), (340.0, 219.0), (0.0, 0.0, 1440.0, 900.0)),
             (40.5, 54.5)
+        );
+    }
+
+    #[test]
+    fn measured_answer_never_covers_its_word_and_expansion_keeps_its_side() {
+        let screen = (0.0, 0.0, 1440.0, 900.0);
+        // Estimated 180pt placed this below; the measured 282pt card cannot fit.
+        let word = Some((614.0, 646.0));
+        assert_eq!(
+            place_measured((100.0, 646.0), (340.0, 282.0), screen, word, None),
+            ((100.0, 332.0), Some(true))
+        );
+        // Expanding keeps the chosen side, growing away from the word.
+        assert_eq!(
+            place_measured((100.0, 332.0), (460.0, 420.0), screen, word, Some(true)),
+            ((100.0, 194.0), Some(true))
+        );
+        // Room below keeps the card directly under the word.
+        assert_eq!(
+            place_measured(
+                (100.0, 526.0),
+                (340.0, 282.0),
+                screen,
+                Some((494.0, 526.0)),
+                None
+            ),
+            ((100.0, 526.0), Some(false))
+        );
+        // Older payloads without a band retain plain display clamping.
+        assert_eq!(
+            place_measured((100.0, 800.0), (340.0, 282.0), screen, None, None),
+            ((100.0, 618.0), None)
         );
     }
 

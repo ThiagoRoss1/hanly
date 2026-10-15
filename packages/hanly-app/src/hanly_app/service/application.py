@@ -330,6 +330,7 @@ class DesktopService:
         self._popup_request_id: int | None = None
         self._popup_presented = False
         self._popup_position: PopupPosition | None = None
+        self._popup_band: tuple[float, float] | None = None
         self._popup_size = PopupSize()
         self._popup_expanded = False
         self._popup_actual_rect: ScreenRect | None = None
@@ -1181,14 +1182,17 @@ class DesktopService:
         )
         popup_controller = PopupController(_PopupModelView(), popup_size=size)
         position = popup_controller.open(result, cursor, screen, anchor=anchor)
+        band = popup_controller.vertical_band(cursor, anchor)
         if not replacement and self._popup_position is not None:
             # Expanding an answer must not relocate it to the footer's cursor.
             position = self._popup_position
+            band = self._popup_band or band
         if replacement:
             self._popup_presented = False
         self._popup_result = result
         self._popup_request_id = request_id
         self._popup_position = position
+        self._popup_band = band
         self._popup_size = size
         self._popup_expanded = expanded
         self._popup_sequence += 1
@@ -1201,6 +1205,9 @@ class DesktopService:
                 "replacement": replacement,
                 "content": _plain(content),
                 "position": {"x": position.x, "y": position.y},
+                # The native host places the measured card against this band,
+                # so a taller answer never covers the word it explains.
+                "band": {"top": band[0], "bottom": band[1]},
                 "size": {"width": size.width, "height": size.height},
                 "expanded": expanded,
                 "technical_details": config.technical_details.value,

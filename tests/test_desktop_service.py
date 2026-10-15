@@ -130,6 +130,8 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         service._show_popup(result, 9)
         assert published[-1][1]["replacement"] is True
         original_position = published[-1][1]["position"]
+        # The word spans y 30-50; the native host places measured cards beside it.
+        assert published[-1][1]["band"] == {"top": 24, "bottom": 56}
         assert events == []
         assert geometry(1) == {"accepted": True}
         assert [(event["event_kind"], event["lookup_request_id"]) for event in events] == [
@@ -143,6 +145,7 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         service._popup_sync("service.popup_expand", {"sequence": 1, "expanded": True})
         assert published[-1][1]["replacement"] is False
         assert published[-1][1]["position"] == original_position
+        assert published[-1][1]["band"] == {"top": 24, "bottom": 56}
         assert service._popup_sequence == 2
         assert geometry(1) == {"accepted": False, "stale": True}
         geometry(2)
