@@ -693,6 +693,7 @@ describe("desktop React routes", () => {
     await user.click(screen.getByRole("button", { name: "Permissions" }));
 
     expect(screen.getByText("Before Hanly can read")).toBeTruthy();
+    expect(screen.getByText(/belongs to an earlier copy of Hanly/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Grant access" }));
 
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {

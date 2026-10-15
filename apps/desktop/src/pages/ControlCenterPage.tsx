@@ -1071,6 +1071,11 @@ function PermissionsPage({
                   Grant the required desktop access, then return here and
                   recheck.
                 </span>
+                <span>
+                  Already switched on in System Settings? That entry belongs
+                  to an earlier copy of Hanly. Remove it with −, then use Grant
+                  access again.
+                </span>
               </div>
             )}
             <div className="panel-rows">
