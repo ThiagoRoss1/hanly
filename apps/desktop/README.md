@@ -20,8 +20,7 @@ settings and resource paths, and the `hanly-desktop` executable name. Its
 Python service is packaged under `resources/hanly-service/` on Windows and
 Linux, or `Contents/Resources/hanly-service/` inside `Hanly.app`. The build
 inventory rejects missing provider inputs and Qt, WebEngine, pywebview, or
-pystray runtime payloads. PyQt is a developer-only Lab dependency, installed
-from the `lab` dependency group when running Lab's native page tests.
+pystray runtime payloads.
 
 ## Source development
 
@@ -63,14 +62,7 @@ Safari for WebKit-faithful metrics. It checks layout and content only: native
 frames, clipping, focus, shortcuts and permissions need the real desktop app.
 Vite builds only `index.html`, so the preview never ships.
 
-The native Lab page test needs the separate developer-only UI dependency:
-
-```sh
-python -m pip install --group lab
-```
-
-The normal `dev` and `runtime` dependency sets do not install PyQt or other
-production UI frameworks.
+The `dev` and `runtime` dependency sets install no Python UI framework.
 
 ## Build and validate the product
 
