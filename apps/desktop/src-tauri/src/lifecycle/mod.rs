@@ -26,7 +26,7 @@ struct Channel {
 /// Owns the private service process and resolves every outstanding request at disconnect.
 pub struct Service {
     channel: Arc<Mutex<Channel>>,
-    child: Arc<Mutex<Child>>,
+    family: Arc<Mutex<Family>>,
     #[cfg(windows)]
     job: Arc<Mutex<Option<windows_job::WindowsJob>>>,
     next_id: AtomicU64,
@@ -70,7 +70,6 @@ impl Service {
                 return Err(error);
             }
         };
-        let group_pid = child.id();
         let mut input = child.stdin.take().expect("piped service stdin");
         let output = child.stdout.take().expect("piped service stdout");
         let (writer, writes) = mpsc::sync_channel::<Vec<u8>>(MAX_PENDING);
@@ -88,7 +87,10 @@ impl Service {
                 )
             }),
         }));
-        let child = Arc::new(Mutex::new(child));
+        let family = Arc::new(Mutex::new(Family {
+            child,
+            reaped: false,
+        }));
 
         let write_channel = channel.clone();
         let writer_thread = thread::spawn(move || {
@@ -158,7 +160,7 @@ impl Service {
             }
         });
         let watch_channel = channel.clone();
-        let watch_child = child.clone();
+        let watch_family = family.clone();
         #[cfg(windows)]
         let watch_job = job.clone();
         let watcher_thread = thread::spawn(move || loop {
@@ -166,29 +168,26 @@ impl Service {
                 let state = watch_channel.lock().expect("service channel");
                 (state.stopped, state.failure.is_some())
             };
-            let mut child = watch_child.lock().expect("service process");
+            let mut family = watch_family.lock().expect("service process");
             // A wedged writer or a malformed service must not keep the family alive.
             if failed && !stopped {
                 #[cfg(windows)]
                 watch_job.lock().expect("service job").take();
-                terminate_family(group_pid, &mut child);
+                family.terminate();
             }
-            match child.try_wait() {
-                Ok(Some(_)) | Err(_) => {
-                    #[cfg(windows)]
-                    watch_job.lock().expect("service job").take();
-                    terminate_family(group_pid, &mut child);
-                    fail(&watch_channel, disconnected());
-                    break;
-                }
-                Ok(None) => {}
+            if family.reap_if_exited() {
+                drop(family);
+                #[cfg(windows)]
+                watch_job.lock().expect("service job").take();
+                fail(&watch_channel, disconnected());
+                break;
             }
-            drop(child);
+            drop(family);
             thread::sleep(Duration::from_millis(20));
         });
         Ok(Self {
             channel,
-            child,
+            family,
             #[cfg(windows)]
             job,
             next_id: AtomicU64::new(1),
@@ -275,25 +274,15 @@ impl Service {
         }
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let mut child = self.child.lock().expect("service process");
-            if matches!(child.try_wait(), Ok(Some(_))) {
+            let mut family = self.family.lock().expect("service process");
+            if family.reap_if_exited() {
                 break;
             }
             if Instant::now() >= deadline {
-                terminate_family(child.id(), &mut child);
-                let _ = child.wait();
-                break;
+                family.terminate();
             }
-            drop(child);
+            drop(family);
             thread::sleep(Duration::from_millis(20));
-        }
-        #[cfg(unix)]
-        {
-            let pid = self.child.lock().expect("service process").id();
-            // Detached update helpers have their own session; only service/lookup descendants share this group.
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
-            }
         }
         #[cfg(windows)]
         self.job.lock().expect("service job").take();
@@ -310,12 +299,70 @@ impl Drop for Service {
     }
 }
 
-fn terminate_family(pid: u32, child: &mut Child) {
-    #[cfg(unix)]
+/// The service process and, on Unix, the process group it leads.
+struct Family {
+    child: Child,
+    reaped: bool,
+}
+
+impl Family {
+    fn terminate(&mut self) {
+        // After reaping, the PID and group ID may already name another process.
+        if self.reaped {
+            return;
+        }
+        #[cfg(unix)]
+        kill_group(self.child.id());
+        let _ = self.child.kill();
+    }
+
+    /// Reap an exited leader once, first ending descendants left in its group.
+    fn reap_if_exited(&mut self) -> bool {
+        if self.reaped {
+            return true;
+        }
+        #[cfg(unix)]
+        let exited = leader_exited(self.child.id());
+        #[cfg(not(unix))]
+        let exited = !matches!(self.child.try_wait(), Ok(None));
+        if exited {
+            // Detached update helpers have their own session; only service/lookup
+            // descendants share this group. Its zombie leader still reserves the ID.
+            #[cfg(unix)]
+            {
+                kill_group(self.child.id());
+                let _ = self.child.wait();
+            }
+            self.reaped = true;
+        }
+        exited
+    }
+}
+
+#[cfg(unix)]
+fn kill_group(pid: u32) {
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);
     }
-    let _ = child.kill();
+}
+
+/// Whether the leader has exited, leaving it unreaped (`WNOWAIT`).
+#[cfg(unix)]
+fn leader_exited(pid: u32) -> bool {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let status = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if status == 0 {
+        // WNOHANG leaves the zeroed record untouched while the leader is running.
+        return info.si_signo == libc::SIGCHLD;
+    }
+    std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
 }
 
 fn fail(channel: &Mutex<Channel>, error: BridgeError) {
@@ -511,7 +558,7 @@ mod tests {
             "service.hello"
         );
         service.stop();
-        assert!(service.child.lock().unwrap().try_wait().unwrap().is_some());
+        assert!(service.family.lock().unwrap().reaped);
         assert!(service.request("host", "service.hello", json!({})).is_err());
     }
 
@@ -528,7 +575,7 @@ mod tests {
             "protocol_error"
         );
         service.stop();
-        assert!(service.child.lock().unwrap().try_wait().unwrap().is_some());
+        assert!(service.family.lock().unwrap().reaped);
     }
 
     #[test]
@@ -544,7 +591,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "service_timeout");
         service.stop();
-        assert!(service.child.lock().unwrap().try_wait().unwrap().is_some());
+        assert!(service.family.lock().unwrap().reaped);
     }
 
     #[test]
@@ -557,6 +604,27 @@ mod tests {
                 .code,
             "service_disconnected"
         );
+        service.stop();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exited_leader_takes_its_group_and_tolerates_repeated_stop() {
+        let service = fixture("import json,subprocess,sys\nr=json.loads(sys.stdin.readline())\np=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])\nprint(json.dumps({'version':1,'type':'reply','id':r['id'],'result':{'pid':p.pid}}),flush=True)");
+        let orphan = service.request("host", "service.hello", json!({})).unwrap()["pid"]
+            .as_i64()
+            .unwrap() as libc::pid_t;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.connected() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(service.family.lock().unwrap().reaped);
+        // The re-parented descendant is reaped by init/launchd once killed.
+        while unsafe { libc::kill(orphan, 0) } == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_ne!(unsafe { libc::kill(orphan, 0) }, 0);
+        service.stop();
         service.stop();
     }
 
@@ -613,7 +681,7 @@ mod integration_tests {
             "unavailable"
         );
         service.stop();
-        assert!(service.child.lock().unwrap().try_wait().unwrap().is_some());
+        assert!(service.family.lock().unwrap().reaped);
         std::fs::remove_dir_all(profile).unwrap();
     }
 }
