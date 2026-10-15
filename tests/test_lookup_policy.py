@@ -20,6 +20,7 @@ from hanly_app.hotkeys import (
     HotkeyEdge,
     HotkeyEdgeHandler,
     HotkeyService,
+    canonical_hotkey,
 )
 from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import ManualLookupRuntime, create_manual_lookup
@@ -31,8 +32,8 @@ _CAPTURE = CaptureResult(_IMAGE, ScreenRect(20, 30, 2, 1), Point(1.0, 0.5))
 #: drive that path bind one, the way an embedding client would.
 _LOOKUP_HOTKEY = "ctrl+alt+space"
 _LOOKUP_BINDING = "<ctrl>+<alt>+<space>"
-_PUSH_BINDING = "<ctrl>+<shift>+<space>"
-_TOGGLE_BINDING = "<ctrl>+<shift>+<f9>"
+_PUSH_BINDING = canonical_hotkey(AppConfig().hotkey)
+_TOGGLE_BINDING = canonical_hotkey(AppConfig().hover_hotkey)
 
 
 class _Engine:
@@ -512,7 +513,7 @@ def test_changing_a_binding_alone_does_not_disturb_a_running_session() -> None:
     assert engine.calls == []
     assert factory.listener is not None
     assert "<ctrl>+<alt>+k" in factory.listener.callbacks
-    assert manual.hotkeys.bindings[HotkeyAction.TOGGLE_HOVER] == "<ctrl>+<shift>+<f9>"
+    assert manual.hotkeys.bindings[HotkeyAction.TOGGLE_HOVER] == _TOGGLE_BINDING
     manual.shutdown()
 
 

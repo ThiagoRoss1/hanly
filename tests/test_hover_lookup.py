@@ -14,6 +14,7 @@ from hanly_app.hotkeys import (
     HotkeyEdge,
     HotkeyEdgeHandler,
     HotkeyService,
+    canonical_hotkey,
 )
 from hanly_app.hover.lookup import HoverLookupRuntime
 from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
@@ -880,8 +881,9 @@ def test_pausing_capture_clears_the_visible_lookup_popup() -> None:
     assert closed == ["close"]
 
 
-_PUSH = "<ctrl>+<shift>+<space>"
 _PUSH_CONFIG = AppConfig(hover_activation=HoverActivation.PUSH_TO_HOVER)
+_PUSH = canonical_hotkey(_PUSH_CONFIG.hotkey)
+_CAPTURE_BINDING = canonical_hotkey(_PUSH_CONFIG.capture_hotkey)
 
 
 def _push_composition() -> tuple[
@@ -1039,9 +1041,9 @@ def test_the_capture_shortcut_reaches_whoever_owns_the_session() -> None:
     manual.prepare()
     assert hotkeys.listener is not None
 
-    hotkeys.listener.press("<ctrl>+<shift>+<f10>")
+    hotkeys.listener.press(_CAPTURE_BINDING)
     _drain(dispatcher)
-    hotkeys.listener.release("<ctrl>+<shift>+<f10>")
+    hotkeys.listener.release(_CAPTURE_BINDING)
     _drain(dispatcher)
 
     # One tap, one toggle: the release is not a second press.
