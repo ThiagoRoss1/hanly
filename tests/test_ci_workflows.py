@@ -285,6 +285,8 @@ def test_native_ci_runs_rust_format_tests_and_clippy_on_every_platform() -> None
 
     setup = _step(_workflow("ci.yml"), "native", name="Set up Rust")
     assert "rustup toolchain install 1.99.0 --profile minimal" in setup["run"]
+    # The minimal profile ships neither tool the steps below run.
+    assert "--component rustfmt,clippy" in setup["run"]
     assert "rustup default 1.99.0" in setup["run"]
     assert "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check" in commands
     assert "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked" in commands

@@ -94,7 +94,7 @@ jobs:
           node-version: "22"
       - name: Set up Rust
         run: |
-          rustup toolchain install 1.99.0 --profile minimal
+          rustup toolchain install 1.99.0 --profile minimal --component rustfmt,clippy
           rustup default 1.99.0
 
       # Tauri's Linux runtime links WebKitGTK and Ayatana AppIndicator.
