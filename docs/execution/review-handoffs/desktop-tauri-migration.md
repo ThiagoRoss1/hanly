@@ -1,6 +1,13 @@
 # Desktop Tauri Migration Review Handoff
 
-**Current status — 2026-10-15, after the live acceptance pass.** Product
+**Current status — 2026-10-15, grants kept across rebuilds.** Product commit
+`0ac4335` is built as `49d48277-fe83-4bf4-9784-e3f8db5c9126` and installed as
+`/Applications/Hanly.app`. Its designated requirement is the bundle
+identifier, so this is the last build that needs a fresh grant. It needs
+one grant now, and later rebuilds and updates keep it. See "Grants across
+rebuilds" at the end.
+
+**Earlier status — 2026-10-15, after the live acceptance pass.** Product
 commit `e7ef391` is built as `20284932-80c5-4086-9015-5092705d6714` and
 installed as `/Applications/Hanly.app`. All seven packaged checks and both
 archive verifications pass. The live popup, shortcut, tray, Safari/TextEdit
@@ -1208,6 +1215,69 @@ Installed state:
    Synthetic HID chords are verified above; physical input is not.
 3. Optional: decide on a stable local signing identity so later rebuilds
    keep the grant.
+
+Deferred, not blocking: Playwright over `preview/`, Windows/Linux native
+acceptance, and Developer ID signing. No push, merge or tag.
+
+## Grants across rebuilds (2026-10-15)
+
+The human required that rebuilds and updates stop losing the macOS grants,
+without a paid Apple identity. They also reported that the ⌃ shortcuts did not
+work for them. The ⌃ looked like an arrow key, so they rebound the shortcuts
+to ⌘H, ⌘P and ⌘R, which then worked.
+
+### Commit `0ac4335`
+
+- `tools/build_package.py` deep-signs ad hoc as before, then re-signs only the
+  outer bundle with `designated => identifier "io.github.thiagoross1.hanly"`.
+  TCC stores the designated requirement when access is granted. Before this,
+  the requirement was the cdhash, which each rebuild changes. The bundle
+  identifier stays the same across rebuilds and in-place updates. Nested code
+  keeps its own identifiers, because `--deep` would impose this requirement on it.
+- **Trade-off:** any code signed with that identifier satisfies the
+  requirement. Only a Developer ID team requirement closes that gap. This is
+  recorded in `packaging/README.md`.
+- On macOS, shortcut keycaps name each modifier beside its symbol
+  (`⌃ Control`, `⌘ Command`, `⌥ Option`, `⇧ Shift`).
+- A registered one-modifier binding gets a "Used by other apps." warning,
+  because a global shortcut takes the combination from every app while
+  Hanly runs. The one-modifier form is ⌘ + key on macOS and Ctrl + key
+  elsewhere. Bindings are not refused.
+
+### Verification
+
+- Checks: tsc, Node 12/12, UI 42/42, the Vite build, ruff, and mypy
+  (342 files); the packaging and macOS updater tests pass 111/111.
+- Build `49d48277-fe83-4bf4-9784-e3f8db5c9126` from
+  `0ac4335fe9ff019028152c4a0a75e7dfd56b51f8`: ZIP SHA-256
+  `15f6753a175e04b31fd74fcddd04fe18a7257346f4342d58167bb0c1499677ce`, DMG
+  SHA-256 `a3be1ce78e60e9aaea6639107e4686df2a119ce6823677f755de9bba80086aed`.
+  The cdhash is `d5dc4078…`, and the designated requirement is the
+  identifier above.
+- All 7 packaged checks pass. Both archives verify (3,748 entries, with
+  inventory and strict signatures).
+- The build is installed as `/Applications/Hanly.app`. It is the only Hanly
+  copy on disk that LaunchServices knows; the other records point at
+  deleted temporary paths.
+- The debug root that `hanly` runs and the Lab's debug bundle were rebuilt
+  at `0ac4335`, and the two are byte-identical. Only
+  `npm run tauri -- build --debug --bundles app` is needed, because it also
+  writes `target/debug/hanly-desktop`. Running it after a separate
+  `cargo build --features custom-protocol` recompiled every dependency
+  (8 minutes), so that extra step is not worth running.
+
+### Remaining
+
+1. **The human, once:** grant Screen Recording and Accessibility to this
+   build. The 17:47 grant is bound to cdhash `70ed70a1…`, which no later
+   build can satisfy. This is the first grant stored with the identifier
+   requirement.
+2. **To confirm:** after the next rebuild or update, Hanly should show both
+   permissions as granted without asking. A tccd result of `authReason=5`
+   would mean the requirement was not honoured.
+3. The current bindings `cmd+h`, `cmd+p` and `cmd+r` replace Hide, Print
+   and Reload in every app while Hanly runs. The defaults ⌃⌘H, ⌃⌘P and ⌃⌘R
+   use the Control key.
 
 Deferred, not blocking: Playwright over `preview/`, Windows/Linux native
 acceptance, and Developer ID signing. No push, merge or tag.

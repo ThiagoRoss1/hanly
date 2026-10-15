@@ -1,5 +1,18 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Grants kept across rebuilds (2026-10-15)
+
+- Commit **0ac4335** gives the macOS bundle the designated requirement
+  `identifier "io.github.thiagoross1.hanly"` instead of its cdhash, so
+  grants survive rebuilds and updates. It needs no paid identity; the
+  trade-off is in `packaging/README.md`. Shortcut keycaps now name
+  each modifier, and one-modifier bindings get a warning.
+- Build **49d48277-fe83-4bf4-9784-e3f8db5c9126**: ZIP `15f6753a…77ce`, DMG
+  `a3be1ce7…6aed`. It passes all 7 packaged checks and both archive
+  verifications, and is installed as `/Applications/Hanly.app`.
+- Open: the human's last one-time grant on this build, then confirmation
+  that the next rebuild keeps it.
+
 ## Live acceptance pass — final build installed (2026-10-15)
 
 - Product commit **e7ef391f8adb3be72851f855d9bf2da94e596df2**, build
