@@ -319,6 +319,10 @@ class DesktopService:
         self._monitors: list[dict[str, Any]] = []
         self._registered_hotkey_context: dict[str, str] = {}
         self._popup_sequence = 0
+        # Snapshots leave this serialized loop in order; the webview drops one
+        # that arrives after a newer one. A restarted service is a new series.
+        self._state_series = uuid.uuid4().hex
+        self._state_number = 0
         self._popup_result: LookupResult | None = None
         self._popup_request_id: int | None = None
         self._popup_presented = False
@@ -472,8 +476,12 @@ class DesktopService:
         }
 
     def _state(self) -> dict[str, Any]:
-        state = self.bridge.get_state()
+        return self._stamped(self.bridge.get_state())
+
+    def _stamped(self, state: dict[str, Any]) -> dict[str, Any]:
         state["runtime"]["diagnostics"] = state["runtime"].get("diagnostics", [])[-100:]
+        self._state_number += 1
+        state["revision"] = {"series": self._state_series, "number": self._state_number}
         return state
 
     def _logs(self) -> dict[str, Any]:
@@ -529,7 +537,11 @@ class DesktopService:
             raise ServiceError(
                 "service_error", "The desktop operation could not be completed."
             ) from error
-        return result if isinstance(result, dict) else {"accepted": True}
+        if not isinstance(result, dict):
+            return {"accepted": True}
+        if _STATE_SECTIONS <= result.keys() and "revision" not in result:
+            return self._stamped(result)
+        return result
 
     def _prepare_settings(self, changes: object) -> dict[str, Any]:
         if not isinstance(changes, dict):
@@ -1431,6 +1443,10 @@ class DesktopService:
         )
         self._publish_status()
         self._publish_state()
+
+
+#: What makes a bridge reply a full state snapshot rather than an acknowledgement.
+_STATE_SECTIONS = frozenset({"app", "config", "runtime", "updates", "permissions"})
 
 
 def _validate_shortcut_set(config: AppConfig) -> None:

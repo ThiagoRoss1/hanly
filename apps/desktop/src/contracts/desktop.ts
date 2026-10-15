@@ -29,7 +29,14 @@ export interface PermissionItem {
   restart_note?: string;
 }
 
+/** Orders snapshots from one service process; a restarted service starts a new series. */
+export interface StateRevision {
+  series: string;
+  number: number;
+}
+
 export interface HanlyState {
+  revision?: StateRevision;
   app: {
     state: string;
     activity: string;

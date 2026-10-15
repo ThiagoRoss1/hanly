@@ -834,6 +834,16 @@ def test_native_input_reaches_the_prepared_desktop_coordinator(
         stopped = request("get_state", window="control-center")
         assert stopped["app"]["capture_running"] is False
         assert stopped["app"]["state"] == "paused"
+        # Every snapshot, including a bridge method's reply, is ordered within
+        # this service's series so the webview can drop one that arrives late.
+        refreshed = request("refresh_permissions", window="control-center")
+        series = {snapshot["revision"]["series"] for snapshot in (state, stopped, refreshed)}
+        assert len(series) == 1
+        assert (
+            state["revision"]["number"]
+            < stopped["revision"]["number"]
+            < refreshed["revision"]["number"]
+        )
 
         assert request(
             "native.input",

@@ -1,4 +1,8 @@
-import type { DesktopServiceStatus, HanlyState } from "../contracts/desktop.ts";
+import type {
+  DesktopServiceStatus,
+  HanlyState,
+  StateRevision,
+} from "../contracts/desktop.ts";
 
 export interface DesktopStateModel {
   state: HanlyState | null;
@@ -207,6 +211,23 @@ export function isHanlyState(value: unknown): value is HanlyState {
   return true;
 }
 
+function isRevision(value: unknown): value is StateRevision {
+  return (
+    isRecord(value) &&
+    typeof value.series === "string" &&
+    Number.isSafeInteger(value.number)
+  );
+}
+
+/** Events, replies and polls can cross; a snapshot older than the shown one loses. */
+function isOlder(next: HanlyState, current: HanlyState | null): boolean {
+  const a = next.revision;
+  const b = current?.revision;
+  return (
+    isRevision(a) && isRevision(b) && a.series === b.series && a.number < b.number
+  );
+}
+
 export function desktopStateReducer(
   model: DesktopStateModel,
   action: DesktopStateAction,
@@ -218,6 +239,7 @@ export function desktopStateReducer(
         connectionError: "Hanly returned an incomplete desktop state.",
       };
     }
+    if (isOlder(action.payload, model.state)) return model;
     return { ...model, state: action.payload, connectionError: null };
   }
   if (action.type === "service-status") {

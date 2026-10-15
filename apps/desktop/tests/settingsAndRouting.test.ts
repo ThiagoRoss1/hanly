@@ -25,23 +25,25 @@ test("shortcut capture keeps native key names in Hanly's stored format", () => {
   assert.deepEqual(formatHotkey("<ctrl>+<shift>+space", "Win32"), ["ctrl", "shift", "space"]);
 });
 
+const stateFixture = {
+  app: { state: "new", activity: "preparing", detail: "Starting.", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
+  config: {
+    capture_hotkey: "ctrl+shift+f10", capture_mode: "full_monitor", capture_monitor: null, capture_region: null,
+    hotkey: "ctrl+shift+f9", hover_activation: "push_to_hover", hover_delay_ms: 80, hover_hotkey: "ctrl+shift+f8",
+    lookup_preload: "when_capture_starts", ocr_backend: "auto", popup_enabled: true, popup_default_size: "compact",
+    technical_details: "off", theme: "system", update_checks_enabled: true,
+  },
+  runtime: {
+    ocr_provider: null, ocr_backends: ["auto", "easyocr"], app_version: "1.1.0", hover_delay_bounds: { min: 20, max: 2000 },
+    resources: [], status: { phase: "idle", stage: "startup", message: "Starting." }, engine: { state: "sleeping", message: "Not loaded." },
+    hotkeys: {}, log_path: null, diagnostics: ["Service: Hanly desktop service started."],
+  },
+  updates: { available: false, status: "idle", message: "" },
+  permissions: { supported: false, items: [] },
+} satisfies HanlyState;
+
 test("desktop state events validate full snapshots and keep service failures visible", () => {
-  const state = {
-    app: { state: "new", activity: "preparing", detail: "Starting.", capture_running: false, capture_mode: "full_monitor", target: "cursor", region: null, targets: [] },
-    config: {
-      capture_hotkey: "ctrl+shift+f10", capture_mode: "full_monitor", capture_monitor: null, capture_region: null,
-      hotkey: "ctrl+shift+f9", hover_activation: "push_to_hover", hover_delay_ms: 80, hover_hotkey: "ctrl+shift+f8",
-      lookup_preload: "when_capture_starts", ocr_backend: "auto", popup_enabled: true, popup_default_size: "compact",
-      technical_details: "off", theme: "system", update_checks_enabled: true,
-    },
-    runtime: {
-      ocr_provider: null, ocr_backends: ["auto", "easyocr"], app_version: "1.1.0", hover_delay_bounds: { min: 20, max: 2000 },
-      resources: [], status: { phase: "idle", stage: "startup", message: "Starting." }, engine: { state: "sleeping", message: "Not loaded." },
-      hotkeys: {}, log_path: null, diagnostics: ["Service: Hanly desktop service started."],
-    },
-    updates: { available: false, status: "idle", message: "" },
-    permissions: { supported: false, items: [] },
-  } satisfies HanlyState;
+  const state = stateFixture;
   const received = desktopStateReducer(initialDesktopState, { type: "state-received", payload: state });
   assert.deepEqual(received.state, state);
   assert.equal(received.connectionError, null);
@@ -56,6 +58,20 @@ test("desktop state events validate full snapshots and keep service failures vis
   const invalid = desktopStateReducer(failed, { type: "state-received", payload: { app: {} } });
   assert.equal(invalid.state, state);
   assert.equal(invalid.connectionError, "Hanly returned an incomplete desktop state.");
+});
+
+test("a snapshot older than the shown one is dropped, but a restarted service is not", () => {
+  const base = desktopStateReducer(initialDesktopState, { type: "state-received", payload: { app: {} } });
+  const snapshot = (series: string, number: number, running: boolean) => ({
+    ...structuredClone(stateFixture),
+    revision: { series, number },
+    app: { ...stateFixture.app, capture_running: running },
+  });
+  const newer = desktopStateReducer(base, { type: "state-received", payload: snapshot("a", 5, true) });
+  const stale = desktopStateReducer(newer, { type: "state-received", payload: snapshot("a", 4, false) });
+  assert.equal(stale, newer);
+  const restarted = desktopStateReducer(stale, { type: "state-received", payload: snapshot("b", 1, false) });
+  assert.equal(restarted.state?.app.capture_running, false);
 });
 
 test("Mac shortcut labels use native symbols while storage remains portable", () => {
