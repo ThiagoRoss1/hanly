@@ -1134,7 +1134,7 @@ function PermissionCard({
           onClick={onGrant}
           type="button"
         >
-          Open settings
+          Grant access
         </button>
       )}
     </div>

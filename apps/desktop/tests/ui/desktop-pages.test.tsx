@@ -693,7 +693,7 @@ describe("desktop React routes", () => {
     await user.click(screen.getByRole("button", { name: "Permissions" }));
 
     expect(screen.getByText("Before Hanly can read")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(screen.getByRole("button", { name: "Grant access" }));
 
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "grant_permission",
@@ -727,7 +727,7 @@ describe("desktop React routes", () => {
 
     expect(screen.getByText("This platform does not require a separate permission check.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Recheck" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.queryByRole("button", { name: "Open settings" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Grant access" })).toBeNull();
   });
 
   it("confirms full application downloads, shows progress, and expands resource activity", async () => {
