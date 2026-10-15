@@ -318,22 +318,22 @@ pub fn send_context(app: &tauri::AppHandle, service: &Service) -> Result<Value, 
 
 fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
-    let start = MenuItem::with_id(app, "start", "Start capture", true, None::<&str>)?;
-    let pause = MenuItem::with_id(app, "pause", "Pause capture", true, None::<&str>)?;
+    let capture = MenuItem::with_id(app, "capture", "Start capture", true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open Hanly", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Hanly", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&start, &pause, &open, &quit])?;
+    let menu = Menu::with_items(app, &[&capture, &open, &quit])?;
+    app.manage(TrayCapture(capture));
     let mut tray = tauri::tray::TrayIconBuilder::with_id("hanly")
         .menu(&menu)
         .tooltip("Hanly")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => windows::show_control_center(app),
             "quit" => app.exit(0),
-            "start" | "pause" => {
-                let method = if event.id.as_ref() == "start" {
-                    "start_capture"
-                } else {
+            "capture" => {
+                let method = if capture_running(app) {
                     "stop_capture"
+                } else {
+                    "start_capture"
                 };
                 if let Ok(service) = app.state::<DesktopState>().service() {
                     let app = app.clone();
@@ -361,16 +361,23 @@ fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The tray's single capture item, relabelled from each published state.
+struct TrayCapture(tauri::menu::MenuItem<tauri::Wry>);
+
+fn capture_running(app: &tauri::AppHandle) -> bool {
+    app.try_state::<DesktopState>().is_some_and(|state| {
+        state
+            .presentation
+            .lock()
+            .expect("presentation")
+            .state
+            .as_ref()
+            .is_some_and(|s| s["app"]["capture_running"].as_bool() == Some(true))
+    })
+}
+
 fn update_tray(app: &tauri::AppHandle) {
-    let Some(state) = app.try_state::<DesktopState>() else {
-        return;
-    };
-    let presentation = state.presentation.lock().expect("presentation");
-    let running = presentation
-        .state
-        .as_ref()
-        .is_some_and(|s| s["app"]["capture_running"].as_bool() == Some(true));
-    drop(presentation);
+    let running = capture_running(app);
     let app_handle = app.clone();
     // Service reader callbacks must not wait on the native loop during root shutdown.
     let _ = app.run_on_main_thread(move || {
@@ -380,6 +387,13 @@ fn update_tray(app: &tauri::AppHandle) {
             } else {
                 "Hanly — stopped"
             }));
+        }
+        if let Some(item) = app_handle.try_state::<TrayCapture>() {
+            let _ = item.0.set_text(if running {
+                "Stop capture"
+            } else {
+                "Start capture"
+            });
         }
     });
 }
