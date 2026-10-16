@@ -235,3 +235,86 @@ def test_scaling_replicates_pixels_exactly_and_invents_no_detail() -> None:
 
     with Image.open(BytesIO(_png_bytes(roi, 1))) as plain:
         assert plain.size == (3, 2)
+
+
+# -- autorelease ownership ------------------------------------------------------------
+
+
+class _RecordingPool:
+    """Stands in for ``objc.autorelease_pool`` and records what ran inside it."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.active = False
+
+    def __enter__(self) -> None:
+        self.active = True
+        self.events.append("enter")
+
+    def __exit__(self, kind: object, value: object, traceback: object) -> None:
+        self.active = False
+        self.events.append("exit:error" if kind else "exit")
+
+
+class _Observation:
+    def __init__(self, events: list[str], pool: _RecordingPool) -> None:
+        self._events = events
+        self._pool = pool
+
+    def topCandidates_(self, count: int) -> list[object]:
+        self._events.append("normalize:" + ("inside" if self._pool.active else "outside"))
+        candidate = type("Candidate", (), {"string": lambda self: "학교",
+                                            "confidence": lambda self: 0.9})()
+        return [candidate]
+
+    def boundingBox(self) -> object:
+        origin = type("P", (), {"x": 0.1, "y": 0.2})()
+        size = type("S", (), {"width": 0.5, "height": 0.4})()
+        return type("Box", (), {"origin": origin, "size": size})()
+
+
+def _pooled_provider(
+    monkeypatch: pytest.MonkeyPatch, run: object
+) -> tuple[VisionProvider, list[str]]:
+    import hanly.vision_provider as module
+
+    events: list[str] = []
+    pool = _RecordingPool(events)
+    monkeypatch.setattr(module, "_autorelease_pool", lambda: pool)
+    provider = VisionProvider()
+    monkeypatch.setattr(provider, "_load", lambda: (object(), object()))
+    monkeypatch.setattr(provider, "_payload", lambda image: b"png")
+    monkeypatch.setattr(provider, "_run", lambda *args: run(events, pool))  # type: ignore[operator]
+    return provider, events
+
+
+def test_recognition_and_normalization_share_one_drained_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker thread has no pool of its own; normalization reads the native
+    observations, so it must happen before the pool that owns them drains."""
+
+    def run(events: list[str], pool: _RecordingPool) -> list[_Observation]:
+        events.append("run:" + ("inside" if pool.active else "outside"))
+        return [_Observation(events, pool)]
+
+    provider, events = _pooled_provider(monkeypatch, run)
+
+    results = provider.recognize(_roi(10, 10))
+
+    assert events == ["enter", "run:inside", "normalize:inside", "exit"]
+    # Plain values survive the drain.
+    assert results[0].text == "학교" and isinstance(results[0].text, str)
+    assert results[0].quad.p1.x == pytest.approx(1.0)
+
+
+def test_a_failed_recognition_still_drains_its_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(events: list[str], pool: _RecordingPool) -> list[_Observation]:
+        events.append("run")
+        raise RuntimeError("Vision refused")
+
+    provider, events = _pooled_provider(monkeypatch, run)
+
+    with pytest.raises(VisionProviderError, match="Vision recognition failed"):
+        provider.recognize(_roi(10, 10))
+    assert events == ["enter", "run", "exit:error"]

@@ -16,8 +16,38 @@ from hanly.vision_provider import (
     _PIXEL_MODES,
     VisionConfig,
     VisionProvider,
+    VisionProviderError,
+    _normalize,
     _png_bytes,
 )
+
+
+class UnpooledVision(VisionProvider):
+    """The provider exactly as it was before its autorelease pool (2026-10-16).
+
+    Kept so the pooled provider can be measured against its predecessor
+    back to back, under identical conditions, without switching checkouts.
+    """
+
+    def recognize(self, image: Any) -> tuple[Any, ...]:
+        request_class, handler_class = self._load()
+        try:
+            payload = self._payload(image)
+        except Exception as exc:
+            raise VisionProviderError(f"Vision input conversion failed: {exc}") from exc
+        try:
+            observations = self._run(request_class, handler_class, payload)
+        except VisionProviderError:
+            raise
+        except Exception as exc:
+            raise VisionProviderError(f"Vision recognition failed: {exc}") from exc
+        results = [
+            normalized
+            for observation in observations
+            if (normalized := _normalize(observation, image)) is not None
+        ]
+        results.sort(key=lambda result: (result.quad.p1.y, result.quad.p1.x))
+        return tuple(results)
 
 
 class RequestReuseVision(VisionProvider):
@@ -52,14 +82,13 @@ class RawImageVision(VisionProvider):
     normalized against the unscaled ROI exactly as before.
     """
 
-    def recognize(self, image: Any) -> Any:
-        self._raw_image = image
-        return super().recognize(image)
+    def _payload(self, image: Any) -> Any:
+        return _scaled_rgb(image, self._config.input_scale)
 
-    def _run(self, request_class: Any, handler_class: Any, payload: bytes) -> Sequence[Any]:
+    def _run(self, request_class: Any, handler_class: Any, payload: Any) -> Sequence[Any]:
         import Quartz
 
-        width, height, rgb = _scaled_rgb(self._raw_image, self._config.input_scale)
+        width, height, rgb = payload
         provider = Quartz.CGDataProviderCreateWithData(None, rgb, len(rgb), None)
         cg_image = Quartz.CGImageCreate(
             width, height, 8, 24, width * 3,
@@ -99,8 +128,9 @@ def _scaled_rgb(image: Any, scale: int) -> tuple[int, int, bytes]:
 
 #: Name in a plan → factory. ``product`` is the shipped provider itself.
 VARIANTS: dict[str, Callable[[], Any]] = {
+    "unpooled": UnpooledVision,
     "request_reuse": RequestReuseVision,
     "raw_image": RawImageVision,
 }
 
-__all__ = ["VARIANTS", "RawImageVision", "RequestReuseVision", "_png_bytes"]
+__all__ = ["VARIANTS", "RawImageVision", "RequestReuseVision", "UnpooledVision", "_png_bytes"]

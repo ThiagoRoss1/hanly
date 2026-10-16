@@ -333,11 +333,26 @@ class _Face:
 
     @classmethod
     def discover(cls) -> _Face:
+        """The first installed Hangul face, or the one ``HANLY_LAB_FACE`` names.
+
+        A named face that is not installed is an error: substituting another
+        would make two machines' results look comparable when they are not.
+        """
+
+        import os
+
         from .synthetic_ocr import discover_faces
 
         faces = discover_faces()
         if not faces:
             raise RuntimeError("no installed face draws Hangul")
+        wanted = os.environ.get("HANLY_LAB_FACE", "").strip().lower()
+        if wanted:
+            matching = [face for face in faces if wanted in face.family.lower()]
+            if not matching:
+                names = sorted({face.family for face in faces})
+                raise RuntimeError(f"HANLY_LAB_FACE={wanted!r} is not installed; found {names}")
+            faces = matching
         face = faces[0]
         return cls(face.path, face.index, f"{face.family}#{face.index}")
 

@@ -80,3 +80,43 @@ def test_doubling_does_not_change_where_a_region_is_reported() -> None:
     assert abs(plain[0].quad.p1.x - doubled[0].quad.p1.x) <= 2
     assert abs(plain[0].quad.p1.y - doubled[0].quad.p1.y) <= 2
 
+
+def test_recognition_on_the_lookup_worker_thread_drains_its_own_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lookup child recognizes on a worker thread, which has no pool of
+    its own; the provider must bring one, and its results must outlive it."""
+
+    pytest.importorskip("PIL")
+    import threading
+
+    import hanly.vision_provider as module
+    import objc
+    from PIL import Image, ImageDraw, ImageFont
+
+    entered: list[str] = []
+    real = module._autorelease_pool
+
+    def recording() -> object:
+        entered.append(threading.current_thread().name)
+        return real()
+
+    monkeypatch.setattr(module, "_autorelease_pool", recording)
+    font = ImageFont.truetype("/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttc", 40)
+    canvas = Image.new("RGB", (360, 120), "white")
+    ImageDraw.Draw(canvas).text((40, 30), "학교에서", font=font, fill="black")
+    roi = ROIImage(canvas.width, canvas.height, PixelFormat.RGB_888, canvas.tobytes())
+    provider = VisionProvider()
+    outcome: list[object] = []
+    worker = threading.Thread(
+        target=lambda: outcome.append(provider.recognize(roi)), name="hanly-lookup-worker"
+    )
+    worker.start()
+    worker.join(30)
+
+    assert entered == ["hanly-lookup-worker"]
+    results = outcome[0]
+    assert isinstance(results, tuple) and results
+    # Read after the pool drained: plain Python values, not native proxies.
+    assert type(results[0].text) is str and results[0].text.strip() == "학교에서"
+    assert not isinstance(results[0].text, objc.pyobjc_unicode)
