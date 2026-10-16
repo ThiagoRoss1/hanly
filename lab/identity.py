@@ -46,6 +46,7 @@ KINDS = (
     "real_hover",
     "live_hover",
     "update_check",
+    "resource_attribution",
     UNKNOWN,
 )
 
@@ -513,6 +514,14 @@ def _campaign_kind(
         scenarios = sorted(str(item) for item in scenario.get("app_lab") or ())
         return "check", ",".join(scenarios) or UNKNOWN, {"scenarios": scenarios}
     name = str(scenario.get("name") or "")
+    if name == "resource_attribution":
+        options = {
+            key: _normalized(config.get(key))
+            for key in (
+                "ocr_backend", "lookups", "idle_seconds", "inputs", "input_digest", "protocol",
+            )
+        }
+        return "resource_attribution", str(config.get("ocr_backend") or UNKNOWN), options
     if name == "ocr_differential":
         options = {key: _normalized(config.get(key)) for key in ("backends", "warmup", "samples")}
         return "ocr_differential", "ocr-only", options

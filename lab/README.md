@@ -362,6 +362,59 @@ text-free outcome facts and timing measurements.
 `resources/dev/runtime-local.json` is gitignored and machine-local; it points
 at a KRDICT database you built yourself. `tools/README.md` has its shape.
 
+## `resources` — what each part costs, and whether a change helps
+
+```bash
+python -m lab resources stages [--components ocr,kiwi,dictionary] [--repeats 3]
+python -m lab resources session <run>          # phases of a recorded session
+python -m lab resources compare <baseline> <candidate>
+```
+
+`stages` runs Hanly's real providers, built as the lookup child builds them, in
+fresh interpreters. Each child walks fixed stages and waits at every boundary
+while the parent reads it from outside:
+
+1. interpreter, imports and runtime validation;
+2. each provider's construction;
+3. worker assembly with prewarming;
+4. the first lookup;
+5. repeated lookups on varied inputs (fresh) and on the same input (cache hits);
+6. idle, unload, and idle after unloading.
+
+`--components` adds one isolated process per provider. The run records:
+- macOS physical footprint (RSS elsewhere), RSS and sampled peaks;
+- CPU, threads, disk reads and writes, latency and exit time;
+- a digest of each lookup's decision. No text and no pixels are kept.
+
+Inputs are minibook lines rendered in an installed Hangul face, kept in a
+temporary file that is deleted with the run. One unrecorded warm-up child runs
+before each experiment's repeats. A `calibration` experiment maps and releases a
+known 64 MiB; if it is not attributed and released, distrust the run.
+`summary.md` states the method and its limits:
+- Deltas between boundaries are estimates.
+- Native allocators keep freed pages, so what unloading leaves is released
+  only when the process exits.
+- RSS falls when idle pages are compressed.
+- GPU memory is always unavailable.
+
+`session` attributes an existing session's `processes.jsonl` to the phases its
+own events mark: startup, engine warm-up, active, idle and shutdown. It reports
+per-role peaks, sustained medians, growth, duplicate processes and anything
+still running after the stop. It writes `resources.md` beside the run.
+
+`compare` refuses pairs that differ in protocol, inputs, plan, recognizer,
+library versions or host, or that have fewer than two repeats a side. It then
+compares the decision digests before labelling any cost: `unchanged`,
+`improved`, `regressed` or `inconclusive`.
+- Memory uses a band of max(5 %, 16 MiB); timing uses max(5 %, 5 ms).
+- Overlapping ranges are `inconclusive`.
+- A timing change needs five repeats a side. Two identical-code runs of three
+  repeats each produced six false timing labels and no false memory label.
+
+`compare` never accepts a change. An accepted optimization still needs
+reproducible evidence, stated trade-offs and regression coverage. Nothing here
+tunes a production setting.
+
 ## `live-hover` — human-operated session
 
 ```powershell

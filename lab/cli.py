@@ -1246,6 +1246,49 @@ def _session_parsers(subcommands: Any) -> None:
     gc.add_argument("--plan", type=Path, help="the plan file a preview wrote")
     gc.set_defaults(handler=run_lab_gc)
 
+    resources = subcommands.add_parser(
+        "resources",
+        help="attribute memory, CPU, threads, latency and I/O to Hanly's stages",
+        description=(
+            "Developer-only. 'stages' runs Hanly's real providers in fresh processes and "
+            "measures each stage from outside; 'session' attributes a recorded session's "
+            "process samples to its phases; 'compare' decides whether two stage runs are "
+            "comparable before labelling any difference. Nothing is tuned or accepted."
+        ),
+    )
+    resource_actions = resources.add_subparsers(dest="resource_action", required=True)
+    stages = resource_actions.add_parser("stages", help="run isolated stage experiments")
+    stages.add_argument("--config", type=Path, help="runtime configuration (default: hanly's)")
+    stages.add_argument(
+        "--ocr-backend", choices=("auto", "vision", "easyocr"), default="auto",
+        help="recognizer to measure; auto resolves as the desktop would",
+    )
+    stages.add_argument("--repeats", type=int, default=3, help="fresh processes per experiment")
+    stages.add_argument("--lookups", type=int, default=12, help="operations per repeated stage")
+    stages.add_argument("--idle", type=float, default=5.0, help="seconds of idle observation")
+    stages.add_argument("--inputs", type=int, default=8, help="distinct rendered inputs")
+    stages.add_argument(
+        "--components", default="",
+        help="also measure these alone, one process each: ocr,kiwi,dictionary",
+    )
+    stages.add_argument("--warmup", type=int, default=1,
+                        help="unrecorded children per experiment before the repeats")
+    stages.add_argument("--no-calibration", action="store_true",
+                        help="skip the known-allocation calibration experiment")
+    stages.add_argument("--calibration-only", action="store_true",
+                        help="measure only the calibration experiment")
+    stages.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
+    stages.set_defaults(handler=run_resource_stages)
+    session = resource_actions.add_parser(
+        "session", help="attribute a recorded session's process samples to its phases"
+    )
+    session.add_argument("run", help="a session run under artifacts/lab/runs")
+    session.set_defaults(handler=run_resource_session)
+    compare = resource_actions.add_parser("compare", help="compare two stage runs")
+    compare.add_argument("baseline")
+    compare.add_argument("candidate")
+    compare.set_defaults(handler=run_resource_compare)
+
     stress = subcommands.add_parser(
         "stress",
         help="a seeded text-acquisition stress campaign over lab-authored pages",
@@ -1567,6 +1610,87 @@ def run_lab_pin(args: argparse.Namespace) -> int:
         print(f"lab: {error}", file=sys.stderr)
         return 2
     return 0
+
+
+def run_resource_stages(args: argparse.Namespace) -> int:
+    """Run the planned stage experiments and print where the evidence is."""
+
+    from .resources.experiment import ExperimentPlan, run_experiment
+
+    components = tuple(name for name in args.components.split(",") if name)
+    unknown = sorted(set(components) - {"ocr", "kiwi", "dictionary"})
+    if unknown:
+        print(f"lab: unknown component(s): {', '.join(unknown)}", file=sys.stderr)
+        return 2
+    if min(args.repeats, args.lookups, args.inputs) < 1 or min(args.idle, args.warmup) < 0:
+        print("lab: --repeats, --lookups and --inputs must be positive; --idle and "
+              "--warmup must not be negative", file=sys.stderr)
+        return 2
+
+    config: Path | None = None
+    backend = args.ocr_backend
+    if not args.calibration_only:
+        from hanly_app.config import OCRBackend
+
+        from .session.runner import _runtime_config
+
+        config = _runtime_config(args.config)
+        runtime = load_runtime(config)
+        # Resolved here, as the desktop shell does, so no child probes a framework.
+        backend = replace(runtime, ocr_backend=OCRBackend(args.ocr_backend)) \
+            .resolved_ocr_backend().value
+
+    plan = ExperimentPlan(
+        runtime_config=config,
+        ocr_backend=backend,
+        lookups=args.lookups,
+        idle_seconds=args.idle,
+        repeats=args.repeats,
+        inputs=args.inputs,
+        components=() if args.calibration_only else components,
+        calibrate=not args.no_calibration,
+        warmup_runs=args.warmup,
+    )
+    run_dir = run_experiment(plan, args.output_root, report=lambda line: print(f"lab: {line}"))
+    print(f"lab: resource evidence in {run_dir}/summary.md")
+    return 0
+
+
+def run_resource_session(args: argparse.Namespace) -> int:
+    """Attribute a recorded session's samples to its phases, beside its report."""
+
+    from .identity import resolve_name
+    from .resources.app_phases import analyze_session, write_session_summary
+
+    try:
+        run_dir = resolve_name(args.run)
+        analysis = analyze_session(run_dir)
+    except ValueError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    _write_json(run_dir / "resources.json", analysis)
+    path = write_session_summary(run_dir, analysis, run_dir / "resources.md")
+    print(f"lab: session resources in {path}")
+    return 0
+
+
+def run_resource_compare(args: argparse.Namespace) -> int:
+    """Compare two stage runs; exit 1 when they are not comparable."""
+
+    from .identity import resolve_name
+    from .resources.compare import compare, write_comparison
+
+    try:
+        baseline, candidate = resolve_name(args.baseline), resolve_name(args.candidate)
+        result = compare(baseline, candidate)
+    except (ValueError, OSError, KeyError) as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    destination = candidate / f"compare-{baseline.name}.md"
+    _write_json(destination.with_suffix(".json"), result)
+    write_comparison(result, destination)
+    print(f"lab: comparison in {destination}")
+    return 0 if result["comparable"] else 1
 
 
 def with_default_verb(arguments: Sequence[str]) -> list[str]:
