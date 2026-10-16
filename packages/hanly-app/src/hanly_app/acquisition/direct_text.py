@@ -15,6 +15,7 @@ from threading import Condition, Event, Thread, current_thread
 from typing import Protocol
 
 from hanly import BoundingBox, Point, TextSelection
+from hanly.language_pipeline import neighbouring_words
 
 #: Direct text is worth having only while the pointer is still on it. A slow
 #: answer is a wrong answer, so the attempt is abandoned rather than awaited.
@@ -219,8 +220,18 @@ class DirectTextCoordinator:
             # than to claim a region this word does not occupy.
             return Acquisition(Outcome.AMBIGUOUS, duration_ns=duration)
 
+        # The words beside this one on the control's line, so constructions
+        # such as 먹고 있어요 read as one; whitespace bounds them, as in OCR.
+        word_start = start
+        while word_start > 0 and not reading.text[word_start - 1].isspace():
+            word_start -= 1
+        word_end = start + len(word)
+        while word_end < len(reading.text) and not reading.text[word_end].isspace():
+            word_end += 1
+        before, after = neighbouring_words(reading.text, word_start, word_end)
         selection = TextSelection(
-            text=word, cursor_index=cursor_index, source="accessibility"
+            text=word, cursor_index=cursor_index, source="accessibility",
+            context_before=before, context_after=after,
         )
         return Acquisition(
             Outcome.DIRECT,

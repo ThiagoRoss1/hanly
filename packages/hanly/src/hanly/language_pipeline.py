@@ -7,10 +7,11 @@ existing evidence gains language fields without changing its other fields.
 """
 
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from unicodedata import category
 
 from .contracts import (
+    Construction,
     DictionaryEntry,
     LexicalCandidate,
     LexicalComponent,
@@ -64,7 +65,8 @@ class LanguagePipeline:
             LookupContext()
             if evidence is None
             else replace(
-                evidence, text=None, lemma=None, analyses=(), candidate=None, components=()
+                evidence, text=None, lemma=None, analyses=(), candidate=None, components=(),
+                construction=None,
             )
         )
         text = selection.text.strip()
@@ -78,6 +80,14 @@ class LanguagePipeline:
                 diagnostics=("The selection carried no text",),
                 context=base,
             )
+
+        # A word fused to digits, Latin or an emoji (2026년에, 😀안녕하세요) is
+        # answered for the Korean the pointer rests on, as accessibility text
+        # already is; a pointer on the non-Korean part is still refused below.
+        if not _is_korean_segment(text):
+            narrowed = _hangul_run(text, cursor_index)
+            if narrowed is not None:
+                text, cursor_index = narrowed
 
         context = replace(base, text=text)
         # Hanly's downstream language services are Korean-only. Latin text,
@@ -94,7 +104,7 @@ class LanguagePipeline:
             )
 
         try:
-            analysis = _as_morphology_analysis(self._morphology_provider.analyze(text))
+            analysis, window = self._analyze(text, selection)
         except Exception as exc:
             return error_result("morphology", exc, context)
 
@@ -134,8 +144,13 @@ class LanguagePipeline:
 
         lemma = selected.lemma
         diagnostics = _selection_diagnostics(analysis, selected, text)
+        try:
+            construction = _construction(window, self._dictionary_provider)
+        except Exception as exc:
+            return error_result("dictionary", exc, attempted)
         context = replace(
-            context, lemma=lemma, candidate=selected, components=components
+            context, lemma=lemma, candidate=selected, components=components,
+            construction=construction,
         )
 
         if not entries:
@@ -175,6 +190,12 @@ class LanguagePipeline:
             if form is None:
                 continue
             entries = probes.lookup(form)
+            if entries and _contradicts_analysis(entries, selected, form):
+                # 먹지 is listed as a noun (carbon paper) where the analysis reads
+                # a conjugated 먹다; 나는 is listed as a form of 나다 where it reads
+                # the pronoun 나 with 는. A surface entry of the other word class
+                # names a different word.
+                continue
             if entries:
                 surface = LexicalCandidate(
                     lemma=form,
@@ -197,6 +218,36 @@ class LanguagePipeline:
                 return derived, entries
 
         return selected, probes.lookup(selected.lemma)
+
+
+    def _analyze(
+        self, text: str, selection: TextSelection
+    ) -> tuple[MorphologyAnalysis, "_Window | None"]:
+        """Analyze ``text`` within its neighbouring words when acquisition saw them.
+
+        Kiwi reads 나는 differently before 가요 than alone, and only sees the
+        auxiliary in 먹고 있어요 when both words are present. The window is
+        analyzed once and narrowed back to the target's own tokens; a provider
+        without spans, or any token straddling the target's edge, falls back to
+        the word alone.
+        """
+
+        before = _one_word(selection.context_before, last=True)
+        after = _one_word(selection.context_after, last=False)
+        if not before and not after:
+            return _as_morphology_analysis(self._morphology_provider.analyze(text)), None
+        offset = len(before) + 1 if before else 0
+        window_text = " ".join(part for part in (before, text, after) if part)
+        try:
+            whole = _as_morphology_analysis(self._morphology_provider.analyze(window_text))
+            local = _narrowed(whole, offset, len(text), text)
+        except Exception:
+            # Context is an improvement over the word alone, never a condition
+            # for an answer; a real provider failure recurs on the word below.
+            local = None
+        if local is None:
+            return _as_morphology_analysis(self._morphology_provider.analyze(text)), None
+        return local, _Window(whole, offset, len(text), before, after)
 
 
 def error_result(
@@ -639,11 +690,16 @@ def _rank_entries(
     if len(entries) < 2:
         return entries
 
-    wanted = _POS_EQUIVALENTS.get(_tag_family(part_of_speech))
+    family = _tag_family(part_of_speech)
+    wanted = _POS_EQUIVALENTS.get(family)
 
     def rank(item: tuple[int, DictionaryEntry]) -> tuple[int, int, int]:
         index, entry = item
-        matched = 0 if wanted is not None and entry.part_of_speech == wanted else 1
+        if family == "VX":
+            # An auxiliary is a 보조 동사 or 보조 형용사 sense of its lemma.
+            matched = 0 if (entry.part_of_speech or "").startswith("보조") else 1
+        else:
+            matched = 0 if wanted is not None and entry.part_of_speech == wanted else 1
         level = _LEVEL_ORDER.get(entry.vocabulary_level or "", len(_LEVEL_ORDER))
         return (matched, level, index)
 
@@ -702,4 +758,175 @@ def _is_hangul_character(character: str) -> bool:
     )
 
 
-__all__ = ["LanguagePipeline", "abort_if_cancelled", "error_result"]
+__all__ = ["LanguagePipeline", "abort_if_cancelled", "error_result", "neighbouring_words"]
+
+
+#: Dictionary queries a construction may spend, apart from the word's own.
+_MAX_CONSTRUCTION_QUERIES = 2
+
+#: Kiwi normalizes 아/어 vowel harmony to 어; the dictionary lists both forms.
+_HARMONY_PAIRS = {"어": ("어", "아"), "어야": ("어야", "아야"), "어서": ("어서", "아서")}
+
+_NOMINAL_SENSES = frozenset({"명사", "의존 명사", "대명사", "수사"})
+_PREDICATE_SENSES = frozenset({"동사", "형용사", "보조 동사", "보조 형용사"})
+
+
+@dataclass(frozen=True)
+class _Window:
+    """The target analyzed with its neighbours: where it sits in that text."""
+
+    analysis: MorphologyAnalysis
+    offset: int
+    length: int
+    before: str
+    after: str
+
+
+def neighbouring_words(line: str, start: int, end: int) -> tuple[str, str]:
+    """The whitespace-delimited words just before and after ``line[start:end]``.
+
+    What acquisition hands a selection as context: one word each side, cut to
+    the contract's bound so a run of unspaced noise cannot exceed it.
+    """
+
+    from .contracts import MAX_CONTEXT_WORD
+
+    before = line[:start].split()
+    after = line[end:].split()
+    return (
+        before[-1][-MAX_CONTEXT_WORD:] if before else "",
+        after[0][:MAX_CONTEXT_WORD] if after else "",
+    )
+
+
+def _one_word(text: str, *, last: bool) -> str:
+    words = text.split()
+    if not words:
+        return ""
+    return words[-1] if last else words[0]
+
+
+def _narrowed(
+    analysis: MorphologyAnalysis, offset: int, length: int, text: str
+) -> MorphologyAnalysis | None:
+    """The target's own tokens and candidates, re-based to the target's start.
+
+    ``None`` unless the tokens account for every character of the target: a
+    provider whose spans do not describe the text it was given would otherwise
+    leave a fragment that looks like a complete analysis.
+    """
+
+    end = offset + length
+    tokens: list[TokenAnalysis] = []
+    for token in analysis.tokens:
+        if token.start is None or token.length is None:
+            return None
+        token_end = token.start + token.length
+        if token.start >= offset and token_end <= end:
+            tokens.append(replace(token, start=token.start - offset))
+        elif token.start < end and token_end > offset:
+            return None
+    candidates = tuple(
+        replace(candidate, start=candidate.start - offset, end=candidate.end - offset,
+                token_indices=())
+        for candidate in analysis.candidates
+        if candidate.start >= offset and candidate.end <= end
+    )
+    covered = {
+        index
+        for token in tokens
+        for index in range(token.start or 0, (token.start or 0) + (token.length or 0))
+    }
+    if not tokens or any(
+        index not in covered for index, character in enumerate(text) if not character.isspace()
+    ):
+        return None
+    return MorphologyAnalysis(tokens=tuple(tokens), candidates=candidates)
+
+
+def _hangul_run(text: str, cursor_index: int) -> tuple[str, int] | None:
+    """The unbroken Hangul the cursor rests on, and the cursor within it."""
+
+    index = min(cursor_index, len(text) - 1)
+    if index < 0 or not _is_hangul_syllable_or_jamo(text[index]):
+        return None
+    start = index
+    while start > 0 and _is_hangul_syllable_or_jamo(text[start - 1]):
+        start -= 1
+    end = index + 1
+    while end < len(text) and _is_hangul_syllable_or_jamo(text[end]):
+        end += 1
+    return text[start:end], index - start
+
+
+def _is_hangul_syllable_or_jamo(character: str) -> bool:
+    return "가" <= character <= "힣" or "ᄀ" <= character <= "ᇿ" or "ㄱ" <= character <= "ㆎ"
+
+
+def _contradicts_analysis(
+    entries: Sequence[DictionaryEntry], selected: LexicalCandidate, form: str
+) -> bool:
+    """Surface entries of only the other word class than morphology reads.
+
+    A conjugated predicate against noun-only entries, or a noun or pronoun
+    against predicate-only entries listed under another headword. Entries of
+    mixed or unknown class never contradict.
+    """
+
+    family = _tag_family(selected.part_of_speech)
+    senses = [entry.part_of_speech or "" for entry in entries]
+    if family.startswith("V") and family != "VCP":
+        return all(sense in _NOMINAL_SENSES for sense in senses)
+    if family in ("NNG", "NNP", "NNB", "NP", "NR"):
+        return all(sense in _PREDICATE_SENSES for sense in senses) and all(
+            entry.headword != form for entry in entries
+        )
+    return False
+
+
+def _construction(
+    window: _Window | None, dictionary: DictionaryProvider
+) -> Construction | None:
+    """The listed construction the target forms with a neighbouring word.
+
+    A connective ending followed by an auxiliary predicate (먹고 있어요), or a
+    modifier ending, the bound noun 수 and 있다/없다 (할 수 있어요). The name
+    is only ever a dictionary headword: candidates that are not listed are
+    discarded, so morphology alone never invents a construction.
+    """
+
+    if window is None:
+        return None
+    tokens = sorted(
+        (token for token in window.analysis.tokens if token.start is not None),
+        key=lambda token: token.start or 0,
+    )
+    start, end = window.offset, window.offset + window.length
+    names: list[str] = []
+    for index in range(len(tokens) - 1):
+        ending, auxiliary = tokens[index], tokens[index + 1]
+        if _tag_family(ending.part_of_speech) != "EC":
+            continue
+        if not _tag_family(auxiliary.part_of_speech).startswith("V"):
+            continue
+        # The pair must join the target to a neighbour, not sit inside one.
+        ending_inside = start <= (ending.start or 0) < end
+        auxiliary_inside = start <= (auxiliary.start or 0) < end
+        if ending_inside == auxiliary_inside:
+            continue
+        for form in _HARMONY_PAIRS.get(ending.token, (ending.token,)):
+            names.append(f"-{form} {auxiliary.lemma}")
+    for index in range(len(tokens) - 2):
+        modifier, bound, predicate = tokens[index], tokens[index + 1], tokens[index + 2]
+        if (_tag_family(modifier.part_of_speech) == "ETM" and bound.token == "수"
+                and predicate.lemma in ("있다", "없다")):
+            names += [f"-ㄹ 수 {predicate.lemma}", f"-을 수 {predicate.lemma}"]
+    queried = 0
+    for name in dict.fromkeys(names):
+        if queried >= _MAX_CONSTRUCTION_QUERIES:
+            break
+        queried += 1
+        entries = tuple(dictionary.lookup(name))
+        if entries:
+            return Construction(headword=name, entries=entries)
+    return None

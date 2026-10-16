@@ -394,6 +394,18 @@ function SuccessContent({
           ))}
         </PopupSection>
       )}
+      {content.construction && (
+        <PopupSection title="Grammar pattern">
+          <div className="popup-component">
+            <span className="popup-part">{content.construction.headword}</span>
+            <span className="popup-secondary">
+              {content.construction.gloss ??
+                content.construction.definition ??
+                "listed in the dictionary"}
+            </span>
+          </div>
+        </PopupSection>
+      )}
       {expanded && (content.other_entries ?? []).length > 0 && (
         <PopupSection title="Other entries">
           {(content.other_entries ?? []).map((other, index) => (

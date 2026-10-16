@@ -32,6 +32,7 @@ from hanly import (
     TokenAnalysis,
 )
 from hanly.errors import LookupCancelled
+from hanly.language_pipeline import neighbouring_words
 from hanly.providers import DictionaryProvider, MorphologyProvider, OCRProvider
 
 from tests.hanly_fixtures.runtime_input import invoke_with_runtime_values
@@ -248,7 +249,13 @@ def test_a_real_pixel_lookup_and_an_equivalent_direct_selection_agree() -> None:
     assert resolution is not None
 
     language, _m2, direct_dictionary = _language()
-    direct = language.lookup(TextSelection(surface, resolution.cursor_index))
+    before, after = neighbouring_words(
+        resolution.region.text, resolution.region_start,
+        resolution.region_start + len(resolution.text),
+    )
+    direct = language.lookup(TextSelection(
+        surface, resolution.cursor_index, context_before=before, context_after=after,
+    ))
 
     assert direct.status is from_pixels.status
     assert direct.entries == from_pixels.entries
@@ -266,7 +273,12 @@ def test_the_two_paths_run_one_implementation_not_two() -> None:
     pipeline, _o, morphology, _d = _pixel()
     pipeline.lookup(_IMAGE, _TARGET)
 
-    assert morphology.analyzed == [_SURFACE]
+    language, direct_morphology, _d2 = _language()
+    language.lookup(TextSelection(_SURFACE, 2, context_before="나는"))
+
+    assert morphology.analyzed == direct_morphology.analyzed
+    # A provider whose spans do not describe the line falls back to the word.
+    assert morphology.analyzed[-1] == _SURFACE
 
 
 # --- The pixel facade stays compatible --------------------------------------
@@ -464,7 +476,12 @@ def test_the_selection_carries_no_screen_geometry() -> None:
 
     fields = set(TextSelection.__dataclass_fields__)
 
-    assert fields == {"text", "cursor_index", "source"}
+    # Neighbouring words are text, not geometry: one word each side, bounded.
+    assert fields == {"text", "cursor_index", "source", "context_before", "context_after"}
+    with pytest.raises(ValueError, match="neighbouring word"):
+        TextSelection(text="책", context_after="가" * 33)
+    with pytest.raises(TypeError):
+        TextSelection(text="책", context_before=None)  # type: ignore[arg-type]
 
 
 def test_the_source_label_is_inert() -> None:
@@ -587,3 +604,115 @@ def test_the_result_of_a_direct_selection_is_an_ordinary_lookup_result() -> None
     assert isinstance(result, LookupResult)
     assert result.status is LookupStatus.SUCCESS
     assert result.entries[0].headword == "받다"
+
+
+# -- bounded context, constructions and Korean fused to other scripts -----------------
+
+
+class _Listed:
+    """A dictionary holding exactly the given headwords, each with its senses."""
+
+    def __init__(self, senses: dict[str, tuple[str, ...]]) -> None:
+        self.senses = senses
+        self.queries: list[str] = []
+
+    def lookup(self, lemma: str) -> tuple[DictionaryEntry, ...]:
+        self.queries.append(lemma)
+        return tuple(
+            DictionaryEntry(headword=lemma, definitions=(f"{lemma} {pos}",), part_of_speech=pos)
+            for pos in self.senses.get(lemma, ())
+        )
+
+
+def _kiwi_language(senses: dict[str, tuple[str, ...]]) -> LanguagePipeline:
+    from hanly.kiwi_provider import KiwiProvider
+
+    return LanguagePipeline(KiwiProvider(), _Listed(senses))
+
+
+def test_korean_fused_to_digits_is_read_for_the_syllable_under_the_pointer() -> None:
+    language, morphology, _dictionary = _language()
+
+    language.lookup(TextSelection(text="2026초대받았어요", cursor_index=5))
+    assert morphology.analyzed == ["초대받았어요"]
+
+    refused = language.lookup(TextSelection(text="2026초대받았어요", cursor_index=1))
+    assert refused.status is LookupStatus.UNUSABLE
+    assert morphology.analyzed == ["초대받았어요"]
+
+
+def test_a_pointer_on_the_copula_answers_for_its_noun() -> None:
+    language = _kiwi_language({"학생": ("명사",), "이다": ("조사",)})
+
+    for cursor in range(len("학생입니다")):
+        result = language.lookup(TextSelection(text="학생입니다", cursor_index=cursor))
+        assert result.entries[0].headword == "학생", cursor
+
+
+def test_a_neighbouring_word_decides_an_ambiguous_analysis() -> None:
+    language = _kiwi_language({"나": ("대명사",), "나다": ("동사",)})
+
+    before_verb = language.lookup(
+        TextSelection(text="나는", cursor_index=0, context_after="가요")
+    )
+
+    assert before_verb.entries[0].headword == "나"
+    assert before_verb.context is not None and before_verb.context.text == "나는"
+
+
+def test_a_noun_spelled_like_an_inflection_does_not_replace_the_verb() -> None:
+    language = _kiwi_language({"먹지": ("명사",), "먹다": ("동사",)})
+
+    result = language.lookup(TextSelection(text="먹지", cursor_index=0, context_after="않아요"))
+
+    assert result.entries[0].headword == "먹다"
+
+
+def test_a_listed_construction_is_named_from_either_word() -> None:
+    language = _kiwi_language({
+        "먹다": ("동사",), "있다": ("형용사", "보조 동사"), "-고 있다": ("품사 없음",),
+    })
+
+    stem = language.lookup(TextSelection(text="먹고", cursor_index=0, context_after="있어요"))
+    auxiliary = language.lookup(
+        TextSelection(text="있어요", cursor_index=0, context_before="먹고")
+    )
+
+    for result in (stem, auxiliary):
+        assert result.context is not None and result.context.construction is not None
+        assert result.context.construction.headword == "-고 있다"
+    assert stem.entries[0].headword == "먹다"
+    assert auxiliary.entries[0].part_of_speech == "보조 동사"
+
+
+def test_a_construction_is_never_invented_without_its_dictionary_entry() -> None:
+    language = _kiwi_language({"먹다": ("동사",), "가다": ("동사",)})
+
+    result = language.lookup(TextSelection(text="먹고", cursor_index=0, context_after="가요"))
+
+    assert result.status is LookupStatus.SUCCESS
+    assert result.context is not None and result.context.construction is None
+
+
+def test_without_neighbours_the_word_is_analyzed_alone() -> None:
+    language, morphology, _dictionary = _language()
+
+    language.lookup(TextSelection(text="초대받았어요", cursor_index=0))
+
+    assert morphology.analyzed == ["초대받았어요"]
+
+
+def test_ocr_passes_the_words_beside_the_target_on_its_line() -> None:
+    from hanly.lookup_pipeline import LookupPipeline
+
+    morphology = _Morphology()
+    pipeline = LookupPipeline(
+        ocr_provider=_OCR("지금 초대받았어요 정말"),
+        morphology_provider=morphology,
+        dictionary_provider=_Dictionary(),
+    )
+
+    pipeline.lookup(_IMAGE, Point(x=45, y=5))
+
+    # The window first; this fake's spans describe the word, so it falls back.
+    assert morphology.analyzed == ["지금 초대받았어요 정말", "초대받았어요"]

@@ -155,6 +155,12 @@ export interface PopupComponent {
   selected?: boolean;
 }
 
+export interface PopupConstruction {
+  headword: string;
+  gloss?: string | null;
+  definition?: string | null;
+}
+
 export interface PopupContent {
   status?: string;
   title?: string;
@@ -166,6 +172,7 @@ export interface PopupContent {
   analysis?: PopupAnalysisPiece[];
   components?: PopupComponent[];
   other_entries?: PopupEntry[];
+  construction?: PopupConstruction | null;
   confidence?: number | null;
   source?: string | null;
   technical_lines?: string[];

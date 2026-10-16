@@ -190,6 +190,24 @@ class OCRResult:
         return self.quad.bounding_box()
 
 
+#: Longest neighbouring word a selection carries. A real word is far shorter;
+#: the bound keeps context from becoming a channel for whole lines.
+MAX_CONTEXT_WORD = 32
+
+
+@dataclass(frozen=True)
+class Construction:
+    """A dictionary-listed grammatical construction the selected word is part of.
+
+    ``headword`` is the dictionary's own entry for the pattern, such as
+    ``-고 있다``; it is named only when the dictionary lists it, never
+    assembled from morphology alone.
+    """
+
+    headword: str
+    entries: tuple[DictionaryEntry, ...] = ()
+
+
 @dataclass(frozen=True)
 class LookupContext:
     """Optional normalized engine context retained with a lookup outcome."""
@@ -214,6 +232,9 @@ class LookupContext:
     #: Empty when the surface does not decompose, so a client showing a
     #: breakdown has nothing to show for a simple word.
     components: tuple[LexicalComponent, ...] = ()
+    #: A construction spanning a neighbouring word, such as ``-고 있다`` for
+    #: ``먹고 있어요``, when the dictionary lists one; ``None`` otherwise.
+    construction: Construction | None = None
 
 
 @dataclass(frozen=True)
@@ -265,10 +286,21 @@ class TextSelection:
     text: str
     cursor_index: int = 0
     source: str | None = None
+    #: The whitespace-delimited word immediately before and after ``text``, as
+    #: acquisition saw them, or empty. One word each side at most: enough for
+    #: morphology to read ``먹고 있어요`` as one construction, never a sentence.
+    context_before: str = ""
+    context_after: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.text, str):
             raise TypeError("selection text must be a string")
+        for name in ("context_before", "context_after"):
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise TypeError(f"{name} must be a string")
+            if len(value) > MAX_CONTEXT_WORD:
+                raise ValueError(f"{name} is one neighbouring word, not a passage")
         if isinstance(self.cursor_index, bool) or not isinstance(self.cursor_index, int):
             raise TypeError("cursor_index must be an integer")
         if self.cursor_index < 0:

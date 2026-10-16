@@ -443,3 +443,16 @@ def test_emoji_prefixed_korean_is_retained_by_its_own_rectangle() -> None:
     assert (result.selection.text, result.selection.cursor_index) == ("초대받았어요", 0)
     assert result.bounds == _WORD_BOUNDS
     assert provider.spans == [(2, 8)]
+
+
+def test_the_words_beside_the_pointer_travel_with_the_selection() -> None:
+    """Constructions such as 먹고 있어요 need the neighbouring word, nothing more."""
+
+    result = _acquire(_reading(text="지금 먹고 있어요 정말", cursor_index=3))
+
+    assert result.selection is not None
+    assert result.selection.text == "먹고"
+    assert (result.selection.context_before, result.selection.context_after) == (
+        "지금",
+        "있어요",
+    )

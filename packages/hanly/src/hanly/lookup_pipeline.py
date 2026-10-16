@@ -14,7 +14,12 @@ from .contracts import (
     ROIImage,
     TextSelection,
 )
-from .language_pipeline import LanguagePipeline, abort_if_cancelled, error_result
+from .language_pipeline import (
+    LanguagePipeline,
+    abort_if_cancelled,
+    error_result,
+    neighbouring_words,
+)
 from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
 from .word_resolver import TargetResolver, WordResolver
 
@@ -57,7 +62,7 @@ class LookupPipeline:
         self,
         ocr_results: Sequence[OCRResult],
         target: Point,
-    ) -> tuple[OCRResult | None, str, int]:
+    ) -> tuple[OCRResult | None, str, int, tuple[str, str]]:
         """Resolve the pointer through the richest API the resolver offers.
 
         A resolver that only implements the pair contract still works; its
@@ -69,14 +74,20 @@ class LookupPipeline:
         if callable(detailed):
             resolution = detailed(ocr_results, target)
             if resolution is None:
-                return None, "", 0
-            return resolution.region, resolution.text, resolution.cursor_index
+                return None, "", 0, ("", "")
+            # The words beside it on the same recognized line, for morphology
+            # to read constructions such as 먹고 있어요 as one.
+            start = resolution.region_start
+            neighbours = neighbouring_words(
+                resolution.region.text, start, start + len(resolution.text)
+            )
+            return resolution.region, resolution.text, resolution.cursor_index, neighbours
 
         pair = self._word_resolver.resolve_target(ocr_results, target)
         # A resolver that returns a malformed pair fails here and becomes an
         # ordinary word-resolution error rather than a shape ladder.
         region, text = pair if pair is not None else (None, "")
-        return region, text, 0
+        return region, text, 0, ("", "")
 
     @property
     def confidence_threshold(self) -> float | None:
@@ -114,7 +125,7 @@ class LookupPipeline:
             )
 
         try:
-            region, text, cursor_index = self._resolve_target(ocr_results, target)
+            region, text, cursor_index, neighbours = self._resolve_target(ocr_results, target)
         except Exception as exc:
             return error_result("word resolution", exc, context)
 
@@ -151,7 +162,10 @@ class LookupPipeline:
             )
 
         return self._language.lookup(
-            TextSelection(text=text, cursor_index=cursor_index, source="ocr"),
+            TextSelection(
+                text=text, cursor_index=cursor_index, source="ocr",
+                context_before=neighbours[0], context_after=neighbours[1],
+            ),
             cancelled=cancelled,
             evidence=evidence,
         )

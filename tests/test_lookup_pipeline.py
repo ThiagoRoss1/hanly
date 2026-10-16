@@ -307,8 +307,10 @@ def test_single_token_segment_reports_no_reduction_diagnostic() -> None:
     assert result.diagnostics == ()
 
 
-@pytest.mark.parametrize("text", ["hello", "hello책", "책2"])
+@pytest.mark.parametrize("text", ["hello", "hello책", "2책2"])
 def test_non_korean_target_stops_before_morphology_and_dictionary(text: str) -> None:
+    """A pointer on Latin text or digits is refused, even beside Hangul."""
+
     events: list[str] = []
     target_segment = OCRResult(
         text=text,

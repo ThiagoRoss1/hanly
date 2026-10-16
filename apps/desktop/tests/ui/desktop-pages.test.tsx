@@ -975,6 +975,26 @@ describe("desktop React routes", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it("names a dictionary-listed grammar pattern beside the word", async () => {
+    renderRoute("/popup");
+    await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
+    eventHandlers.get("desktop-popup")?.({
+      payload: {
+        type: "popup",
+        sequence: 9,
+        payload: {
+          status: "success",
+          entry: { headword: "먹다", senses: [{ gloss: "eat" }] },
+          construction: { headword: "-고 있다", gloss: "be doing" },
+        },
+      },
+    });
+
+    expect(await screen.findByText("Grammar pattern")).toBeTruthy();
+    expect(screen.getByText("-고 있다")).toBeTruthy();
+    expect(screen.getByText("be doing")).toBeTruthy();
+  });
+
   it("reports a press on the popup so the native host can hand activation back", async () => {
     renderRoute("/popup");
     await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));

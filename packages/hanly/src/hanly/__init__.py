@@ -2,6 +2,7 @@
 
 from .contracts import (
     BoundingBox,
+    Construction,
     DictionaryEntry,
     DictionarySense,
     LexicalCandidate,
@@ -28,6 +29,7 @@ from .providers import DictionaryProvider, MorphologyProvider, OCRProvider
 
 __all__ = [
     "BoundingBox",
+    "Construction",
     "DictionaryEntry",
     "DictionarySense",
     "DictionaryProvider",
