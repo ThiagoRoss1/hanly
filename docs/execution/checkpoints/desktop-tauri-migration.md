@@ -1,5 +1,25 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Popup placement and activation fixed; build installed (2026-10-16)
+
+- **Commits** (local, not pushed):
+  - `5f6233f`: cdhash signature restored.
+  - `82b1476`: Grant access clears a stale entry.
+  - `8d8ee90`: Lab resource attribution.
+  - `bc2764c`: popup stays below its word, is capped above the Dock and
+    scrolls; a press hands activation back to the reader's app, so the
+    Control Center stays behind.
+- **Build `ed9d4483`** (`bc2764c`): 7/7 packaged checks, both archives verify,
+  installed at `/Applications/Hanly.app`.
+- **Live verification** of `bc2764c` on the debug root: 15/15 clicks keep
+  Safari frontmost with the Control Center behind; placement as specified.
+  The grant flow was verified on packaged build `8d20c254`.
+- **Open:**
+  - the human's one grant on `ed9d4483`;
+  - the Vision autorelease decision;
+  - disk cleanup;
+  - the Windows review.
+
 ## Grants kept across rebuilds (2026-10-15)
 
 - Commit **0ac4335** gives the macOS bundle the designated requirement
@@ -10,8 +30,14 @@
 - Build **49d48277-fe83-4bf4-9784-e3f8db5c9126**: ZIP `15f6753a…77ce`, DMG
   `a3be1ce7…6aed`. It passes all 7 packaged checks and both archive
   verifications, and is installed as `/Applications/Hanly.app`.
-- Open: the human's last one-time grant on this build, then confirmation
-  that the next rebuild keeps it.
+- **Correction (20:45):**
+  - Persistence across rebuilds is untested.
+  - The identifier-only requirement is a confirmed defect: an ad-hoc
+    impostor with Hanly's identifier satisfies it.
+  - The installed build has not been granted, and should not be until
+    signing is decided.
+  - The handoff's "Current status" is authoritative. It holds the signing
+    options, the bounded persistence test and the packaged smoke check.
 
 ## Live acceptance pass — final build installed (2026-10-15)
 

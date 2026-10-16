@@ -1,11 +1,239 @@
 # Desktop Tauri Migration Review Handoff
 
-**Current status — 2026-10-15, grants kept across rebuilds.** Product commit
-`0ac4335` is built as `49d48277-fe83-4bf4-9784-e3f8db5c9126` and installed as
-`/Applications/Hanly.app`. Its designated requirement is the bundle
-identifier, so this is the last build that needs a fresh grant. It needs
-one grant now, and later rebuilds and updates keep it. See "Grants across
-rebuilds" at the end.
+## Current status (authoritative — 2026-10-16 20:10 -03)
+
+This section supersedes every status, verification and remaining-work
+statement below it. Everything below keeps its original provenance and is
+history. "Implemented behavior and ownership" still describes the design.
+
+- **Branch:** `desktop/tauri-migration`. The human pushed `31235eb`. These
+  local commits followed and are **not pushed**:
+  - `5f6233f` restores the cdhash-bound ad-hoc signature, removing the
+    insecure identifier-only requirement.
+  - `82b1476` makes Grant access clear an earlier build's stale privacy
+    entry (packaged builds only).
+  - `8d8ee90` adds `python -m lab resources` (developer-only).
+  - `bc2764c` fixes popup placement and Control Center activation.
+
+  Not merged; no tag; no public release.
+- **Installed build:** `ed9d4483-d7ae-4fef-89bd-ef18bf7de7df` from
+  `bc2764ca2401b1d123faab5e36afe263269cb5df`, at `/Applications/Hanly.app`.
+  - Ad-hoc signed, `designated => cdhash H"ea2fb29e085f8998ab3412003191e1902bbb3964"`.
+  - ZIP `05918f51519605ae5d9a75127f7f9e5ed883235dea1fe6bd919e5dc520db73f9`.
+  - DMG `915a741259b6bc5c120ea6e223d9e4dfa1a2636ba726225058f3acad23b6a46b`.
+  - It is the only Hanly copy LaunchServices can open.
+- **Permissions:** each ad-hoc build is a new identity to macOS and needs one
+  grant. The human accepted this; certificates and keychains are out of
+  scope.
+
+### Acceptance table
+
+**Debug root** means the `hanly` terminal command or `target/debug/hanly-desktop`.
+macOS attributes it to VS Code and lets it use VS Code's grants, so it
+always looks granted. Grants for the installed app are given only in the
+installed app's own window.
+
+| Area | Evidence | Status |
+|---|---|---|
+| Packaged checks on `ed9d4483` | 7/7 pass; ZIP and DMG verify (3,748 entries each, inventory and strict signatures) | Accepted |
+| Signature | cdhash-bound; a stub "impostor" app with Hanly's identifier fails the requirement (`5f6233f`) | Accepted |
+| Grant flow on a packaged build | `8d20c254` (`8d8ee90`), 2026-10-16. At 01:20 Grant access cleared the stale entry (tccd `TCCAccessResetInternal`, reply 0). At 01:22 the human switched Hanly on, and tccd allowed Screen Recording and Accessibility (`authValue=2, authReason=4`). Both still allowed after a Finder relaunch at 01:25. | Accepted |
+| Physical shortcuts, popup and tray on a packaged build | The human used `8d20c254`. Everything worked except the Expand/Control Center bug and the placement issues fixed in `bc2764c`. | Accepted, apart from those fixes |
+| Grant for `ed9d4483` itself | Not yet given. The app launched at 14:55 and was refused (`authReason=5`); the human's later "granted" was the debug root | **Open, human, one step** |
+| Expand/Collapse/Close keep the reader's app in front (`bc2764c`) | Debug root with VS Code's grants, three full runs: **15/15** clicks leave Safari frontmost and the Control Center behind it. The old binary reproduced the activation (Hanly frontmost). | Accepted on the debug root; the packaged app runs the same code |
+| Placement (`bc2764c`) | Same runs on Lab-authored `보다` text, plus Rust unit tests. Mid-screen: below the word; Expand grows downward. Near the bottom (y 552): stays below and is capped at 236 pt above the Dock (bottom 816; the old binary reached 847, past the work area). Very bottom (y 744): above the word; Expand grows upward. | Accepted |
+| Permissions hint | Says to switch Hanly on in System Settings (UI test) | Accepted |
+| Shortcut defaults and custom bindings | Defaults `ctrl+cmd+h/p/r`; the human's `cmd+h/p/r` load unchanged; the ⌘-only warning is shown | Accepted |
+| Resource attribution (Lab) | `8d8ee90`. The calibration attributes and releases a known 64 MiB on every run; the same-code A/A comparison gives 0 false labels. Evidence is in `docs/execution/reports/resource-attribution-2026-10-15.md`. | Accepted (developer tool) |
+
+### Root causes fixed in `bc2764c`
+
+- **The Control Center came forward on Expand.**
+  - The popup is a plain window, so a click on it activates Hanly.
+    Activation makes the Control Center key and raises it over the app
+    being read.
+  - Tao's window cannot be turned into a non-activating `NSPanel`: AppKit
+    already observes it through an `NSKVONotifying_TaoWindow` subclass, and
+    swapping that class is unsafe.
+  - The fix: the popup reports each press (`popup_pressed`). When the popup
+    was presented over another app, Hanly hands activation back to that app
+    using macOS 14's cooperative `yieldActivationToApplication:` and
+    `activateFromApplication:options:`. It retries for up to 320 ms, because
+    the click's own activation completes asynchronously.
+- **The card under the Dock, and the inconsistent side.**
+  - Placement used the full display and flipped any card taller than the
+    room below.
+  - It now uses the work area with a 6 pt margin and keeps the card below
+    its word, capped and scrolling. It flips only when less than 160 pt
+    remains below.
+  - The native host returns the room it found, and React caps the card to
+    it.
+
+### Remaining
+
+1. **Human, optional:** grant `ed9d4483` in the installed app's window. Use
+   Grant access, then switch Hanly on in System Settings. Then repeat the
+   popup check there.
+2. **Human decision:** the Vision autorelease-pool candidate in the
+   resource report. Not applied.
+3. **Human decision:** disk cleanup. About 23 GB in `dist/`, 10 GB of Lab
+   runs and 13 GB of Rust cache, all regenerable; nothing has been deleted.
+4. **Next workstreams:** the Windows review; then visual and capture
+   adjustments using the Lab.
+
+## Superseded status (2026-10-15 20:45 -03)
+
+
+This section supersedes every status, verification and remaining-work
+statement below it. Those sections keep their original provenance and are
+history. "Implemented behavior and ownership" still describes the design.
+
+- **Branch:** `desktop/tauri-migration`, pushed by the human; the remote is at
+  `31235eb`. Not merged; no tag; no public release.
+- **Product commit:** `0ac4335`. Commit `31235eb` changes only the docs.
+- **Installed build:** `49d48277-fe83-4bf4-9784-e3f8db5c9126` from
+  `0ac4335fe9ff019028152c4a0a75e7dfd56b51f8`, at `/Applications/Hanly.app`.
+  - cdhash `d5dc4078f24784f78dba60ceb837288ef319015f`.
+  - Designated requirement: `identifier "io.github.thiagoross1.hanly"`.
+  - ZIP `15f6753a…77ce`, DMG `a3be1ce7…6aed`.
+- **Working tree:** this consolidation is an uncommitted documentation edit.
+  Nothing else is pending.
+
+### Acceptance table
+
+"Debug root" means `target/debug/hanly-desktop` exec'd from a terminal.
+macOS attributes it to VS Code and lets it use VS Code's grants, so its
+evidence is not evidence for the packaged app's identity or grants.
+
+| Area | Packaged release (`49d48277`) | Debug root (`e7ef391`/`0ac4335` source) | Status |
+|---|---|---|---|
+| Frozen payload, build commit, OCR self-check | 3 packaged checks pass | — | Accepted |
+| Native window waits for React; UI-ready ack; helper restore after rejected startup | 3 packaged checks pass | — | Accepted |
+| Tauri root is the only foreground app and owns the service | 1 packaged check passes | — | Accepted |
+| ZIP and DMG inventory and strict signature | 3,748 entries each, both pass | — | Accepted |
+| Grants for this build | **No evidence.** tccd recorded no request from this build after it was installed. The 17:47 grant is bound to `e7ef391`'s cdhash `70ed70a1…`. | Uses VS Code's grants | **Open** |
+| Grants surviving a rebuild | **Untested** | Not applicable | **Open**. Do not claim it. |
+| Signing identity | Identifier-only requirement; an impostor satisfies it (see "Signing review") | — | **Defect**, fix proposed |
+| Lab tours, frame sampling, popup placement, Expand/Collapse/Close, foreground kept, context menu, OCR fallback, AX on TextEdit | Not run | Passed (see "Live acceptance pass") | Accepted on the debug root only |
+| Shortcuts (⌃⌘H hold, ⌃⌘P, ⌃⌘R) | Not run | Synthetic HID chords pass. Physical presses: the human reports ⌘-only bindings work on the debug root. | Physical presses on the packaged app are open |
+| Tray label and Quit; SIGTERM exit | Packaged checks cover clean exit only | Passed | Tray on the packaged app is open |
+| Normal quit, reopen, no leftover processes | Not run | Passed | Open on the packaged app |
+| Shortcut defaults and custom bindings | — | Defaults `ctrl+cmd+h/p/r`. The human's `cmd+h/p/r` load unchanged with no migration notes (checked 20:40 against `~/.config/hanly/config.json`). The ⌘-only warning is in place (UI test). | Accepted |
+
+### Confirmed defects
+
+1. **The identifier-only requirement lets another app inherit Hanly's grants**
+   (introduced in `0ac4335`, pushed).
+   - **Impact:** any same-user code that ad-hoc signs a bundle with Hanly's
+     identifier satisfies `identifier "io.github.thiagoross1.hanly"`. Once
+     that requirement is stored with a grant, the impostor receives Hanly's
+     Screen Recording and Accessibility.
+   - **Evidence:** a never-launched `Impostor.app`, built from a stub C
+     program with that identifier, passes
+     `codesign -v -R='identifier "io.github.thiagoross1.hanly"'`. It fails
+     the cdhash requirement. This was tested statically only, not against
+     tccd.
+   - **Exposure today:** no grant has been stored with the new requirement
+     yet, because the installed build has not been granted. Do not grant
+     this build until signing is decided.
+2. **The earlier handoff overstated the result.** It claimed that later
+   rebuilds and updates keep the grant. Nothing has tested that. The claim is
+   withdrawn.
+
+### Documentation and evidence gaps (not product defects)
+
+- "The human granted the installed build" referred to `e7ef391`
+  (`70ed70a1…`), not the build installed now.
+- The human's "opened, everything alright" at about 20:16 was the debug root:
+  pid 99412 was attributed to `com.microsoft.VSCode`. It exercised
+  VS Code's grants, not the installed app.
+- Every live interaction check ran on the debug root. The packaged app has
+  only the automated packaged checks.
+
+### Exact remaining actions
+
+1. **Human decision:** choose the signing policy (see "Signing review" below).
+   No certificate, keychain or signing change has been made.
+2. **After approval:** implement it, rebuild, and run the bounded persistence
+   test below. It needs the human for one grant and two launches from
+   Finder. No TCC reset.
+3. **Same session:** the packaged-app smoke check below, run on build B from
+   the persistence test so nothing is done twice.
+4. **Public release, still blocked:** notarization and Gatekeeper need a paid
+   Developer ID, which the human has declined for now. Windows and Linux
+   native acceptance, and Playwright, remain deferred.
+
+Development can proceed on this branch now. Avoid granting the current
+`/Applications/Hanly.app` until defect 1 is fixed.
+
+### Signing review
+
+| Option | Identity that survives rebuilds | Who can satisfy it | Cost and operations | Gatekeeper |
+|---|---|---|---|---|
+| Ad-hoc, cdhash (before `0ac4335`) | No; each build needs a fresh grant | Only that exact build | None | Unnotarized |
+| Ad-hoc, identifier-only (`0ac4335`) | Expected but untested | **Anyone** who can sign with that identifier | None | Unnotarized |
+| **Self-signed code-signing certificate** | Yes while the same certificate is kept. codesign derives `identifier … and certificate leaf = H"…"` (to confirm on the first signed build). | Only the holder of the private key | Free. One key, kept in a dedicated password-protected keychain and as a CI secret if releases use it. A replacement certificate means one more grant for every user. | Unnotarized; no change |
+| Free Apple Development certificate (Xcode personal team) | Yes across renewals within the same team | Holder of that Apple ID's key | Free; needs an Apple ID; the certificate lasts one year; meant for development, not distribution | Unnotarized |
+| Developer ID (paid) | Yes | The team's key; Apple-anchored | US$99/year | **Notarizable**; the only option that clears Gatekeeper |
+
+**Recommendation:**
+- Replace the identifier-only requirement with a project self-signed
+  certificate.
+- `tools/build_package.py` signs with an identity named in an environment
+  variable, such as `HANLY_MACOS_SIGNING_IDENTITY`. Without it, the build
+  falls back to plain ad-hoc signing with the cdhash requirement, never to
+  identifier-only.
+- The certificate lives in a dedicated keychain with a long validity. The
+  human creates it, or approves its creation, and holds the password.
+- Releases built in CI use the same certificate from a secret. Otherwise
+  users' updates change identity.
+- Optional follow-up: the updater also checks that a candidate satisfies the
+  installed app's requirement before swapping. That adds update authenticity
+  on top of today's manifest checks.
+
+**What still needs testing:**
+- whether tccd honours the certificate requirement across two builds, using
+  the test below;
+- how `codesign --verify --strict` treats an expired self-signed leaf without
+  a timestamp.
+
+### Bounded persistence test (prepared, not run, needs approval)
+
+1. **Build A** from commit X with the chosen signing.
+   - Record the cdhash and requirement.
+   - Install to `/Applications`, then quit and remove the stale Hanly
+     entries only with the human's approval.
+   - The human opens the app from Finder and grants Screen Recording and
+     Accessibility once.
+   - Pass when tccd shows `authValue=2` for
+     `responsible_path=/Applications/Hanly.app/…`.
+2. **Build B** from commit Y, a real source difference.
+   - Assert its cdhash differs from A's and its requirement is identical.
+   - Quit A normally, then replace it, by `ditto` and separately by the
+     in-place updater if time allows.
+3. **The human opens B from Finder.**
+   - Pass: no prompt; tccd shows `authValue=2, authReason=4` for both
+     services and no "Failed to match existing code requirement"; Hanly's
+     Permissions page shows both granted.
+   - Fail: `authReason=5`.
+4. **Negative control, static:** the impostor fails `codesign -v -R` with the
+   stored requirement.
+
+### Smallest packaged-app smoke check (on build B; needs approval)
+
+1. Open from Finder. Permissions shows both granted.
+2. Press the configured shortcuts on the physical keyboard: capture toggle,
+   hold over a Korean word in Safari, hover toggle.
+3. Popup: Expand, Collapse, Close. Safari stays frontmost.
+4. The tray label changes. Quit from the tray.
+5. Reopen from Finder; the grants are still shown.
+6. Quit, then confirm with `pgrep` that no Hanly processes remain.
+
+## Historical status entries (superseded; kept for provenance)
+
+Each entry below was accurate when written. Statements in them about current
+state are superseded: uncommitted fixes, "no push", "last build that needs
+a grant", "all commits remain local", build identities and remaining work.
 
 **Earlier status — 2026-10-15, after the live acceptance pass.** Product
 commit `e7ef391` is built as `20284932-80c5-4086-9015-5092705d6714` and
@@ -1225,6 +1453,10 @@ The human required that rebuilds and updates stop losing the macOS grants,
 without a paid Apple identity. They also reported that the ⌃ shortcuts did not
 work for them. The ⌃ looked like an arrow key, so they rebound the shortcuts
 to ⌘H, ⌘P and ⌘R, which then worked.
+
+> **Correction (20:45):** this section described the intent. Persistence
+> across rebuilds is untested, and the identifier-only requirement is a
+> confirmed defect. See "Current status".
 
 ### Commit `0ac4335`
 
