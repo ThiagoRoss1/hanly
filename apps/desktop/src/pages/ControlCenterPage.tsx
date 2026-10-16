@@ -1074,8 +1074,8 @@ function PermissionsPage({
                 </span>
                 <span>
                   Already switched on in System Settings? That entry belongs
-                  to an earlier copy of Hanly. Remove it with −, then use Grant
-                  access again.
+                  to an earlier copy of Hanly. Grant access clears it and asks
+                  macOS again.
                 </span>
               </div>
             )}

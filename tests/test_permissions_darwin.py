@@ -35,6 +35,7 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> permissions_darwin.DarwinPermissio
         "request_screen_recording",
         "accessibility_trusted",
         "request_accessibility",
+        "forget_previous_decision",
     ):
         monkeypatch.setattr(permissions_darwin, name, unscripted)
     monkeypatch.setattr(permissions_darwin, "open_privacy_settings", unscripted)
@@ -65,11 +66,23 @@ def test_a_granted_request_never_sends_the_user_to_system_settings(
     probe: permissions_darwin.DarwinPermissionProbe, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     opened: list[Permission] = []
+    forgotten: list[Permission] = []
+    monkeypatch.setattr(permissions_darwin, "screen_recording_granted", lambda: False)
+    monkeypatch.setattr(permissions_darwin, "forget_previous_decision", forgotten.append)
     monkeypatch.setattr(permissions_darwin, "request_screen_recording", lambda: True)
     monkeypatch.setattr(permissions_darwin, "open_privacy_settings", opened.append)
 
     assert probe.request(Permission.SCREEN_RECORDING) is PermissionState.GRANTED
     assert opened == []
+    assert forgotten == [Permission.SCREEN_RECORDING]
+
+
+def test_a_permission_already_held_is_neither_cleared_nor_requested(
+    probe: permissions_darwin.DarwinPermissionProbe, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(permissions_darwin, "accessibility_trusted", lambda: True)
+
+    assert probe.request(Permission.ACCESSIBILITY) is PermissionState.GRANTED
 
 
 def test_a_request_the_system_did_not_grant_opens_the_exact_pane(
@@ -77,12 +90,56 @@ def test_a_request_the_system_did_not_grant_opens_the_exact_pane(
 ) -> None:
     """The system prompt appears once; the pane is the route that always works."""
 
-    opened: list[Permission] = []
-    monkeypatch.setattr(permissions_darwin, "request_accessibility", lambda: False)
-    monkeypatch.setattr(permissions_darwin, "open_privacy_settings", opened.append)
+    calls: list[str] = []
+    monkeypatch.setattr(permissions_darwin, "accessibility_trusted", lambda: False)
+    monkeypatch.setattr(
+        permissions_darwin, "forget_previous_decision", lambda _p: calls.append("forget")
+    )
+
+    def request() -> bool:
+        calls.append("request")
+        return False
+
+    monkeypatch.setattr(permissions_darwin, "request_accessibility", request)
+    monkeypatch.setattr(
+        permissions_darwin, "open_privacy_settings", lambda _p: calls.append("pane")
+    )
 
     assert probe.request(Permission.ACCESSIBILITY) is PermissionState.REQUIRED
-    assert opened == [Permission.ACCESSIBILITY]
+    assert calls == ["forget", "request", "pane"]
+
+
+def test_only_a_frozen_build_clears_its_own_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A source run belongs to its terminal; clearing would revoke the installed app."""
+
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_options: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(permissions_darwin.subprocess, "run", run)
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    permissions_darwin.forget_previous_decision(Permission.SCREEN_RECORDING)
+    assert commands == []
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    permissions_darwin.forget_previous_decision(Permission.SCREEN_RECORDING)
+    permissions_darwin.forget_previous_decision(Permission.ACCESSIBILITY)
+    assert commands == [
+        ["/usr/bin/tccutil", "reset", "ScreenCapture", "io.github.thiagoross1.hanly"],
+        ["/usr/bin/tccutil", "reset", "Accessibility", "io.github.thiagoross1.hanly"],
+    ]
+
+
+def test_a_failed_reset_still_lets_the_request_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(*_args: object, **_options: object) -> None:
+        raise OSError("tccutil missing")
+
+    monkeypatch.setattr(permissions_darwin.subprocess, "run", run)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    permissions_darwin.forget_previous_decision(Permission.ACCESSIBILITY)
 
 
 def test_both_panes_address_a_privacy_control_rather_than_settings_at_large() -> None:

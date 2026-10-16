@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import subprocess
+import sys
 from threading import RLock
 
 from .permissions import (
@@ -28,6 +29,15 @@ PRIVACY_PANES: dict[Permission, str] = {
 #: Long enough for a busy launch service, short enough that a Control Center
 #: action never looks hung.
 _OPEN_TIMEOUT_SECONDS = 10.0
+
+#: TCC's names for each permission's service, as ``tccutil`` spells them, and
+#: the packaged application whose entries they are.
+TCC_SERVICES: dict[Permission, str] = {
+    Permission.SCREEN_RECORDING: "ScreenCapture",
+    Permission.ACCESSIBILITY: "Accessibility",
+}
+BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
+TCCUTIL = "/usr/bin/tccutil"
 
 _lock = RLock()
 _frameworks: dict[str, ctypes.CDLL] = {}
@@ -161,6 +171,30 @@ def _prompt_options() -> ctypes.c_void_p | None:
     return ctypes.c_void_p(options) if options else None
 
 
+def forget_previous_decision(permission: Permission) -> None:
+    """Clear the packaged application's own standing entry for one permission.
+
+    An ad-hoc signed build owns its entry only by cdhash. After an update the
+    old entry still shows Hanly switched on, denies the new build, and stops
+    macOS from asking again. Only a frozen service runs as the bundle; a source
+    run belongs to its terminal, and clearing from there would revoke the
+    installed application's grant instead.
+    """
+
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        subprocess.run(
+            [TCCUTIL, "reset", TCC_SERVICES[permission], BUNDLE_IDENTIFIER],
+            check=False,
+            capture_output=True,
+            timeout=_OPEN_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # The request below still runs and still lands on the pane.
+        pass
+
+
 def open_privacy_settings(permission: Permission) -> None:
     """Open the System Settings pane that owns one privacy control."""
 
@@ -202,9 +236,14 @@ class DarwinPermissionProbe:
 
         A request that comes back granted is finished. Anything else opens the
         pane, because the system prompt only ever appears once and the user who
-        clicks Grant a second time still has to end up somewhere useful.
+        clicks Grant a second time still has to end up somewhere useful. A
+        permission this build lacks first loses any entry an earlier build left.
         """
 
+        if self.state(permission) is PermissionState.GRANTED:
+            return PermissionState.GRANTED
+
+        forget_previous_decision(permission)
         if permission is Permission.SCREEN_RECORDING:
             granted = request_screen_recording()
         elif permission is Permission.ACCESSIBILITY:
@@ -222,6 +261,7 @@ __all__ = [
     "PRIVACY_PANES",
     "DarwinPermissionProbe",
     "accessibility_trusted",
+    "forget_previous_decision",
     "open_privacy_settings",
     "request_accessibility",
     "request_screen_recording",
