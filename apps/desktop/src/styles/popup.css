@@ -34,6 +34,7 @@ html[data-popup="true"] #root {
 }
 
 .popup-scroll {
+  flex: 1 1 auto;
   min-height: 0;
   max-height: 494px;
   overflow: auto;
@@ -118,6 +119,7 @@ html[data-popup="true"] #root {
 .popup-details .popup-section { margin-bottom: 4px; }
 .popup-footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   min-height: 43px;

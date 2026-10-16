@@ -1073,9 +1073,9 @@ function PermissionsPage({
                   recheck.
                 </span>
                 <span>
-                  Already switched on in System Settings? That entry belongs
-                  to an earlier copy of Hanly. Grant access clears it and asks
-                  macOS again.
+                  Grant access opens System Settings: switch Hanly on there.
+                  An entry already switched on belongs to an earlier copy of
+                  Hanly; Grant access clears it, so switch the new one on.
                 </span>
               </div>
             )}

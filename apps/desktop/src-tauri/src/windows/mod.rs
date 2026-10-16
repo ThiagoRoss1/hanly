@@ -279,13 +279,14 @@ fn apply_popup_action(
             let payload = payload.ok_or_else(window_error)?;
             let (x, y, _, _) = popup_geometry(&payload)?;
             let band = popup_band(&payload)?;
-            let ((x, y), above) =
-                fit_measured_popup(window, (x, y), (width, height), band, placed_above)?;
-            crate::platform::present_popup_frame(window, x, y, width, height)?;
+            let placed = fit_measured_popup(window, (x, y), (width, height), band, placed_above)?;
+            let (left, top) = placed.origin;
+            crate::platform::present_popup_frame(window, left, top, width, placed.height)?;
             let mut state = presentation.lock().expect("presentation");
             if state.visible && params["sequence"].as_u64() == Some(state.sequence) {
-                state.placed_above = above;
+                state.placed_above = placed.above;
             }
+            return Ok(json!({"sequence":service_sequence,"room":placed.room}));
         }
         // The frontend follows expansion with its measured geometry command.
         "popup_expand" => {}
@@ -311,7 +312,21 @@ fn popup_service_sequence(state: &Presentation, params: &Value) -> Result<u64, B
         .ok_or_else(window_error)
 }
 
-type Placement = ((f64, f64), Option<bool>);
+/// Least height an answer is still useful at. Below a word with less room
+/// than this the card goes above it; otherwise it stays below and scrolls.
+const MIN_USABLE_HEIGHT: f64 = 160.0;
+
+/// Kept clear above the Dock so the card's edge and shadow stay visible.
+const WORK_AREA_MARGIN: f64 = 6.0;
+
+#[derive(Debug, PartialEq)]
+struct Placement {
+    origin: (f64, f64),
+    height: f64,
+    above: Option<bool>,
+    /// Height available on the chosen side, which the card is capped to.
+    room: f64,
+}
 
 fn fit_measured_popup(
     window: &WebviewWindow,
@@ -321,38 +336,74 @@ fn fit_measured_popup(
     above: Option<bool>,
 ) -> Result<Placement, BridgeError> {
     for monitor in window.available_monitors().map_err(|_| window_error())? {
-        let origin = monitor.position().to_logical::<f64>(monitor.scale_factor());
-        let extent = monitor.size().to_logical::<f64>(monitor.scale_factor());
+        let scale = monitor.scale_factor();
+        let origin = monitor.position().to_logical::<f64>(scale);
+        let extent = monitor.size().to_logical::<f64>(scale);
         if x >= origin.x
             && x < origin.x + extent.width
             && y >= origin.y
             && y < origin.y + extent.height
         {
-            let bounds = (origin.x, origin.y, extent.width, extent.height);
+            // The work area excludes the menu bar and Dock, which a card
+            // placed against the full display would slide under.
+            let area = monitor.work_area();
+            let area_origin = area.position.to_logical::<f64>(scale);
+            let area_size = area.size.to_logical::<f64>(scale);
+            let bounds = (
+                area_origin.x,
+                area_origin.y,
+                area_size.width,
+                area_size.height - WORK_AREA_MARGIN,
+            );
             return Ok(place_measured((x, y), size, bounds, band, above));
         }
     }
-    Ok(((x, y), above))
+    Ok(Placement {
+        origin: (x, y),
+        height: size.1,
+        above,
+        room: size.1,
+    })
 }
 
-/// Put the measured card beside the word band, keeping a side already chosen.
+/// Place the measured card below its word, as the desktop always has.
+///
+/// A card taller than the room below keeps its place and is capped to that
+/// room, scrolling inside; only a word too close to the bottom for a usable
+/// card sends it above. Expansion keeps the side the answer took.
 fn place_measured(
     (x, y): (f64, f64),
-    size: (f64, f64),
+    (width, height): (f64, f64),
     bounds: (f64, f64, f64, f64),
     band: Option<(f64, f64)>,
     above: Option<bool>,
 ) -> Placement {
     let Some((band_top, band_bottom)) = band else {
-        return (fit_position((x, y), size, bounds), above);
+        let height = height.min(bounds.3);
+        return Placement {
+            origin: fit_position((x, y), (width, height), bounds),
+            height,
+            above,
+            room: bounds.3,
+        };
     };
-    let above = above.unwrap_or(band_bottom.floor() + size.1 > bounds.1 + bounds.3);
-    let y = if above {
-        (band_top - size.1).floor()
+    let below_room = (bounds.1 + bounds.3 - band_bottom.floor()).max(0.0);
+    let above_room = (band_top.ceil() - bounds.1).max(0.0);
+    let above =
+        above.unwrap_or(below_room < height.min(MIN_USABLE_HEIGHT) && above_room > below_room);
+    let room = if above { above_room } else { below_room };
+    let height = height.min(room).max(1.0);
+    let top = if above {
+        (band_top - height).floor()
     } else {
         band_bottom.floor()
     };
-    (fit_position((x, y), size, bounds), Some(above))
+    Placement {
+        origin: (fit_position((x, top), (width, height), bounds).0, top),
+        height,
+        above: Some(above),
+        room,
+    }
 }
 
 fn fit_position(
@@ -440,34 +491,49 @@ mod tests {
     }
 
     #[test]
-    fn measured_answer_never_covers_its_word_and_expansion_keeps_its_side() {
-        let screen = (0.0, 0.0, 1440.0, 900.0);
-        // Estimated 180pt placed this below; the measured 282pt card cannot fit.
-        let word = Some((614.0, 646.0));
+    fn answers_stay_below_their_word_and_tall_ones_scroll_above_the_dock() {
+        // A work area that ends above a Dock at 900.
+        let area = (0.0, 25.0, 1440.0, 815.0);
+        let placed = |band: (f64, f64), height: f64, above: Option<bool>| {
+            place_measured((100.0, band.1), (340.0, height), area, Some(band), above)
+        };
+
+        // Mid-screen: below the word, full height.
         assert_eq!(
-            place_measured((100.0, 646.0), (340.0, 282.0), screen, word, None),
-            ((100.0, 332.0), Some(true))
+            placed((494.0, 526.0), 282.0, None),
+            Placement {
+                origin: (100.0, 526.0),
+                height: 282.0,
+                above: Some(false),
+                room: 314.0
+            }
         );
-        // Expanding keeps the chosen side, growing away from the word.
+        // Taller than the room below: still below, capped above the Dock.
         assert_eq!(
-            place_measured((100.0, 332.0), (460.0, 420.0), screen, word, Some(true)),
-            ((100.0, 194.0), Some(true))
+            placed((494.0, 526.0), 560.0, None),
+            Placement {
+                origin: (100.0, 526.0),
+                height: 314.0,
+                above: Some(false),
+                room: 314.0
+            }
         );
-        // Room below keeps the card directly under the word.
+        // Expanding keeps the side and the cap; the card scrolls.
+        assert_eq!(placed((494.0, 526.0), 900.0, Some(false)).height, 314.0);
+        // Too close to the bottom for a usable card: above the word.
         assert_eq!(
-            place_measured(
-                (100.0, 526.0),
-                (340.0, 282.0),
-                screen,
-                Some((494.0, 526.0)),
-                None
-            ),
-            ((100.0, 526.0), Some(false))
+            placed((730.0, 760.0), 282.0, None),
+            Placement {
+                origin: (100.0, 448.0),
+                height: 282.0,
+                above: Some(true),
+                room: 705.0
+            }
         );
-        // Older payloads without a band retain plain display clamping.
+        // Older payloads without a band retain plain work-area clamping.
         assert_eq!(
-            place_measured((100.0, 800.0), (340.0, 282.0), screen, None, None),
-            ((100.0, 618.0), None)
+            place_measured((100.0, 800.0), (340.0, 282.0), area, None, None).origin,
+            (100.0, 558.0)
         );
     }
 

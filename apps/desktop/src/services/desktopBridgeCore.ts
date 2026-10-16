@@ -15,6 +15,7 @@ export type DesktopMethod =
   | "confirm_region"
   | "cancel_region"
   | "grant_permission"
+  | "popup_pressed"
   | "refresh_permissions"
   | "retry_runtime"
   | "check_for_updates"

@@ -44,6 +44,9 @@ function entryGloss(entry: PopupEntry): string {
   return text(sense?.gloss || sense?.definition || entry.definitions?.[0]);
 }
 
+/** The card's own ceiling, as `.popup-frame` declares it. */
+const POPUP_MAX_HEIGHT = 560;
+
 export function PopupPage() {
   const [current, setCurrent] = useState<Extract<
     DesktopPopupEvent,
@@ -51,6 +54,11 @@ export function PopupPage() {
   > | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
+  // The height the native host found beside this answer's word; the card is
+  // capped to it and scrolls, so it never slides under the Dock or the word.
+  const [room, setRoom] = useState<{ sequence: number; height: number } | null>(
+    null,
+  );
   const currentSequence = useRef(-1);
   const geometrySent = useRef("");
   const cardRef = useRef<HTMLElement | null>(null);
@@ -98,6 +106,19 @@ export function PopupPage() {
     return () => window.removeEventListener("contextmenu", onContextMenu);
   }, []);
 
+  useEffect(() => {
+    // A press on the popup activates Hanly on macOS; the native host hands
+    // that activation back so the Control Center stays behind the reader's app.
+    const onPress = () => {
+      void desktopRequest("popup_pressed").catch((reason: unknown) =>
+        console.error("popup_pressed", reason),
+      );
+    };
+    window.addEventListener("mousedown", onPress, { capture: true });
+    return () =>
+      window.removeEventListener("mousedown", onPress, { capture: true });
+  }, []);
+
   const reportGeometry = useCallback((sequence: number) => {
     if (currentSequence.current !== sequence) return;
     const card = cardRef.current;
@@ -108,9 +129,27 @@ export function PopupPage() {
     const key = `${sequence}:${width}:${height}`;
     if (geometrySent.current === key) return;
     geometrySent.current = key;
-    void desktopRequest("popup_geometry", { sequence, width, height }).catch(
-      () => undefined,
-    );
+    void desktopRequest<{ room?: unknown }>("popup_geometry", {
+      sequence,
+      width,
+      height,
+    })
+      .then((reply) => {
+        const available = reply?.room;
+        if (
+          currentSequence.current === sequence &&
+          typeof available === "number" &&
+          Number.isFinite(available) &&
+          available > 0
+        ) {
+          setRoom((previous) =>
+            previous?.sequence === sequence && previous.height === available
+              ? previous
+              : { sequence, height: available },
+          );
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   const payload = current?.payload;
@@ -196,7 +235,13 @@ export function PopupPage() {
       aria-label="Hanly dictionary result"
       className="popup-frame"
       ref={cardRef}
-      style={{ width: `${width}px` }}
+      style={{
+        width: `${width}px`,
+        maxHeight:
+          room && room.sequence === sequence
+            ? `${Math.min(POPUP_MAX_HEIGHT, Math.floor(room.height))}px`
+            : undefined,
+      }}
     >
       <div className="popup-scroll">
         {success && entry ? (

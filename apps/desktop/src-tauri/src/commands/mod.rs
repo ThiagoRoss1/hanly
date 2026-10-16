@@ -26,6 +26,23 @@ pub async fn desktop_request(
         }
         return crate::windows::local_action(&window, &state.presentation, &method, &params);
     }
+    if method == "popup_pressed" {
+        // The press's activation completes asynchronously; each check hands
+        // it back once Hanly is active and does nothing otherwise.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            for delay in [0, 40, 80, 160, 320] {
+                std::thread::sleep(std::time::Duration::from_millis(delay));
+                if app
+                    .run_on_main_thread(crate::platform::yield_activation)
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        return Ok(json!({}));
+    }
     if method == "quit" {
         app.exit(0);
         return Ok(json!({}));
@@ -125,7 +142,13 @@ fn popup_action(
         }
         _ => return Err(BridgeError::new("not_allowed", "Unknown popup action.")),
     };
-    service.request(window.label(), native_method, native_params)
+    let mut reply = service.request(window.label(), native_method, native_params)?;
+    // The room beside the word is the native host's answer, not the service's;
+    // React caps the card to it.
+    if let (Some(room), Some(fields)) = (applied.get("room"), reply.as_object_mut()) {
+        fields.insert("room".to_owned(), room.clone());
+    }
+    Ok(reply)
 }
 
 fn update_hotkeys(

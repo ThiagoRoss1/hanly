@@ -103,6 +103,67 @@ pub fn configure_popup(window: &WebviewWindow) -> Result<(), BridgeError> {
     window.set_focusable(false).map_err(|_| window_error())
 }
 
+#[cfg(target_os = "macos")]
+thread_local! {
+    /// The app the popup was last presented over, while Hanly was not active.
+    static READING_APP: std::cell::RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSRunningApplication>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Remember the app the popup is shown over; none when Hanly itself is active.
+#[cfg(target_os = "macos")]
+fn remember_reading_app(mtm: objc2::MainThreadMarker) {
+    use objc2_app_kit::{NSApplication, NSWorkspace};
+    let reading = if NSApplication::sharedApplication(mtm).isActive() {
+        None
+    } else {
+        NSWorkspace::sharedWorkspace().frontmostApplication()
+    };
+    READING_APP.with(|slot| *slot.borrow_mut() = reading);
+}
+
+/// After a press on the popup, give activation back to the app it was shown over.
+///
+/// The popup is a plain window, so pressing it activates Hanly, and activation
+/// makes the Control Center key and brings it over the app being read. Tao's
+/// window cannot become a non-activating panel: AppKit already observes it
+/// through a KVO subclass. Since macOS 14 activation is cooperative, so Hanly,
+/// active at this moment, activates the reading app explicitly; that also
+/// orders its window back above the Control Center.
+pub fn yield_activation() {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::NSObjectProtocol;
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSApplication, NSApplicationActivationOptions};
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let reading = READING_APP.with(|slot| slot.borrow().clone());
+        let application = NSApplication::sharedApplication(mtm);
+        if !application.isActive() {
+            return;
+        }
+        match reading {
+            Some(app) if !app.isTerminated() => {
+                // macOS 14's cooperative calls; earlier systems take the old one.
+                if app.respondsToSelector(objc2::sel!(activateFromApplication:options:)) {
+                    application.yieldActivationToApplication(&app);
+                    app.activateFromApplication_options(
+                        &objc2_app_kit::NSRunningApplication::currentApplication(),
+                        NSApplicationActivationOptions::empty(),
+                    );
+                } else {
+                    #[allow(deprecated)]
+                    app.activateWithOptions(NSApplicationActivationOptions::empty());
+                }
+            }
+            // Shown while Hanly was active: the press belongs to Hanly.
+            _ => {}
+        }
+    }
+}
+
 pub fn present_popup_frame(
     window: &WebviewWindow,
     x: f64,
@@ -141,6 +202,9 @@ pub fn present_popup_frame(
             }
             native.invalidateShadow();
             if !native.isVisible() {
+                // A fresh answer, not a resize of one already on screen,
+                // which a press may be activating Hanly around.
+                remember_reading_app(mtm);
                 native.orderFrontRegardless();
             }
         }
