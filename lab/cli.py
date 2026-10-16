@@ -1273,6 +1273,10 @@ def _session_parsers(subcommands: Any) -> None:
     )
     stages.add_argument("--warmup", type=int, default=1,
                         help="unrecorded children per experiment before the repeats")
+    stages.add_argument("--ocr-variant", default="product",
+                        help="recognizer: product, or a name in lab/resources/ocr_variants.py")
+    stages.add_argument("--no-sequence", action="store_true",
+                        help="skip the whole-lookup sequence (its repeats are cache hits)")
     stages.add_argument("--no-calibration", action="store_true",
                         help="skip the known-allocation calibration experiment")
     stages.add_argument("--calibration-only", action="store_true",
@@ -1618,6 +1622,11 @@ def run_resource_stages(args: argparse.Namespace) -> int:
     from .resources.experiment import ExperimentPlan, run_experiment
 
     components = tuple(name for name in args.components.split(",") if name)
+    from .resources.ocr_variants import VARIANTS
+
+    if args.ocr_variant != "product" and args.ocr_variant not in VARIANTS:
+        print(f"lab: unknown OCR variant {args.ocr_variant!r}", file=sys.stderr)
+        return 2
     unknown = sorted(set(components) - {"ocr", "kiwi", "dictionary"})
     if unknown:
         print(f"lab: unknown component(s): {', '.join(unknown)}", file=sys.stderr)
@@ -1650,6 +1659,8 @@ def run_resource_stages(args: argparse.Namespace) -> int:
         components=() if args.calibration_only else components,
         calibrate=not args.no_calibration,
         warmup_runs=args.warmup,
+        ocr_variant=args.ocr_variant,
+        sequence=not args.no_sequence,
     )
     run_dir = run_experiment(plan, args.output_root, report=lambda line: print(f"lab: {line}"))
     print(f"lab: resource evidence in {run_dir}/summary.md")

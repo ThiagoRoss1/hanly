@@ -25,8 +25,9 @@ from .metrics import Snapshot, primary_memory, snapshot
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Measurement protocol for these experiments. A change to how a value is read
-#: or derived bumps it, and comparison refuses to mix versions.
-PROTOCOL = "resources-v1"
+#: or derived bumps it, and comparison refuses to mix versions. v2: providers
+#: on the worker thread, genuine OCR calls counted, OCR results recorded.
+PROTOCOL = "resources-v2"
 
 #: Fast enough to see a model load's transient; slow enough not to perturb it.
 SAMPLE_INTERVAL_SECONDS = 0.02
@@ -267,6 +268,9 @@ def attribute(record: ExperimentRecord) -> dict[str, Any]:
             "memory_after": memory,
             "delta": delta,
             "sampled_peak": stage.sampled_peak,
+            "sampled_peak_rss": stage.sampled_peak_rss,
+            # Calls that reached the recognizer, beneath every cache.
+            "ocr_calls": stage.detail.get("ocr_calls"),
             "transient_above_boundary": transient,
             "rss_after": (stage.after or {}).get("rss"),
             "uss_after": (stage.after or {}).get("uss"),
@@ -299,6 +303,7 @@ def _repeated(ticks: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "latency_ms": {
             "p50": _nearest_rank(latencies, 0.5),
             "p90": _nearest_rank(latencies, 0.9),
+            "p95": _nearest_rank(latencies, 0.95),
             "max": latencies[-1],
         },
         # A slope through a handful of readings is noise, not growth.
@@ -407,17 +412,20 @@ def aggregate(experiments: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     keys = (
         "memory_after", "delta", "sampled_peak", "transient_above_boundary",
         "duration_ms", "cpu_seconds", "threads_after", "read_bytes",
-        "growth_per_operation",
+        "growth_per_operation", "rss_after", "sampled_peak_rss", "ocr_calls",
     )
     stages: dict[str, dict[str, Any]] = {}
     for experiment in experiments:
         for row in experiment["stages"]:
-            slot = stages.setdefault(row["stage"], {key: [] for key in (*keys, "latency_p50")})
+            slot = stages.setdefault(
+                row["stage"], {key: [] for key in (*keys, "latency_p50", "latency_p95")}
+            )
             for key in keys:
                 if row.get(key) is not None:
                     slot[key].append(row[key])
             if row.get("latency_ms"):
                 slot["latency_p50"].append(row["latency_ms"]["p50"])
+                slot["latency_p95"].append(row["latency_ms"]["p95"])
     derived_keys = {key for experiment in experiments for key in experiment["derived"]}
     derived = {
         key: _spread([

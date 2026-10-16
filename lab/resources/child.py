@@ -3,8 +3,14 @@
 ``python -m lab.resources.child <plan.json>`` executes the plan's stages in
 order. After each stage it writes one JSON line and blocks until the parent
 answers, so the parent reads this process at an exact boundary while it is
-idle. The child measures nothing about itself except latency and what it
-returned; recognized text and pixels never leave it, only digests and counts.
+idle. The child measures nothing about itself except latency, how many calls
+reached the recognizer, and what it returned.
+
+Providers are built, used and closed on one thread named like the lookup
+child's worker, never on the main thread: native frameworks such as Vision
+behave differently on a thread without an autorelease pool, and that is the
+thread the application runs them on. Recognized text and pixels never leave
+the child; geometry, confidence and digests do.
 """
 
 from __future__ import annotations
@@ -12,43 +18,20 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import queue
 import sys
+import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-#: The order every sequence experiment follows; components stop where the
-#: plan says. Stage names are the report's vocabulary.
-SEQUENCE_STAGES = (
-    "interpreter",
-    "import_runtime",
-    "runtime_validation",
-    "load_ocr",
-    "load_kiwi",
-    "load_dictionary",
-    "assemble_worker",
-    "first_lookup",
-    "repeated_varied",
-    "repeated_same",
-    "idle",
-    "unload",
-    "after_unload_idle",
-)
-COMPONENT_STAGES = (
-    "interpreter",
-    "import_runtime",
-    "runtime_validation",
-    "load",
-    "first_use",
-    "repeated_varied",
-    "repeated_same",
-    "idle",
-    "unload",
-    "after_unload_idle",
-)
+#: The lookup child's provider thread, as ``hanly_app.lookup.process`` names it.
+WORKER_THREAD = "hanly-lookup-worker"
+
 COMPONENTS = ("ocr", "kiwi", "dictionary", "synthetic")
+
+T = TypeVar("T")
 
 
 class _Handshake:
@@ -76,23 +59,104 @@ class _Handshake:
             raise SystemExit(0)
 
 
+class _Worker:
+    """The one thread that owns every provider, as in the lookup child."""
+
+    def __init__(self) -> None:
+        self._jobs: queue.Queue[tuple[Callable[[], Any], queue.Queue[Any]] | None] = (
+            queue.Queue()
+        )
+        self._thread = threading.Thread(target=self._run, name=WORKER_THREAD, daemon=True)
+        self._thread.start()
+
+    def call(self, work: Callable[[], T]) -> T:
+        reply: queue.Queue[Any] = queue.Queue(maxsize=1)
+        self._jobs.put((work, reply))
+        ok, value = reply.get()
+        if not ok:
+            raise value
+        return value
+
+    def stop(self) -> None:
+        self._jobs.put(None)
+        self._thread.join(timeout=30)
+
+    def _run(self) -> None:
+        while True:
+            job = self._jobs.get()
+            if job is None:
+                return
+            work, reply = job
+            try:
+                reply.put((True, work()))
+            except BaseException as error:  # handed back to the caller
+                reply.put((False, error))
+
+
+class _CountingOCR:
+    """Count the calls that really reach the recognizer.
+
+    Wraps the provider under every cache, so a cache hit is visibly not a
+    recognition; everything except ``recognize`` passes through untouched.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.calls = 0
+
+    def recognize(self, image: Any) -> Any:
+        self.calls += 1
+        return self._inner.recognize(image)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 def _digest(value: Any) -> str:
     payload = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _result_digest(result: Any) -> tuple[str, str]:
-    """(status, digest) of a lookup result: what it decided, never its text."""
+def ocr_record(results: Sequence[Any]) -> dict[str, Any]:
+    """What a recognition returned, comparable without keeping its text.
 
-    status = str(result.status.value)
-    shape = {
-        "status": status,
+    Order, a digest of each region's text, its confidence and its corners are
+    kept; the comparison applies tolerances to the numbers and none to text or
+    order.
+    """
+
+    regions = []
+    for result in results:
+        quad = result.quad
+        regions.append({
+            "text": _digest(result.text),
+            "confidence": round(float(result.confidence), 4),
+            "quad": [
+                round(value, 2)
+                for point in (quad.p1, quad.p2, quad.p3, quad.p4)
+                for value in (point.x, point.y)
+            ],
+        })
+    return {"regions": regions, "digest": _digest(regions)}
+
+
+def _result_decision(result: Any) -> dict[str, Any]:
+    """What a lookup decided, as digests: status, selection, lemma and entries."""
+
+    context = result.context
+    selected = None
+    if context is not None and context.selected_ocr is not None:
+        selected = _digest(context.selected_ocr.text)
+    decision = {
+        "status": str(result.status.value),
+        "surface": _digest(context.text) if context is not None and context.text else None,
+        "lemma": _digest(context.lemma) if context is not None and context.lemma else None,
+        "selected_line": selected,
         "entries": [
-            [entry.entry_id or entry.headword, entry.part_of_speech]
-            for entry in result.entries
+            [entry.entry_id or entry.headword, entry.part_of_speech] for entry in result.entries
         ],
     }
-    return status, _digest(shape)
+    return {"status": decision["status"], "digest": _digest(decision)}
 
 
 def _load_inputs(path: Path) -> list[dict[str, Any]]:
@@ -111,18 +175,34 @@ def _repeat(
     stage: str,
     work: Callable[[int], dict[str, Any]],
     count: int,
+    calls: Callable[[], int] | None,
 ) -> None:
+    before = calls() if calls else None
     for index in range(count):
+        started_calls = calls() if calls else None
         started = time.perf_counter_ns()
         detail = work(index)
-        handshake.tick(stage, index, time.perf_counter_ns() - started, **detail)
-    handshake.report(stage, count=count)
+        latency = time.perf_counter_ns() - started
+        if calls and started_calls is not None:
+            detail["ocr_calls"] = calls() - started_calls
+        handshake.tick(stage, index, latency, **detail)
+    handshake.report(
+        stage, count=count,
+        **({"ocr_calls": calls() - before} if calls and before is not None else {}),
+    )
 
 
-@contextmanager
-def _collected() -> Iterator[None]:
-    yield
-    gc.collect()
+def _ocr_factory(settings: Any, plan: dict[str, Any]) -> Callable[[], Any]:
+    """The application's recognizer, or a named Lab variant of it."""
+
+    from hanly_app.lookup.process import _ocr_provider_factory
+
+    variant = plan.get("ocr_variant") or "product"
+    if variant == "product":
+        return _ocr_provider_factory(settings)
+    from .ocr_variants import VARIANTS
+
+    return VARIANTS[variant]
 
 
 def run(plan: dict[str, Any]) -> None:
@@ -133,8 +213,6 @@ def run(plan: dict[str, Any]) -> None:
 
     from hanly import PixelFormat, Point, ROIImage
     from hanly_app.config import OCRBackend
-    from hanly_app.lookup.controller import LookupRequest
-    from hanly_app.lookup.process import _ocr_provider_factory
     from hanly_app.runtime import load_runtime
 
     handshake.report("import_runtime", modules=len(sys.modules))
@@ -156,65 +234,98 @@ def run(plan: dict[str, Any]) -> None:
         for item in inputs
     ]
     targets = [Point(item["target_x"], item["target_y"]) for item in inputs]
-    lookups = int(plan["lookups"])
-    idle = float(plan["idle_seconds"])
+    worker = _Worker()
+    try:
+        if plan["mode"] == "component":
+            _run_component(plan, handshake, worker, settings, images)
+        else:
+            _run_sequence(plan, handshake, worker, settings, images, targets)
+    finally:
+        worker.stop()
 
-    if plan["mode"] == "component":
-        _run_component(plan, handshake, settings, _ocr_provider_factory, images, lookups, idle)
-        return
 
+def _run_sequence(
+    plan: dict[str, Any],
+    handshake: _Handshake,
+    worker: _Worker,
+    settings: Any,
+    images: Sequence[Any],
+    targets: Sequence[Any],
+) -> None:
     from hanly.kiwi_provider import KiwiProvider
     from hanly.krdict_provider import KRDICTProvider
     from hanly_app.composition import create_lookup_worker_factory
+    from hanly_app.lookup.controller import LookupRequest
 
+    lookups = int(plan["lookups"])
+    idle = float(plan["idle_seconds"])
     # One owner for everything loaded, so unloading is one visible clear.
     held: dict[str, Any] = {}
-    held["ocr"] = _ocr_provider_factory(settings)()
+    factory = _ocr_factory(settings, plan)
+
+    def load_ocr() -> None:
+        held["ocr"] = _CountingOCR(factory())
+
+    worker.call(load_ocr)
     handshake.report("load_ocr", backend=settings.ocr_backend.value)
-    held["kiwi"] = KiwiProvider()
+    worker.call(lambda: held.__setitem__("kiwi", KiwiProvider()))
     handshake.report("load_kiwi")
-    held["dictionary"] = KRDICTProvider(settings.krdict_path)
+    worker.call(lambda: held.__setitem__("dictionary", KRDICTProvider(settings.krdict_path)))
     handshake.report("load_dictionary")
 
     # The app's child hands the worker factories; these return the instances
     # already measured, so assembly is the pipeline, caches and prewarming.
-    held["worker"] = create_lookup_worker_factory(
-        lambda: held["ocr"], lambda: held["kiwi"], lambda: held["dictionary"],
-        confidence_threshold=settings.confidence_threshold,
-        skip_flat_rois=settings.skip_flat_rois,
-        ocr_backend=settings.ocr_backend.value,
-    )()
-    provider_types = tuple(
-        type(held[name]) for name in ("ocr", "kiwi", "dictionary")
-    )
-    handshake.report("assemble_worker", instances=_instances(provider_types))
+    def assemble() -> None:
+        held["worker"] = create_lookup_worker_factory(
+            lambda: held["ocr"], lambda: held["kiwi"], lambda: held["dictionary"],
+            confidence_threshold=settings.confidence_threshold,
+            skip_flat_rois=settings.skip_flat_rois,
+            ocr_backend=settings.ocr_backend.value,
+        )()
 
-    request_ids = iter(range(1, 1_000_000))
+    worker.call(assemble)
+    provider_types = (
+        type(held["ocr"]._inner), type(held["kiwi"]), type(held["dictionary"]),
+    )
+    handshake.report(
+        "assemble_worker", instances=worker.call(lambda: _instances(provider_types)),
+        ocr_calls=held["ocr"].calls,
+    )
+
+    request_ids = iter(range(1, 10_000_000))
+    calls = lambda: held["ocr"].calls  # noqa: E731
 
     def lookup(index: int) -> dict[str, Any]:
         request = LookupRequest(next(request_ids), images[index], targets[index])
-        status, digest = _result_digest(held["worker"](request))
-        return {"status": status, "digest": digest, "input": index}
+        return {**worker.call(lambda: _result_decision(held["worker"](request))),
+                "input": index}
 
     def varied(index: int) -> dict[str, Any]:
         # Index 0 is the first lookup's input and already cached, so varied
-        # work cycles through the rest; only the first pass is fresh.
+        # work cycles through the rest; only the first pass is fresh, and the
+        # recorded OCR calls say so rather than the label.
         others = max(1, len(images) - 1)
-        cache = "fresh" if index < others else "repeat"
-        return lookup(1 + index % others if len(images) > 1 else 0) | {"cache": cache}
+        return lookup(1 + index % others if len(images) > 1 else 0)
 
-    handshake.report("first_lookup", **lookup(0))
-    _repeat(handshake, "repeated_varied", varied, lookups)
-    _repeat(handshake, "repeated_same", lambda _i: lookup(0) | {"cache": "hit"}, lookups)
+    before = calls()
+    first = lookup(0)
+    handshake.report("first_lookup", **first, ocr_calls=calls() - before)
+    _repeat(handshake, "repeated_varied", varied, lookups, calls)
+    _repeat(handshake, "repeated_same", lambda _i: lookup(0), lookups, calls)
 
     time.sleep(idle)
-    handshake.report("idle", seconds=idle, instances=_instances(provider_types))
+    handshake.report(
+        "idle", seconds=idle, instances=worker.call(lambda: _instances(provider_types)),
+    )
 
-    with _collected():
+    def unload() -> None:
         # The worker closes the providers it was handed.
         held.pop("worker").close()
         held.clear()
-    handshake.report("unload", instances=_instances(provider_types))
+        gc.collect()
+
+    worker.call(unload)
+    handshake.report("unload", instances=worker.call(lambda: _instances(provider_types)))
     time.sleep(min(idle, 2.0))
     handshake.report("after_unload_idle")
 
@@ -232,41 +343,53 @@ def _instances(types: tuple[type, ...]) -> dict[str, int]:
 def _run_component(
     plan: dict[str, Any],
     handshake: _Handshake,
+    worker: _Worker,
     settings: Any,
-    ocr_factory: Callable[[Any], Callable[[], Any]],
     images: Sequence[Any],
-    lookups: int,
-    idle: float,
 ) -> None:
     component = plan["component"]
+    lookups = int(plan["lookups"])
+    idle = float(plan["idle_seconds"])
     texts: list[str] = list(plan.get("texts") or [])
     held: dict[str, Any] = {}
+    records: dict[int, dict[str, Any]] = {}
+    unstable: set[int] = set()
     use: Callable[[int], dict[str, Any]]
+    calls: Callable[[], int] | None = None
 
     if component == "ocr":
-        held["provider"] = ocr_factory(settings)()
+        factory = _ocr_factory(settings, plan)
+        worker.call(lambda: held.__setitem__("provider", _CountingOCR(factory())))
+        calls = lambda: held["provider"].calls  # noqa: E731
 
         def use(index: int) -> dict[str, Any]:
-            regions = held["provider"].recognize(images[index % len(images)])
-            return {"regions": len(regions)}
+            slot = index % len(images)
+            record = worker.call(lambda: ocr_record(held["provider"].recognize(images[slot])))
+            known = records.setdefault(slot, record)
+            if known["digest"] != record["digest"]:
+                unstable.add(slot)
+            return {"regions": len(record["regions"]), "ocr": record["digest"], "input": slot}
 
     elif component == "kiwi":
         from hanly.kiwi_provider import KiwiProvider
 
-        held["provider"] = KiwiProvider()
+        worker.call(lambda: held.__setitem__("provider", KiwiProvider()))
 
         def use(index: int) -> dict[str, Any]:
-            analysis = held["provider"].analyze(texts[index % len(texts)])
+            analysis = worker.call(lambda: held["provider"].analyze(texts[index % len(texts)]))
             tokens = getattr(analysis, "tokens", analysis)
             return {"tokens": len(tokens)}
 
     elif component == "dictionary":
         from hanly.krdict_provider import KRDICTProvider
 
-        held["provider"] = KRDICTProvider(settings.krdict_path)
+        worker.call(
+            lambda: held.__setitem__("provider", KRDICTProvider(settings.krdict_path))
+        )
 
         def use(index: int) -> dict[str, Any]:
-            return {"entries": len(held["provider"].lookup(texts[index % len(texts)]))}
+            entries = worker.call(lambda: held["provider"].lookup(texts[index % len(texts)]))
+            return {"entries": len(entries)}
 
     elif component == "synthetic":
         # Calibrates the method itself: a known allocation must be attributed
@@ -275,10 +398,14 @@ def _run_component(
         import mmap
 
         size = int(plan.get("synthetic_bytes", 64 * 2**20))
-        mapping = mmap.mmap(-1, size)
-        for offset in range(0, size, mmap.PAGESIZE):
-            mapping[offset] = 1
-        held["provider"] = mapping
+
+        def mapped() -> Any:
+            mapping = mmap.mmap(-1, size)
+            for offset in range(0, size, mmap.PAGESIZE):
+                mapping[offset] = 1
+            return mapping
+
+        worker.call(lambda: held.__setitem__("provider", mapped()))
 
         def use(index: int) -> dict[str, Any]:
             return {"bytes": len(held["provider"])}
@@ -286,18 +413,29 @@ def _run_component(
     else:
         raise SystemExit(f"unknown component {component!r}")
 
-    handshake.report("load", component=component)
-    handshake.report("first_use", **use(0))
-    _repeat(handshake, "repeated_varied", lambda i: use(1 + i), lookups)
-    _repeat(handshake, "repeated_same", lambda _i: use(0), lookups)
+    handshake.report("load", component=component, ocr_variant=plan.get("ocr_variant"))
+    before = calls() if calls else 0
+    first = use(0)
+    handshake.report(
+        "first_use", **first, **({"ocr_calls": calls() - before} if calls else {}),
+    )
+    _repeat(handshake, "repeated_varied", lambda i: use(1 + i), lookups, calls)
+    _repeat(handshake, "repeated_same", lambda _i: use(0), lookups, calls)
     time.sleep(idle)
-    handshake.report("idle", seconds=idle)
+    handshake.report(
+        "idle", seconds=idle,
+        **({"ocr_records": {str(k): v for k, v in sorted(records.items())},
+            "ocr_unstable_inputs": sorted(unstable)} if component == "ocr" else {}),
+    )
 
-    with _collected():
+    def unload() -> None:
         close = getattr(held["provider"], "close", None)
         if callable(close):
             close()
         held.clear()
+        gc.collect()
+
+    worker.call(unload)
     handshake.report("unload")
     time.sleep(min(idle, 2.0))
     handshake.report("after_unload_idle")

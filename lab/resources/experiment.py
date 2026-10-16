@@ -52,6 +52,11 @@ class ExperimentPlan:
     #: Unrecorded children run first, so every recorded repeat meets the same
     #: warm file cache and a cold disk is never mistaken for a code change.
     warmup_runs: int = 1
+    #: ``product``, or a candidate from ``ocr_variants`` measured against it.
+    ocr_variant: str = "product"
+    #: Whether the whole lookup sequence runs; a long recognizer-only
+    #: experiment skips it, since its repeated lookups are cache hits.
+    sequence: bool = True
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +68,8 @@ class ExperimentPlan:
             "components": list(self.components),
             "calibrate": self.calibrate,
             "warmup_runs": self.warmup_runs,
+            "ocr_variant": self.ocr_variant,
+            "sequence": self.sequence,
         }
 
 
@@ -75,8 +82,17 @@ class RenderedInputs:
     face: str
 
 
+#: Font sizes used, in turn, once every line has been rendered at the last.
+_INPUT_SIZES = (20, 18, 22, 16, 24, 26, 14, 28)
+
+
 def render_inputs(count: int, directory: Path) -> RenderedInputs:
-    """Render ``count`` minibook lines with the pointer on a known target."""
+    """Render ``count`` distinct minibook images, the pointer on a known target.
+
+    Each input is a different image: one target per line, then the next font
+    size. Two inputs sharing pixels would be one OCR cache entry, and a
+    "varied" stage over them would measure cache hits rather than recognition.
+    """
 
     from ..minibook import load_minibook
     from ..synthetic_ocr import SampleSpec, discover_faces, render_sample
@@ -86,45 +102,56 @@ def render_inputs(count: int, directory: Path) -> RenderedInputs:
         raise RuntimeError("no installed face draws Hangul; resource inputs cannot be rendered")
     face = faces[0]
     book = load_minibook()
-    targets = [
-        target for target in book.targets
-        if not target.refuse and all("가" <= ch <= "힣" for ch in target.surface)
-    ][:count]
-    if not targets:
+    per_line: dict[int, Any] = {}
+    for target in book.targets:
+        if not target.refuse and all("가" <= ch <= "힣" for ch in target.surface):
+            per_line.setdefault(target.line, target)
+    lines = list(per_line.values())
+    if not lines:
         raise RuntimeError("the minibook has no Korean target to render")
 
     index: list[dict[str, Any]] = []
     blob = bytearray()
+    seen: set[str] = set()
+    chosen: list[Any] = []
     digest = hashlib.sha256(f"{face.family}:{face.index}".encode())
-    for number, target in enumerate(targets):
-        line = book.lines[target.line]
-        sample = render_sample(SampleSpec(
-            case_id=f"resource-{number}",
-            text=line,
-            font=face.spec(),
-            font_size=20,
-            target_index=target.start + target.cursor,
-        ))
-        point = sample.metadata.get("target_point") or (sample.width / 2, sample.height / 2)
-        pixel_format = _PIXEL_FORMATS.get(sample.mode)
-        if pixel_format is None:
-            raise RuntimeError(f"rendered mode {sample.mode} has no ROI pixel format")
-        index.append({
-            "width": sample.width, "height": sample.height, "pixel_format": pixel_format,
-            "target_x": float(point[0]), "target_y": float(point[1]),
-            "offset": len(blob), "length": len(sample.data),
-        })
-        blob.extend(sample.data)
-        digest.update(sample.data)
+    for size in _INPUT_SIZES:
+        for target in lines:
+            if len(chosen) == count:
+                break
+            sample = render_sample(SampleSpec(
+                case_id=f"resource-{len(chosen)}",
+                text=book.lines[target.line],
+                font=face.spec(),
+                font_size=size,
+                target_index=target.start + target.cursor,
+            ))
+            fingerprint = hashlib.sha256(sample.data).hexdigest()
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            point = sample.metadata.get("target_point") or (sample.width / 2, sample.height / 2)
+            pixel_format = _PIXEL_FORMATS.get(sample.mode)
+            if pixel_format is None:
+                raise RuntimeError(f"rendered mode {sample.mode} has no ROI pixel format")
+            index.append({
+                "width": sample.width, "height": sample.height, "pixel_format": pixel_format,
+                "target_x": float(point[0]), "target_y": float(point[1]),
+                "offset": len(blob), "length": len(sample.data), "font_size": size,
+            })
+            blob.extend(sample.data)
+            digest.update(sample.data)
+            chosen.append(target)
+    if len(chosen) < count:
+        raise RuntimeError(f"only {len(chosen)} distinct inputs could be rendered")
     path = directory / "inputs.bin"
     with path.open("wb") as stream:
         stream.write(json.dumps(index).encode("utf-8") + b"\n")
         stream.write(bytes(blob))
-    lemmas = tuple(target.lemma or target.surface for target in targets)
     return RenderedInputs(
         path=path,
-        texts=tuple(book.lines[target.line] for target in targets),
-        lemmas=lemmas,
+        texts=tuple(book.lines[target.line] for target in chosen),
+        lemmas=tuple(target.lemma or target.surface for target in chosen),
         digest="sha256:" + digest.hexdigest()[:16],
         face=f"{face.family}#{face.index}",
     )
@@ -163,6 +190,7 @@ def run_experiment(
                 "primary_memory": primary_memory_name(),
                 "input_digest": inputs.digest if inputs else None,
                 "input_face": inputs.face if inputs else None,
+                "source_diff": _record_source_diff(run_dir),
             },
             scenario={"name": SCENARIO, "experiments": _labels(plan)},
             versions=versions(),
@@ -214,6 +242,7 @@ def run_experiment(
         },
         "interaction": _interaction(experiments),
         "correctness": _correctness(experiments.get("sequence", [])),
+        "ocr": _ocr_correctness(experiments.get("component:ocr", [])),
     }
     (run_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -227,7 +256,8 @@ def run_experiment(
 def _labels(plan: ExperimentPlan) -> list[str]:
     labels = ["calibration"] if plan.calibrate else []
     if plan.runtime_config is not None:
-        labels.append("sequence")
+        if plan.sequence:
+            labels.append("sequence")
         labels += [f"component:{name}" for name in plan.components]
     return labels
 
@@ -241,6 +271,7 @@ def _child_plans(
         "inputs_path": str(inputs.path) if inputs else None,
         "lookups": plan.lookups,
         "idle_seconds": plan.idle_seconds,
+        "ocr_variant": plan.ocr_variant,
     }
     plans: list[tuple[str, dict[str, Any]]] = []
     if plan.calibrate:
@@ -250,7 +281,8 @@ def _child_plans(
         }))
     if inputs is None:
         return plans
-    plans.append(("sequence", {**base, "mode": "sequence"}))
+    if plan.sequence:
+        plans.append(("sequence", {**base, "mode": "sequence"}))
     for component in plan.components:
         texts: Sequence[str] = inputs.lemmas if component == "dictionary" else inputs.texts
         plans.append((f"component:{component}", {
@@ -308,4 +340,72 @@ def _correctness(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
             all(item == signatures[0] for item in signatures) if signatures else None
         ),
         "statuses": sorted(statuses),
+    }
+
+
+def _ocr_correctness(runs: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    """The recognizer's per-input results and whether every repeat agreed.
+
+    Records hold region order, text digests, confidence and corners, so a
+    comparison can apply tolerances to numbers and none to text or order.
+    """
+
+    if not runs:
+        return None
+    per_repeat: list[dict[str, Any]] = []
+    unstable: set[str] = set()
+    for run in runs:
+        idle = next((row for row in run["stages"] if row["stage"] == "idle"), None)
+        detail = (idle or {}).get("detail") or {}
+        per_repeat.append(detail.get("ocr_records") or {})
+        unstable.update(str(index) for index in detail.get("ocr_unstable_inputs") or ())
+    first = per_repeat[0]
+    differing = sorted(
+        index for records in per_repeat[1:] for index, record in records.items()
+        if first.get(index, {}).get("digest") != record.get("digest")
+    )
+    return {
+        "records": first,
+        "stable_within_runs": not unstable,
+        "unstable_inputs": sorted(unstable),
+        "stable_across_repeats": not differing,
+        "differing_inputs": sorted(set(differing)),
+    }
+
+
+def _record_source_diff(run_dir: Path) -> dict[str, Any]:
+    """Identify a dirty checkout exactly: the tracked diff, kept beside the run.
+
+    Untracked files are listed by name and size only; the diff itself is the
+    reproducible part.
+    """
+
+    import subprocess
+
+    root = Path(__file__).resolve().parents[2]
+
+    def git(*arguments: str) -> bytes | None:
+        try:
+            return subprocess.run(
+                ["git", *arguments], cwd=root, capture_output=True, check=True, timeout=30,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    diff = git("diff", "HEAD", "--binary")
+    untracked = git("ls-files", "--others", "--exclude-standard")
+    if diff is None or untracked is None:
+        return {"available": False}
+    names = [name for name in untracked.decode("utf-8", "replace").splitlines() if name]
+    if diff:
+        (run_dir / "source.diff").write_bytes(diff)
+    return {
+        "available": True,
+        "sha256": hashlib.sha256(diff).hexdigest() if diff else None,
+        "bytes": len(diff),
+        "untracked": [
+            {"path": name, "bytes": (root / name).stat().st_size}
+            for name in names
+            if (root / name).is_file()
+        ][:200],
     }

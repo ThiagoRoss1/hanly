@@ -317,3 +317,93 @@ def test_changed_decisions_are_reported_beside_any_saving(tmp_path: Path) -> Non
     cand = _resource_run(tmp_path, "cand", memory=300 * MIB, digest="d2")
 
     assert compare.compare(base, cand)["behaviour"] == "changed"
+
+
+# -- protocol v2: ownership, genuine OCR calls, readings ---------------------------------
+
+
+def test_rendered_inputs_are_distinct_images(tmp_path: Path) -> None:
+    import hashlib
+
+    from lab.resources.experiment import render_inputs
+
+    rendered = render_inputs(12, tmp_path)
+    with rendered.path.open("rb") as stream:
+        index = json.loads(stream.readline())
+        blob = stream.read()
+    fingerprints = {
+        hashlib.sha256(blob[item["offset"]: item["offset"] + item["length"]]).hexdigest()
+        for item in index
+    }
+    assert len(index) == len(fingerprints) == 12
+
+
+def test_providers_run_on_the_lookup_worker_thread() -> None:
+    import threading
+
+    from lab.resources.child import WORKER_THREAD, _Worker
+
+    worker = _Worker()
+    try:
+        assert worker.call(lambda: threading.current_thread().name) == WORKER_THREAD
+        with pytest.raises(ValueError, match="boom"):
+            worker.call(lambda: (_ for _ in ()).throw(ValueError("boom")))
+    finally:
+        worker.stop()
+
+
+def test_ocr_calls_are_counted_beneath_the_lookup_cache() -> None:
+    from hanly import OCRResult, PixelFormat, Point, Quad, ROIImage
+    from hanly_app.composition import create_lookup_worker_factory
+    from hanly_app.lookup.controller import LookupRequest
+
+    from lab.resources.child import _CountingOCR
+
+    class OneLine:
+        def recognize(self, image: ROIImage) -> tuple[OCRResult, ...]:
+            quad = Quad(Point(0, 0), Point(40, 0), Point(40, 20), Point(0, 20))
+            return (OCRResult(text="책", confidence=0.9, quad=quad),)
+
+    class Analyzer:
+        def analyze(self, text: str) -> tuple[()]:
+            return ()
+
+    class Dictionary:
+        def lookup(self, lemma: str) -> tuple[()]:
+            return ()
+
+    counting = _CountingOCR(OneLine())
+    worker = create_lookup_worker_factory(lambda: counting, Analyzer, Dictionary)()
+    image = ROIImage(width=40, height=20, pixel_format=PixelFormat.GRAYSCALE_8, data=bytes(800))
+    for request_id in (1, 2, 3):
+        worker(LookupRequest(request_id, image, Point(10, 10)))
+    worker.close()
+
+    assert counting.calls == 1
+
+
+def _reading(confidence: float = 0.9, shift: float = 0.0, text: str = "a") -> dict[str, Any]:
+    from lab.resources.child import _digest
+
+    regions = [{"text": text, "confidence": confidence,
+                "quad": [0.0 + shift, 0.0, 10.0, 0.0, 10.0, 5.0, 0.0, 5.0]}]
+    return {"regions": regions, "digest": _digest(regions)}
+
+
+def _ocr(records: dict[str, Any]) -> dict[str, Any]:
+    return {"records": records, "stable_within_runs": True, "unstable_inputs": [],
+            "stable_across_repeats": True, "differing_inputs": []}
+
+
+def test_ocr_readings_compare_with_stated_tolerances() -> None:
+    base = _ocr({"0": _reading(), "1": _reading()})
+
+    assert compare.compare_ocr(base, base)["label"] == "identical"
+    near = _ocr({"0": _reading(confidence=0.91, shift=0.5), "1": _reading()})
+    assert compare.compare_ocr(base, near)["label"] == "within_tolerance"
+    moved = _ocr({"0": _reading(shift=3.0), "1": _reading(text="b")})
+    result = compare.compare_ocr(base, moved)
+    assert result["label"] == "changed"
+    assert result["changed"] == {"0": ["geometry"], "1": ["text or order"]}
+    noisy = dict(base, stable_within_runs=False, unstable_inputs=["0"])
+    assert compare.compare_ocr(noisy, base)["label"] == "unstable"

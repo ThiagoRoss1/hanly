@@ -16,9 +16,13 @@ METHOD = """\
 - Attribution is the difference between boundaries: an **estimate**, not
   allocation accounting. Shared libraries, native allocators that keep freed
   pages, memory compression and initialization order all move it.
-- The primary figure is the macOS physical footprint; elsewhere it is RSS.
-  RSS also counts clean shared pages and falls when idle pages are compressed,
-  so it can hide or invent cost.
+- The primary figure (`after`, `peak`) is the macOS physical footprint;
+  elsewhere it is RSS. RSS is shown in its own columns: it also counts clean
+  shared pages and falls when idle pages are compressed, so it can hide or
+  invent cost. The two are never mixed in one figure.
+- Providers are built, used and closed on a `hanly-lookup-worker` thread, as
+  in the lookup child. `OCR calls` counts recognitions that really reached the
+  recognizer, beneath every cache; a lookup answered from the cache is not one.
 - `released_by_unload` is what closing the providers returned to the system.
   What stays after unloading leaves only when the process exits; the lookup
   child's retirement is that exit.
@@ -37,6 +41,7 @@ def write_summary(run_dir: Path, metadata: Mapping[str, Any], summary: Mapping[s
     if summary.get("interaction"):
         lines += _interaction(summary["interaction"])
     lines += _correctness(summary.get("correctness") or {})
+    lines += _ocr_readings(summary.get("ocr"))
     lines += _lazy_loading(summary)
     lines += ["", "## Unavailable in this run", ""]
     lines += [f"- `{name}`: {reason}" for name, reason in summary["unavailable"].items()]
@@ -60,8 +65,23 @@ def _provenance(metadata: Mapping[str, Any], summary: Mapping[str, Any]) -> list
         f"{plan['idle_seconds']:g} s idle; {plan['repeats']} repeats",
         f"- Inputs `{config.get('input_digest') or 'none'}` "
         f"in `{config.get('input_face') or 'n/a'}`",
+        f"- Recognizer variant `{plan.get('ocr_variant', 'product')}`; "
+        f"whole-lookup sequence {'run' if plan.get('sequence', True) else 'skipped'}",
+        f"- Source diff: {_diff_line(config.get('source_diff') or {})}",
         f"- Versions: {known}",
     ]
+
+
+def _diff_line(diff: Mapping[str, Any]) -> str:
+    if not diff.get("available"):
+        return "unavailable"
+    untracked = len(diff.get("untracked") or ())
+    if not diff.get("sha256"):
+        return f"none against the commit; {untracked} untracked file(s)"
+    return (
+        f"`{diff['sha256'][:16]}` ({diff['bytes']} bytes, kept as `source.diff`); "
+        f"{untracked} untracked file(s)"
+    )
 
 
 def _experiment(label: str, experiment: Mapping[str, Any]) -> list[str]:
@@ -71,17 +91,20 @@ def _experiment(label: str, experiment: Mapping[str, Any]) -> list[str]:
     if errors:
         lines += [f"- **Error:** {error}" for error in errors] + [""]
     lines += [
-        "| stage | after | delta | peak | transient | time | CPU s | threads | read "
-        "| p50 | growth/op |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| stage | after | delta | peak | transient | RSS after | RSS peak | time | CPU s "
+        "| threads | read | OCR calls | p50 | p95 | growth/op |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for stage, values in aggregate["stages"].items():
         lines.append(
             f"| {stage} | {_mib(values['memory_after'])} | {_mib(values['delta'], signed=True)} "
             f"| {_mib(values['sampled_peak'])} | {_mib(values['transient_above_boundary'])} "
+            f"| {_mib(values.get('rss_after'))} | {_mib(values.get('sampled_peak_rss'))} "
             f"| {_ms(values['duration_ms'])} | {_plain(values['cpu_seconds'], 2)} "
             f"| {_plain(values['threads_after'], 0)} | {_mib(values['read_bytes'])} "
-            f"| {_ms(values['latency_p50'])} | {_kib(values['growth_per_operation'])} |"
+            f"| {_plain(values.get('ocr_calls'), 0)} "
+            f"| {_ms(values['latency_p50'])} | {_ms(values.get('latency_p95'))} "
+            f"| {_kib(values['growth_per_operation'])} |"
         )
     derived = aggregate["derived"]
     lines += ["", "| derived | median (min–max) |", "|---|---|"]
@@ -127,6 +150,21 @@ def _lazy_loading(summary: Mapping[str, Any]) -> list[str]:
         return []
     return ["", "## Deferred loading", "",
             "A constructor that costs little does not mean a cheap component:", "", *found]
+
+
+def _ocr_readings(ocr: Mapping[str, Any] | None) -> list[str]:
+    if not ocr:
+        return []
+    return [
+        "", "## Recognizer readings", "",
+        f"- Inputs read: {len(ocr['records'])}; every region's order, text digest, "
+        "confidence and corners are kept (no text).",
+        f"- Same reading for the same input within each run: "
+        f"**{'yes' if ocr['stable_within_runs'] else 'no'}**"
+        + (f" (unstable: {ocr['unstable_inputs']})" if ocr["unstable_inputs"] else ""),
+        f"- Same readings across repeats: **{'yes' if ocr['stable_across_repeats'] else 'no'}**"
+        + (f" (differing: {ocr['differing_inputs']})" if ocr["differing_inputs"] else ""),
+    ]
 
 
 def _correctness(correctness: Mapping[str, Any]) -> list[str]:

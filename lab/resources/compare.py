@@ -25,6 +25,11 @@ GROWTH_BAND = (0.05, 4096.0)
 #: a busy Mac (2026-10-15); memory produced no such false label.
 MIN_TIMING_REPEATS = 5
 
+#: How far recognition may move and still count as the same reading: corners
+#: in ROI pixels, confidence absolute. Text and region order have no tolerance.
+QUAD_TOLERANCE = 1.0
+CONFIDENCE_TOLERANCE = 0.02
+
 #: Library versions that may differ without changing what was measured.
 _IGNORED_VERSIONS = frozenset({"hanly", "hanly-app"})
 
@@ -49,7 +54,11 @@ def compatibility(
         reasons.append("different primary memory metric")
     if base.get("input_digest") != cand.get("input_digest"):
         reasons.append("different inputs")
-    plan_keys = ("ocr_backend", "lookups", "idle_seconds", "inputs", "warmup_runs")
+    # The OCR variant may differ: that difference is what a comparison measures.
+    plan_keys = (
+        "ocr_backend", "lookups", "idle_seconds", "inputs", "warmup_runs", "sequence",
+        "components",
+    )
     for key in plan_keys:
         if base["plan"].get(key) != cand["plan"].get(key):
             reasons.append(f"plan {key}: {base['plan'].get(key)} against {cand['plan'].get(key)}")
@@ -81,10 +90,71 @@ def compare(baseline_dir: Path, candidate_dir: Path) -> dict[str, Any]:
         "comparable": not reasons,
         "reasons": reasons,
         "behaviour": behaviour,
+        "ocr": compare_ocr(base.get("ocr"), cand.get("ocr")),
+        "variants": [base["plan"].get("ocr_variant", "product"),
+                     cand["plan"].get("ocr_variant", "product")],
         "experiments": experiments,
         "calibration": _calibration(cand),
         "decision": "not made here: accepting a change needs reproducible evidence, "
                     "documented trade-offs and regression coverage",
+    }
+
+
+def compare_ocr(
+    base: Mapping[str, Any] | None, cand: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """Compare two recognizers' readings of the same inputs, input by input.
+
+    ``identical`` needs every digest equal; ``within_tolerance`` allows corner
+    and confidence movement inside the stated tolerances; anything else is
+    ``changed`` and names the inputs and what moved. Unstable readings within
+    either run make the result ``unstable`` rather than hiding the noise.
+    """
+
+    if not base or not cand:
+        return {"label": "unavailable"}
+    if not (base.get("stable_within_runs") and cand.get("stable_within_runs")
+            and base.get("stable_across_repeats") and cand.get("stable_across_repeats")):
+        return {"label": "unstable", "baseline_unstable": base.get("unstable_inputs"),
+                "candidate_unstable": cand.get("unstable_inputs")}
+    changed: dict[str, list[str]] = {}
+    worst_quad = 0.0
+    worst_confidence = 0.0
+    left, right = base["records"], cand["records"]
+    for index in sorted(set(left) | set(right), key=int):
+        one, other = left.get(index), right.get(index)
+        if one is None or other is None:
+            changed[index] = ["missing"]
+            continue
+        if one["digest"] == other["digest"]:
+            continue
+        reasons: list[str] = []
+        if len(one["regions"]) != len(other["regions"]):
+            reasons.append("region count")
+        for a, b in zip(one["regions"], other["regions"]):
+            if a["text"] != b["text"]:
+                reasons.append("text or order")
+            quad = max(abs(x - y) for x, y in zip(a["quad"], b["quad"]))
+            confidence = abs(a["confidence"] - b["confidence"])
+            worst_quad = max(worst_quad, quad)
+            worst_confidence = max(worst_confidence, confidence)
+            if quad > QUAD_TOLERANCE:
+                reasons.append("geometry")
+            if confidence > CONFIDENCE_TOLERANCE:
+                reasons.append("confidence")
+        if reasons:
+            changed[index] = sorted(set(reasons))
+    identical = all(
+        left.get(index, {}).get("digest") == right.get(index, {}).get("digest")
+        for index in set(left) | set(right)
+    )
+    return {
+        "label": "identical" if identical else "changed" if changed else "within_tolerance",
+        "inputs": len(set(left) | set(right)),
+        "changed": changed,
+        "worst_quad_px": round(worst_quad, 3),
+        "worst_confidence": round(worst_confidence, 4),
+        "tolerances": {"quad_px": QUAD_TOLERANCE, "confidence": CONFIDENCE_TOLERANCE},
     }
 
 
@@ -164,6 +234,12 @@ def write_comparison(result: Mapping[str, Any], destination: Path) -> Path:
     lines += [f"  - {reason}" for reason in result["reasons"]]
     lines += [
         f"- Behaviour: **{result['behaviour']}**",
+        f"- Recognizer: `{result['variants'][0]}` → `{result['variants'][1]}`; readings "
+        f"**{result['ocr']['label']}**"
+        + (f" (worst corner {result['ocr']['worst_quad_px']} px, worst confidence "
+           f"{result['ocr']['worst_confidence']}; changed inputs: "
+           f"{sorted(result['ocr']['changed']) or 'none'})"
+           if "worst_quad_px" in result["ocr"] else ""),
         f"- Candidate calibration: {result['calibration']}",
         f"- Decision: {result['decision']}", "",
     ]
