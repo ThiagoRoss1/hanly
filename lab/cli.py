@@ -1260,6 +1260,8 @@ def _session_parsers(subcommands: Any) -> None:
     selection.add_argument("--ocr-backend", choices=("vision", "easyocr"), required=True)
     selection.add_argument("--stride", type=int, default=1, help="keep every n-th line")
     selection.add_argument("--limit", type=int, help="stop after this many hovers")
+    selection.add_argument("--edge-retry", action="store_true",
+                           help="evaluate one wider re-capture when the word reaches the crop edge")
     selection.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
     selection.set_defaults(handler=run_word_selection)
 
@@ -1655,7 +1657,7 @@ def run_word_selection(args: argparse.Namespace) -> int:
         print("lab: --stride must be positive", file=sys.stderr)
         return 2
     run_dir = run(_runtime_config(args.config), args.ocr_backend, limit=args.limit,
-                  stride=args.stride, output_root=args.output_root)
+                  stride=args.stride, output_root=args.output_root, edge_retry=args.edge_retry)
     print(f"lab: word-selection evidence in {run_dir}/summary.md")
     return 0
 

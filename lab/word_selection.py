@@ -69,6 +69,11 @@ class Observation:
     edge_touch: bool
     ocr_calls: int
     latency_ms: float
+    #: The edge-retry candidate: whether it fired, and what it changed.
+    retried: bool = False
+    retry_category: str | None = None
+    retry_ocr_calls: int = 0
+    retry_latency_ms: float = 0.0
 
 
 def sentences() -> list[tuple[str, dict[str, tuple[str, ...]]]]:
@@ -144,13 +149,15 @@ def hovers(
                                 return
 
 
-def crop(page: Any, point: tuple[float, float]) -> tuple[Any, tuple[int, int, int, int], Any]:
+def crop(
+    page: Any, point: tuple[float, float], width: int = ROI_SIZE[0]
+) -> tuple[Any, tuple[int, int, int, int], Any]:
     """The ROI the desktop would capture, clipped to the page as to a display."""
 
     from hanly import PixelFormat, Point, ROIImage
     from hanly_app.acquisition.capture import DEFAULT_ROI_GRID, _centered_region
 
-    region = _centered_region(Point(*point), ROI_SIZE[0], ROI_SIZE[1], DEFAULT_ROI_GRID)
+    region = _centered_region(Point(*point), width, ROI_SIZE[1], DEFAULT_ROI_GRID)
     left = max(0, region.left)
     top = max(0, region.top)
     right = min(PAGE_SIZE[0], region.left + region.width)
@@ -205,6 +212,7 @@ def run(
     limit: int | None,
     stride: int,
     output_root: Path,
+    edge_retry: bool = False,
 ) -> Path:
     from dataclasses import replace
 
@@ -236,17 +244,40 @@ def run(
             result = worker(LookupRequest(number, roi, target))
             latency = (time.perf_counter() - started) * 1000
             category, clipped, edge = classify(hover, box, result)
+            retry: dict[str, Any] = {}
+            if edge_retry and _word_touches_edge(result, roi.width):
+                # Candidate: one wider capture around the same pointer, only
+                # when the resolved word reaches the crop's side.
+                wide, wide_box, wide_target = crop(page, hover.point, ROI_SIZE[0] * 2)
+                before_retry = ocr.calls
+                started = time.perf_counter()
+                second = worker(LookupRequest(number + 1_000_000, wide, wide_target))
+                retry = {
+                    "retried": True,
+                    "retry_category": classify(hover, wide_box, second)[0],
+                    "retry_ocr_calls": ocr.calls - before_retry,
+                    "retry_latency_ms": (time.perf_counter() - started) * 1000,
+                }
             observations.append(Observation(
                 hover=hover, category=category,
                 surface=_digest(result.context.text) if result.context and result.context.text
                 else None,
                 headword=result.entries[0].headword if result.entries else None,
                 status=result.status.value, clipped=clipped, edge_touch=edge,
-                ocr_calls=ocr.calls - before, latency_ms=latency,
+                ocr_calls=ocr.calls - before, latency_ms=latency, **retry,
             ))
     finally:
         worker.close()
-    return _write(observations, backend, face.name, output_root, stride)
+    return _write(observations, backend, face.name, output_root, stride, edge_retry)
+
+
+def _word_touches_edge(result: Any, width: int) -> bool:
+    """The resolved word's box reaches the crop's left or right side."""
+
+    region = result.context.word_region if result.context is not None else None
+    if region is None:
+        return False
+    return region.left <= EDGE_MARGIN or region.right >= width - EDGE_MARGIN
 
 
 def summarize(observations: Sequence[Observation]) -> dict[str, Any]:
@@ -259,6 +290,19 @@ def summarize(observations: Sequence[Observation]) -> dict[str, Any]:
     edge_misses = sum(1 for o in observations if o.edge_touch and o.category != "correct")
     edge_total = sum(1 for o in observations if o.edge_touch)
     latencies = sorted(o.latency_ms for o in observations if o.ocr_calls)
+    retried = [o for o in observations if o.retried]
+    retry = {
+        "fired": len(retried),
+        "recovered": sum(1 for o in retried
+                         if o.category != "correct" and o.retry_category == "correct"),
+        "disturbed": sum(1 for o in retried
+                         if o.category == "correct" and o.retry_category != "correct"),
+        "extra_ocr_calls": sum(o.retry_ocr_calls for o in retried),
+        "extra_latency_ms": {
+            "p50": _rank(sorted(o.retry_latency_ms for o in retried), 0.5),
+            "p95": _rank(sorted(o.retry_latency_ms for o in retried), 0.95),
+        },
+    }
     return {
         "hovers": len(observations),
         "categories": dict(total.most_common()),
@@ -269,6 +313,7 @@ def summarize(observations: Sequence[Observation]) -> dict[str, Any]:
             "wrong_total": sum(1 for o in observations if o.category != "correct"),
         },
         "ocr_calls": sum(o.ocr_calls for o in observations),
+        "edge_retry": retry,
         "fresh_latency_ms": {
             "p50": _rank(latencies, 0.5), "p95": _rank(latencies, 0.95), "n": len(latencies),
         },
@@ -276,7 +321,8 @@ def summarize(observations: Sequence[Observation]) -> dict[str, Any]:
 
 
 def _write(
-    observations: Sequence[Observation], backend: str, face: str, root: Path, stride: int
+    observations: Sequence[Observation], backend: str, face: str, root: Path, stride: int,
+    edge_retry: bool = False,
 ) -> Path:
     from datetime import datetime
 
@@ -288,7 +334,7 @@ def _write(
     metadata = build_metadata(
         run_id=run_dir.name, kind="word_selection", repo_root=Path.cwd(),
         config={"backend": backend, "face": face, "roi": ROI_SIZE, "sizes": SIZES,
-                "stride": stride,
+                "stride": stride, "edge_retry": edge_retry,
                 "themes": list(THEMES), "positions": list(POSITIONS)},
         scenario={"name": "word_selection"},
     )
@@ -323,6 +369,14 @@ def _write(
     lines += ["", "## Crop-edge signal", "",
               f"- Selected line touching the crop edge: {edge['touching']} hovers, "
               f"{edge['touching_and_wrong']} of them wrong (of {edge['wrong_total']} wrong)."]
+    if edge_retry:
+        r = summary["edge_retry"]
+        lines += ["", "## Edge-retry candidate (not shipped)", "",
+                  f"- Fired on {r['fired']} hovers: recovered {r['recovered']} misses, "
+                  f"disturbed {r['disturbed']} correct answers, "
+                  f"{r['extra_ocr_calls']} extra genuine OCR calls; added latency p50 "
+                  f"{r['extra_latency_ms']['p50']:.0f} ms, "
+                  f"p95 {r['extra_latency_ms']['p95']:.0f} ms."]
     (run_dir / "summary.md").write_text("\n".join(lines) + "\n", "utf-8")
     return run_dir
 
