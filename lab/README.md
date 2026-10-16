@@ -415,6 +415,52 @@ compares the decision digests before labelling any cost: `unchanged`,
 reproducible evidence, stated trade-offs and regression coverage. Nothing here
 tunes a production setting.
 
+## `grammar` and `word-selection` — what the reader is shown, and why it misses
+
+```bash
+python -m lab grammar                                   # language stage only
+python -m lab word-selection --ocr-backend vision       # or easyocr; --stride N
+```
+
+`grammar` scores the language stage (Kiwi and KRDICT, no OCR) on
+`lab/fixtures/korean/grammar.json`. That is a reviewed, finite corpus covering:
+- particles and particle combinations;
+- syllables that look like particles but belong to the word;
+- conjugations and irregulars;
+- copulas;
+- auxiliary constructions;
+- ambiguous forms;
+- Korean fused to digits, emoji or punctuation.
+
+Every target is hovered at every syllable, in both forms acquisition produces:
+the whitespace-delimited word OCR resolves (with its neighbouring words), and
+the Korean run accessibility text yields. Every expected headword and
+construction is checked against KRDICT before scoring, so a corpus typo fails
+loudly instead of passing as a model error. Ambiguous cases list what is
+acceptable and say why.
+
+`word-selection` renders Lab-authored pages of three lines at several sizes,
+contrasts and display-edge positions. It hovers the first, middle and last
+syllable of each word on the middle line, and crops exactly as the desktop
+does (the shipped ROI and grid, clipped to the page as to a display). The real
+lookup worker then runs on the crop. Glyph geometry is exact, so every miss
+is classified against ground truth:
+
+| category | meaning |
+|---|---|
+| `clipped_by_roi` | the word extends past the captured crop |
+| `ocr_false_space` | the recognized line splits the word with a space |
+| `ocr_misread` | the line lacks or alters the word's characters |
+| `neighbor_word` | the line holds the word, but another one was selected |
+| `wrong_line` | a different line was selected |
+| `no_result` | nothing usable came back |
+| `lexical` | the right surface, a headword the corpus does not accept |
+
+It also counts genuine OCR calls (cache hits are not recognitions) and fresh
+lookup p50 and p95, and how often the selected line touches the crop edge.
+Results are Mac evidence for the recognizer they name. They are never Windows
+evidence: Windows capture, DPI scaling and UIA need their own native runs.
+
 ## `live-hover` — human-operated session
 
 ```powershell

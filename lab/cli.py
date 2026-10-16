@@ -1246,6 +1246,23 @@ def _session_parsers(subcommands: Any) -> None:
     gc.add_argument("--plan", type=Path, help="the plan file a preview wrote")
     gc.set_defaults(handler=run_lab_gc)
 
+    grammar = subcommands.add_parser(
+        "grammar", help="score the language stage on the reviewed Korean grammar corpus"
+    )
+    grammar.add_argument("--dictionary", type=Path, default=Path("data/generated/krdict.sqlite3"))
+    grammar.add_argument("--output", type=Path, help="summary.md path")
+    grammar.set_defaults(handler=run_grammar)
+
+    selection = subcommands.add_parser(
+        "word-selection", help="reproduce hover word selection over OCR and classify misses"
+    )
+    selection.add_argument("--config", type=Path, help="runtime configuration (default: hanly's)")
+    selection.add_argument("--ocr-backend", choices=("vision", "easyocr"), required=True)
+    selection.add_argument("--stride", type=int, default=1, help="keep every n-th line")
+    selection.add_argument("--limit", type=int, help="stop after this many hovers")
+    selection.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
+    selection.set_defaults(handler=run_word_selection)
+
     resources = subcommands.add_parser(
         "resources",
         help="attribute memory, CPU, threads, latency and I/O to Hanly's stages",
@@ -1613,6 +1630,33 @@ def run_lab_pin(args: argparse.Namespace) -> int:
     except pins.PinError as error:
         print(f"lab: {error}", file=sys.stderr)
         return 2
+    return 0
+
+
+def run_grammar(args: argparse.Namespace) -> int:
+    """Score the language stage and print where the report is."""
+
+    from .korean_grammar import run
+
+    summary, path = run(args.dictionary, args.output)
+    for form, counts in summary["by_form"].items():
+        print(f"lab: {form}: {counts.get('correct', 0)} correct, {counts.get('wrong', 0)} wrong")
+    print(f"lab: grammar report in {path}")
+    return 0
+
+
+def run_word_selection(args: argparse.Namespace) -> int:
+    """Run the hover word-selection reproduction for one recognizer."""
+
+    from .session.runner import _runtime_config
+    from .word_selection import run
+
+    if args.stride < 1:
+        print("lab: --stride must be positive", file=sys.stderr)
+        return 2
+    run_dir = run(_runtime_config(args.config), args.ocr_backend, limit=args.limit,
+                  stride=args.stride, output_root=args.output_root)
+    print(f"lab: word-selection evidence in {run_dir}/summary.md")
     return 0
 
 
