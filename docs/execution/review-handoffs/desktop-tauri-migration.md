@@ -1,5 +1,70 @@
 # Desktop Tauri Migration Review Handoff
 
+## Popup flicker follow-up — debug validation passed, 2026-10-17
+
+The human's new recording demonstrates that the earlier settled-focus checks
+missed transient rendering failures. At approximately 2.400 s the real dark
+popup appears as an empty rectangle before its text; at 4.118–4.202 s the
+Control Center briefly rises behind it during Expand. The white/purple card
+in that recording belongs to the browser fixture, not Hanly's native popup.
+The old 15/15 click result below does **not** establish flicker-free behavior.
+
+Correction based on `1b4b313`, on the same branch:
+
+- macOS uses a Rust-owned nonactivating `NSPanel`. Its content is reparented
+  through public AppKit APIs; the observed Tao window/class remains intact.
+  The old press-triggered activation recovery and 600 ms retry sequence are
+  removed. Tauri retains the webview, IPC and root lifecycle.
+- Native room measurement precedes React's final layout. A fixed webview
+  canvas avoids a second viewport resize when the native card changes size.
+  Public WebKit snapshots provide a painted frame before native presentation;
+  the previous frame covers content changes until its replacement is ready.
+- Content sequence and layout revision checks reject late paint callbacks
+  after replacement/Close. Paint failure hides the frozen card and permits
+  one frontend retry; snapshots remain in memory and are released on hide.
+- Native testing found AppKit's automatic utility-panel ordering animation:
+  intended 340-point cards briefly measured 334–342 points. Disabling that
+  animation leaves only the intended 340/460 widths in the final sample.
+  No OCR, acquisition, permission or signing change is included.
+
+TypeScript, 12 Node, 47 UI and 23 Rust tests pass; Clippy all-targets with
+warnings denied, rustfmt, Vite and the embedded-frontend debug build pass.
+The Rust regression covers late paint versus newer layout/Close. UI regressions
+cover room-before-presentation, capped first layout and retry after failure.
+A hidden-panel experiment also confirms that the public WebKit snapshot
+callback can complete while the panel is hidden.
+
+**With the human's separate interactive approval**, the isolated debug test
+passes: six first-show/hide cycles, six real Expand/Collapse clicks (alternating
+460/340 widths), sixteen rapid result replacements, and Close. Across 288
+foreground/geometry samples, the controlled reader lost focus zero times.
+171 owned-window screenshots were returned: five overlapped a completed hide
+and are reported separately; the other 166 contain no blank frames. No owned
+process survivors were observed after shutdown. These are sampled frames,
+not proof about every display refresh or arbitrary real OCR/hover workloads.
+Compact and expanded screenshots were also visually inspected for clipping.
+
+Evidence is under `artifacts/lab/reviews/20261017-popup-flicker/` (gitignored):
+`probe-summary.json`, `probe-frames.json`, source diff/new-module snapshot,
+start-time provenance and binary SHA-256, authored service fixture and screenshots.
+The final run began from dirty `1b4b313` at 21:28:52 UTC; its native binary SHA-256
+is `423a427db032b0c978c5db0f596a482e48c83b9e1b5526436aef5f5958bf71d0`.
+No capture or lookup provider was invoked by the authored-result fixture.
+
+Initial legacy screenshot attempts failed or stalled. The stalled test family
+was explicitly stopped with zero survivors; an automatic approval timeout
+prevented a diagnostic stack sample, not the subsequent cleanup. The final
+probe uses public ScreenCaptureKit window-only screenshots after checking
+existing access, and checks visibility again after each asynchronous capture.
+One earlier returned empty image overlapped hide; it is not silently counted
+as a passing visible frame. Intermediate evidence is retained in subfolders.
+No installation, certificate, keychain or permission reset/grant was performed.
+
+A fresh package of this correction is being prepared. The older `5665db48`
+package and installed `ed9d4483` results below do not validate the new native
+panel. Installed-app replacement and packaged live acceptance remain separate.
+The broader migration blockers below are unchanged.
+
 ## Current status — Codex post-bundle review, 2026-10-16
 
 **Review corrections implemented; migration not accepted for merge.** This
@@ -26,7 +91,7 @@ resource/OCR/grammar changes, rather than only Claude's final diff.
 | Lab: retry OCR contaminated first-pass counts and fresh latency | First-pass and retry counts are captured separately; tests distinguish a cached first pass from a fresh retry. |
 | Lab: unfair/failed resource comparisons could look usable | Both calibrations and every repeat must succeed; missing OCR inputs in later repeats are unstable. Decision digests now include morphology, component spans and constructions. New runs use `resources-v3`, incompatible with v2. |
 | Lab: coverage and reproducibility were overstated | Added g106's omitted final syllable; checked both particles in four combinations; tightened the flying-bird expectation using the NIKL reference in the report. Reject duplicate/incomplete cases. Parts pass counts now include only required checks. Word-selection v2 stamps source/diff and input/dependency identities before work and owns providers on one worker thread. |
-| Cleanup | Removed two new Python type ignores and two Lab noqa annotations with typed callbacks/runtime-input helpers/named functions. Active Python/TypeScript inline suppressions are absent. The guarded Rust deprecated call remains for pre-macOS-14 activation compatibility. |
+| Cleanup | Removed two new Python type ignores and two Lab noqa annotations with typed callbacks/runtime-input helpers/named functions. Active Python/TypeScript inline suppressions are absent. The October 17 popup correction also removes the former deprecated activation call. |
 
 **Deferred considerations and acceptance blockers**
 
@@ -57,12 +122,11 @@ resource/OCR/grammar changes, rather than only Claude's final diff.
    broader semantic changes need evidence and are not smuggled into this review.
    Multi-answer expectations such as g055 (듣다/들다) and g097
    (가다/가늘다) still need independent semantic review.
-5. **Native-only risks for the live checklist:** popup geometry errors are
-   swallowed after deduplication, so retry behavior under a transient failure
-   needs checking. Activation retry sleeps sum to 600 ms; the older “320 ms”
-   description was inaccurate. Check a popup click followed immediately by
-   intentional Control Center activation for delayed focus return. These are
-   unconfirmed interaction risks, not reproduced product failures.
+5. **Popup rendering:** the October 17 recording confirmed an empty first
+   frame and transient Control Center activation. The uncommitted correction
+   at the top replaces activation recovery, gates presentation on painting,
+   and adds bounded geometry retry. Its visual verification and fresh package
+   remain pending; older settled-focus checks are insufficient.
 6. **Other platforms and release:** real Windows DPI/UIA/WebView2/Job/updater
    acceptance and Linux native/packaged/desktop integration remain required.
    Ad-hoc Mac signing is cdhash-bound again; grants across rebuilt identities

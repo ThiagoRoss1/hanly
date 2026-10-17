@@ -1,5 +1,24 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Popup flicker follow-up — 2026-10-17
+
+- User recording confirms an empty first native popup frame and a brief
+  Control Center flash on Expand. Earlier settled-foreground checks missed
+  those transients.
+- Source correction from `1b4b313`: real nonactivating NSPanel, fixed canvas,
+  public WebKit painted-frame barrier, pre-layout room cap, stale-paint guards,
+  bounded retry, removal of activation recovery and automatic panel animation.
+- TypeScript, 12 Node, 47 UI, 23 Rust tests, Clippy, rustfmt, Vite and the
+  embedded-frontend debug build pass.
+- Approved isolated debug interaction test passes: 288 focus/geometry samples,
+  166 scorable screenshots with zero blank frames, five captures overlapping
+  hide reported separately, six correct Expand/Collapse alternations, Close,
+  rapid replacements, and zero observed owned survivors. Only 340/460 widths
+  after disabling AppKit's transient ordering animation. Sampled evidence is
+  scoped to authored results; it does not prove real OCR/hover or packaged UI.
+- Fresh package is being prepared; the installed app remains untouched.
+  No grants reset/requested. Details/provenance are in the single handoff.
+
 ## Codex full migration verification — corrections verified, 2026-10-16
 
 Human explicitly approved review of all sixteen areas listed in chat, plus

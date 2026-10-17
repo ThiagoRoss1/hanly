@@ -36,7 +36,7 @@ pub fn authorize(window: &str, method: &str, params: &Value) -> Result<(), Bridg
             "popup_close",
             "popup_expand",
             "popup_geometry",
-            "popup_pressed",
+            "popup_measure",
         ]
         .contains(&method),
         "region-selector" => {
@@ -136,11 +136,11 @@ pub fn authorize(window: &str, method: &str, params: &Value) -> Result<(), Bridg
             sequence(object)?;
             boolean(object, "expanded")?;
         }
-        "popup_geometry" => {
+        "popup_geometry" | "popup_measure" => {
             keys(object, &["sequence", "width", "height"])?;
             sequence(object)?;
-            number(object, "width", 1.0, 1000.0)?;
-            number(object, "height", 1.0, 1000.0)?;
+            number(object, "width", 1.0, 460.0)?;
+            number(object, "height", 1.0, 560.0)?;
         }
         "confirm_region" => {
             keys(object, &["region", "coordinate_space", "scale_factor"])?;
@@ -235,10 +235,10 @@ mod tests {
         assert!(authorize("unknown", "get_state", &json!({})).is_err());
         assert!(authorize("control-center", "get_state", &json!({"path":"/tmp"})).is_err());
         assert!(authorize("popup", "frontend_ready", &json!({"view":"control_center"})).is_err());
-        // Only the popup reports presses, and a press carries nothing.
-        assert!(authorize("popup", "popup_pressed", &json!({})).is_ok());
-        assert!(authorize("popup", "popup_pressed", &json!({"x":1})).is_err());
-        assert!(authorize("control-center", "popup_pressed", &json!({})).is_err());
+        let measure = json!({"sequence":1,"width":340,"height":280});
+        assert!(authorize("popup", "popup_measure", &measure).is_ok());
+        assert!(authorize("control-center", "popup_measure", &measure).is_err());
+        assert!(authorize("popup", "popup_pressed", &json!({})).is_err());
     }
 
     #[test]

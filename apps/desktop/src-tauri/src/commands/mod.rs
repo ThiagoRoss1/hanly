@@ -26,23 +26,6 @@ pub async fn desktop_request(
         }
         return crate::windows::local_action(&window, &state.presentation, &method, &params);
     }
-    if method == "popup_pressed" {
-        // The press's activation completes asynchronously; each check hands
-        // it back once Hanly is active and does nothing otherwise.
-        let app = app.clone();
-        std::thread::spawn(move || {
-            for delay in [0, 40, 80, 160, 320] {
-                std::thread::sleep(std::time::Duration::from_millis(delay));
-                if app
-                    .run_on_main_thread(crate::platform::yield_activation)
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-        return Ok(json!({}));
-    }
     if method == "quit" {
         app.exit(0);
         return Ok(json!({}));
@@ -119,27 +102,20 @@ fn popup_action(
         method,
         &params,
     )?;
+    if method == "popup_measure" {
+        return Ok(applied);
+    }
     params["sequence"] = applied["sequence"].clone();
     let (native_method, native_params) = match method {
         "popup_close" => ("service.popup_close", params),
         "popup_expand" => ("service.popup_expand", params),
-        "popup_geometry" => {
-            let position = window
-                .outer_position()
-                .map_err(|_| {
-                    BridgeError::new("window_error", "Hanly could not read its popup geometry.")
-                })?
-                .to_logical::<f64>(window.scale_factor().map_err(|_| {
-                    BridgeError::new("window_error", "Hanly could not read its popup scale.")
-                })?);
-            (
-                "service.popup_geometry",
-                json!({
-                    "sequence":params["sequence"], "x":position.x, "y":position.y,
-                    "width":params["width"], "height":params["height"]
-                }),
-            )
-        }
+        "popup_geometry" => (
+            "service.popup_geometry",
+            json!({
+                "sequence":params["sequence"], "x":applied["x"], "y":applied["y"],
+                "width":applied["width"], "height":applied["height"]
+            }),
+        ),
         _ => return Err(BridgeError::new("not_allowed", "Unknown popup action.")),
     };
     let mut reply = service.request(window.label(), native_method, native_params)?;

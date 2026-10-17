@@ -169,7 +169,8 @@ beforeEach(() => {
     if (method === "copy_text") return {};
     if (method === "clear_logs") return { records: [], levels: ["info", "warning", "error"], subsystems: [], log_path: null };
     if (method === "export_diagnostics") return { path: "/tmp/hanly-report.json", records: 1 };
-    if (method === "popup_geometry" || method === "popup_expand" || method === "popup_close" || method === "popup_pressed") return {};
+    if (method === "popup_measure") return { room: 560 };
+    if (method === "popup_geometry" || method === "popup_expand" || method === "popup_close") return {};
     if (method === "select_region" || method === "cancel_region" || method === "confirm_region") return {};
     throw { code: "unavailable", message: "Capture area selection is not ready in this build." };
   });
@@ -995,14 +996,14 @@ describe("desktop React routes", () => {
     expect(screen.getByText("be doing")).toBeTruthy();
   });
 
-  it("reports a press on the popup so the native host can hand activation back", async () => {
+  it("does not activate Hanly through a popup press handoff", async () => {
     renderRoute("/popup");
     await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
     fireEvent.mouseDown(window);
 
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+    expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", {
       method: "popup_pressed", params: {},
-    }));
+    });
   });
 
   it("caps the card to the room the native host reports beside the word", async () => {
@@ -1012,7 +1013,7 @@ describe("desktop React routes", () => {
     });
     const fallback = invokeMock.getMockImplementation();
     invokeMock.mockImplementation(async (command: string, args?: { method?: string }) =>
-      command === "desktop_request" && args?.method === "popup_geometry"
+      command === "desktop_request" && args?.method === "popup_measure"
         ? { sequence: 7, room: 300 }
         : fallback?.(command, args),
     );
@@ -1029,6 +1030,58 @@ describe("desktop React routes", () => {
     const card = await screen.findByRole("main", { name: "Hanly dictionary result" });
     await waitFor(() => expect(card.style.maxHeight).toBe("300px"));
     rectangle.mockRestore();
+  });
+
+  it("waits for native room and commits the capped layout before presentation", async () => {
+    let releaseRoom: (value: { room: number }) => void = () => undefined;
+    const answer = new Promise<{ room: number }>((resolve) => { releaseRoom = resolve; });
+    const fallback = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation(async (command: string, args?: { method?: string }) =>
+      command === "desktop_request" && args?.method === "popup_measure"
+        ? answer : fallback?.(command, args),
+    );
+    const rectangle = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const height = this.style.maxHeight ? Number.parseInt(this.style.maxHeight, 10) : 520;
+      return { x: 0, y: 0, top: 0, left: 0, right: 340, bottom: height,
+        width: 340, height, toJSON: () => ({}) };
+    });
+    renderRoute("/popup");
+    await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
+    eventHandlers.get("desktop-popup")?.({ payload: {
+      type: "popup", sequence: 12,
+      payload: { status: "success", entry: { headword: "학교", senses: [{ gloss: "school" }] } },
+    } });
+    await screen.findByRole("heading", { name: "학교" });
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "popup_measure", params: { sequence: 12, width: 340, height: 520 },
+    }));
+    expect(invokeMock.mock.calls.some(([, args]) => args?.method === "popup_geometry")).toBe(false);
+
+    await act(async () => releaseRoom({ room: 300 }));
+
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "popup_geometry", params: { sequence: 12, width: 340, height: 300 },
+    }));
+    rectangle.mockRestore();
+  });
+
+  it("retries a failed layout request once rather than caching its failure", async () => {
+    const fallback = invokeMock.getMockImplementation();
+    let measures = 0;
+    invokeMock.mockImplementation(async (command: string, args?: { method?: string }) => {
+      if (command === "desktop_request" && args?.method === "popup_measure" && ++measures === 1)
+        throw new Error("temporary layout failure");
+      return fallback?.(command, args);
+    });
+    renderRoute("/popup");
+    await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
+    eventHandlers.get("desktop-popup")?.({ payload: {
+      type: "popup", sequence: 13,
+      payload: { status: "success", entry: { headword: "학교", senses: [{ gloss: "school" }] } },
+    } });
+
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "popup_geometry" })));
+    expect(measures).toBe(2);
   });
 
   it("ignores stale popup events and reports measured geometry for the current entry", async () => {

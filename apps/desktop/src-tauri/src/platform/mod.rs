@@ -1,4 +1,10 @@
 pub mod hotkeys;
+#[cfg(target_os = "macos")]
+mod popup_macos;
+#[cfg(target_os = "macos")]
+pub use popup_macos::PaintedPopup;
+#[cfg(not(target_os = "macos"))]
+pub struct PaintedPopup;
 
 use crate::ipc::BridgeError;
 use serde_json::{json, Value};
@@ -74,93 +80,79 @@ fn vision_available() -> bool {
 
 pub fn configure_popup(window: &WebviewWindow) -> Result<(), BridgeError> {
     #[cfg(target_os = "macos")]
-    {
-        use objc2_app_kit::{NSColor, NSWindow, NSWindowCollectionBehavior};
-        let raw = window.ns_window().map_err(|_| window_error())?;
-        // Public AppKit behavior keeps a non-key floating window visible while another app is active.
-        unsafe {
-            let window = &*(raw as *const NSWindow);
-            window.setHidesOnDeactivate(false);
-            window.setCollectionBehavior(
-                NSWindowCollectionBehavior::CanJoinAllSpaces
-                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
-            );
-            window.setLevel(3);
-            window.setOpaque(false);
-            window.setBackgroundColor(Some(&NSColor::clearColor()));
-            // Clip the entire native content, including the opaque webview, to
-            // the card. Public AppKit/Core Animation avoids WKWebView private APIs.
-            if let Some(content) = window.contentView() {
-                content.setWantsLayer(true);
-                if let Some(layer) = content.layer() {
-                    layer.setCornerRadius(14.0);
-                    layer.setMasksToBounds(true);
-                }
-            }
-            window.setHasShadow(true);
-        }
-    }
+    popup_macos::configure(window)?;
     window.set_focusable(false).map_err(|_| window_error())
 }
 
-#[cfg(target_os = "macos")]
-thread_local! {
-    /// The app the popup was last presented over, while Hanly was not active.
-    static READING_APP: std::cell::RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSRunningApplication>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Remember the app the popup is shown over; none when Hanly itself is active.
-#[cfg(target_os = "macos")]
-fn remember_reading_app(mtm: objc2::MainThreadMarker) {
-    use objc2_app_kit::{NSApplication, NSWorkspace};
-    let reading = if NSApplication::sharedApplication(mtm).isActive() {
-        None
-    } else {
-        NSWorkspace::sharedWorkspace().frontmostApplication()
-    };
-    READING_APP.with(|slot| *slot.borrow_mut() = reading);
-}
-
-/// After a press on the popup, give activation back to the app it was shown over.
-///
-/// The popup is a plain window, so pressing it activates Hanly, and activation
-/// makes the Control Center key and brings it over the app being read. Tao's
-/// window cannot become a non-activating panel: AppKit already observes it
-/// through a KVO subclass. Since macOS 14 activation is cooperative, so Hanly,
-/// active at this moment, activates the reading app explicitly; that also
-/// orders its window back above the Control Center.
-pub fn yield_activation() {
+pub fn prepare_popup_update(window: &WebviewWindow, replacement: bool) -> Result<(), BridgeError> {
     #[cfg(target_os = "macos")]
     {
-        use objc2::runtime::NSObjectProtocol;
-        use objc2::MainThreadMarker;
-        use objc2_app_kit::{NSApplication, NSApplicationActivationOptions};
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        let reading = READING_APP.with(|slot| slot.borrow().clone());
-        let application = NSApplication::sharedApplication(mtm);
-        if !application.isActive() {
-            return;
+        let _ = (window, replacement);
+        popup_macos::freeze()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if replacement {
+            window.hide().map_err(|_| window_error())?;
         }
-        match reading {
-            Some(app) if !app.isTerminated() => {
-                // macOS 14's cooperative calls; earlier systems take the old one.
-                if app.respondsToSelector(objc2::sel!(activateFromApplication:options:)) {
-                    application.yieldActivationToApplication(&app);
-                    app.activateFromApplication_options(
-                        &objc2_app_kit::NSRunningApplication::currentApplication(),
-                        NSApplicationActivationOptions::empty(),
-                    );
-                } else {
-                    #[allow(deprecated)]
-                    app.activateWithOptions(NSApplicationActivationOptions::empty());
-                }
-            }
-            // Shown while Hanly was active: the press belongs to Hanly.
-            _ => {}
-        }
+        Ok(())
+    }
+}
+
+pub fn prepare_popup_frame(
+    window: &WebviewWindow,
+    width: f64,
+    height: f64,
+    finished: impl FnOnce(Result<PaintedPopup, BridgeError>) + Send + 'static,
+) -> Result<(), BridgeError> {
+    #[cfg(target_os = "macos")]
+    {
+        popup_macos::paint(window, width, height, finished)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, width, height);
+        finished(Ok(PaintedPopup));
+        Ok(())
+    }
+}
+
+pub fn hide_popup(window: &WebviewWindow) -> Result<(), BridgeError> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        popup_macos::hide()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.hide().map_err(|_| window_error())
+    }
+}
+
+pub fn popup_position(window: &WebviewWindow) -> Result<(f64, f64), BridgeError> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        popup_macos::position()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let position = window
+            .outer_position()
+            .map_err(|_| window_error())?
+            .to_logical::<f64>(window.scale_factor().map_err(|_| window_error())?);
+        Ok((position.x, position.y))
+    }
+}
+
+pub fn uncover_popup() -> Result<(), BridgeError> {
+    #[cfg(target_os = "macos")]
+    {
+        popup_macos::uncover()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
     }
 }
 
@@ -170,48 +162,16 @@ pub fn present_popup_frame(
     y: f64,
     width: f64,
     height: f64,
+    painted: PaintedPopup,
 ) -> Result<(), BridgeError> {
     #[cfg(target_os = "macos")]
     {
-        use objc2::MainThreadMarker;
-        use objc2_app_kit::{NSScreen, NSWindow};
-        use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-        let mtm = MainThreadMarker::new().ok_or_else(window_error)?;
-        let primary = NSScreen::screens(mtm)
-            .firstObject()
-            .ok_or_else(window_error)?;
-        let primary_frame = primary.frame();
-        let (left, bottom) = cocoa_popup_origin(
-            x,
-            y,
-            height,
-            primary_frame.origin.y + primary_frame.size.height,
-        );
-        let raw = window.ns_window().map_err(|_| window_error())?;
-        // Tao queues size/position setters but shows synchronously on macOS.
-        // Commit one public AppKit frame before ordering it onto the screen.
-        unsafe {
-            let native = &*(raw as *const NSWindow);
-            native.setFrame_display(
-                NSRect::new(NSPoint::new(left, bottom), NSSize::new(width, height)),
-                true,
-            );
-            if let Some(content) = native.contentView() {
-                content.layoutSubtreeIfNeeded();
-            }
-            native.invalidateShadow();
-            if !native.isVisible() {
-                // A fresh answer, not a resize of one already on screen,
-                // which a press may be activating Hanly around.
-                remember_reading_app(mtm);
-                native.orderFrontRegardless();
-            }
-        }
-        Ok(())
+        let _ = window;
+        popup_macos::present(x, y, width, height, painted)
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = painted;
         window
             .set_size(tauri::LogicalSize::new(width, height))
             .and_then(|_| window.set_position(tauri::LogicalPosition::new(x, y)))

@@ -25,7 +25,7 @@ pub fn open(app: &AppHandle) -> Result<Value, BridgeError> {
         let _ = center.hide();
     }
     if let Some(popup) = app.get_webview_window("popup") {
-        let _ = popup.hide();
+        let _ = crate::platform::hide_popup(&popup);
     }
     let backdrop = match service.request(
         "host",

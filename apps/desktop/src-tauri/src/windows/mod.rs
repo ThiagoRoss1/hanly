@@ -12,6 +12,7 @@ pub struct Presentation {
     pub sequence: u64,
     sequence_base: u64,
     pub visible: bool,
+    paint_revision: u64,
     pub region: Option<Value>,
     applied_theme: Option<Option<tauri::Theme>>,
     /// The side a presented answer took; expansion keeps it.
@@ -175,15 +176,12 @@ fn flush_events(app: &AppHandle, presentation: &SharedPresentation) {
         }
         if let Some(window) = app.get_webview_window("popup") {
             if visible {
-                if let Some(message) = &message {
-                    // Never expose stale or empty DOM at an estimated size.
-                    // Expansion of the same answer can remain on screen.
-                    if message["payload"]["replacement"].as_bool() != Some(false) {
-                        let _ = window.hide();
-                    }
-                }
+                let replacement = message.as_ref().is_some_and(|message| {
+                    message["payload"]["replacement"].as_bool() != Some(false)
+                });
+                let _ = crate::platform::prepare_popup_update(&window, replacement);
             } else {
-                let _ = window.hide();
+                let _ = crate::platform::hide_popup(&window);
             }
             if let Some(message) = message {
                 let _ = window.emit("desktop-popup", message);
@@ -227,8 +225,16 @@ pub fn local_action(
     let dispatch_window = window.clone();
     window
         .run_on_main_thread(move || {
-            let result = apply_popup_action(&dispatch_window, &presentation, &method, &params);
-            let _ = sender.send(result);
+            if method == "popup_geometry" {
+                if let Err(error) =
+                    render_popup(&dispatch_window, &presentation, &params, sender.clone())
+                {
+                    let _ = sender.send(Err(error));
+                }
+            } else {
+                let result = apply_popup_action(&dispatch_window, &presentation, &method, &params);
+                let _ = sender.send(result);
+            }
         })
         .map_err(|_| window_error())?;
     receiver
@@ -258,7 +264,7 @@ fn apply_popup_action(
                 }
                 None
             }
-            "popup_geometry" => None,
+            "popup_measure" => None,
             _ => return Err(window_error()),
         };
         let payload = state
@@ -270,10 +276,10 @@ fn apply_popup_action(
 
     match method {
         "popup_close" => {
-            window.hide().map_err(|_| window_error())?;
+            crate::platform::hide_popup(window)?;
             let _ = window.emit("desktop-popup", message.expect("close message"));
         }
-        "popup_geometry" => {
+        "popup_measure" => {
             let width = params["width"].as_f64().ok_or_else(window_error)?;
             let height = params["height"].as_f64().ok_or_else(window_error)?;
             let payload = payload.ok_or_else(window_error)?;
@@ -281,18 +287,144 @@ fn apply_popup_action(
             let band = popup_band(&payload)?;
             let placed = fit_measured_popup(window, (x, y), (width, height), band, placed_above)?;
             let (left, top) = placed.origin;
-            crate::platform::present_popup_frame(window, left, top, width, placed.height)?;
-            let mut state = presentation.lock().expect("presentation");
-            if state.visible && params["sequence"].as_u64() == Some(state.sequence) {
-                state.placed_above = placed.above;
-            }
-            return Ok(json!({"sequence":service_sequence,"room":placed.room}));
+            return Ok(json!({"sequence":service_sequence,"room":placed.room,
+                "x":left,"y":top,"width":width,"height":placed.height,"above":placed.above}));
         }
         // The frontend follows expansion with its measured geometry command.
         "popup_expand" => {}
         _ => return Err(window_error()),
     }
     Ok(json!({"sequence":service_sequence}))
+}
+
+fn render_popup(
+    window: &WebviewWindow,
+    presentation: &SharedPresentation,
+    params: &Value,
+    finished: std::sync::mpsc::SyncSender<Result<Value, BridgeError>>,
+) -> Result<(), BridgeError> {
+    let placed = apply_popup_action(window, presentation, "popup_measure", params)?;
+    let revision = {
+        let mut state = presentation.lock().expect("presentation");
+        state.paint_revision = state
+            .paint_revision
+            .checked_add(1)
+            .ok_or_else(window_error)?;
+        state.paint_revision
+    };
+    let window = window.clone();
+    let presentation = presentation.clone();
+    let params = params.clone();
+    let width = placed["width"].as_f64().ok_or_else(window_error)?;
+    let height = placed["height"].as_f64().ok_or_else(window_error)?;
+    let snapshot_window = window.clone();
+    crate::platform::prepare_popup_frame(&snapshot_window, width, height, move |painted| {
+        let result = (|| {
+            let painted = painted?;
+            // Rendering is asynchronous: a newer result or a close must win
+            // even when the older WebKit snapshot finishes afterwards.
+            {
+                let state = presentation.lock().expect("presentation");
+                current_popup_paint(&state, &params, revision)?;
+            }
+            crate::platform::present_popup_frame(
+                &window,
+                placed["x"].as_f64().ok_or_else(window_error)?,
+                placed["y"].as_f64().ok_or_else(window_error)?,
+                width,
+                height,
+                painted,
+            )
+        })();
+        if let Err(error) = result {
+            complete_popup_render(
+                &window,
+                &presentation,
+                &params,
+                revision,
+                Err(error),
+                &finished,
+            );
+            return;
+        }
+
+        let painting = presentation.clone();
+        let painted_params = params.clone();
+        let painted_window = window.clone();
+        let completion = finished.clone();
+        // Reveal a ready image first. Acknowledge geometry only after the
+        // visible WebKit canvas has painted and its cover can be removed.
+        if let Err(error) =
+            crate::platform::prepare_popup_frame(&window, width, height, move |ready| {
+                complete_popup_render(
+                    &painted_window,
+                    &painting,
+                    &painted_params,
+                    revision,
+                    ready.map(|_| placed),
+                    &completion,
+                );
+            })
+        {
+            complete_popup_render(
+                &window,
+                &presentation,
+                &params,
+                revision,
+                Err(error),
+                &finished,
+            );
+        }
+    })
+}
+
+fn complete_popup_render(
+    window: &WebviewWindow,
+    presentation: &SharedPresentation,
+    params: &Value,
+    revision: u64,
+    result: Result<Value, BridgeError>,
+    finished: &std::sync::mpsc::SyncSender<Result<Value, BridgeError>>,
+) {
+    let result = (|| {
+        {
+            let state = presentation.lock().expect("presentation");
+            current_popup_paint(&state, params, revision)?;
+        }
+        let mut placed = match result {
+            Ok(placed) => placed,
+            Err(error) => {
+                // Never leave a frozen, unclickable card after a paint error.
+                // Logical currency remains intact for the frontend's bounded retry.
+                let _ = crate::platform::hide_popup(window);
+                return Err(error);
+            }
+        };
+        crate::platform::uncover_popup()?;
+        let (x, y) = crate::platform::popup_position(window)?;
+        placed["x"] = json!(x);
+        placed["y"] = json!(y);
+        let mut state = presentation.lock().expect("presentation");
+        current_popup_paint(&state, params, revision)?;
+        state.placed_above = placed["above"].as_bool();
+        Ok(placed)
+    })();
+    let _ = finished.send(result);
+}
+
+fn current_popup_paint(
+    state: &Presentation,
+    params: &Value,
+    revision: u64,
+) -> Result<(), BridgeError> {
+    popup_service_sequence(state, params)?;
+    if state.paint_revision != revision {
+        return Err(BridgeError::new(
+            "stale_popup",
+            "This popup layout has been superseded.",
+        ));
+    }
+    Ok(())
 }
 
 fn popup_service_sequence(state: &Presentation, params: &Value) -> Result<u64, BridgeError> {
@@ -560,6 +692,25 @@ mod tests {
         state.visible = true;
         state.popup = Some(json!({"payload":{}}));
         assert!(popup_service_sequence(&state, &json!({"sequence":212})).is_err());
+    }
+
+    #[test]
+    fn late_paint_cannot_replace_a_newer_layout_or_reopen_a_closed_popup() {
+        let mut state = Presentation {
+            visible: true,
+            sequence: 212,
+            paint_revision: 2,
+            popup: Some(json!({"payload":{"sequence":3}})),
+            ..Presentation::default()
+        };
+        let params = json!({"sequence":212});
+        assert!(current_popup_paint(&state, &params, 1).is_err());
+        assert!(current_popup_paint(&state, &params, 2).is_ok());
+        state.visible = false;
+        assert!(current_popup_paint(&state, &params, 2).is_err());
+        state.visible = true;
+        state.sequence = 213;
+        assert!(current_popup_paint(&state, &params, 2).is_err());
     }
 
     #[test]

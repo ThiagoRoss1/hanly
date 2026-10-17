@@ -62,6 +62,9 @@ export function PopupPage() {
   const currentSequence = useRef(-1);
   const geometrySent = useRef("");
   const cardRef = useRef<HTMLElement | null>(null);
+  const retryTimer = useRef<number | null>(null);
+  const roomRef = useRef(room);
+  roomRef.current = room;
 
   useEffect(() => {
     let active = true;
@@ -72,6 +75,9 @@ export function PopupPage() {
         if (event.sequence > currentSequence.current) {
           currentSequence.current = event.sequence;
           geometrySent.current = "";
+          if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
+          retryTimer.current = null;
+          setBridgeError("");
           if (event.type === "popup")
             setExpanded(initiallyExpanded(event.payload));
         }
@@ -106,50 +112,42 @@ export function PopupPage() {
     return () => window.removeEventListener("contextmenu", onContextMenu);
   }, []);
 
-  useEffect(() => {
-    // A press on the popup activates Hanly on macOS; the native host hands
-    // that activation back so the Control Center stays behind the reader's app.
-    const onPress = () => {
-      void desktopRequest("popup_pressed").catch((reason: unknown) =>
-        console.error("popup_pressed", reason),
-      );
-    };
-    window.addEventListener("mousedown", onPress, { capture: true });
-    return () =>
-      window.removeEventListener("mousedown", onPress, { capture: true });
-  }, []);
-
-  const reportGeometry = useCallback((sequence: number) => {
+  const reportGeometry = useCallback(function reportGeometry(sequence: number, attempt = 0) {
     if (currentSequence.current !== sequence) return;
     const card = cardRef.current;
     if (!card) return;
     const rect = card.getBoundingClientRect();
     const width = Math.max(1, Math.ceil(rect.width));
     const height = Math.max(1, Math.ceil(rect.height));
-    const key = `${sequence}:${width}:${height}`;
+    const measured = roomRef.current?.sequence === sequence;
+    const method = measured ? "popup_geometry" : "popup_measure";
+    const key = `${sequence}:${method}:${width}:${height}`;
     if (geometrySent.current === key) return;
     geometrySent.current = key;
-    void desktopRequest<{ room?: unknown }>("popup_geometry", {
-      sequence,
-      width,
-      height,
-    })
+    void desktopRequest<{ room?: unknown }>(method, { sequence, width, height })
       .then((reply) => {
+        if (currentSequence.current !== sequence) return;
         const available = reply?.room;
-        if (
-          currentSequence.current === sequence &&
-          typeof available === "number" &&
-          Number.isFinite(available) &&
-          available > 0
-        ) {
-          setRoom((previous) =>
-            previous?.sequence === sequence && previous.height === available
-              ? previous
-              : { sequence, height: available },
-          );
+        if (!measured) {
+          if (typeof available !== "number" || !Number.isFinite(available) || available <= 0) {
+            throw new Error("Hanly returned invalid popup layout bounds.");
+          }
+          setRoom({ sequence, height: available });
         }
       })
-      .catch(() => undefined);
+      .catch((reason: unknown) => {
+        if (currentSequence.current !== sequence || geometrySent.current !== key) return;
+        geometrySent.current = "";
+        if (attempt === 0) {
+          retryTimer.current = window.setTimeout(() => reportGeometry(sequence, 1), 80);
+        } else {
+          setBridgeError(normalizeDesktopError(reason).message);
+        }
+      });
+  }, []);
+
+  useEffect(() => () => {
+    if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
   }, []);
 
   const payload = current?.payload;
@@ -189,7 +187,8 @@ export function PopupPage() {
   useLayoutEffect(() => {
     if (sequence === undefined || !content) return;
     // Hidden webviews may throttle animation frames. Measure the committed DOM
-    // directly; native presentation waits for this current result's geometry.
+    // directly. Native measurement supplies the cap before a painted frame
+    // is presented, so the first visible card already fits the available room.
     reportGeometry(sequence);
     const observer =
       typeof ResizeObserver === "undefined"
@@ -199,7 +198,7 @@ export function PopupPage() {
     return () => {
       observer?.disconnect();
     };
-  }, [content, expanded, reportGeometry, sequence]);
+  }, [content, expanded, reportGeometry, room, sequence]);
 
   async function closePopup() {
     if (sequence === undefined) return;
