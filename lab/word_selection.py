@@ -78,16 +78,15 @@ class Observation:
     retry_latency_ms: float = 0.0
 
 
-def sentences() -> list[tuple[str, dict[str, tuple[str, ...]]]]:
-    """Lab-authored lines with the headwords a target word should give."""
+def sentences() -> list[tuple[str, dict[str, dict[int, tuple[str, ...]]]]]:
+    """Lab-authored lines with the headwords each syllable of a target should give."""
 
     from .korean_grammar import load_corpus
     from .minibook import load_minibook
 
-    lines: dict[str, dict[str, tuple[str, ...]]] = {}
+    lines: dict[str, dict[str, dict[int, tuple[str, ...]]]] = {}
     for case in load_corpus():
-        accepted = next(iter(case.accept.values()), ())
-        lines.setdefault(case.text, {})[case.target] = accepted
+        lines.setdefault(case.text, {})[case.target] = dict(case.accept)
     book = load_minibook()
     for target in book.targets:
         line = book.lines[target.line]
@@ -96,7 +95,8 @@ def sentences() -> list[tuple[str, dict[str, tuple[str, ...]]]]:
         surface = line[target.start: target.start + len(target.surface)]
         word = _word_containing(line, target.start)
         if word and surface:
-            lines.setdefault(line, {}).setdefault(word, (target.headword or target.lemma,))
+            headword = (target.headword or target.lemma,)
+            lines.setdefault(line, {}).setdefault(word, dict.fromkeys(range(len(word)), headword))
     return [(text, accepted) for text, accepted in lines.items() if " " in text or len(text) > 2]
 
 
@@ -144,7 +144,7 @@ def hovers(
                                 size=size, theme=theme, position=position, point=point,
                                 word_box=box,
                                 neighbours=tuple(w for w, _ in words),
-                                accept=accepted.get(word, ()),
+                                accept=accepted.get(word, {}).get(picks[cursor], ()),
                                 char_index=picks[cursor],
                             ), page
                             produced += 1
