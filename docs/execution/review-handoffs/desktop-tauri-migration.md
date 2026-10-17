@@ -1,6 +1,85 @@
 # Desktop Tauri Migration Review Handoff
 
-## Current status (authoritative — 2026-10-16 20:10 -03)
+## Current status (authoritative — 2026-10-16 22:30 -03)
+
+This section supersedes every status, verification and remaining-work
+statement below it, including the 20:10 status that follows. "Implemented
+behavior and ownership" still describes the design.
+
+**Not accepted and not ready to merge.** Windows native acceptance has not
+been run, and the migration review on Windows is still required.
+
+### Branch and builds
+
+- **Branch:** `desktop/tauri-migration`. The human pushed `31235eb`. Every
+  commit after that is local and not pushed. This session's commits, after
+  `311d784`:
+
+  | commit | what it does |
+  |---|---|
+  | `795fd7c` | Lab protocol v2: worker-thread ownership, distinct inputs, genuine OCR calls, OCR readings with tolerances, source diff |
+  | `176e705` | Bounded neighbouring-word context; KRDICT-listed constructions; the class-agreement rule; the copula; Korean fused to digits or emoji |
+  | `8da81a7` | `lab grammar` (108-case reviewed corpus) and `lab word-selection` |
+  | `ad35319` | Vision autorelease pool on the lookup worker thread (promoted) |
+  | `fbfb0e1` | Crop-edge re-capture candidate (evaluation only) |
+  | `6c0a289`, `e68cca9` | Word-selection classifier fixes: geometry for the line, narrowed surfaces, per-syllable expectations |
+  | `c7a81b3` | Test pins for the additive contract |
+  | `a287e40`, `13c7aba` | Resource report, word-selection report and Windows continuation plan |
+
+- **Built, not installed:** `196286e6-344a-4ad6-bac0-5778b37b112a` from
+  `c7a81b3f1d1f32d7e17405a70ebb16772ed0b5c4`.
+  - Ad-hoc signed, `cdhash f1586908cc54da5b7c39d211e928445d3b7c0772`.
+  - ZIP `b2cabb51775ac33b455454e34686ca0fa8f1712fe34f56d9065564d7e57cf05b`.
+  - DMG `9be85ac9da222519e3ac90b3d6800972fb548b3b4ece2c9b134be8c75fbb42cf`.
+  - All 7 packaged checks pass. The app inside both the ZIP and the DMG
+    passes a strict signature check with no required package missing.
+- **Installed:** `/Applications/Hanly.app` is still `ed9d4483` (`bc2764c`).
+  Replacing it needs the human's approval, and then one grant.
+
+### Generated data removed (approved list)
+
+- **Deleted, one exact path at a time, with no symlink followed and no mount
+  involved:**
+  - `dist/archive-bd7527b` and `dist/archive-e15204d`;
+  - `dist/reconstructed-352e4ee`, `-bd7527b`, `-dmg-352e4ee`,
+    `-dmg-bd7527b` and `-zip`;
+  - `dist/phase-b-reconstructed`;
+  - `dist/final-macos-zip` and `dist/final-macos-dmg`;
+  - the six `artifacts/lab/runs/20261005-mac-update/*/install` copies.
+- **Space recovered:** 24,968 MiB of free disk, measured before and after.
+- **Kept:**
+  - **`dist/reconstructed`:** six `reconstructed*` directories existed where
+    five were approved. This one is the documented output of the manual
+    reconstruct check in `packaging/README.md`, so it was preserved.
+  - All update-check logs, both old installers, all Lab runs, the current
+    product, the service payload and the Rust cache.
+
+### Acceptance table (this session)
+
+| Area | Evidence | Status |
+|---|---|---|
+| Vision memory on the worker thread | Pool A/B from clean commits (`unpooled` against `product`), 2 × 5,000 genuine recognitions: growth 16.2 → 6.8 KiB per call (varied) and 14.0 → 1.3 (same image); retained −49 MiB; latency unchanged; readings identical. Portable tests cover the pool's ordering and error path; a native test covers a real `hanly-lookup-worker`. | **Promoted.** Growth with varied images is not shown to be bounded. |
+| Request reuse; raw `CGImage` input | One change each against `product`: no benefit; +315 KiB per call | Rejected |
+| Word selection, offline (Mac) | Same 7,596 Vision hovers on `main`, `795fd7c` and now: the migration changed nothing offline; now 95.2 % correct, against 93.2 %. EasyOCR: 66.9 % → 69.1 %; misreads (29.5 %) dominate. | Accepted for the Mac recognizers named |
+| Grammar coverage | OCR form 319 → 342 / 344, direct form 327 → 338 / 344, constructions 0 → 37 / 38; minibook 142 → 143 / 144 | Accepted. Human review of the corpus pending. |
+| Crop-edge re-capture | Vision +186 recovered, 4 disturbed; EasyOCR +78, 15 disturbed, +106 ms p50 where it fires | **Not promoted**; needs Windows |
+| Full local gate | 2,703 passed, 3 skipped. Ruff and mypy (355 files) clean. tsc, Node 12, UI 45, Vite build. Native Vision 6/6. | Passed (Mac) |
+| Windows | Plan in `docs/execution/reports/windows-word-selection-continuation.md` | **Pending: native hardware required** |
+
+### Remaining before merge
+
+1. Windows: the portable gate, `lab grammar` (it must match the Mac),
+   EasyOCR word selection, resources, the 100–200 % DPI matrix, UIA,
+   shortcuts and foreground behaviour, and the packaged runtime.
+2. Live checks on this Mac:
+   - the popup's grammar-pattern line;
+   - context-aware lookups through accessibility text;
+   - stale-result handling under rapid movement.
+   These need the human's approval for interactive runs.
+3. Human review of the grammar corpus expectations.
+4. Optional: install `196286e6` (approval, then one grant).
+
+## Superseded status (2026-10-16 20:10 -03)
 
 This section supersedes every status, verification and remaining-work
 statement below it. Everything below keeps its original provenance and is

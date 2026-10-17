@@ -1,5 +1,23 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Resource, OCR and word-selection work (2026-10-16 22:30)
+
+- **Cleanup:** 24,968 MiB recovered from the approved generated copies;
+  `dist/reconstructed` was kept as the documented reconstruct output.
+- **Lab protocol v2** (`795fd7c`): worker-thread ownership, distinct inputs,
+  genuine OCR call counts, OCR readings compared with tolerances, source
+  diff. Earlier v1 Vision conclusions are superseded.
+- **Vision autorelease pool promoted** (`ad35319`): over 5,000 genuine
+  recognitions on the worker thread, growth 16 → 7 KiB per call, 49 MiB less
+  retained, latency and readings unchanged. Request reuse and raw `CGImage`
+  input were rejected.
+- **Language** (`176e705`): bounded neighbouring-word context and
+  KRDICT-listed constructions. Grammar corpus 319 → 342 / 344 (OCR form);
+  Vision word selection 93.2 % → 95.2 %. Offline word selection is identical
+  on `main` and the pre-change migration engine.
+- **Build `196286e6`** (`c7a81b3`) is built and verified, not installed.
+  Windows acceptance is pending; not ready to merge.
+
 ## Popup placement and activation fixed; build installed (2026-10-16)
 
 - **Commits** (local, not pushed):
