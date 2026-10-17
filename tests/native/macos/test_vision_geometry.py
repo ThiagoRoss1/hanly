@@ -90,8 +90,8 @@ def test_recognition_on_the_lookup_worker_thread_drains_its_own_pool(
     pytest.importorskip("PIL")
     import threading
 
+    objc = pytest.importorskip("objc")
     import hanly.vision_provider as module
-    import objc
     from PIL import Image, ImageDraw, ImageFont
 
     entered: list[str] = []
