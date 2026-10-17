@@ -24,8 +24,13 @@ Start HEAD `953bbb6`, clean, sixteen commits ahead of the tracked remote.
 - **Open P1:** Windows logical native bounds versus physical cursor/capture
   geometry. Exact paths and native DPI continuation are documented. Other
   language/native interaction limits remain in the single review handoff.
-- Built/installed artifacts retain their prior identities; neither replaced.
-  Rebuild/package follow-up is pending. This is not migration acceptance.
+- Fixes committed locally as `28f9c7a`; no push/merge.
+- Fresh build `5665db48` from that commit: four headless packaged tests pass;
+  ZIP/DMG each match 3,748 manifest entries, required inventory, source identity
+  and strict cdhash-bound signatures. Installed `ed9d4483` is untouched.
+- Three window-based packaged tests await separate approval; live capture,
+  shortcuts, grammar review and native Windows/Linux remain open. Detailed
+  findings and evidence are in the single handoff. No migration acceptance.
 
 ## Resource, OCR and word-selection work (2026-10-16 22:30)
 

@@ -37,9 +37,10 @@ resource/OCR/grammar changes, rather than only Claude's final diff.
    `docs/execution/reports/windows-word-selection-continuation.md`. This is a
    code finding requiring correction and native validation, not merely a
    missing Windows test. No speculative coordinate rewrite was made on Mac.
-2. **Current-source packaged/live acceptance:** the existing built bundle
-   `196286e6` predates these fixes. Rebuild and run its noninteractive gates;
-   then obtain separate approval before interactive tests or installation.
+2. **Current-source packaged/live acceptance:** fresh `5665db48` below passes
+   its four noninteractive checks and both archive verifications. Three
+   window-based packaged tests await separate approval, followed by live
+   capture/interaction checks. Do not transfer the old bundle's UI results.
    `/Applications/Hanly.app` remains `ed9d4483` / `bc2764c`.
 3. **Mac live check after approval:** context-aware accessibility lookups,
    grammar-pattern rendering, rapid word transitions/stale replies, popup
@@ -53,6 +54,8 @@ resource/OCR/grammar changes, rather than only Claude's final diff.
    15/15 auxiliary senses per form. These are language-stage inputs, not live
    accessibility/OCR accuracy. Independent human grammar review remains open;
    broader semantic changes need evidence and are not smuggled into this review.
+   Multi-answer expectations such as g055 (듣다/들다) and g097
+   (가다/가늘다) still need independent semantic review.
 5. **Native-only risks for the live checklist:** popup geometry errors are
    swallowed after deduplication, so retry behavior under a transient failure
    needs checking. Activation retry sleeps sum to 600 ms; the older “320 ms”
@@ -108,6 +111,32 @@ by the deferred list above; a source review is not platform acceptance.
 - Old 7,596-hover tables are explicitly historical. The report no longer mixes
   a corrected lexical subtotal with uncorrected totals or treats contaminated
   first-pass latency as fresh.
+
+### Reviewed package — built, not installed (2026-10-17 00:01 -03)
+
+- Review fixes: local commit `28f9c7aa2df2da46218a8c071b7c11c16417eb0d`.
+  No push or merge. Packaging started from that clean commit; the follow-up
+  documentation change does not alter the product.
+- Build: `5665db48-e13b-494e-9769-4d87fd139116`, arm64, version 1.1.0.
+  Canonical app: `dist/macos/Hanly.app`.
+- Ordinary ad-hoc requirement:
+  `cdhash ba27b1d771cc9e9cabcf3b5257499e8accc86ae8`.
+  No identifier-only requirement, new certificate, keychain or trust change.
+- Four noninteractive packaged cases pass, three window cases deliberately
+  deselected (24.58 s): required inventory, exact source identity, real frozen
+  OCR on an isolated profile, and native helper rollback after rejected root
+  startup. These do not open the UI or establish packaged live acceptance.
+- ZIP and read-only DMG reconstruction each match all **3,748 manifest
+  entries**, contain all required inputs, match source/version/platform/arch,
+  and pass `codesign --verify --deep --strict`. Temporary copies/mounts are
+  cleaned up. SHA-256:
+  - ZIP: `fcf1e546e553537008f8f9e255be6534cad463350cbab9736ed832598d785e5d`
+  - DMG: `60e88f30b87c60531e54b8342b05869aa0ee96601e1e365507efdc413c61f882`
+- The first build stopped at a missing Cargo PATH entry after freezing;
+  rerunning with the installed Cargo path completed. No product workaround.
+- Evidence is under `artifacts/lab/reviews/20261016-codex/`, including
+  `package-archives.json` and the gate/build logs. No test or build process is
+  intentionally left running. The human's installed app was not replaced.
 
 ## Historical status (2026-10-16 22:30 -03)
 
