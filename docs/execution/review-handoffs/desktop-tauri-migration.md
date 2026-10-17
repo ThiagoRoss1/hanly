@@ -1,6 +1,6 @@
 # Desktop Tauri Migration Review Handoff
 
-## Popup flicker follow-up — debug validation passed, 2026-10-17
+## Popup flicker follow-up — debug validated, package built, 2026-10-17
 
 The human's new recording demonstrates that the earlier settled-focus checks
 missed transient rendering failures. At approximately 2.400 s the real dark
@@ -9,7 +9,8 @@ Control Center briefly rises behind it during Expand. The white/purple card
 in that recording belongs to the browser fixture, not Hanly's native popup.
 The old 15/15 click result below does **not** establish flicker-free behavior.
 
-Correction based on `1b4b313`, on the same branch:
+Correction committed locally as `80c63f8694f37c901e0b70262f4a417b619fc1dd`,
+based on `1b4b313`, on the same branch. No push or merge.
 
 - macOS uses a Rust-owned nonactivating `NSPanel`. Its content is reparented
   through public AppKit APIs; the observed Tao window/class remains intact.
@@ -35,7 +36,8 @@ A hidden-panel experiment also confirms that the public WebKit snapshot
 callback can complete while the panel is hidden.
 
 **With the human's separate interactive approval**, the isolated debug test
-passes: six first-show/hide cycles, six real Expand/Collapse clicks (alternating
+passes: six first-show/hide cycles, six posted native CGEvent Expand/Collapse
+clicks (alternating
 460/340 widths), sixteen rapid result replacements, and Close. Across 288
 foreground/geometry samples, the controlled reader lost focus zero times.
 171 owned-window screenshots were returned: five overlapped a completed hide
@@ -60,10 +62,33 @@ One earlier returned empty image overlapped hide; it is not silently counted
 as a passing visible frame. Intermediate evidence is retained in subfolders.
 No installation, certificate, keychain or permission reset/grant was performed.
 
-A fresh package of this correction is being prepared. The older `5665db48`
-package and installed `ed9d4483` results below do not validate the new native
-panel. Installed-app replacement and packaged live acceptance remain separate.
-The broader migration blockers below are unchanged.
+**Fresh package — built, not installed**
+
+- Build `dc33b1e1-2d8f-4cca-a02e-49c5fd8a16b4`, arm64, version 1.1.0,
+  built from clean product commit `80c63f8` at 21:31:18 UTC. The subsequent
+  code-map/handoff edits change documentation only. Canonical app:
+  `dist/macos/Hanly.app`.
+- All four non-window packaged checks pass (48.50 s): required inventory,
+  exact source identity, actual frozen EasyOCR/Kiwi/KRDICT on an isolated
+  profile, and native helper rollback after rejected root startup.
+  **Three packaged window checks await the newly requested approval.**
+  This is not a seven-check pass for the new build.
+- Both ZIP and read-only DMG reconstructions match all 3,748 manifest entries,
+  source/version/platform/architecture, required inventory, and strict deep
+  signature verification. Ordinary ad-hoc requirement:
+  `cdhash cdb8a721194e3a1a2d48461a4be1452f7cd39ed3`.
+- ZIP SHA-256:
+  `f2948d470ef0788eeb040de74c5da6a9fdea1fab8e9cabca9054dde364f4f510`.
+  DMG SHA-256:
+  `bf21a95e7f261d6c0c67336f2062121fa9cfcdab0c88d7a6a8b851283d85fb39`.
+- Logs and `package-archives.json` are beside the debug evidence. Archive
+  reconstructions and the test-owned headless profile were removed.
+
+The older `5665db48` seven-check package result below is historical; it does
+not validate the new native panel. `/Applications/Hanly.app` remains
+`ed9d4483`. Installation replacement and packaged live acceptance require
+separate authorization; no promise is made that ad-hoc grants survive this
+rebuild. The broader migration blockers below are unchanged.
 
 ## Current status — Codex post-bundle review, 2026-10-16
 

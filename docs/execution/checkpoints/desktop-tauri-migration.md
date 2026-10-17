@@ -16,8 +16,13 @@
   rapid replacements, and zero observed owned survivors. Only 340/460 widths
   after disabling AppKit's transient ordering animation. Sampled evidence is
   scoped to authored results; it does not prove real OCR/hover or packaged UI.
-- Fresh package is being prepared; the installed app remains untouched.
-  No grants reset/requested. Details/provenance are in the single handoff.
+- Product fix committed locally as `80c63f8`; no push/merge. Fresh arm64
+  package `dc33b1e1` is built: four non-window packaged checks pass; both
+  ZIP/DMG reconstructions match 3,748 entries, source and strict cdhash-bound
+  signatures. Three packaged window tests await separately requested approval.
+- Installed `ed9d4483` remains untouched. No grants reset/requested. Installing
+  the new build and packaged live acceptance remain separate. Exact build,
+  digests, test scope and provenance are in the single handoff.
 
 ## Codex full migration verification — corrections verified, 2026-10-16
 
