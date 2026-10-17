@@ -1,5 +1,19 @@
 # Resource attribution — first evidence (2026-10-15)
 
+> **Superseded in part (2026-10-16): read "Protocol v2 evidence" at the end
+> first.** The v1 measurements below had three validity problems, found and
+> fixed in `795fd7c`:
+> - **Cache hits counted as fresh work.** Most "varied" inputs were the same
+>   image with a different pointer, so most "varied" lookups were OCR cache
+>   hits. The pipeline's "0.4 KiB per lookup" mostly measured the cache.
+> - **Two distinct images.** The isolated recognizer re-read only two images.
+> - **Main thread.** Providers ran on the child's main thread, not on the
+>   lookup worker's thread.
+>
+> These Kiwi and KRDICT findings still stand: load cost, deferred loading,
+> and release only at process exit. The v1 Vision growth figures and the v1
+> autorelease verdict are replaced by the v2 results.
+
 Developer evidence from `python -m lab resources` (protocol `resources-v1`) on
 one Apple Silicon Mac, with the Apple Vision recognizer and Python 3.13.11.
 Package versions:
@@ -137,3 +151,78 @@ inconclusive ones.
 5. **Kiwi:** any model or option change needs correctness and latency
    evaluation through `lab tour` and `lab resources compare`. Kiwi stays a core
    dependency.
+
+## Protocol v2 evidence (2026-10-16)
+
+### What changed in the method (`795fd7c`)
+
+- **Ownership:** providers are built, used and closed on a thread named
+  `hanly-lookup-worker`, like the lookup child's.
+- **Inputs:** every input is a distinct image; a duplicate is refused at
+  render time.
+- **Genuine calls:** every stage counts the calls that reached the
+  recognizer beneath every cache. In the whole-lookup sequence, 30 "varied"
+  lookups over 16 inputs made 15 genuine OCR calls, and the other 15 were
+  cache hits.
+- **Readings:** each input's region order, text digest, confidence and corners
+  are recorded. A comparison allows 1 px of corner movement and 0.02 of
+  confidence, and nothing for text or order.
+- **Provenance:** a dirty checkout is identified by its diff (`source.diff`,
+  hashed in metadata).
+- **Metrics:** RSS and physical footprint have separate columns, and
+  latency p95 is reported. The protocol version is `resources-v2`; v1 runs
+  are refused as comparison partners.
+
+### Vision autorelease: before against after
+
+The pre-fix provider is kept as the Lab's `unpooled` variant, so both ran
+back to back from clean commits, with nothing else running. Plan: 64
+distinct inputs, recognizer only, on the worker thread.
+
+| | `unpooled` (before) | `product` (after, `ad35319`) | label |
+|---|---|---|---|
+| readings, 64 inputs | — | identical (0.0 px, 0.0 confidence) | unchanged |
+| growth per call, varied images (2 × 2,500) | 16.2 KiB (14.0–18.4) | 6.8 KiB (2.3–11.3) | improved |
+| growth per call, same image (2 × 2,500) | 14.0 KiB | 1.3 KiB | improved |
+| footprint after 5,000 calls | 187 MiB | 140 MiB | improved |
+| sustained after idle | 166 MiB | 118 MiB | improved |
+| retained after closing the provider | 138 MiB | 89 MiB | improved |
+| recognition p50 / p95, varied | 65.2 / 83.4 ms | 64.7 / 82.4 ms | unchanged |
+| recognition p50 / p95, same image | 53.9 / 66.8 ms | 53.8 / 67.0 ms | unchanged |
+
+Runs: `20261016-211535-resources` (before) and `20261016-212557-resources`
+(after). The short runs, 5 repeats × 600 calls (`20261016-205600` and
+`20261016-210151`), labelled the same deltas inconclusive. 300 calls are too
+few to see growth through memory compression; their slopes range from −99
+to +25 KiB per call.
+
+**Promoted.** The pool drains on success and on error. Normalization runs
+inside it, and text is copied into a plain `str` before it drains.
+- **Portable tests** check the ordering and the error path.
+- **A native macOS test** checks recognition on a real `hanly-lookup-worker`
+  thread, and that the results stay valid after the drain.
+
+**Not claimed:** that Vision's memory is bounded. Varied images still grow
+about 7 KiB per call over 5,000 calls. The remaining source is not attributed:
+Vision's internal caches or the native allocator are hypotheses, and neither
+has been tested.
+
+### Further candidates, one change each against `product`
+
+| candidate | readings | memory | latency | verdict |
+|---|---|---|---|---|
+| reuse one `VNRecognizeTextRequest` | identical | unchanged | unchanged | **rejected**: no benefit |
+| hand Vision a `CGImage` of the scaled pixels, no PNG | identical | **+315 KiB per call; +180 MiB retained** | −3 ms (inside the band) | **rejected**: memory regression |
+
+The raw-image variant keeps the provider's scaling, channel handling and
+coordinate mapping exactly, and its readings are identical. One hypothesis
+for its growth is that each `CGDataProvider` keeps its Python pixel buffer
+alive across calls; it has not been tested. Runs: `20261016-210151` (product),
+`20261016-210627` (reuse) and `20261016-211108` (raw image).
+
+### "Before" runs, kept with their caveat
+
+The first v2 baselines (`20261016-203225`, `-203814` and `-203902`) came from a
+clean `795fd7c`. Test and grammar runs overlapped part of the long baseline,
+so its latency is not used. Its memory growth (15–16 KiB per call) agrees
+with the clean `unpooled` run.
