@@ -38,9 +38,10 @@ resource/OCR/grammar changes, rather than only Claude's final diff.
    code finding requiring correction and native validation, not merely a
    missing Windows test. No speculative coordinate rewrite was made on Mac.
 2. **Current-source packaged/live acceptance:** fresh `5665db48` below passes
-   its four noninteractive checks and both archive verifications. Three
-   window-based packaged tests await separate approval, followed by live
-   capture/interaction checks. Do not transfer the old bundle's UI results.
+   all seven packaged checks and both archive verifications. The human
+   approved the three window-based tests on October 17; they passed on
+   disposable copies. Live capture/interaction checks still need separate
+   approval. Do not equate startup/lifecycle checks with popup acceptance.
    `/Applications/Hanly.app` remains `ed9d4483` / `bc2764c`.
 3. **Mac live check after approval:** context-aware accessibility lookups,
    grammar-pattern rendering, rapid word transitions/stale replies, popup
@@ -125,7 +126,19 @@ by the deferred list above; a source review is not platform acceptance.
 - Four noninteractive packaged cases pass, three window cases deliberately
   deselected (24.58 s): required inventory, exact source identity, real frozen
   OCR on an isolated profile, and native helper rollback after rejected root
-  startup. These do not open the UI or establish packaged live acceptance.
+  startup. These do not open the UI.
+- With the human's October 17 approval, the three remaining Mac window tests
+  pass on disposable copies of this same bundle (23.29 s): React frontend
+  readiness and state bridge; a normal update launch acknowledging its exact
+  challenge and promoting the receipt after UI readiness; Tauri Foreground
+  registration with its private Python service as a child and no observed
+  foreground child or Qt process. No observed owned children survived quit.
+  Thus **7/7 packaged tests pass across the two runs**. The identity sampler
+  saw root/service, but no WebKit helper descendants; this is not proof about
+  separately owned OS webview processes. No capture, popup interaction or
+  physical shortcut test was performed, and no grants were requested/reset.
+- The disposable apps/profiles were removed and the explicitly opened test
+  copy was unregistered from LaunchServices. The installed app is unchanged.
 - ZIP and read-only DMG reconstruction each match all **3,748 manifest
   entries**, contain all required inputs, match source/version/platform/arch,
   and pass `codesign --verify --deep --strict`. Temporary copies/mounts are
@@ -135,7 +148,8 @@ by the deferred list above; a source review is not platform acceptance.
 - The first build stopped at a missing Cargo PATH entry after freezing;
   rerunning with the installed Cargo path completed. No product workaround.
 - Evidence is under `artifacts/lab/reviews/20261016-codex/`, including
-  `package-archives.json` and the gate/build logs. No test or build process is
+  `package-archives.json`, `packaged-window-tests.log`,
+  `packaged-window-identity.json` and the gate/build logs. No test or build process is
   intentionally left running. The human's installed app was not replaced.
 
 ## Historical status (2026-10-16 22:30 -03)

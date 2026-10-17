@@ -28,8 +28,13 @@ Start HEAD `953bbb6`, clean, sixteen commits ahead of the tracked remote.
 - Fresh build `5665db48` from that commit: four headless packaged tests pass;
   ZIP/DMG each match 3,748 manifest entries, required inventory, source identity
   and strict cdhash-bound signatures. Installed `ed9d4483` is untouched.
-- Three window-based packaged tests await separate approval; live capture,
-  shortcuts, grammar review and native Windows/Linux remain open. Detailed
+- With the human's October 17 approval, the three remaining Mac packaged
+  window tests pass (23.29 s) on disposable copies: React/state readiness,
+  real UI-gated update acknowledgement/receipt, native root/service ownership
+  and observed zero-survivor quit. **7/7 packaged checks pass** across the
+  headless and window runs. No grants requested/reset or installation replaced.
+- Live capture, popup interaction, physical shortcuts, grammar review and
+  native Windows/Linux remain open. Detailed
   findings and evidence are in the single handoff. No migration acceptance.
 
 ## Resource, OCR and word-selection work (2026-10-16 22:30)
