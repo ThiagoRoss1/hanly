@@ -70,7 +70,7 @@ def _result(surface: str | None, line: str, headword: str | None = "학교") -> 
     quad = Quad.from_bounding_box(BoundingBox(10, 0, 150, 20))
     selected = OCRResult(text=line, confidence=0.9, quad=quad)
     return SimpleNamespace(
-        context=SimpleNamespace(text=surface, selected_ocr=selected),
+        context=SimpleNamespace(text=surface, selected_ocr=selected, word_region=None),
         entries=(SimpleNamespace(headword=headword),) if headword else (),
     )
 
@@ -92,3 +92,31 @@ def test_misses_are_classified_against_ground_truth() -> None:
         "neighbor_word"
     )
     assert word_selection.classify(_hover(), inside, _result(None, ""))[0] == "no_result"
+    # A misread of the hovered line is a misread, not another line.
+    misread = _result("학교에셔", "학교에셔 공부해요")
+    assert word_selection.classify(_hover(), inside, misread)[0] == "ocr_misread"
+    other_line = SimpleNamespace(
+        context=SimpleNamespace(
+            text="사과를", word_region=None,
+            selected_ocr=OCRResult(text="사과를 먹어요", confidence=0.9,
+                                   quad=Quad.from_bounding_box(BoundingBox(10, 40, 150, 60))),
+        ),
+        entries=(),
+    )
+    assert word_selection.classify(_hover(), inside, other_line)[0] == "wrong_line"
+    # Narrowed to the Korean under the pointer: 3명이 answered as 명이.
+    counted = word_selection.Hover(**{**_hover("3명이", line="3명이 왔어요").__dict__,
+                                      "char_index": 1, "accept": ()})
+    assert word_selection.classify(counted, inside, _result("명이", "3명이 왔어요"))[0] == (
+        "correct"
+    )
+
+
+def test_the_edge_retry_fires_only_when_the_word_reaches_the_crop_side() -> None:
+    def resolved(left: int, right: int) -> Any:
+        return SimpleNamespace(context=SimpleNamespace(word_region=BoundingBox(left, 0, right, 20)))
+
+    assert word_selection._word_touches_edge(resolved(0, 60), 200)
+    assert word_selection._word_touches_edge(resolved(120, 199), 200)
+    assert not word_selection._word_touches_edge(resolved(40, 120), 200)
+    assert not word_selection._word_touches_edge(SimpleNamespace(context=None), 200)

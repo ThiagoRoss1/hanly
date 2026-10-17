@@ -38,7 +38,7 @@ THEMES = {"light": (255, 0), "dark": (24, 235)}
 #: ``edge`` starts the line two pixels from the display's left edge.
 POSITIONS = {"normal": 220, "edge": 2}
 CURSORS = ("first", "middle", "last")
-#: A recognized region within this many pixels of the crop edge may be cut.
+#: A resolved word within this many pixels of the crop's side may be cut.
 EDGE_MARGIN = 2.0
 
 
@@ -56,6 +56,8 @@ class Hover:
     word_box: tuple[float, float, float, float]
     neighbours: tuple[str, ...]
     accept: tuple[str, ...] = ()
+    #: The hovered character's offset inside ``word``.
+    char_index: int = 0
 
 
 @dataclass
@@ -143,6 +145,7 @@ def hovers(
                                 word_box=box,
                                 neighbours=tuple(w for w, _ in words),
                                 accept=accepted.get(word, ()),
+                                char_index=picks[cursor],
                             ), page
                             produced += 1
                             if limit is not None and produced >= limit:
@@ -171,38 +174,56 @@ def crop(
 def classify(
     hover: Hover, roi_box: tuple[int, int, int, int], result: Any
 ) -> tuple[str, bool, bool]:
-    """(category, word clipped by the crop, selected line touches the crop edge)."""
+    """(category, word clipped by the crop, resolved word touches the crop edge).
 
-    left, _, right, _ = roi_box
+    Whether the selected region is the hovered line is decided by geometry,
+    not text: a misread of the right line is a misread. A surface narrowed to
+    the Korean under the pointer (명이 in 3명이) is the expected answer.
+    """
+
+    left, top, right, _ = roi_box
     clipped = hover.word_box[0] < left or hover.word_box[2] > right
     context = result.context
     surface = _clean(context.text) if context is not None and context.text else None
     selected = context.selected_ocr if context is not None else None
-    edge = False
-    if selected is not None:
-        box = selected.quad.bounding_box()
-        edge = box.left <= EDGE_MARGIN or box.right >= (right - left) - EDGE_MARGIN
+    edge = _word_touches_edge(result, right - left)
     expected = _clean(hover.word)
+    accepted_surfaces = {expected, _korean_run(hover.word, hover.char_index)}
     headword = result.entries[0].headword if result.entries else None
-    if surface == expected:
+    if surface in accepted_surfaces:
         if hover.accept and headword not in hover.accept:
             return "lexical", clipped, edge
         return "correct", clipped, edge
-    if surface is None:
+    if surface is None or selected is None:
         return ("clipped_by_roi" if clipped else "no_result"), clipped, edge
-    line = selected.text if selected is not None else ""
+    box = selected.quad.bounding_box()
+    line_top, line_bottom = hover.word_box[1] - top, hover.word_box[3] - top
+    overlap = min(box.bottom, line_bottom) - max(box.top, line_top)
+    if overlap < 0.5 * (line_bottom - line_top):
+        return "wrong_line", clipped, edge
+    line = selected.text
     if clipped and surface in expected:
         return "clipped_by_roi", clipped, edge
     if expected in line.replace(" ", "") and expected not in line.split():
         return "ocr_false_space", clipped, edge
     others = {_clean(word) for word in hover.neighbours} - {expected}
-    if surface in others:
-        in_line = expected in [_clean(word) for word in line.split()]
-        return ("neighbor_word" if in_line else "ocr_misread"), clipped, edge
-    if expected not in line:
-        # The selected line may simply be another line of the page.
-        return ("wrong_line" if _clean(surface) not in hover.line else "ocr_misread"), clipped, edge
-    return "neighbor_word", clipped, edge
+    if surface in others and expected in [_clean(word) for word in line.split()]:
+        return "neighbor_word", clipped, edge
+    return "ocr_misread", clipped, edge
+
+
+def _korean_run(word: str, index: int) -> str:
+    """The unbroken Hangul around ``index``, as acquisition narrows mixed words."""
+
+    if not 0 <= index < len(word):
+        return word
+    start = index
+    while start > 0 and "가" <= word[start - 1] <= "힣":
+        start -= 1
+    end = index + 1
+    while end < len(word) and "가" <= word[end] <= "힣":
+        end += 1
+    return word[start:end]
 
 
 def run(
@@ -367,7 +388,7 @@ def _write(
             lines.append(f"| {key} | " + " | ".join(str(counts.get(n, 0)) for n in names) + " |")
     edge = summary["edge_signal"]
     lines += ["", "## Crop-edge signal", "",
-              f"- Selected line touching the crop edge: {edge['touching']} hovers, "
+              f"- Resolved word touching the crop's side: {edge['touching']} hovers, "
               f"{edge['touching_and_wrong']} of them wrong (of {edge['wrong_total']} wrong)."]
     if edge_retry:
         r = summary["edge_retry"]
