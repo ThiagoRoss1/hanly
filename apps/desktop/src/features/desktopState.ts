@@ -8,6 +8,7 @@ export interface DesktopStateModel {
   state: HanlyState | null;
   connectionError: string | null;
   serviceStatus: DesktopServiceStatus | null;
+  retiredSeries: readonly string[];
 }
 
 export type DesktopStateAction =
@@ -20,6 +21,7 @@ export const initialDesktopState: DesktopStateModel = {
   state: null,
   connectionError: null,
   serviceStatus: null,
+  retiredSeries: [],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -239,8 +241,19 @@ export function desktopStateReducer(
         connectionError: "Hanly returned an incomplete desktop state.",
       };
     }
-    if (isOlder(action.payload, model.state)) return model;
-    return { ...model, state: action.payload, connectionError: null };
+    const next = action.payload.revision;
+    const previous = model.state?.revision;
+    if (
+      isOlder(action.payload, model.state) ||
+      (isRevision(next) && model.retiredSeries.includes(next.series))
+    ) return model;
+    // A reply already in flight when the service restarted may arrive after
+    // its replacement's first event. That old series must stay retired.
+    const retiredSeries =
+      isRevision(next) && isRevision(previous) && next.series !== previous.series
+        ? [...model.retiredSeries, previous.series]
+        : model.retiredSeries;
+    return { ...model, state: action.payload, connectionError: null, retiredSeries };
   }
   if (action.type === "service-status") {
     return {

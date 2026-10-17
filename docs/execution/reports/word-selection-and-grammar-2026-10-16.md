@@ -4,11 +4,19 @@ Mac evidence only. These runs are Apple Silicon results for the recognizers
 they name, and none of them is Windows evidence. The Windows continuation is
 `windows-word-selection-continuation.md`.
 
+**Review qualification (2026-10-16):** the tables below preserve the original
+recorded counts. They predate later classifier corrections and the complete
+transport/cache review. They are historical offline evidence, not acceptance
+of the current packaged desktop. In particular, the old direct-text grammar
+harness called the engine directly and could not detect neighboring context
+being lost on the real lookup pipe; that defect is fixed by the review.
+
 ## How it was measured
 
 - **`python -m lab grammar`:** the language stage alone (Kiwi and KRDICT),
   over the reviewed 108-case corpus `lab/fixtures/korean/grammar.json`.
-  - Every syllable of every target is hovered, 688 hovers in all.
+  - The original corpus scored 688 hovers. Review found one omitted final
+    syllable (`g106`, 을), so the corrected corpus scores 690.
   - Both acquisition forms are scored: the whitespace-delimited word OCR
     resolves, and the Korean run accessibility text yields.
   - Expected headwords and constructions are verified against KRDICT before
@@ -33,7 +41,7 @@ On Vision, at stride 2 (7,596 hovers):
 | category | `main` | `795fd7c` | now |
 |---|---|---|---|
 | correct | 7,081 (93.2 %) | 7,081 (93.2 %) | **7,233 (95.2 %)** |
-| wrong lexical choice | 222 | 222 | 72 (52 after the harness fix below) |
+| wrong lexical choice | 222 | 222 | 72 |
 | crop clipped the word | 111 | 111 | 134 |
 | OCR misread | 143 | 143 | 118 |
 | no result | 30 | 30 | 30 |
@@ -78,7 +86,11 @@ Wrong lexical choices fall from 115 to 0. OCR misreads are 1,512 against
    - 고르고 → no entry on two hovers.
    - The harness first scored per-syllable expectations against the first
      syllable's answer; that accounted for 20 of the 72 and is fixed in
-     `e68cca9`.
+     `e68cca9`. The table keeps the original 72 rather than combining a
+     corrected category with an uncorrected total. Raw observations were not
+     overwritten, and the review did not re-run this 7,596-hover campaign.
+     A second review fix checks wrong-line geometry before crediting matching
+     text. Old observations lack the geometry needed for a full rescore.
 
 ### Not reproduced here, still to check live
 
@@ -107,6 +119,16 @@ What is left:
 The corpus expectations were written by the implementer to KRDICT headwords
 and standard school grammar. **Independent human review is still pending.**
 
+Review tightened four particle-combination expectations, added the omitted
+`g106` syllable, and removed pronoun 나 as an acceptable answer to the flying
+bird's 나는. The latter follows the
+[National Institute of Korean Language's explanation of 날다 + 는](https://www.korean.go.kr/front/mcfaq/mcfaqView.do?mcfaq_seq=9072).
+The new, separate strict run scores **343/345 OCR-form and 339/345 direct-form
+headwords**, **37/38 constructions** and **15/15 auxiliary senses** in each
+form. Particle checks now count only cases that actually require parts.
+The denominator changed; the extra correct hover is coverage, not an accuracy
+improvement. Evidence: `artifacts/lab/reviews/20261016-codex/grammar-strict-summary.md`.
+
 ## Consistency checks evaluated (not shipped)
 
 - **The selected line touching the crop edge says nothing:** lines are wider
@@ -124,11 +146,19 @@ and standard school grammar. **Independent human review is still pending.**
 | extra genuine OCR calls | 1,297 | 826 |
 | added latency on those hovers, p50 / p95 | 41 / 74 ms | **106 / 231 ms** |
 
-**Not promoted.** It is clearly positive on Vision, but on EasyOCR (Windows'
+**Not promoted.** The recorded aggregate is positive on Vision, but on EasyOCR (Windows'
 recognizer) it disturbs 15 correct answers and adds 106 ms at the median
 where it fires. It must be measured natively on Windows before any decision.
 A second pass over the same text was not used as verification: it cannot
 recover characters OCR never read.
+
+The old retry instrumentation included retry recognitions in first-pass OCR
+counts, which could mislabel cached first passes as fresh. Review separated
+those counts. Treat old first-pass latency selection as contaminated; the
+retry's separately measured latency remains historical, not a new promotion
+decision. New word-selection recordings use protocol v2, start-time source
+identity/diff, dependency/font/dictionary/corpus identities and the provider
+worker thread. They cannot be mixed with these old runs as if unchanged.
 
 ## Runs
 

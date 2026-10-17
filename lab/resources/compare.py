@@ -71,6 +71,15 @@ def compatibility(
         reasons.append("different host description")
     if min(base["plan"]["repeats"], cand["plan"]["repeats"]) < 2:
         reasons.append("fewer than two repeats on one side; spread is unknown")
+    for name, summary in (("baseline", base), ("candidate", cand)):
+        calibration = _calibration(summary)
+        if calibration != "passed":
+            reasons.append(f"{name} calibration {calibration}")
+        for label, experiment in summary["experiments"].items():
+            for run in experiment.get("repeats", []):
+                if run.get("error") or run.get("returncode") != 0:
+                    reasons.append(f"{name} {label} contains a failed or unfinished repeat")
+                    break
     return reasons
 
 
@@ -95,6 +104,7 @@ def compare(baseline_dir: Path, candidate_dir: Path) -> dict[str, Any]:
                      cand["plan"].get("ocr_variant", "product")],
         "experiments": experiments,
         "calibration": _calibration(cand),
+        "baseline_calibration": _calibration(base),
         "decision": "not made here: accepting a change needs reproducible evidence, "
                     "documented trade-offs and regression coverage",
     }
@@ -240,6 +250,7 @@ def write_comparison(result: Mapping[str, Any], destination: Path) -> Path:
            f"{result['ocr']['worst_confidence']}; changed inputs: "
            f"{sorted(result['ocr']['changed']) or 'none'})"
            if "worst_quad_px" in result["ocr"] else ""),
+        f"- Baseline calibration: {result['baseline_calibration']}",
         f"- Candidate calibration: {result['calibration']}",
         f"- Decision: {result['decision']}", "",
     ]

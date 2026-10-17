@@ -25,9 +25,9 @@ from .metrics import Snapshot, primary_memory, snapshot
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Measurement protocol for these experiments. A change to how a value is read
-#: or derived bumps it, and comparison refuses to mix versions. v2: providers
-#: on the worker thread, genuine OCR calls counted, OCR results recorded.
-PROTOCOL = "resources-v2"
+#: or derived bumps it, and comparison refuses to mix versions. v3 includes
+#: morphological explanations in correctness and rejects missing OCR readings.
+PROTOCOL = "resources-v3"
 
 #: Fast enough to see a model load's transient; slow enough not to perturb it.
 SAMPLE_INTERVAL_SECONDS = 0.02

@@ -772,6 +772,8 @@ def _lookup_message(request: LookupRequest) -> Message:
             "selection_text": selection.text,
             "selection_cursor_index": selection.cursor_index,
             "selection_source": selection.source,
+            "selection_context_before": selection.context_before,
+            "selection_context_after": selection.context_after,
         }
 
     image = request.image
@@ -1034,6 +1036,8 @@ def _request_from(message: Message) -> LookupRequest:
             text=str(message["selection_text"]),
             cursor_index=int(message["selection_cursor_index"]),
             source=source if isinstance(source, str) else None,
+            context_before=message.get("selection_context_before", ""),
+            context_after=message.get("selection_context_after", ""),
         )
         return LookupRequest(
             int(message["request_id"]), None, target,

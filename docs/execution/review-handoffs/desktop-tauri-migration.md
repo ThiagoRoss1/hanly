@@ -1,6 +1,115 @@
 # Desktop Tauri Migration Review Handoff
 
-## Current status (authoritative — 2026-10-16 22:30 -03)
+## Current status — Codex post-bundle review, 2026-10-16
+
+**Review corrections implemented; migration not accepted for merge.** This
+section supersedes the historical statuses below. The human authorized Codex
+to review all sixteen areas and fix confirmed defects. Review started at clean
+`953bbb6` on `desktop/tauri-migration`; no push, merge or public release.
+
+### Post-Bundle Review Outcome
+
+Reviewer: Codex, GPT ecosystem. Scope: the full migration and the latest
+resource/OCR/grammar changes, rather than only Claude's final diff.
+
+**Fixed now**
+
+| Finding | Correction and evidence |
+|---|---|
+| P1: direct-text neighbors vanished across the lookup pipe | `lookup/process.py` serializes both neighbors. The real spawned-process test looks up 있어요 with 먹고, then 돈이, then 먹고 and observes pattern / no pattern / pattern, with providers confined to the child and no survivors after retirement/close. |
+| P1: direct cache ignored neighboring context | `composition.py` includes both neighbors in the cache key and a text-free, length-delimited fingerprint. Repeated identical selections still hit the cache; changed context reaches morphology. |
+| P2: construction lookup bypassed the five-query budget | Constructions now share `_DictionaryProbes`. Regression reproduced six queries before the fix; primary word lookup keeps priority over optional grammar annotation. |
+| P2: a construction wholly in a neighbor could annotate the hovered word | Ability-pattern detection requires a bound noun and overlap with the target. Regression prevents 할수있다 before 학교 from annotating 학교. |
+| P2: Vision ignored native request failure | Both BOOL-only runtime bindings and metadata-aware `(BOOL, NSError)` bindings are checked. Failure becomes a provider error, not an empty reading. Native testing caught the BOOL-only binding and the final six Vision cases pass. |
+| P2: a late reply from a retired service could roll back React state | The reducer retains retired revision series. Regression reproduced old-series state replacing the restarted service's state before the fix. |
+| Lab: matching text on the wrong line scored correct | Geometry is checked before awarding correctness. Old recordings are preserved, not silently rescored without their missing geometry. |
+| Lab: retry OCR contaminated first-pass counts and fresh latency | First-pass and retry counts are captured separately; tests distinguish a cached first pass from a fresh retry. |
+| Lab: unfair/failed resource comparisons could look usable | Both calibrations and every repeat must succeed; missing OCR inputs in later repeats are unstable. Decision digests now include morphology, component spans and constructions. New runs use `resources-v3`, incompatible with v2. |
+| Lab: coverage and reproducibility were overstated | Added g106's omitted final syllable; checked both particles in four combinations; tightened the flying-bird expectation using the NIKL reference in the report. Reject duplicate/incomplete cases. Parts pass counts now include only required checks. Word-selection v2 stamps source/diff and input/dependency identities before work and owns providers on one worker thread. |
+| Cleanup | Removed two new Python type ignores and two Lab noqa annotations with typed callbacks/runtime-input helpers/named functions. Active Python/TypeScript inline suppressions are absent. The guarded Rust deprecated call remains for pre-macOS-14 activation compatibility. |
+
+**Deferred considerations and acceptance blockers**
+
+1. **P1, Windows coordinate integration defect:** native context converts
+   display/cursor geometry to logical units, but service mouse events/MSS and
+   UIA use physical geometry. Popup and selector conversion/feedback also need
+   alignment. See the exact paths and 150 % counterexample in
+   `docs/execution/reports/windows-word-selection-continuation.md`. This is a
+   code finding requiring correction and native validation, not merely a
+   missing Windows test. No speculative coordinate rewrite was made on Mac.
+2. **Current-source packaged/live acceptance:** the existing built bundle
+   `196286e6` predates these fixes. Rebuild and run its noninteractive gates;
+   then obtain separate approval before interactive tests or installation.
+   `/Applications/Hanly.app` remains `ed9d4483` / `bc2764c`.
+3. **Mac live check after approval:** context-aware accessibility lookups,
+   grammar-pattern rendering, rapid word transitions/stale replies, popup
+   expand/collapse/close, foreground retention, real shortcuts, tray quit and
+   reopen with no surviving owned processes. Debug results do not establish
+   packaged permissions. No grants were reset or requested in this review.
+4. **Known language limits:** 나는 in 하늘을 나는 새 still answers 나다;
+   direct acquisition splits punctuation cases; 할 수 있다 can exceed the
+   one-neighbor window. The strict corpus has 343/345 OCR-form and 339/345
+   direct-form headwords, 119/119 required-parts checks, 37/38 constructions,
+   15/15 auxiliary senses per form. These are language-stage inputs, not live
+   accessibility/OCR accuracy. Independent human grammar review remains open;
+   broader semantic changes need evidence and are not smuggled into this review.
+5. **Native-only risks for the live checklist:** popup geometry errors are
+   swallowed after deduplication, so retry behavior under a transient failure
+   needs checking. Activation retry sleeps sum to 600 ms; the older “320 ms”
+   description was inaccurate. Check a popup click followed immediately by
+   intentional Control Center activation for delayed focus return. These are
+   unconfirmed interaction risks, not reproduced product failures.
+6. **Other platforms and release:** real Windows DPI/UIA/WebView2/Job/updater
+   acceptance and Linux native/packaged/desktop integration remain required.
+   Ad-hoc Mac signing is cdhash-bound again; grants across rebuilt identities
+   are not promised. Developer ID/notarization remains a separate release
+   credential decision. No certificate/keychain changes were made.
+
+**Dismissed / qualified**
+
+- No active Qt/pywebview fallback was found. Remaining framework names in
+  inventory classification, old-install compatibility and negative tests are
+  intentional; deleting them would weaken migration checks.
+- Offline old/new resolver equivalence does not prove live migration
+  equivalence. The lost-context defect demonstrates why transport needs its
+  own evidence.
+- Re-reading the same OCR text cannot independently verify its characters.
+  No third OCR backend, spelling correction or unmeasured second pass was added.
+- Mac EasyOCR scores are not a Windows acceptance threshold. The Windows plan
+  now requires compatible Windows baseline/candidate inputs; dependency or
+  corpus differences are investigated before calling a score difference a bug.
+
+### Review coverage and verification
+
+All sixteen areas were examined through their entry points, changed seams and
+tests: provenance; architecture; permissions/signing; ownership/concurrency;
+IPC/state; capture/coordinates; word selection; morphology; corpus; OCR;
+Lab method; scoring/reports; React/native interaction; packaging/updater/CI;
+Windows readiness; cleanup/docs. Native visual/hardware claims remain bounded
+by the deferred list above; a source review is not platform acceptance.
+
+- Portable suite: **2,626 passed, two skipped** with host process inspection,
+  134.67 s. One subsequently added parts-counter regression is included in the
+  final focused run: **148 passed, one platform skip**. The two broad-suite
+  skips are opt-in real EasyOCR inference and the non-macOS Vision branch;
+  the separate native process test does run real EasyOCR.
+- Ruff and mypy (**355 files**) pass; TypeScript and Vite build pass;
+  **12 Node, 45 React UI tests** pass. The React race regression failed before
+  its correction. Rust was unchanged; baseline **22 tests**, Clippy all-targets
+  with warnings denied, and rustfmt passed.
+- Final headless native subset: **7 passed**, 14.66 s, real Vision plus real
+  EasyOCR/Kiwi/KRDICT spawned-child/retire/wake/close. No native window opened.
+- Strict grammar report:
+  `artifacts/lab/reviews/20261016-codex/grammar-strict-summary.md`.
+  A separate 36-hover Vision harness smoke has 36 correct and 18 genuine OCR
+  calls; it is a small one-size/light-theme subset, not a replacement for the
+  old full accuracy campaign. Its start-time source is dirty and its saved
+  diff is beside the run.
+- Old 7,596-hover tables are explicitly historical. The report no longer mixes
+  a corrected lexical subtotal with uncorrected totals or treats contaminated
+  first-pass latency as fresh.
+
+## Historical status (2026-10-16 22:30 -03)
 
 This section supersedes every status, verification and remaining-work
 statement below it, including the 20:10 status that follows. "Implemented

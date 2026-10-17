@@ -481,7 +481,7 @@ def test_the_selection_carries_no_screen_geometry() -> None:
     with pytest.raises(ValueError, match="neighbouring word"):
         TextSelection(text="책", context_after="가" * 33)
     with pytest.raises(TypeError):
-        TextSelection(text="책", context_before=None)  # type: ignore[arg-type]
+        invoke_with_runtime_values(TextSelection, text="책", context_before=None)
 
 
 def test_the_source_label_is_inert() -> None:
@@ -700,6 +700,28 @@ def test_without_neighbours_the_word_is_analyzed_alone() -> None:
     language.lookup(TextSelection(text="초대받았어요", cursor_index=0))
 
     assert morphology.analyzed == ["초대받았어요"]
+
+
+def test_constructions_share_the_existing_dictionary_query_budget() -> None:
+    from hanly.kiwi_provider import KiwiProvider
+
+    dictionary = _Listed({})
+    language = LanguagePipeline(KiwiProvider(), dictionary)
+
+    language.lookup(TextSelection("컴퓨터공학공부하고", context_after="있어요"))
+
+    assert len(dictionary.queries) <= 5
+
+
+def test_a_construction_entirely_inside_a_neighbour_does_not_describe_the_target() -> None:
+    language = _kiwi_language({
+        "학교": ("명사",), "-ㄹ 수 있다": ("품사 없음",),
+    })
+
+    result = language.lookup(TextSelection("학교", context_before="할수있다"))
+
+    assert result.status is LookupStatus.SUCCESS
+    assert result.context is not None and result.context.construction is None
 
 
 def test_ocr_passes_the_words_beside_the_target_on_its_line() -> None:

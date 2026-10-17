@@ -361,8 +361,8 @@ def _ocr_correctness(runs: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
         unstable.update(str(index) for index in detail.get("ocr_unstable_inputs") or ())
     first = per_repeat[0]
     differing = sorted(
-        index for records in per_repeat[1:] for index, record in records.items()
-        if first.get(index, {}).get("digest") != record.get("digest")
+        index for records in per_repeat[1:] for index in set(first) | set(records)
+        if first.get(index, {}).get("digest") != records.get(index, {}).get("digest")
     )
     return {
         "records": first,

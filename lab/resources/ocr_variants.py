@@ -18,6 +18,7 @@ from hanly.vision_provider import (
     VisionProvider,
     VisionProviderError,
     _normalize,
+    _perform,
     _png_bytes,
 )
 
@@ -70,7 +71,7 @@ class RequestReuseVision(VisionProvider):
             self._request = request
         data = NSData.dataWithBytes_length_(payload, len(payload))
         handler = handler_class.alloc().initWithData_options_(data, {})
-        handler.performRequests_error_([self._request], None)
+        _perform(handler, self._request)
         return tuple(self._request.results() or ())
 
 
@@ -103,7 +104,7 @@ class RawImageVision(VisionProvider):
         if self._config.minimum_text_height > 0:
             request.setMinimumTextHeight_(self._config.minimum_text_height)
         handler = handler_class.alloc().initWithCGImage_options_(cg_image, {})
-        handler.performRequests_error_([request], None)
+        _perform(handler, request)
         return tuple(request.results() or ())
 
 

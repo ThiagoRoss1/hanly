@@ -145,7 +145,7 @@ class LanguagePipeline:
         lemma = selected.lemma
         diagnostics = _selection_diagnostics(analysis, selected, text)
         try:
-            construction = _construction(window, self._dictionary_provider)
+            construction = _construction(window, probes)
         except Exception as exc:
             return error_result("dictionary", exc, attempted)
         context = replace(
@@ -387,7 +387,7 @@ _GRAMMATICAL_LABELS = {
 
 #: The dictionary budget for one lookup: the exact surface, the surface without
 #: its particles, the reconstructed whole form, and up to three lexical
-#: components, never more than five queries in all.
+#: components and optional constructions, never more than five queries in all.
 _MAX_DICTIONARY_QUERIES = 5
 _MAX_COMPONENT_QUERIES = 3
 
@@ -885,7 +885,7 @@ def _contradicts_analysis(
 
 
 def _construction(
-    window: _Window | None, dictionary: DictionaryProvider
+    window: _Window | None, probes: _DictionaryProbes
 ) -> Construction | None:
     """The listed construction the target forms with a neighbouring word.
 
@@ -919,14 +919,17 @@ def _construction(
     for index in range(len(tokens) - 2):
         modifier, bound, predicate = tokens[index], tokens[index + 1], tokens[index + 2]
         if (_tag_family(modifier.part_of_speech) == "ETM" and bound.token == "수"
-                and predicate.lemma in ("있다", "없다")):
+                and _tag_family(bound.part_of_speech) == "NNB"
+                and predicate.lemma in ("있다", "없다")
+                and any(start <= (token.start or 0) < end
+                        for token in (modifier, bound, predicate))):
             names += [f"-ㄹ 수 {predicate.lemma}", f"-을 수 {predicate.lemma}"]
     queried = 0
     for name in dict.fromkeys(names):
         if queried >= _MAX_CONSTRUCTION_QUERIES:
             break
         queried += 1
-        entries = tuple(dictionary.lookup(name))
+        entries = probes.lookup(name)
         if entries:
             return Construction(headword=name, entries=entries)
     return None

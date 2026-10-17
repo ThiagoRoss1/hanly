@@ -1,6 +1,9 @@
 """Focused tests for the Apple Vision OCR adapter."""
 
 import sys
+from collections.abc import Callable, Sequence
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from hanly import OCRProvider, PixelFormat, ROIImage
@@ -22,6 +25,25 @@ def _roi(width: int = 4, height: int = 2) -> ROIImage:
 
 def test_the_adapter_satisfies_the_engine_ocr_seam() -> None:
     assert isinstance(VisionProvider(), OCRProvider)
+
+
+@pytest.mark.parametrize("response", [False, (False, object())])
+def test_a_failed_native_request_is_an_error_not_an_empty_read(
+    monkeypatch: pytest.MonkeyPatch, response: object,
+) -> None:
+    request = Mock()
+    request_class = Mock()
+    request_class.alloc.return_value.init.return_value = request
+    handler = Mock()
+    handler.performRequests_error_.return_value = response
+    handler_class = Mock()
+    handler_class.alloc.return_value.initWithData_options_.return_value = handler
+    monkeypatch.setitem(sys.modules, "Foundation", SimpleNamespace(NSData=Mock()))
+
+    with pytest.raises(VisionProviderError, match="Vision request failed"):
+        VisionProvider()._run(request_class, handler_class, b"image")
+
+    request.results.assert_not_called()
 
 
 def test_availability_is_false_off_darwin_without_raising() -> None:
@@ -274,7 +296,8 @@ class _Observation:
 
 
 def _pooled_provider(
-    monkeypatch: pytest.MonkeyPatch, run: object
+    monkeypatch: pytest.MonkeyPatch,
+    run: Callable[[list[str], _RecordingPool], Sequence[object]],
 ) -> tuple[VisionProvider, list[str]]:
     import hanly.vision_provider as module
 
@@ -284,7 +307,7 @@ def _pooled_provider(
     provider = VisionProvider()
     monkeypatch.setattr(provider, "_load", lambda: (object(), object()))
     monkeypatch.setattr(provider, "_payload", lambda image: b"png")
-    monkeypatch.setattr(provider, "_run", lambda *args: run(events, pool))  # type: ignore[operator]
+    monkeypatch.setattr(provider, "_run", lambda *args: run(events, pool))
     return provider, events
 
 

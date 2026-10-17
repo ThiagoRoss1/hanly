@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from hanly import BoundingBox, OCRResult, Quad
+import pytest
+from hanly import BoundingBox, LookupStatus, OCRResult, Quad
 
 from lab import korean_grammar, word_selection
 
@@ -19,6 +21,22 @@ def test_the_corpus_loads_with_every_target_inside_its_sentence() -> None:
         assert case.target in case.text
         assert case.accept, case.id
         assert all(0 <= index < len(case.target) for index in case.accept)
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_incomplete_or_duplicate_corpus_cases_are_rejected(tmp_path: Path, duplicate: bool) -> None:
+    import json
+
+    cursor = {"0": ["학교"], "1": ["학교"]}
+    if duplicate:
+        cursor["2"] = ["학교"]
+    item = {"id": "x", "category": "test", "text": "학교는", "target": "학교는",
+            "cursor": cursor}
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps({"cases": [item, item] if duplicate else [item]}), "utf-8")
+
+    with pytest.raises(ValueError, match="duplicate|every Hangul"):
+        korean_grammar.load_corpus(path)
 
 
 def test_a_headword_the_dictionary_lacks_is_reported_not_scored() -> None:
@@ -52,6 +70,17 @@ def test_both_acquisition_forms_hand_over_the_right_word() -> None:
     assert (direct.text, direct.cursor_index) == ("먹고", 0)
     assert (ocr.context_before, ocr.context_after) == ("지금", "있어요.")
     assert korean_grammar._variants("-아 있다") == {"-아 있다", "-어 있다"}
+
+
+def test_a_case_without_required_parts_does_not_count_as_a_parts_pass() -> None:
+    outcome = korean_grammar.Outcome(
+        case="x", category="test", form="ocr", cursor=0,
+        status="SUCCESS", headword="학교", lemma="학교", correct=True,
+    )
+
+    counts = korean_grammar.summarize([outcome])["by_form"]["ocr"]
+
+    assert "parts_ok:yes" not in counts
 
 
 def _hover(
@@ -120,3 +149,40 @@ def test_the_edge_retry_fires_only_when_the_word_reaches_the_crop_side() -> None
     assert word_selection._word_touches_edge(resolved(120, 199), 200)
     assert not word_selection._word_touches_edge(resolved(40, 120), 200)
     assert not word_selection._word_touches_edge(SimpleNamespace(context=None), 200)
+
+
+def test_matching_text_on_another_line_is_not_a_correct_hover() -> None:
+    result = _result("학교에서", "학교에서 공부해요")
+    result.context.selected_ocr = OCRResult(
+        text="학교에서 공부해요", confidence=0.9,
+        quad=Quad.from_bounding_box(BoundingBox(10, 40, 150, 60)),
+    )
+
+    assert word_selection.classify(_hover(), (0, 0, 200, 100), result)[0] == "wrong_line"
+
+
+@pytest.mark.parametrize("first_calls", [0, 1])
+def test_retry_calls_do_not_turn_a_cached_first_pass_into_fresh_work(first_calls: int) -> None:
+    from PIL import Image
+
+    counter = SimpleNamespace(calls=0)
+    requests: list[object] = []
+
+    def worker(request: object) -> Any:
+        counter.calls += first_calls if not requests else 1
+        requests.append(request)
+        result = _result("학교에서", "학교에서 공부해요")
+        result.status = LookupStatus.SUCCESS
+        result.context.word_region = BoundingBox(0, 0, 60, 20)
+        return result
+
+    observation = word_selection._observe(
+        worker, counter, 1, _hover(), Image.new("RGB", word_selection.PAGE_SIZE), True,
+    )
+    summary = word_selection.summarize([observation])
+
+    assert observation.ocr_calls == first_calls
+    assert observation.retry_ocr_calls == 1
+    assert summary["ocr_calls"] == first_calls
+    assert summary["fresh_latency_ms"]["n"] == first_calls
+    assert summary["edge_retry"]["extra_ocr_calls"] == 1

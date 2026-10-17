@@ -1,5 +1,32 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Codex full migration verification — corrections verified, 2026-10-16
+
+Human explicitly approved review of all sixteen areas listed in chat, plus
+confirmed-defect fixes. Same branch; no push/merge. Interactive desktop tests,
+installation replacement and permission actions still need separate approval.
+Start HEAD `953bbb6`, clean, sixteen commits ahead of the tracked remote.
+
+- Final portable: 2,626 pass, two intentional skips with host inspection;
+  final focused: 148 pass, one platform skip, including the added parts test.
+  Ruff/mypy (355 files), TypeScript, 12 Node + 45 UI and Vite build pass.
+  Unchanged Rust baseline: 22 tests, Clippy all-targets and rustfmt pass.
+- Fixed: direct context lost across the real lookup pipe and ignored by cache;
+  construction budget and target-overlap defects; ignored Vision request
+  failures; React accepting a delayed reply from a retired service series.
+- Corrected Lab geometry-first scoring, separate retry counts, failed-run /
+  calibration refusal, missing OCR readings, grammar-aware digests, corpus
+  coverage and parts counters. New resource protocol v3 and word-selection
+  protocol v2; old recordings remain historical. Removed new suppressions.
+- Native headless: 7 pass (real Vision + spawned EasyOCR/Kiwi/KRDICT child,
+  context changes, retire/wake/close). Strict grammar: OCR 343/345, direct
+  339/345, parts 119/119, constructions 37/38, auxiliary 15/15 per form.
+- **Open P1:** Windows logical native bounds versus physical cursor/capture
+  geometry. Exact paths and native DPI continuation are documented. Other
+  language/native interaction limits remain in the single review handoff.
+- Built/installed artifacts retain their prior identities; neither replaced.
+  Rebuild/package follow-up is pending. This is not migration acceptance.
+
 ## Resource, OCR and word-selection work (2026-10-16 22:30)
 
 - **Cleanup:** 24,968 MiB recovered from the approved generated copies;

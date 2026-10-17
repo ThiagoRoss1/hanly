@@ -25,7 +25,7 @@ import hashlib
 import json
 import time
 from collections import Counter, defaultdict
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -190,17 +190,18 @@ def classify(
     expected = _clean(hover.word)
     accepted_surfaces = {expected, _korean_run(hover.word, hover.char_index)}
     headword = result.entries[0].headword if result.entries else None
+    if selected is not None:
+        box = selected.quad.bounding_box()
+        line_top, line_bottom = hover.word_box[1] - top, hover.word_box[3] - top
+        overlap = min(box.bottom, line_bottom) - max(box.top, line_top)
+        if overlap < 0.5 * (line_bottom - line_top):
+            return "wrong_line", clipped, edge
     if surface in accepted_surfaces:
         if hover.accept and headword not in hover.accept:
             return "lexical", clipped, edge
         return "correct", clipped, edge
     if surface is None or selected is None:
         return ("clipped_by_roi" if clipped else "no_result"), clipped, edge
-    box = selected.quad.bounding_box()
-    line_top, line_bottom = hover.word_box[1] - top, hover.word_box[3] - top
-    overlap = min(box.bottom, line_bottom) - max(box.top, line_top)
-    if overlap < 0.5 * (line_bottom - line_top):
-        return "wrong_line", clipped, edge
     line = selected.text
     if clipped and surface in expected:
         return "clipped_by_roi", clipped, edge
@@ -236,60 +237,101 @@ def run(
     edge_retry: bool = False,
 ) -> Path:
     from dataclasses import replace
+    from datetime import datetime
 
     from hanly.kiwi_provider import KiwiProvider
     from hanly.krdict_provider import KRDICTProvider
     from hanly_app.composition import create_lookup_worker_factory
     from hanly_app.config import OCRBackend
-    from hanly_app.lookup.controller import LookupRequest
     from hanly_app.lookup.process import _ocr_provider_factory
     from hanly_app.runtime import load_runtime
 
-    from .resources.child import _CountingOCR
+    from .identity import REPO_ROOT
+    from .metadata import build_metadata, source_identity
+    from .resources.child import _CountingOCR, _Worker
+    from .resources.experiment import _record_source_diff, versions
 
+    face = _Face.discover()
     settings = replace(load_runtime(runtime_config).lookup_settings(),
                        ocr_backend=OCRBackend(backend))
-    ocr = _CountingOCR(_ocr_provider_factory(settings)())
-    worker = create_lookup_worker_factory(
-        lambda: ocr, KiwiProvider, lambda: KRDICTProvider(settings.krdict_path),
-        confidence_threshold=settings.confidence_threshold,
-        skip_flat_rois=settings.skip_flat_rois, ocr_backend=backend,
-    )()
-    face = _Face.discover()
+    run_dir = output_root / f"{datetime.now():%Y%m%d-%H%M%S}-word-selection-{backend}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    metadata = build_metadata(
+        run_id=run_dir.name, kind="word_selection", repo_root=REPO_ROOT,
+        config={"protocol": "word-selection-v2", "backend": backend, "face": face.name,
+                "font_sha256": hashlib.sha256(face.path.read_bytes()).hexdigest(),
+                "dictionary_sha256": hashlib.sha256(settings.krdict_path.read_bytes()).hexdigest(),
+                "corpus_sha256": hashlib.sha256(json.dumps(
+                    sentences(), ensure_ascii=False, sort_keys=True,
+                ).encode("utf-8")).hexdigest(),
+                "roi": ROI_SIZE, "sizes": SIZES, "stride": stride, "limit": limit,
+                "edge_retry": edge_retry, "themes": list(THEMES),
+                "positions": list(POSITIONS), "provider_thread": "hanly-lookup-worker",
+                "execution": "in-process replica, not the service or spawned lookup child"},
+        versions=versions(), scenario={"name": "word_selection"},
+    )
+    metadata["source_diff"] = _record_source_diff(run_dir)
+    (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", "utf-8")
+
+    def create() -> tuple[Any, Any]:
+        ocr = _CountingOCR(_ocr_provider_factory(settings)())
+        worker = create_lookup_worker_factory(
+            lambda: ocr, KiwiProvider, lambda: KRDICTProvider(settings.krdict_path),
+            confidence_threshold=settings.confidence_threshold,
+            skip_flat_rois=settings.skip_flat_rois, ocr_backend=backend,
+        )()
+        return worker, ocr
+
+    owner = _Worker()
     observations: list[Observation] = []
     try:
-        for number, (hover, page) in enumerate(hovers(face, limit, stride), start=1):
-            roi, box, target = crop(page, hover.point)
-            before = ocr.calls
-            started = time.perf_counter()
-            result = worker(LookupRequest(number, roi, target))
-            latency = (time.perf_counter() - started) * 1000
-            category, clipped, edge = classify(hover, box, result)
-            retry: dict[str, Any] = {}
-            if edge_retry and _word_touches_edge(result, roi.width):
-                # Candidate: one wider capture around the same pointer, only
-                # when the resolved word reaches the crop's side.
-                wide, wide_box, wide_target = crop(page, hover.point, ROI_SIZE[0] * 2)
-                before_retry = ocr.calls
-                started = time.perf_counter()
-                second = worker(LookupRequest(number + 1_000_000, wide, wide_target))
-                retry = {
-                    "retried": True,
-                    "retry_category": classify(hover, wide_box, second)[0],
-                    "retry_ocr_calls": ocr.calls - before_retry,
-                    "retry_latency_ms": (time.perf_counter() - started) * 1000,
-                }
-            observations.append(Observation(
-                hover=hover, category=category,
-                surface=_digest(result.context.text) if result.context and result.context.text
-                else None,
-                headword=result.entries[0].headword if result.entries else None,
-                status=result.status.value, clipped=clipped, edge_touch=edge,
-                ocr_calls=ocr.calls - before, latency_ms=latency, **retry,
-            ))
+        worker, ocr = owner.call(create)
+        try:
+            for number, (hover, page) in enumerate(hovers(face, limit, stride), start=1):
+                observations.append(owner.call(
+                    lambda: _observe(worker, ocr, number, hover, page, edge_retry)
+                ))
+        finally:
+            owner.call(worker.close)
     finally:
-        worker.close()
-    return _write(observations, backend, face.name, output_root, stride, edge_retry)
+        owner.stop()
+    metadata["lab_provenance"]["source_at_end"] = source_identity(REPO_ROOT)
+    (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", "utf-8")
+    return _write(observations, backend, face.name, run_dir, edge_retry)
+
+
+def _observe(
+    worker: Callable[[Any], Any], ocr: Any, number: int, hover: Hover, page: Any,
+    edge_retry: bool,
+) -> Observation:
+    from hanly_app.lookup.controller import LookupRequest
+
+    roi, box, target = crop(page, hover.point)
+    before = ocr.calls
+    started = time.perf_counter()
+    result = worker(LookupRequest(number, roi, target))
+    latency = (time.perf_counter() - started) * 1000
+    first_calls = ocr.calls - before
+    category, clipped, edge = classify(hover, box, result)
+    retry: dict[str, Any] = {}
+    if edge_retry and _word_touches_edge(result, roi.width):
+        wide, wide_box, wide_target = crop(page, hover.point, ROI_SIZE[0] * 2)
+        before_retry = ocr.calls
+        started = time.perf_counter()
+        second = worker(LookupRequest(number + 1_000_000, wide, wide_target))
+        retry = {
+            "retried": True,
+            "retry_category": classify(hover, wide_box, second)[0],
+            "retry_ocr_calls": ocr.calls - before_retry,
+            "retry_latency_ms": (time.perf_counter() - started) * 1000,
+        }
+    return Observation(
+        hover=hover, category=category,
+        surface=_digest(result.context.text) if result.context and result.context.text else None,
+        headword=result.entries[0].headword if result.entries else None,
+        status=result.status.value, clipped=clipped, edge_touch=edge,
+        ocr_calls=first_calls, latency_ms=latency, **retry,
+    )
 
 
 def _word_touches_edge(result: Any, width: int) -> bool:
@@ -342,24 +384,10 @@ def summarize(observations: Sequence[Observation]) -> dict[str, Any]:
 
 
 def _write(
-    observations: Sequence[Observation], backend: str, face: str, root: Path, stride: int,
+    observations: Sequence[Observation], backend: str, face: str, run_dir: Path,
     edge_retry: bool = False,
 ) -> Path:
-    from datetime import datetime
-
-    from .metadata import build_metadata
-
-    run_dir = root / f"{datetime.now():%Y%m%d-%H%M%S}-word-selection-{backend}"
-    run_dir.mkdir(parents=True, exist_ok=False)
     summary = summarize(observations)
-    metadata = build_metadata(
-        run_id=run_dir.name, kind="word_selection", repo_root=Path.cwd(),
-        config={"backend": backend, "face": face, "roi": ROI_SIZE, "sizes": SIZES,
-                "stride": stride, "edge_retry": edge_retry,
-                "themes": list(THEMES), "positions": list(POSITIONS)},
-        scenario={"name": "word_selection"},
-    )
-    (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", "utf-8")
     (run_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", "utf-8"
     )
@@ -371,6 +399,7 @@ def _write(
             # only as its corpus id would be, so the file stays reviewable.
             record.update(
                 line=_digest(hover["line"]), word=hover["word"], cursor=hover["cursor"],
+                char_index=hover["char_index"],
                 size=hover["size"], theme=hover["theme"], position=hover["position"],
             )
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")

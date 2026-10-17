@@ -142,7 +142,7 @@ class VisionProvider:
 
         data = NSData.dataWithBytes_length_(payload, len(payload))
         handler = handler_class.alloc().initWithData_options_(data, {})
-        handler.performRequests_error_([request], None)
+        _perform(handler, request)
         return request.results() or ()
 
     def _load(self) -> tuple[Any, Any]:
@@ -172,6 +172,15 @@ class VisionProvider:
 
         self._classes = classes
         return classes
+
+
+def _perform(handler: Any, request: Any) -> None:
+    # Runtime-loaded classes can lack NSError out-parameter metadata and
+    # return just BOOL; metadata-aware bindings return (BOOL, NSError).
+    response = handler.performRequests_error_([request], None)
+    succeeded = response[0] if isinstance(response, tuple) else response
+    if not succeeded:
+        raise VisionProviderError("Vision request failed")
 
 
 def _autorelease_pool() -> Any:

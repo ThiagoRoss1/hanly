@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -141,7 +142,7 @@ def ocr_record(results: Sequence[Any]) -> dict[str, Any]:
 
 
 def _result_decision(result: Any) -> dict[str, Any]:
-    """What a lookup decided, as digests: status, selection, lemma and entries."""
+    """Digest the selected entry and its morphological explanation."""
 
     context = result.context
     selected = None
@@ -155,6 +156,15 @@ def _result_decision(result: Any) -> dict[str, Any]:
         "entries": [
             [entry.entry_id or entry.headword, entry.part_of_speech] for entry in result.entries
         ],
+        "candidate": asdict(context.candidate) if context and context.candidate else None,
+        "components": [asdict(part) for part in context.components] if context else [],
+        "analyses": [asdict(token) for token in context.analyses] if context else [],
+        "construction": (
+            {"headword": context.construction.headword, "entries": [
+                [entry.entry_id or entry.headword, entry.part_of_speech]
+                for entry in context.construction.entries
+            ]} if context and context.construction else None
+        ),
     }
     return {"status": decision["status"], "digest": _digest(decision)}
 
@@ -293,7 +303,8 @@ def _run_sequence(
     )
 
     request_ids = iter(range(1, 10_000_000))
-    calls = lambda: held["ocr"].calls  # noqa: E731
+    def calls() -> int:
+        return int(held["ocr"].calls)
 
     def lookup(index: int) -> dict[str, Any]:
         request = LookupRequest(next(request_ids), images[index], targets[index])
@@ -360,7 +371,10 @@ def _run_component(
     if component == "ocr":
         factory = _ocr_factory(settings, plan)
         worker.call(lambda: held.__setitem__("provider", _CountingOCR(factory())))
-        calls = lambda: held["provider"].calls  # noqa: E731
+        def ocr_calls() -> int:
+            return int(held["provider"].calls)
+
+        calls = ocr_calls
 
         def use(index: int) -> dict[str, Any]:
             slot = index % len(images)

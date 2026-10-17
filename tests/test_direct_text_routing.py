@@ -211,6 +211,56 @@ def test_a_selection_request_survives_the_process_transport() -> None:
     )
 
 
+def test_neighbouring_words_survive_the_lookup_transport() -> None:
+    from hanly_app.lookup.process import _lookup_message, _request_from
+
+    selection = TextSelection(
+        text="있어요", source="accessibility", context_before="먹고", context_after="지금",
+    )
+    request = LookupRequest(8, None, _TARGET, selection=selection)
+
+    assert _request_from(_lookup_message(request)).selection == selection
+
+
+def test_direct_cache_distinguishes_context_but_reuses_an_identical_selection() -> None:
+    class RecordingMorphology(_Morphology):
+        def __init__(self) -> None:
+            self.inputs: list[str] = []
+
+        def analyze(self, text: str) -> MorphologyAnalysis:
+            self.inputs.append(text)
+            return super().analyze(text)
+
+    morphology = RecordingMorphology()
+    sink = _Sink()
+    worker = LookupWorker(
+        _ExplodingOCR, lambda: morphology, _Dictionary, trace_sink=sink,
+    )
+    try:
+        for request_id, before in enumerate(("어제", "오늘", "오늘"), start=1):
+            selection = TextSelection(
+                text=_KOREAN, source="accessibility", context_before=before,
+            )
+            worker(LookupRequest(request_id, None, _TARGET, selection=selection))
+    finally:
+        worker.close()
+
+    assert f"어제 {_KOREAN}" in morphology.inputs
+    assert f"오늘 {_KOREAN}" in morphology.inputs
+    assert morphology.inputs.count(f"오늘 {_KOREAN}") == 1
+    cache_events = [e for e in sink.events if e.get("event_kind") in {
+        "lookup_cache_hit", "lookup_cache_miss",
+    }]
+    assert [e["event_kind"] for e in cache_events] == [
+        "lookup_cache_miss", "lookup_cache_miss", "lookup_cache_hit",
+    ]
+    assert (
+        cache_events[0]["lookup_cache_fingerprint"]
+        != cache_events[1]["lookup_cache_fingerprint"]
+    )
+    assert "어제" not in repr(sink.events) and "오늘" not in repr(sink.events)
+
+
 def test_a_captured_request_still_survives_the_process_transport() -> None:
     from hanly_app.lookup.process import _lookup_message, _request_from
 

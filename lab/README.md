@@ -406,6 +406,10 @@ still running after the stop. It writes `resources.md` beside the run.
 library versions or host, or that have fewer than two repeats a side. It then
 compares the decision digests before labelling any cost: `unchanged`,
 `improved`, `regressed` or `inconclusive`.
+It also refuses failed calibration on either side and failed or unfinished
+repeats. `resources-v3` includes morphological explanations in the decision
+digest and detects an OCR input missing from a later repeat. Earlier v2
+recordings remain unchanged and cannot be compared directly with v3.
 - Memory uses a band of max(5 %, 16 MiB); timing uses max(5 %, 5 ms).
 - Overlapping ranges are `inconclusive`.
 - A timing change needs five repeats a side. Two identical-code runs of three
@@ -443,7 +447,11 @@ acceptable and say why.
 contrasts and display-edge positions. It hovers the first, middle and last
 syllable of each word on the middle line, and crops exactly as the desktop
 does (the shipped ROI and grid, clipped to the page as to a display). The real
-lookup worker then runs on the crop. Glyph geometry is exact, so every miss
+lookup worker then runs on the crop, constructed, used and closed on one
+provider thread. This is an in-process replica; it does not exercise the
+service, real process transport, native capture, accessibility or windows.
+Protocol v2 stamps source identity/diff before work, plus dependency, font,
+dictionary and corpus hashes and the stride/limit. Glyph geometry is exact, so every miss
 is classified against ground truth:
 
 | category | meaning |
@@ -457,7 +465,7 @@ is classified against ground truth:
 | `lexical` | the right surface, a headword the corpus does not accept |
 
 It also counts genuine OCR calls (cache hits are not recognitions) and fresh
-lookup p50 and p95, and how often the selected line touches the crop edge.
+lookup p50 and p95, and how often the resolved word touches the crop edge.
 Results are Mac evidence for the recognizer they name. They are never Windows
 evidence: Windows capture, DPI scaling and UIA need their own native runs.
 

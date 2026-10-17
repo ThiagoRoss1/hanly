@@ -23,6 +23,41 @@ from lab.resources.experiment import ExperimentPlan, run_experiment
 MIB = 2**20
 
 
+def test_a_missing_ocr_input_in_a_later_repeat_is_not_stable() -> None:
+    from lab.resources.experiment import _ocr_correctness
+
+    runs = [
+        {"stages": [{"stage": "idle", "detail": {"ocr_records": records}}]}
+        for records in ({"0": {"digest": "a"}, "1": {"digest": "b"}},
+                        {"0": {"digest": "a"}})
+    ]
+
+    report = _ocr_correctness(runs)
+
+    assert report is not None
+    assert report["stable_across_repeats"] is False
+    assert report["differing_inputs"] == ["1"]
+
+
+def test_behaviour_digests_cover_the_explanation_without_retaining_text() -> None:
+    from dataclasses import replace
+
+    from hanly import Construction, LookupContext, LookupResult, LookupStatus
+
+    from lab.resources.child import _result_decision
+
+    plain = LookupResult(LookupStatus.NOT_FOUND, context=LookupContext(text="있어요"))
+    contextual = replace(plain, context=LookupContext(
+        text="있어요", construction=Construction("-고 있다"),
+    ))
+
+    first, second = _result_decision(plain), _result_decision(contextual)
+
+    assert first["digest"] != second["digest"]
+    assert "있어요" not in json.dumps(second)
+    assert "-고 있다" not in json.dumps(second)
+
+
 def test_a_live_process_is_read_and_a_missing_metric_stays_none() -> None:
     reading = metrics.snapshot(os.getpid())
 
@@ -317,6 +352,41 @@ def test_changed_decisions_are_reported_beside_any_saving(tmp_path: Path) -> Non
     cand = _resource_run(tmp_path, "cand", memory=300 * MIB, digest="d2")
 
     assert compare.compare(base, cand)["behaviour"] == "changed"
+
+
+@pytest.mark.parametrize("side", ["base", "cand"])
+def test_comparison_refuses_a_failed_calibration_on_either_side(
+    tmp_path: Path, side: str,
+) -> None:
+    base = _resource_run(tmp_path, "base", memory=500 * MIB)
+    cand = _resource_run(tmp_path, "cand", memory=400 * MIB)
+    path = (base if side == "base" else cand) / "summary.json"
+    summary = json.loads(path.read_text())
+    summary["experiments"]["calibration"]["aggregate"]["derived"]["loaded"]["median"] = 0
+    path.write_text(json.dumps(summary))
+
+    result = compare.compare(base, cand)
+
+    assert result["comparable"] is False
+    assert any("calibration failed" in reason for reason in result["reasons"])
+
+
+def test_comparison_refuses_a_failed_repeat_even_if_aggregates_look_better(
+    tmp_path: Path,
+) -> None:
+    base = _resource_run(tmp_path, "base", memory=500 * MIB)
+    cand = _resource_run(tmp_path, "cand", memory=300 * MIB)
+    path = cand / "summary.json"
+    summary = json.loads(path.read_text())
+    summary["experiments"]["sequence"]["repeats"] = [
+        {"returncode": 2, "error": "provider failed"},
+    ]
+    path.write_text(json.dumps(summary))
+
+    result = compare.compare(base, cand)
+
+    assert result["comparable"] is False
+    assert any("failed or unfinished" in reason for reason in result["reasons"])
 
 
 # -- protocol v2: ownership, genuine OCR calls, readings ---------------------------------

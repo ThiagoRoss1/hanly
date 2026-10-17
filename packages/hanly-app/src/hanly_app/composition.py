@@ -53,9 +53,12 @@ _GATE_SAMPLES_PER_ROW = 64
 _GATE_SAMPLE_ROWS = 32
 _GATE_EDGE_DELTA = 32
 _GATE_MIN_TRANSITIONS = 8
-#: A captured ROI keys on its pixels and target; direct text keys on the word
-#: itself, so the two can never collide.
-LookupCacheKey = tuple[bool, int, int, str, float, float, bytes] | tuple[bool, str, int]
+#: A captured ROI keys on its pixels and target; direct text also needs the
+#: neighbouring words that influence morphology and construction selection.
+LookupCacheKey = (
+    tuple[bool, int, int, str, float, float, bytes]
+    | tuple[bool, str, int, str, str]
+)
 _OCRCacheKey = tuple[int, int, str, bytes]  # dimensions, format, ROI digest
 
 
@@ -532,10 +535,13 @@ def _cache_key_fingerprint(key: LookupCacheKey) -> str:
     Both are private, so a trace only ever receives this digest of them.
     """
 
-    if len(key) == 3:
-        hover, text, cursor_index = key
-        digest = blake2b(str(text).encode("utf-8"), digest_size=16)
-        digest.update(f"|direct|{hover}|{cursor_index}".encode())
+    if len(key) == 5:
+        # Length prefixes preserve the boundaries between arbitrary text fields.
+        digest = blake2b(digest_size=16)
+        for value in key:
+            encoded = str(value).encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
         return digest.hexdigest()
 
     hover, width, height, pixel_format, target_x, target_y, data = key
@@ -548,12 +554,13 @@ def _cache_key_fingerprint(key: LookupCacheKey) -> str:
 
 def _lookup_cache_key(request: LookupRequest) -> LookupCacheKey:
     if request.selection is not None:
-        # Direct text is its own cache identity: the same word read the same
-        # way answers the same, and no pixels were involved to key on.
+        # Context can change both the lemma and the grammatical construction.
         return (
             request.hover_request_id is not None,
             request.selection.text,
             request.selection.cursor_index,
+            request.selection.context_before,
+            request.selection.context_after,
         )
 
     image = request.image

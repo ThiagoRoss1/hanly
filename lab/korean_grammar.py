@@ -47,6 +47,7 @@ class Outcome:
     lemma: str | None
     correct: bool
     parts_missing: tuple[str, ...] = ()
+    parts_required: bool = False
     construction: str | None = None
     construction_ok: bool | None = None
     auxiliary_ok: bool | None = None
@@ -56,7 +57,11 @@ class Outcome:
 def load_corpus(path: Path = CORPUS) -> list[Case]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     cases: list[Case] = []
+    seen: set[str] = set()
     for item in raw["cases"]:
+        if item["id"] in seen:
+            raise ValueError(f"duplicate case id: {item['id']}")
+        seen.add(item["id"])
         target = item["target"]
         if target not in item["text"]:
             raise ValueError(f"{item['id']}: target {target!r} is not in its sentence")
@@ -70,6 +75,9 @@ def load_corpus(path: Path = CORPUS) -> list[Case]:
                 for index in range(start, len(target))
                 if _is_hangul(target[index])
             }
+        expected_indices = {i for i, char in enumerate(target) if _is_hangul(char)}
+        if set(accept) != expected_indices or any(not values for values in accept.values()):
+            raise ValueError(f"{item['id']}: every Hangul syllable needs an expected headword")
         cases.append(Case(
             id=item["id"], category=item["category"], text=item["text"], target=target,
             accept=accept, parts=tuple(item.get("parts", ())),
@@ -163,7 +171,7 @@ def _score(
         case=case.id, category=case.category, form=form, cursor=cursor,
         status=result.status.value, headword=headword,
         lemma=context.lemma if context else None, correct=correct,
-        parts_missing=missing, construction=construction_name,
+        parts_missing=missing, parts_required=bool(case.parts), construction=construction_name,
         construction_ok=construction_ok, auxiliary_ok=auxiliary_ok, reasons=reasons,
     )
 
@@ -176,7 +184,7 @@ def summarize(outcomes: Sequence[Outcome]) -> dict[str, Any]:
         by_form[outcome.form][key] += 1
         by_category[outcome.category][key] += 1
         for name, value in (
-            ("parts_ok", not outcome.parts_missing),
+            ("parts_ok", not outcome.parts_missing if outcome.parts_required else None),
             ("construction_ok", outcome.construction_ok),
             ("auxiliary_ok", outcome.auxiliary_ok),
         ):
@@ -224,11 +232,14 @@ def run(dictionary_path: Path, output: Path | None = None) -> tuple[dict[str, An
     from hanly.language_pipeline import LanguagePipeline
 
     dictionary = KRDICTProvider(dictionary_path)
-    cases = load_corpus()
-    problems = verify_against_dictionary(cases, dictionary)
-    if problems:
-        raise ValueError("corpus does not match the dictionary: " + "; ".join(problems))
-    summary = summarize(evaluate(cases, LanguagePipeline(KiwiProvider(), dictionary)))
+    try:
+        cases = load_corpus()
+        problems = verify_against_dictionary(cases, dictionary)
+        if problems:
+            raise ValueError("corpus does not match the dictionary: " + "; ".join(problems))
+        summary = summarize(evaluate(cases, LanguagePipeline(KiwiProvider(), dictionary)))
+    finally:
+        dictionary.close()
     path = write_report(summary, output or LAB_ROOT / "grammar" / "summary.md")
     path.with_suffix(".json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

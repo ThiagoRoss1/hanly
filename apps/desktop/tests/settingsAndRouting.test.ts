@@ -77,6 +77,8 @@ test("a snapshot older than the shown one is dropped, but a restarted service is
   assert.equal(stale, newer);
   const restarted = desktopStateReducer(stale, { type: "state-received", payload: snapshot("b", 1, false) });
   assert.equal(restarted.state?.app.capture_running, false);
+  const lateReply = desktopStateReducer(restarted, { type: "state-received", payload: snapshot("a", 6, true) });
+  assert.equal(lateReply, restarted);
 });
 
 test("Mac shortcut labels name each native symbol while storage remains portable", () => {
