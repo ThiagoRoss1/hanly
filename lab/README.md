@@ -421,6 +421,30 @@ tunes a production setting.
 
 ## `grammar` and `word-selection` — what the reader is shown, and why it misses
 
+`python -m lab grammar-pages --output artifacts/lab/grammar-pages` generates
+paired `text.html` and `ocr.html` pages without opening windows. The first
+contains selectable Korean; the second contains images with empty alt text
+and keeps ground truth outside the accessible page. Each case changes the
+actual browser/OS cursor; the selector can hold a cursor constant, including
+zoom-in/out. Image zoom and drag use native element behavior. Native tests
+that open windows or move the pointer require the operator's approval.
+
+The inventory enumerates every particle and ending entry in the selected
+KRDICT database and retains one locatable example per entry. Kiwi helps locate
+grammatical tokens rather than identically spelled noun characters. This is
+fixture construction, not an independent oracle for Kiwi or proof of complete
+Korean grammar coverage. Missing examples remain listed. Hand-authored lemma
+expectations, including prospective `-(으)ㄹ 거예요`, remain separate.
+
+Normal, handwritten/comic-like, display and pixel faces are pinned with their
+OFL licenses in `fixtures/fonts/`. A bounded matrix varies size, contrast,
+scaling, blur, compression and noise; `--stress-cases 0..12` controls its size.
+Missing glyphs are reported, never silently substituted. The external manifest
+records source, dictionary/font identities, generated pixels and target
+geometry. These pages are native-test inputs, **not** native detector/OCR
+acceptance results. The existing language/word-selection commands below keep
+their original measurement scopes.
+
 ```bash
 python -m lab grammar                                   # language stage only
 python -m lab word-selection --ocr-backend vision       # or easyocr; --stride N

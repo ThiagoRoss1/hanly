@@ -542,7 +542,10 @@ def _validate_param_values(
             if not _bounded_coordinate(params["x"]) or not _bounded_coordinate(params["y"]):
                 fail("popup position is outside the supported bounds.")
             for key in ("width", "height"):
-                if type(params[key]) is not int or not 1 <= params[key] <= 1000:
+                # AppKit/WebKit geometry crosses JSON as floating-point values,
+                # including integral extents such as 340.0. The owner encloses
+                # fractional bounds when it constructs the retained rectangle.
+                if type(params[key]) not in (int, float) or not 1 <= params[key] <= 1000:
                     fail(f"popup {key} must be between 1 and 1000.")
         if method == "service.popup_expand" and type(params["expanded"]) is not bool:
             fail("expanded must be a boolean.")

@@ -1253,6 +1253,14 @@ def _session_parsers(subcommands: Any) -> None:
     grammar.add_argument("--output", type=Path, help="summary.md path")
     grammar.set_defaults(handler=run_grammar)
 
+    pages = subcommands.add_parser(
+        "grammar-pages", help="build paired text/image native-cursor acquisition fixtures"
+    )
+    pages.add_argument("--dictionary", type=Path, default=Path("data/generated/krdict.sqlite3"))
+    pages.add_argument("--output", type=Path, required=True)
+    pages.add_argument("--stress-cases", type=int, default=3)
+    pages.set_defaults(handler=run_grammar_pages)
+
     selection = subcommands.add_parser(
         "word-selection", help="reproduce hover word selection over OCR and classify misses"
     )
@@ -1644,6 +1652,18 @@ def run_grammar(args: argparse.Namespace) -> int:
     for form, counts in summary["by_form"].items():
         print(f"lab: {form}: {counts.get('correct', 0)} correct, {counts.get('wrong', 0)} wrong")
     print(f"lab: grammar report in {path}")
+    return 0
+
+
+def run_grammar_pages(args: argparse.Namespace) -> int:
+    from .grammar_pages import run
+
+    try:
+        summary = run(args.dictionary, args.output, args.stress_cases)
+    except (ValueError, OSError) as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    print(f"lab: acquisition fixtures in {summary}")
     return 0
 
 

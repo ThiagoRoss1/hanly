@@ -2,17 +2,48 @@
 
 use crate::ipc::BridgeError;
 use block2::RcBlock;
-use objc2::{rc::Retained, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, rc::Retained, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSImage, NSImageScaling, NSImageView, NSPanel, NSView, NSWindow,
     NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_foundation::{NSError, NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSError, NSObjectProtocol, NSPoint, NSRect, NSSize};
 use objc2_web_kit::{WKSnapshotConfiguration, WKWebView};
 use std::cell::RefCell;
 use tauri::WebviewWindow;
 
 const CANVAS: NSSize = NSSize::new(460.0, 560.0);
+
+define_class!(
+    // A separate public AppKit subclass keeps Tao's KVO-observed class intact.
+    #[unsafe(super = NSPanel)]
+    #[name = "HanlyDictionaryPopupPanel"]
+    #[thread_kind = MainThreadOnly]
+    struct PopupPanel;
+
+    unsafe impl NSObjectProtocol for PopupPanel {}
+
+    impl PopupPanel {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key_window(&self) -> bool { false }
+
+        #[unsafe(method(canBecomeMainWindow))]
+        fn can_become_main_window(&self) -> bool { false }
+    }
+);
+
+impl PopupPanel {
+    fn create(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSPanel> {
+        let this = Self::alloc(mtm).set_ivars(());
+        // The initializer signature is AppKit's public NSPanel contract.
+        let panel: Retained<Self> = unsafe {
+            msg_send![super(this), initWithContentRect: frame,
+                styleMask: NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+                backing: NSBackingStoreType::Buffered, defer: false]
+        };
+        panel.into_super()
+    }
+}
 
 struct Popup {
     panel: Retained<NSPanel>,
@@ -36,13 +67,7 @@ pub fn configure(window: &WebviewWindow) -> Result<(), BridgeError> {
     let original = unsafe { &*(raw as *const NSWindow) };
     let canvas = original.contentView().ok_or_else(error)?;
     let frame = NSRect::new(NSPoint::new(0.0, 0.0), CANVAS);
-    let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
-        NSPanel::alloc(mtm),
-        frame,
-        NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
-        NSBackingStoreType::Buffered,
-        false,
-    );
+    let panel = PopupPanel::create(mtm, frame);
     // The root retains the panel; AppKit must not release that owner on close.
     unsafe {
         panel.setReleasedWhenClosed(false);
@@ -132,7 +157,8 @@ pub fn paint(
                     NSPoint::new(0.0, 0.0),
                     NSSize::new(width, height),
                 ));
-                config.setAfterScreenUpdates(true);
+                // The default includes recent updates; the explicit setter is
+                // unavailable on older Intel macOS versions supported by WebKit.
                 let webview = &*(native.inner() as *const WKWebView);
                 webview.takeSnapshotWithConfiguration_completionHandler(Some(&config), &completion);
             }

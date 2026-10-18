@@ -229,7 +229,7 @@ def test_popup_crossing_survives_a_concurrent_dwell_until_its_grace_expires(
         invalidation_threads.append(threading.get_ident())
 
     runtime, controller, listeners, capture, invalidated = _start_hover_runtime(
-        owner_loop, sticky=True, on_invalidate=invalidate
+        owner_loop, sticky=False, on_invalidate=invalidate
     )
 
     cleared_dwell = threading.Event()

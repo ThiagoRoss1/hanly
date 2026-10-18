@@ -1,5 +1,49 @@
 # Hanly Desktop Tauri migration checkpoint
 
+## Current popup retention / native cursors — 2026-10-17
+
+- Fixed a demonstrated wire-contract mismatch: Rust sent floating-point native
+  extents, Python rejected them, and hover protected an estimated 180-point
+  rectangle while the actual card was 307 points tall. Numeric geometry is now
+  accepted and fractional bounds are enclosed; invalid extents remain refused.
+- Fixed queued crossing expiry, progress renewal, deliberate-request lifetime,
+  diagonal footer approaches and normal dwell after a paused approach. A
+  dedicated NSPanel subclass explicitly refuses key/main-window status.
+- Seven actual native-cursor word-to-footer policy traversals pass, including
+  zoom-in/out; Expand and Close work. Separate fourteen-cursor fixture passes.
+  Rendering: 293 focus/geometry samples, 175 scorable owned-window captures,
+  zero blanks/key/foreground losses; six Expand/Collapse toggles and Close.
+- Authored policy results are not real OCR acceptance. Actual acquisition
+  attempts stall inside unchanged MSS `CGWindowListCreateImage`; the bounded
+  worker-thread check also did not complete. No reset/request of permissions,
+  installed-app replacement or signing/keychain changes was made. Capture and
+  the original Codex border-flash acceptance remain open.
+- Lab: paired selectable-text/image-only pages, strict OCR corpus export,
+  770 targets/865 images, four licensed pinned faces/eight profiles/fourteen
+  actual cursor styles. Inventory covers source examples for 156/157 particle
+  and 500/504 ending entries; five redirects have no example. One emoji image
+  is a missing-glyph omission. No claim of all Korean grammar being reviewed.
+- Language-only: 706 syllable hovers; 351/353 OCR-form, 347/353 direct-form;
+  sixteen new future-construction hovers pass. Offline batch/gate/build details
+  and the exact remaining acceptance boundaries are in the single handoff.
+- Three packaged window tests remain explicitly paused. Commit review stays
+  queued after those tests; no push/merge or unsolicited deep-review phase.
+
+
+## Historical human pause and queued Lab work — 2026-10-17
+
+- The three packaged window tests for `dc33b1e1` have **not run**. The human
+  asked to wait because another fix is needed; await explicit resumption.
+- After those tests: review Hanly's migration commits and extend grammar
+  coverage with a versioned particle/ending/construction inventory, at least
+  one natural example per listed form, including `-(으)ㄹ 거예요`.
+- Add a batch/page for the current text detector and a separate image-only
+  OCR batch/page over the same grammar cases: normal, comic/handwritten,
+  pixel and unusual fonts, with varied rendering conditions. Preserve a
+  baseline and distinguish native acquisition, OCR and linguistic results.
+- These are queued notes, not implemented work or new acceptance claims.
+  Detailed scope and existing Lab entry points are in the single handoff.
+
 ## Popup flicker follow-up — 2026-10-17
 
 - User recording confirms an empty first native popup frame and a brief
@@ -19,7 +63,8 @@
 - Product fix committed locally as `80c63f8`; no push/merge. Fresh arm64
   package `dc33b1e1` is built: four non-window packaged checks pass; both
   ZIP/DMG reconstructions match 3,748 entries, source and strict cdhash-bound
-  signatures. Three packaged window tests await separately requested approval.
+  signatures. Three packaged window tests are paused by the human, pending
+  another fix and explicit resumption.
 - Installed `ed9d4483` remains untouched. No grants reset/requested. Installing
   the new build and packaged live acceptance remain separate. Exact build,
   digests, test scope and provenance are in the single handoff.

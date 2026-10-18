@@ -1,5 +1,181 @@
 # Desktop Tauri Migration Review Handoff
 
+## Current popup/cursor implementation — 2026-10-17
+
+This section supersedes earlier popup acceptance claims. The latest human
+recording is `Gravação de Tela 2026-10-17 às 18.35.58.mov`. It shows a real
+current debug build, not evidence that an old installation was accidentally
+opened. The human authorized bounded temporary Lab windows/cursor tests and
+asked work to continue unattended, reporting approval-dependent work at the
+end. **The three packaged window tests remain paused.** No installation,
+permission reset/request, keychain/certificate change, push or merge is included.
+
+### Confirmed defects and corrections
+
+1. **Native geometry was rejected across the actual JSON pipe.** Rust's measured
+   `340.0 × 307.0` extents reached a Python validator that accepted only `int`.
+   The panel rendered at height 307 while the service retained the estimated
+   height 180, so moving down to Expand exited the protected rectangle. Two
+   wire-level regressions failed before the fix. The protocol now accepts
+   bounded finite numeric extents, still refuses booleans/non-numbers/invalid
+   ranges, and the owner encloses fractional bounds with floor/ceil. Native
+   diagnostics confirm `presented=true` and the full 307-point retained frame.
+2. **Crossing expiry could dismiss a card after entry or during steady progress.**
+   A separate timer revision rejects cancelled callbacks already queued for
+   delivery. Progress renews a 350 ms idle grace; a stationary approach expires.
+   Push-to-Hover expiry releases protection without dismissing its deliberate
+   answer. Always Active still dismisses on a real exit.
+3. **A direct footer approach could miss the nearest-edge corridor.** Movement
+   aimed into the actual card is accepted, with progress/retreat checks and the
+   bounded idle grace. Pausing over a neighbouring word starts its ordinary
+   dwell instead of requiring another mouse movement. Permanent word/popup
+   protection remains a union, not their combined bounding rectangle.
+4. **macOS key-window policy is explicit.** The dedicated public NSPanel subclass
+   refuses key/main-window status; no Tao/KVO class mutation or activation retry
+   is introduced. The normal reader remains key while native footer clicks work.
+   This hardens focus behavior; it does not establish that every Codex border
+   artifact from the recording has been reproduced and eliminated.
+
+### Evidence and its limits
+
+- Local evidence: `artifacts/lab/reviews/20261017-popup-retention/`. The source
+  diff, file/binary hashes, regression-before log and before/after native
+  traversal records are retained there. Native policy runs use authored
+  dictionary results and real global mouse observation; **they do not perform
+  a successful real capture/OCR lookup**.
+- Seven actual word-to-footer traversals pass over native browser cursors:
+  selectable text with arrow/text, and images with arrow, zoom-in, zoom-out,
+  grab and crosshair. All retain the popup, Expand from 340 to 460, and Close.
+  This is a corrected geometry/hover policy result, not an OCR accuracy claim.
+- A separate native fixture test visits all fourteen browser/OS cursor styles,
+  checks distinct actual OS arrow/text/zoom identities and confirms no Korean
+  accessible transcript on the image page. A CSS-painted pointer is not used.
+- The rebuilt popup rendering probe records 293 geometry/focus samples, 181
+  window captures (six overlap hide; 175 scorable), zero blank frames, no reader
+  foreground/key loss, six correct Expand/Collapse alternations, sixteen rapid
+  replacements, Close and zero owned survivors. The old reference also had no
+  sampled key loss; focus alone is not the demonstrated original root cause.
+- **Real acquisition is still unaccepted here.** A real-provider hover probe
+  reaches native-text fallback and stalls inside MSS's unchanged
+  `CGWindowListCreateImage`; a bounded separate-thread diagnostic did not
+  produce a completed capture either. Temporary diagnostic roots were cleaned
+  up. No permissions were reset/requested and the capture method was not
+  replaced to manufacture a pass. This needs a supported native capture run
+  under a verified responsible application identity; its cause is not proven
+  to be a cursor filter or a missing grant. The service owner-loop stall and
+  the original Codex border-flash check remain explicit acceptance risks.
+
+### Lab expansion implemented
+
+`python -m lab grammar-pages --output artifacts/lab/grammar-pages` builds paired
+selectable-text and image-only pages. Cursor shapes change per case using real
+browser/native cursor APIs; a selector holds a shape constant, and image zoom
+and dragging exercise actual element behavior. It opens no windows by itself.
+The separate `corpus.json` feeds the existing strict `ocr-campaign` command.
+
+- 114 authored grammar cases, including six prospective `-(으)ㄹ 거예요` examples.
+  The language-only run scores all 706 syllable hovers: OCR-form 351/353 and
+  direct-form 347/353; all sixteen new future-form hovers pass. Existing
+  ambiguity/punctuation failures remain visible. Parts 119/119, construction
+  37/38 and auxiliary 15/15 per acquisition form remain separately reported.
+- A local inventory enumerates all 157 particle and 504 ending entries in the
+  selected KRDICT. One source example is located for 156 particles and 500
+  endings. The five entries without examples are redirects (`-구만`, `-는구만`,
+  `-더구만`, `로구만`, `마치`); they remain omissions, not invented positive cases.
+  Kiwi helps locate grammar tokens rather than letters in nouns; this is not
+  independent validation of Kiwi or an exhaustive Korean grammar oracle.
+- 770 surface targets and 865 rendered images; four pinned OFL faces (normal,
+  handwritten/comic-like, heavy display, pixel), eight rendering profiles and
+  fourteen cursor shapes. One emoji image is omitted for missing glyphs, never
+  silently substituted. Corpus/dictionary/font/recipe identities, versions,
+  seed, exact target geometry and omissions are recorded. Generated source
+  examples/pixels stay under ignored local artifacts, not committed fixtures.
+- The initial OCR batch exposed a fixture-contract error: grammar targets omit
+  sentence punctuation whereas the raw OCR resolver returns a whitespace token
+  including punctuation. The generator now keeps those two truths separate;
+  authored grammar/lemma answers are unchanged. The first Vision campaign
+  `50be506c-fe55-4132-919c-6c35863a7f22` is superseded for target-selection scores.
+  `grammar-pages-v2` is the corrected batch input; the interrupted old EasyOCR
+  job is not a completed result.
+
+### Remaining boundaries
+
+Automated validation: full portable gate **2,651 passed, 2 intentional skips**;
+focused current regression gate 107 passed; Ruff and mypy (359 source files),
+23 Rust tests, warnings-denied Clippy and rustfmt pass. The final recipe-only
+fixture checks are recorded separately; frontend code is unchanged in this
+follow-up. Native cursor fixture: one test passed.
+
+Corrected Vision corpus campaign `7aa26629-848e-4e3f-9022-bffb70019dff`: 865 images,
+one cold and one warm pass each (1,730 actual calls), zero execution errors;
+raw token accuracy 860/865, whole-line exact match 758/865. The stage classifier
+flags five reading and two selection failures; these are different metrics,
+not seven missing images. Warm p50/p95 approximately 53/88 ms were observed
+under concurrent validation load, not a clean latency baseline. EasyOCR uses
+the identical corrected corpus and remains in progress at this source commit.
+The earlier 61.5% target score belongs to the invalid punctuation contract,
+not a demonstrated 38.5% product regression.
+A generated page is not an AX/UIA detector batch pass; neither authored results
+nor offline images satisfy native capture acceptance. Windows DPI/acquisition,
+Windows/Linux native testing, packaged live grants/manual shortcuts and the
+paused packaged window checks retain their prior status. The queued migration
+commits review remains after those tests and requires the human-selected deep
+review phase; this implementation does not silently start that review.
+
+
+## Historical queued scope — human notes, 2026-10-17
+
+The human explicitly stopped the three new packaged window tests before they
+ran, pending another fix. They remain paused until the human resumes them.
+At that checkpoint, the following work was queued for **after those tests**.
+The current section above records the later authorization and actual progress:
+
+1. **Hanly commits review.** Review the migration branch's commits and combined
+   diff, including the new popup commits, against the approved architecture,
+   tests and actual package identities. Report reproducible bugs, severity,
+   file/line evidence and fixes separately from remaining acceptance gaps.
+2. **Comprehensive Korean grammar coverage.** Extend the Lab corpus with an
+   explicit, versioned inventory of particles, endings, conjugations,
+   auxiliary expressions and multi-word constructions, using named Korean
+   grammar references. Every listed particle/form needs at least one natural
+   example and an explicit expected selection, lemma and relevant grammatical
+   analysis; cover allomorphs, combinations, irregulars and negative controls.
+   Include prospective/future `-(으)ㄹ 거예요`, such as `먹을 거예요` and
+   `갈 거예요`, as a construction rather than labelling every grammar item a
+   particle. Hover each syllable and the relevant separated constituents;
+   verify complete words, real spaces and supported grammatical connections
+   without merging unrelated neighbors. Kiwi/KRDICT validate their respective
+   analyses/entries; dictionary coverage alone does not define Korean grammar.
+   Publish inventory coverage and remaining omissions instead of an unbounded
+   claim that every possible grammatical combination has been tested.
+3. **Current text-detector batch and page.** Preserve the detector as it stands
+   for the baseline and expose the grammar examples as selectable text. Test
+   actual text acquisition/selection and neighboring context, not only injected
+   `TextSelection` values or the language-only `lab grammar` command. Keep
+   offline language results distinct from native AX/UIA evidence; Windows
+   acquisition/DPI acceptance still requires its own Windows run.
+4. **Separate OCR image page and batch.** Render the corresponding grammar
+   examples into images, with ground truth outside the accessible page text,
+   so accessible transcripts/alt text cannot bypass OCR. Exercise normal,
+   comic/handwritten, pixel and unusual display fonts, plus varied sizes,
+   weights, spacing, contrast, scaling, outlines/balloons, blur, compression
+   and noise. Use identified faces with verified Korean glyph coverage; record
+   unavailable fonts as omissions. Reuse the existing OCR corpus/renderer and
+   Vision/EasyOCR seams, with real backend calls and no third recognizer.
+5. **Comparable evidence.** Link both pages to the same grammar case IDs and
+   expected words. Stamp source/diff, corpus, dictionary, dependency and font
+   identities, seeds and backend. Report selection/boundary errors separately
+   from OCR reading errors and linguistic errors; group coverage and failures
+   by grammar form/font/backend and retain genuine OCR call counts and timing.
+   Use findings to propose product corrections; do not change expected answers
+   or the baseline merely to improve a score.
+
+Existing starting points: `lab/fixtures/korean/grammar.json`,
+`lab/korean_grammar.py`, `lab/word_selection.py`, `lab/synthetic_profiles.py`
+and the OCR corpus commands described in `lab/README.md`. The existing
+word-selection replica does not exercise native accessibility or capture;
+its results must not be presented as the requested native detector batch.
+
 ## Popup flicker follow-up — debug validated, package built, 2026-10-17
 
 The human's new recording demonstrates that the earlier settled-focus checks
@@ -71,7 +247,8 @@ No installation, certificate, keychain or permission reset/grant was performed.
 - All four non-window packaged checks pass (48.50 s): required inventory,
   exact source identity, actual frozen EasyOCR/Kiwi/KRDICT on an isolated
   profile, and native helper rollback after rejected root startup.
-  **Three packaged window checks await the newly requested approval.**
+  **Three packaged window checks are paused at the human's request, pending
+  another fix and explicit resumption.**
   This is not a seven-check pass for the new build.
 - Both ZIP and read-only DMG reconstructions match all 3,748 manifest entries,
   source/version/platform/architecture, required inventory, and strict deep

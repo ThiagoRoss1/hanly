@@ -51,10 +51,12 @@ ROOT = Path(__file__).resolve().parents[1]
     [
         ((-40.5, -3.25, 380, 180), ScreenRect(-41, -4, 381, 181)),
         ((40.0, 30.0, 380, 180), ScreenRect(40, 30, 380, 180)),
+        ((40.0, 30.0, 340.0, 307.0), ScreenRect(40, 30, 340, 307)),
+        ((40.5, 30.25, 340.0, 307.5), ScreenRect(40, 30, 341, 308)),
     ],
 )
 def test_popup_geometry_encloses_fractional_native_positions_without_accepting_stale_updates(
-    tmp_path: Path, coordinates: tuple[float, float, int, int], expected: ScreenRect,
+    tmp_path: Path, coordinates: tuple[float, float, float, float], expected: ScreenRect,
 ) -> None:
     service = DesktopService(tmp_path / "config.json")
     service._popup_sequence = 7
@@ -91,6 +93,15 @@ def _message(
         "params": {} if params is None else params,
         "window": window,
     }
+
+
+@pytest.mark.parametrize("extent", [True, None, "340", 0, -1, 1000.1, float("inf"), float("nan")])
+def test_popup_geometry_refuses_invalid_native_extents(extent: object) -> None:
+    with pytest.raises(ProtocolFailure):
+        parse_request(json.dumps(_message(
+            method="service.popup_geometry", window="popup",
+            params={"sequence": 1, "x": 0.0, "y": 0.0, "width": extent, "height": 180.0},
+        )).encode("utf-8"))
 
 
 def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identity(

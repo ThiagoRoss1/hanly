@@ -110,6 +110,12 @@
     {"id": "g105", "category": "long word", "text": "아이스크림을 좋아해요.", "target": "아이스크림을", "accept": ["아이스크림"]},
     {"id": "g106", "category": "unlisted compound", "text": "컴퓨터공학을 공부해요.", "target": "컴퓨터공학을", "cursor": {"0": ["컴퓨터"], "1": ["컴퓨터"], "2": ["컴퓨터"], "3": ["공학"], "4": ["공학"], "5": ["공학"]}, "note": "not a KRDICT headword; the part under the pointer is the answer"},
     {"id": "g107", "category": "unlisted compound", "text": "책읽는 시간", "target": "책읽는", "cursor": {"0": ["책"], "1": ["읽다"], "2": ["읽다"]}, "note": "from the recorded 책읽는 defect: pointing at 읽 must not answer 책"},
-    {"id": "g108", "category": "long word", "text": "도서관에서 만나요.", "target": "도서관에서", "accept": ["도서관"], "parts": ["에서"]}
+    {"id": "g108", "category": "long word", "text": "도서관에서 만나요.", "target": "도서관에서", "accept": ["도서관"], "parts": ["에서"]},
+    {"id": "g109", "category": "future construction", "text": "내일 밥을 먹을 거예요.", "target": "먹을", "accept": ["먹다"], "note": "Prospective -(으)ㄹ 거예요; grammar-form coverage is separate from KRDICT-listed construction annotation."},
+    {"id": "g110", "category": "future construction", "text": "내일 학교에 갈 거예요.", "target": "갈", "accept": ["가다"]},
+    {"id": "g111", "category": "future construction", "text": "저녁에 책을 읽을 거예요.", "target": "읽을", "accept": ["읽다"]},
+    {"id": "g112", "category": "future construction", "text": "내일 숙제를 할 거예요.", "target": "할", "accept": ["하다"]},
+    {"id": "g113", "category": "future construction", "text": "친구와 함께 놀 거예요.", "target": "놀", "accept": ["놀다"]},
+    {"id": "g114", "category": "future construction", "text": "집에서 쉴 거예요.", "target": "쉴", "accept": ["쉬다"]}
   ]
 }
