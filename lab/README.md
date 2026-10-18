@@ -441,9 +441,16 @@ OFL licenses in `fixtures/fonts/`. A bounded matrix varies size, contrast,
 scaling, blur, compression and noise; `--stress-cases 0..12` controls its size.
 Missing glyphs are reported, never silently substituted. The external manifest
 records source, dictionary/font identities, generated pixels and target
-geometry. These pages are native-test inputs, **not** native detector/OCR
+geometry. Authored lemma answers remain indexed by syllable; raw OCR token
+truth also retains punctuation, independently of the grammatical target.
+These pages are native-test inputs, **not** native detector/OCR
 acceptance results. The existing language/word-selection commands below keep
 their original measurement scopes.
+
+Run the image batch separately with `python -m lab ocr-campaign --backend vision
+--manifest artifacts/lab/grammar-pages/corpus.json --samples 1 --warmup 0`
+(or `--backend easyocr`). This measures the existing recognizer/word resolver
+over images; it does not exercise native screen capture or accessibility.
 
 ```bash
 python -m lab grammar                                   # language stage only

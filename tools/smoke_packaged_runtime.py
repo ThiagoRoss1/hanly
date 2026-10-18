@@ -1352,7 +1352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if application is None or args.reconstruct_only:
             print(json.dumps(output, indent=2))
-            return _unusable_disk_image(output)
+            return max(_unusable_disk_image(output), _mismatched_manifest(output))
         return max(
             _report(args, application, output),
             _unusable_disk_image(output),

@@ -6,6 +6,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ class GrammarTarget:
     provenance: str
     expected_headwords: tuple[str, ...] = ()
     reference: str | None = None
+    cursor_headwords: dict[int, tuple[str, ...]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,6 +71,7 @@ def authored_targets() -> list[GrammarTarget]:
             id=case.id, kind=case.category, form=form, text=case.text,
             target=case.target, start=case.text.index(case.target),
             provenance="lab_authored", expected_headwords=tuple(sorted(words)),
+            cursor_headwords=dict(case.accept),
         ))
     return targets
 
@@ -89,11 +92,13 @@ def match_form(text: str, form: str) -> tuple[str, int] | None:
     return None
 
 
-def dictionary_inventory(database: Path) -> GrammarInventory:
+def dictionary_inventory(
+    database: Path, *, analyze: Callable[[str], MorphologyAnalysis] | None = None,
+) -> GrammarInventory:
     """Enumerate every particle/ending entry and retain one source example when locatable."""
 
     inventory = GrammarInventory(targets=authored_targets())
-    morphology = KiwiProvider()
+    analyze = KiwiProvider().analyze if analyze is None else analyze
     with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True) as connection:
         units = connection.execute(
             "SELECT e.id, e.source_id, e.part_of_speech, l.written_form "
@@ -114,7 +119,7 @@ def dictionary_inventory(database: Path) -> GrammarInventory:
                 "WHERE s.entry_id=? ORDER BY LENGTH(x.text), x.text", (entry,),
             )
             for (text,) in candidates:
-                found = _grammar_surface(text, form, kind, morphology.analyze(text))
+                found = _grammar_surface(text, form, kind, analyze(text))
                 if found is None:
                     continue
                 surface, start = found

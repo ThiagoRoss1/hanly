@@ -2,6 +2,23 @@
 
 ## Current popup/cursor implementation — 2026-10-17
 
+**Implementation/payload commit:** `b9124b4f9e4e3737d8b2076835d1d55db9c166e8`.
+The follow-up containing this final report changes only Lab portability, test
+truth preservation and smoke-tool validation; it does not alter the frozen
+product. Local commits only; no push/merge. The current candidate is built,
+but the migration and real native-capture acceptance remain open.
+
+| Area | Current result |
+| --- | --- |
+| Popup native geometry and footer retention | Implemented; seven native policy traversals pass |
+| Controlled rendering / reader key status | Zero observed blank frames or key/foreground losses |
+| Real capture/OCR under the native application | Blocked in unchanged MSS capture; unaccepted |
+| Selectable-text / image-only Lab pages | Implemented; native cursor fixture passes |
+| Same-image Vision and EasyOCR batches | Completed separately; results and limits below |
+| Fresh macOS package and archives | Built; four non-window checks and both manifest reconstructions pass |
+| Three packaged window checks | Still paused by the human |
+| Windows/Linux native acceptance / full commits review | Prior platform gates and queued review remain open |
+
 This section supersedes earlier popup acceptance claims. The latest human
 recording is `Gravação de Tela 2026-10-17 às 18.35.58.mov`. It shows a real
 current debug build, not evidence that an old installation was accidentally
@@ -111,10 +128,72 @@ one cold and one warm pass each (1,730 actual calls), zero execution errors;
 raw token accuracy 860/865, whole-line exact match 758/865. The stage classifier
 flags five reading and two selection failures; these are different metrics,
 not seven missing images. Warm p50/p95 approximately 53/88 ms were observed
-under concurrent validation load, not a clean latency baseline. EasyOCR uses
-the identical corrected corpus and remains in progress at this source commit.
+under concurrent validation load, not a clean latency baseline. EasyOCR campaign
+`3df944bd-c2e6-4abe-8a99-98f79b6807d0` uses the identical corrected corpus:
+1,730 actual calls, zero execution errors, raw token accuracy **550/865** and
+whole-line exact match 170/865. Warm p50/p95 approximately 67/157 ms were
+observed under concurrent validation load. These are Mac/MPS synthetic-image
+measurements, not Windows acceptance or a clean latency comparison.
+
+Diagnostic slices distinguish strict raw-token differences from Korean reading:
+Vision has 860 exact tokens, three differing only outside Hangul and two changed
+Hangul sequences (small handwriting / low-contrast display). EasyOCR has 550
+exact tokens, 52 differing only outside Hangul and 263 changed Hangul sequences.
+The latter is a substantive follow-up risk for the main Windows use case. No
+new OCR backend, spelling correction or score-driven product change was made.
+Both raw metrics remain intact; the diagnostic grouping does not rewrite them.
+The detailed examples/font slices are in local `ocr-diagnostic-slices.json`.
+
+The final Lab-only follow-up preserves per-syllable lemma expectations (such as
+컴퓨터 versus 공학 within one compound), allows dependency-free test analyzers,
+and records absent optional Kiwi metadata without making already constructed
+fixtures require the runtime extra. Twenty-three focused Lab/dependency checks
+pass, followed by a 121-case packaging/Lab regression gate; Ruff/mypy remain
+clean. This closes a portable-CI dependency gap missed by this fully equipped
+Mac. The prior full portable result applies to the product commit; these
+follow-up checks cover the later Lab/tool changes.
 The earlier 61.5% target score belongs to the invalid punctuation contract,
 not a demonstrated 38.5% product regression.
+
+### Fresh macOS candidate and final handoff
+
+- Build `47462440-bb81-492a-8d9b-d65aa183ffe9`, macOS arm64, version 1.1.0,
+  built at `2026-10-18T02:19:42Z` from product commit `b9124b4` (checkout clean
+  when the build started). App: `dist/macos/Hanly.app`; ZIP and DMG are under
+  `dist/`. This supersedes `dc33b1e1` as the current candidate, not its historical
+  evidence or the human's pause on window-based checks.
+- The official build completes TypeScript/Vite, the frozen Python service,
+  optimized native root, updater helper and release products. Four explicitly
+  selected non-window packaged tests pass in 26.27 seconds: dependency/source
+  inventory, isolated frozen OCR and the helper's headless rollback.
+- Both archive reconstructions match **3,748 manifest entries**, with no missing,
+  differing or unexpected paths. Canonical and ZIP-reconstructed app pass deep
+  strict codesign verification. The designated requirement is ordinary build-
+  bound ad-hoc `cdhash d2fbd4166a848a54ec97db0f6b8740d5c935223d`; no identifier-only
+  requirement, new identity, keychain or certificate was introduced.
+- ZIP SHA-256: `72fc37999d61d92a7f95c7acdb665b9a536d937f156b7e0115ffe213bb671a79`.
+  DMG SHA-256: `1338fcd7d3a568e86f16fafa44cc368e080a4b76e00094fd41420167d86db627`.
+- Verification found one additional smoke-tool defect: `--reconstruct-only`
+  printed a manifest mismatch but returned zero. It now preserves the manifest
+  failure status. Matching and tampered-tree regressions pass. This candidate's
+  actual JSON reports were explicitly checked as matching; their success does
+  not rely on the old exit-code behavior.
+- `/Applications/Hanly.app` remains build `ed9d4483`, source `bc2764c`; no app was
+  installed or permission state changed. No ordinary packaged UI was opened.
+  The four headless checks are not the three paused window checks.
+- The disposable ZIP reconstruction was removed after verification; canonical
+  app, published archives and compact evidence remain. No historical baseline
+  or other build was deleted.
+
+The remaining session needing a present human must establish real capture and
+popup behavior under the intended responsible app identity, investigate the
+MSS stall without assuming a reset is needed, verify the original Codex border
+flash, and resume packaged live/window acceptance only when explicitly allowed.
+Do not reset permissions unattended. Windows acquisition/DPI, Windows/Linux
+native acceptance and the queued human-selected commit review remain separate.
+The Lab now supplies reproducible inputs and offline backend evidence; it does
+not turn the unsupported native text-detector batch into a pass.
+
 A generated page is not an AX/UIA detector batch pass; neither authored results
 nor offline images satisfy native capture acceptance. Windows DPI/acquisition,
 Windows/Linux native testing, packaged live grants/manual shortcuts and the

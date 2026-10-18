@@ -2,6 +2,20 @@
 
 ## Current popup retention / native cursors — 2026-10-17
 
+- Product commit `b9124b4`; candidate `47462440`, macOS arm64 v1.1.0, is built.
+  Four non-window packaged checks pass (26.27 s); ZIP/DMG each match all 3,748
+  manifest entries; canonical/ZIP deep strict signatures verify, ordinary
+  cdhash-bound ad-hoc signing. Installation remains `ed9d4483`, untouched.
+- Full portable gate at product commit: 2,651 pass, 2 intentional skips; 23 Rust
+  tests, Clippy/fmt, Ruff/mypy pass. Later Lab/tool corrections: 121 focused
+  packaging/Lab checks pass, including runtime-free fixtures and manifest
+  mismatch exit status. No additional product code changed after the build.
+- Corrected image batches: Vision 860/865 and EasyOCR 550/865 exact raw tokens;
+  1,730 calls each and no execution errors. Different non-Hangul-only mismatches
+  remain diagnostic slices, not rewritten scores. Mac/MPS synthetic evidence
+  is not Windows/native capture acceptance. See the single handoff for digests,
+  run IDs, semantic limits and the precise continuation work.
+
 - Fixed a demonstrated wire-contract mismatch: Rust sent floating-point native
   extents, Python rejected them, and hover protected an estimated 180-point
   rectangle while the actual card was 307 points tall. Numeric geometry is now

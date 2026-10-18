@@ -1725,6 +1725,27 @@ def test_naming_two_subjects_to_reconstruct_is_refused() -> None:
     assert smoke_main(["--against-manifest", "m.json", "--disk-image", "b.dmg"]) == 2
 
 
+@pytest.mark.parametrize("tampered", [False, True])
+def test_reconstruction_only_preserves_the_manifest_comparison_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tampered: bool,
+) -> None:
+    from tests.hanly_fixtures.update_tree import LINUX, manifest_for, write_tree
+
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest_for(root, LINUX).to_json(), encoding="utf-8")
+    if tampered:
+        (root / "hanly-desktop").write_bytes(b"different executable")
+    monkeypatch.setattr(smoke_packaged_runtime, "reconstruct_application", lambda *_args: root)
+
+    status = smoke_main([
+        "--from-archive", str(tmp_path / "release.zip"), "--reconstruct-only",
+        "--against-manifest", str(manifest_path),
+    ])
+
+    assert status == int(tampered)
+
+
 def test_a_packaging_tool_that_names_no_file_writes_none(tmp_path: Path) -> None:
     """`hdiutil detach <mount> -force` ends in a flag; a stub that took it for
     a path once left a file called `-force` in the repository root."""

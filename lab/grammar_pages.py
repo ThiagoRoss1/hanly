@@ -6,7 +6,7 @@ import hashlib
 import html
 import json
 import platform
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +41,16 @@ PROFILES: tuple[dict[str, Any], ...] = (
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _versions() -> dict[str, str]:
+    versions = {"python": platform.python_version()}
+    for name in ("Pillow", "kiwipiepy"):
+        try:
+            versions[name] = version(name)
+        except PackageNotFoundError:
+            versions[name] = "unavailable"
+    return versions
 
 
 def _fonts() -> list[tuple[str, FontSpec]]:
@@ -119,8 +129,7 @@ def build_pages(output: Path, inventory: GrammarInventory, *, stress_cases: int 
     )
     payload = {
         "schema_version": 1, "source": source, "seed": 17,
-        "versions": {"python": platform.python_version(), "Pillow": version("Pillow"),
-                     "kiwipiepy": version("kiwipiepy")},
+        "versions": _versions(),
         "recipe_sha256": {
             path.name: _digest(path) for path in (
                 Path(__file__), Path(__file__).with_name("grammar_inventory.py"),
