@@ -407,7 +407,7 @@ while the parent reads it from outside:
 - CPU, threads, disk reads and writes, latency and exit time;
 - a digest of each lookup's decision. No text and no pixels are kept.
 
-Inputs are minibook lines rendered in an installed Hangul face, kept in a
+Inputs are minibook lines rendered in the bundled OFL Nanum Gothic face, kept in a
 temporary file that is deleted with the run. One unrecorded warm-up child runs
 before each experiment's repeats. A `calibration` experiment maps and releases a
 known 64 MiB; if it is not attributed and released, distrust the run.

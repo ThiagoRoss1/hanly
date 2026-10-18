@@ -60,21 +60,35 @@ def test_x11_pointer_transparency_preserves_display_pointer_and_closes_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     display = 0x1_0000_0042
-    open_display = _NativeFunction(display)
     close_display = _NativeFunction(0)
     shape = _NativeFunction(0)
-    x11 = SimpleNamespace(
-        XOpenDisplay=open_display, XFlush=_NativeFunction(0), XCloseDisplay=close_display
-    )
     xext = SimpleNamespace(XShapeCombineRectangles=shape)
     monkeypatch.setattr(raster_ui.sys, "platform", "linux")
     monkeypatch.setattr(ctypes_util, "find_library", lambda name: name)
-    monkeypatch.setattr(ctypes, "CDLL", lambda name: x11 if name == "X11" else xext)
-    window = SimpleNamespace(winfo_id=lambda: 42)
+    calls: list[str] = []
+
+    def flush_creation() -> None:
+        calls.append("flush")
+
+    def window_id() -> int:
+        calls.append("create")
+        return 42
+
+    x11 = SimpleNamespace(
+        XOpenDisplay=_NativeFunction(display), XFlush=_NativeFunction(0),
+        XCloseDisplay=close_display,
+    )
+
+    def library(name: str) -> SimpleNamespace:
+        assert calls == ["create", "flush"], "Tk must commit creation before X11 uses its ID"
+        return x11 if name == "X11" else xext
+
+    monkeypatch.setattr(ctypes, "CDLL", library)
+    window = SimpleNamespace(update_idletasks=flush_creation, winfo_id=window_id)
 
     raster_ui._tk_ignore_mouse(window, None, Rect(0, 0, 100, 100))
 
-    assert open_display.restype is ctypes.c_void_p
+    assert x11.XOpenDisplay.restype is ctypes.c_void_p
     assert shape.argtypes[0] is ctypes.c_void_p
     assert shape.calls == [(display, 42, 2, 0, 0, None, 0, 0, 0)]
     assert close_display.calls == [(display,)]

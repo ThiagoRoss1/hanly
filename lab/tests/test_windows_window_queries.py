@@ -56,8 +56,9 @@ def _user32() -> SimpleNamespace:
         ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar), ctypes.c_int
     )(class_name)
     visible = ctypes.CFUNCTYPE(wintypes.BOOL, ctypes.c_void_p)(lambda _handle: 1)
+    iconic = ctypes.CFUNCTYPE(wintypes.BOOL, ctypes.c_void_p)(lambda _handle: 0)
     # Emulate WinDLL functions before a caller declares their native arguments.
-    for function in (get_pid, get_rect, get_class, visible):
+    for function in (get_pid, get_rect, get_class, visible, iconic):
         setattr(function, "argtypes", None)
 
     return SimpleNamespace(
@@ -66,6 +67,7 @@ def _user32() -> SimpleNamespace:
         GetWindowRect=get_rect,
         GetClassNameW=get_class,
         IsWindowVisible=visible,
+        IsIconic=iconic,
         EnumWindows=_Enumeration(lambda callback, parameter: callback(_HANDLE, parameter)),
         EnumChildWindows=_Enumeration(
             lambda _handle, callback, parameter: callback(_CHILD, parameter)
@@ -83,13 +85,13 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     return api
 
 
-def test_point_owner_preserves_the_handle_returned_by_window_from_point(
+def test_point_owner_preserves_the_enumerated_visual_window_handle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     api = _install(monkeypatch)
 
     assert ownership.owner_at(200, 150) == _PID
-    assert api.seen == [_HANDLE]
+    assert api.seen == [_HANDLE, _HANDLE]
 
 
 def test_popup_query_keeps_callback_handles_and_signed_geometry(

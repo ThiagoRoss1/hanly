@@ -124,6 +124,10 @@ jobs:
           python -m pip install --editable packages/hanly
           python -m pip install --editable "packages/hanly-app[runtime]"
 
+      - name: Install macOS Lab webview bindings
+        if: matrix.platform == 'macos'
+        run: python -m pip install "pyobjc-framework-WebKit>=10,<13"
+
       # Rust integration tests start the actual Python service, so install it first.
       - name: Check Rust formatting
         run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
@@ -147,4 +151,4 @@ jobs:
         run: |
           display=""
           if [ "${{ matrix.platform }}" = "linux" ]; then display="xvfb-run -a"; fi
-          $display python -m pytest --suite native
+          $display python -m pytest --suite native --capture=tee-sys

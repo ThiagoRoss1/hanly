@@ -392,12 +392,17 @@ def test_comparison_refuses_a_failed_repeat_even_if_aggregates_look_better(
 # -- protocol v2: ownership, genuine OCR calls, readings ---------------------------------
 
 
-def test_rendered_inputs_are_distinct_images(tmp_path: Path) -> None:
+def test_rendered_inputs_are_distinct_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import hashlib
 
     from lab.resources.experiment import render_inputs
 
+    monkeypatch.setattr("lab.synthetic_ocr.DEFAULT_FONT_SEARCH_PATHS", ())
+    monkeypatch.setattr("lab.synthetic_ocr.discover_faces", lambda: [])
     rendered = render_inputs(12, tmp_path)
+    assert rendered.face == "Nanum Gothic#0"
     with rendered.path.open("rb") as stream:
         index = json.loads(stream.readline())
         blob = stream.read()

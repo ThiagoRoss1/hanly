@@ -772,6 +772,16 @@ def test_a_native_job_that_cannot_run_its_cases_fails_instead_of_skipping() -> N
     assert _workflow("ci.yml")["jobs"]["native"]["env"]["HANLY_REQUIRE_NATIVE"] == "1"
 
 
+def test_macos_native_ci_installs_the_lab_webview_binding_before_tests() -> None:
+    steps = _steps(_workflow("ci.yml"), "native")
+    binding = next(step for step in steps if "pyobjc-framework-WebKit" in step.get("run", ""))
+    tests = next(step for step in steps if "--suite native" in step.get("run", ""))
+
+    assert binding["if"] == "matrix.platform == 'macos'"
+    assert steps.index(binding) < steps.index(tests)
+    assert "--capture=tee-sys" in tests["run"]
+
+
 @pytest.mark.parametrize(
     "name", ["release.yml", "build.yml", "ci.yml"]
 )

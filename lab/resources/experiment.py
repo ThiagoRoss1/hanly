@@ -1,6 +1,6 @@
 """Plan, run and record one resource-attribution experiment.
 
-Inputs are Lab-authored: minibook lines rendered in an installed Hangul face.
+Inputs are Lab-authored: minibook lines rendered in a bundled Hangul face.
 Their pixels live only in a temporary file the children read and are deleted
 with it; the run keeps digests, counts and measurements.
 """
@@ -95,12 +95,12 @@ def render_inputs(count: int, directory: Path) -> RenderedInputs:
     """
 
     from ..minibook import load_minibook
-    from ..synthetic_ocr import SampleSpec, discover_faces, render_sample
+    from ..synthetic_ocr import FontSpec, SampleSpec, render_sample
 
-    faces = discover_faces()
-    if not faces:
-        raise RuntimeError("no installed face draws Hangul; resource inputs cannot be rendered")
-    face = faces[0]
+    # Host font availability must not change the benchmark inputs or prevent
+    # portable checks from running on a machine without installed Korean fonts.
+    path = Path(__file__).parents[1] / "fixtures" / "fonts" / "NanumGothic-Regular.ttf"
+    face = FontSpec("Nanum Gothic", "OFL-1.1", (path.name,), path=path)
     book = load_minibook()
     per_line: dict[int, Any] = {}
     for target in book.targets:
@@ -114,7 +114,7 @@ def render_inputs(count: int, directory: Path) -> RenderedInputs:
     blob = bytearray()
     seen: set[str] = set()
     chosen: list[Any] = []
-    digest = hashlib.sha256(f"{face.family}:{face.index}".encode())
+    digest = hashlib.sha256(f"{face.name}:{face.index}".encode())
     for size in _INPUT_SIZES:
         for target in lines:
             if len(chosen) == count:
@@ -122,7 +122,7 @@ def render_inputs(count: int, directory: Path) -> RenderedInputs:
             sample = render_sample(SampleSpec(
                 case_id=f"resource-{len(chosen)}",
                 text=book.lines[target.line],
-                font=face.spec(),
+                font=face,
                 font_size=size,
                 target_index=target.start + target.cursor,
             ))
@@ -153,7 +153,7 @@ def render_inputs(count: int, directory: Path) -> RenderedInputs:
         texts=tuple(book.lines[target.line] for target in chosen),
         lemmas=tuple(target.lemma or target.surface for target in chosen),
         digest="sha256:" + digest.hexdigest()[:16],
-        face=f"{face.family}#{face.index}",
+        face=f"{face.name}#{face.index}",
     )
 
 

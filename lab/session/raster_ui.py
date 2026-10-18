@@ -572,9 +572,12 @@ class _TkImageWindow:
 def _tk_ignore_mouse(window: Any, tkinter: Any, bounds: Rect) -> None:
     """Make an opaque fixture pass pointer input through on X11 and Windows."""
 
+    # Commit Tk's pending window creation before another X11 connection uses
+    # its XID; otherwise Shape can raise BadWindow and terminate the process.
+    window_id = int(window.winfo_id())
+    window.update_idletasks()
     if sys.platform == "win32":
-        window.update_idletasks()
-        hwnd = int(window.winfo_id())
+        hwnd = window_id
         windll = getattr(ctypes, "windll", None)
         if windll is None:
             raise RuntimeError("Lab could not access Windows window styles")
@@ -631,7 +634,7 @@ def _tk_ignore_mouse(window: Any, tkinter: Any, bounds: Rect) -> None:
     if not display:
         raise RuntimeError("Lab cannot open the X11 display for pointer-transparent fixtures")
     try:
-        display_handle = int(window.winfo_id())
+        display_handle = window_id
         # ShapeInput with an empty rectangle list gives the window no hit-test area.
         xext.XShapeCombineRectangles(display, display_handle, 2, 0, 0, None, 0, 0, 0)
         x11.XFlush(display)

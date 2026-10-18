@@ -50,11 +50,11 @@ class _Word:
     english: str
     english_definition: str
     inflection: str | None = None
+    lexical_unit: str = _LEXICAL_UNIT
 
 
-#: ``한국어`` is the word ``hanly --self-check worker`` looks up. The other two
-#: are the reading in the Korean fixture image the same run recognizes, so the
-#: database answers for what the smoke actually puts in front of it.
+#: Cover the packaged self-check, the Korean OCR fixture and the spawned
+#: child's contextual construction probe, including its non-construction control.
 SMOKE_WORDS = (
     _Word("한국어", "명사", "한국 사람이 쓰는 말.", "Korean", "the Korean language"),
     _Word("책", "명사", "글이나 그림을 인쇄하여 묶은 것.", "book", "a book"),
@@ -65,6 +65,13 @@ SMOKE_WORDS = (
         "read",
         "to read",
         inflection="읽습니다",
+    ),
+    _Word("먹다", "동사", "음식을 입으로 받아들이다.", "eat", "to eat"),
+    _Word("있다", "보조 동사", "앞말의 동작이 계속됨을 나타낸다.", "be", "be doing"),
+    _Word("돈", "명사", "물건을 사고파는 데 쓰는 것.", "money", "money"),
+    _Word(
+        "-고 있다", "품사 없음", "동작이 진행 중임을 나타낸다.", "be doing", "be doing",
+        lexical_unit="문법·표현",
     ),
 )
 
@@ -80,7 +87,7 @@ def build_smoke_krdict(destination: str | Path, *, replace: bool = False) -> Pat
 
     An earlier smoke build is rebuilt in place. Any other file there -- a real
     dictionary at the developer path, typically -- is refused unless
-    ``replace`` is true, because this three-word database would silently
+    ``replace`` is true, because this small database would silently
     stand in for it.
     """
 
@@ -134,7 +141,7 @@ def _entry_element(identifier: int, word: _Word) -> ElementTree.Element:
     """Build one ``LexicalEntry``: its features, headword, and single sense."""
 
     entry = ElementTree.Element("LexicalEntry", {"att": "id", "val": str(identifier)})
-    _feature(entry, "lexicalUnit", _LEXICAL_UNIT)
+    _feature(entry, "lexicalUnit", word.lexical_unit)
     _feature(entry, "homonym_number", "0")
     _feature(entry, "partOfSpeech", word.part_of_speech)
     _feature(ElementTree.SubElement(entry, "Lemma"), "writtenForm", word.lemma)

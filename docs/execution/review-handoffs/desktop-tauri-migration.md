@@ -1,5 +1,68 @@
 # Desktop Tauri Migration Review Handoff
 
+## CI repair before merge — 2026-10-18
+
+The human reported the failures in [CI run 39176262492](https://github.com/ThiagoRoss1/hanly/actions/runs/39176262492)
+on migration commit `11a1bb7`. This follow-up stays on
+`desktop/tauri-migration`; the OCR candidate research remains on
+`lab/ocr-candidates` (`7d90052`) and is not included here. No production
+package, signing, grants or installed application changed.
+
+Implemented corrections:
+
+- Seven tests that instantiate the real Kiwi provider now belong to
+  `tests/native/shared/test_language_pipeline_kiwi.py`, where missing Kiwi
+  fails the required native CI job. They are preserved rather than skipped in
+  portable CI. The dictionary-budget case now also requires successful
+  processing and at least one dictionary query; a missing provider can no
+  longer make its upper-bound assertion pass vacuously.
+- Resource-attribution inputs use the bundled OFL Nanum Gothic face rather
+  than discovering host fonts. A regression test removes host font discovery;
+  twelve distinct images still render. The input digest changes with these
+  pixels, so old and new resource runs must pass compatibility checks before
+  comparison.
+- The CI smoke dictionary now includes `먹다`, `있다`, `돈` and `-고 있다`,
+  including the construction's lexical-unit metadata. The spawned-context
+  assertion previously expected a construction absent from the three-word
+  CI database; the complete local dictionary had hidden this fixture gap.
+- The macOS native job installs PyObjC WebKit bindings explicitly for the
+  Lab's WKWebView cursor test. This is a test dependency, not a new product
+  dependency.
+- Windows Lab ownership enumerates visible, non-minimized windows and checks
+  their geometry instead of input hit testing. The opaque Lab fixture passes
+  clicks through, so the former query identified the application underneath.
+  Portable regressions cover pointer-sized handles, the owned fixture,
+  occlusion by another application, and unavailable enumeration.
+- Tk commits window creation before a separate X11 connection uses its ID
+  for the input Shape. The former ordering could issue Shape against a window
+  the server did not yet know, invoking Xlib's fatal error handler. The Linux
+  log ends abruptly at precisely this fixture, but does not retain an Xlib
+  diagnostic, so this remains a suspected cause until a Linux rerun confirms
+  it. A portable regression enforces creation/flush ordering; native CI now
+  uses `--capture=tee-sys` so native stderr survives a fatal exit.
+
+Validation of this follow-up:
+
+| Gate | Result |
+| --- | --- |
+| Portable suite, minimal Python 3.13.11 environment | 2,562 passed, 105 skipped, 49.23 s |
+| Portable suite, minimal Python 3.10.20 environment | 2,549 passed, 107 skipped, 56.61 s |
+| Real spawned OCR/context test using the revised CI smoke database, plus seven real Kiwi cases | 8 passed, 33.70 s |
+| macOS corpus-paint/ownership and native WKWebView cursor cases | 2 passed, 7.09 s |
+| Final focused fixtures, Lab and workflow gate | 134 passed, 3.63 s |
+| Ruff / mypy | Passed; mypy checked 363 source files in both minimal Python environments |
+
+Both temporary portable environments have no Kiwi, EasyOCR, Torch, AppKit or
+WebKit installed. Initial sandbox runs could not execute `ps` or reach the
+WindowServer; the process and native-window gates above were rerun with host
+access. No permission reset or new grant was requested.
+
+**Merge remains conditional on the next GitHub CI run.** Windows and Linux
+native fixes have portable regression coverage here, but were not executed on
+those operating systems during this Mac session. Changes stay on the migration
+branch; no push or merge was performed. The product/manual-acceptance limits
+in the earlier sections remain open.
+
 ## Current verification and EasyOCR investigation — 2026-10-18
 
 The human resumed all Lab tests, including the three paused packaged window
