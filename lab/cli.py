@@ -481,22 +481,19 @@ def _ocr_provider_factory(
             config = runtime_config
     config = _benchmark_ocr_config(config, args)
 
-    def reader() -> Any:
-        from easyocr import Reader
-
-        return Reader(**config.to_reader_kwargs())
-
     shared: list[Any] = []
 
-    def shared_reader() -> Any:
+    def shared_provider() -> Any:
         if not shared:
-            shared.append(reader())
+            # Construct through the real adapter so the benchmark also pays
+            # for, and applies, the product's Torch thread policy.
+            shared.append(EasyOCRProvider(config))
         return shared[0]
 
     return (
         EASYOCR,
-        lambda: EasyOCRProvider(config, engine=shared_reader()),
-        shared_reader,
+        shared_provider,
+        lambda: shared_provider()._engine,
     )
 
 

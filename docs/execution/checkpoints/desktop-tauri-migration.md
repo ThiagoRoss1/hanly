@@ -1,6 +1,42 @@
 # Hanly Desktop Tauri migration checkpoint
 
-## Current popup retention / native cursors — 2026-10-17
+## Current verification / EasyOCR diagnosis — 2026-10-18
+
+- The human resumed the three packaged window tests: **3 passed, 33.49 s**.
+  Full macOS native suite: **88 passed, 134.78 s**. Product/candidate remain
+  `b9124b4` / `47462440`; only Lab/tests/docs change in this follow-up.
+- Portable: 2,665 passed, 2 skipped; two process cases denied `ps` in the
+  sandbox, then passed in the host-enabled five-case rerun. Focused Lab gate:
+  64 passed; Ruff/mypy pass over 361 files.
+- Corrected Lab factory now applies the real adapter's Torch thread policy.
+  Prior campaigns used CPU, not MPS. Complete corrected EasyOCR campaign:
+  `1d9298af-2cde-454d-94e9-19b9867c552b`, 865 images, 3,460 calls, zero errors,
+  unchanged **550/865** strict targets. This is not Windows acceptance.
+- Actual reader has 913 Hangul output classes. Missing classes occur in 113
+  target tokens, and all 113 fail; language masks are a separate limitation.
+  Sensitive inference, beam search, annotated crops, expanded model allowlist
+  and disabling quantization provide no general accuracy improvement on the
+  deterministic 120-image diagnostic subset. Product OCR stays unchanged.
+- MSS is measured returning after **~30 s per call**, not proven to hang
+  indefinitely. Stack sampling locates the legacy API proxy wait. Modern
+  Lab-only owned-window capture completes; a production macOS API change is
+  proposed, not implemented, respecting the capture-method constraint.
+- Real EasyOCR hover run `20261018-022721-stress` reaches native readiness and
+  accepted input, then explicitly fails capture start with `permission_required`.
+  Zero hovers executed; interrupted/cleaned up, not a pass. Shell preflight is
+  not proof of Hanly.app's separate grants. No install/reset/request/signing
+  changes; user's running debug app remains untouched.
+- Remaining: intended-app grants with the human present; real capture/popups,
+  original Codex border artifact and manual acceptance; Windows DPI/native,
+  Linux native and queued human-selected commit review. No push/merge.
+- Full findings and reproducible evidence:
+  [investigation report](../reports/easyocr-lab-investigation-2026-10-18.md),
+  linked from the single authoritative migration handoff.
+
+The following dated sections preserve earlier evidence. Their paused tests,
+MPS description and indefinite-stall interpretation are superseded above.
+
+## Popup retention / native cursors baseline — 2026-10-17
 
 - Product commit `b9124b4`; candidate `47462440`, macOS arm64 v1.1.0, is built.
   Four non-window packaged checks pass (26.27 s); ZIP/DMG each match all 3,748

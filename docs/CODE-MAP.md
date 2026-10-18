@@ -360,6 +360,7 @@ the migration routes.
 | `packaging/` | Internal service spec/runtime hook, native updater helper and platform bundle configuration |
 | `lab/` | The developer lab: `python -m lab` runs the real desktop under observation (`session/`), `lab tour` drives it over lab-authored Korean, `report/` turns a run into a visual report; `identity.py`, `pins.py`, `comparison.py` and `storage.py` say what a run is, which runs are baselines, what a comparison may claim and what may be cleaned; `synthetic_ocr.py`, `synthetic_profiles.py`, `stage_evidence.py` and `differential.py` build and score controlled-image corpora; `grammar_inventory.py` and `grammar_pages.py` build paired selectable-text/image-only Korean fixtures with real browser cursor styles and pinned test fonts; `resources/` attributes memory, CPU, threads, latency and I/O to stages in fresh processes, splits recorded sessions into phases and compares two experiments; plus measurement campaigns, `checks/`, its own `tests/` and the `hud/`. Nothing in `packages/` imports it |
 | `data/` | Local KRDICT source and build outputs. Gitignored except the README |
+| `lab/easyocr_audit.py` | Developer-only synthetic-image comparison of EasyOCR decoder/crop options, effective CPU policy and model/language alphabet limits; never changes product OCR |
 | `resources/dev/` | Machine-local benchmark configuration. Gitignored |
 | `tests/` | Product tests for both packages, in three selectable suites: portable by default, `tests/native/` for real desktop and OS adapters, `tests/packaged/` for the frozen product |
 

@@ -192,6 +192,27 @@ interface uses the process tree instead; each run records the chosen attribution
 path, and tree-only attribution may omit reparented helpers. Protocol v3 separates
 these runs from the previous launcher and Qt-painted fixture recordings.
 
+## EasyOCR crop, decoder and alphabet diagnosis
+
+`python -m lab.easyocr_audit --manifest PATH --output NEW_DIRECTORY` runs a
+deterministic font-balanced subset of authored synthetic images through the
+real CPU adapter. It records actual Torch threads/device, model hashes and
+alphabet limits, strict token/line scores, raw repetitions and staged replay
+agreement. It downloads no model, refuses private screenshots and never
+overwrites a previous output directory.
+
+Defaults compare product inference, the existing sensitive pass, beam search
+and annotated tight line crops. `--variants product model-alphabet
+line-oracle-padded` checks language masking and crop margin sensitivity;
+`--variants product --no-quantize` checks quantization. Annotated boxes are
+diagnostic ground truth unavailable at runtime, not an alternative production
+detector or an accuracy upper bound. No variant changes product settings.
+
+Use `--limit 120 --samples 2 --cpu-threads 4` for the recorded investigation's
+selection. Run comparisons sequentially and do not infer Windows performance
+from Mac timings. Full results and the observed Korean output-alphabet limit
+are in the [2026-10-18 investigation](../docs/execution/reports/easyocr-lab-investigation-2026-10-18.md).
+
 ## Evidence: identity, baselines, comparison, storage
 
 Read a run's compact summary first: `summary.md` (sessions) or `campaign.md`

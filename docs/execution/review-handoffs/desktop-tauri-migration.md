@@ -1,6 +1,58 @@
 # Desktop Tauri Migration Review Handoff
 
-## Current popup/cursor implementation — 2026-10-17
+## Current verification and EasyOCR investigation — 2026-10-18
+
+The human resumed all Lab tests, including the three paused packaged window
+checks and an EasyOCR investigation. **Those three packaged checks now pass.**
+The product payload remains `b9124b4` / candidate build `47462440`; this
+follow-up changes Lab tooling, tests and docs only. It does not finish native
+capture acceptance, install a new app, reset/request grants or start the queued
+deep review.
+
+| Area | Current result |
+| --- | --- |
+| Three packaged window checks | 3 passed in 33.49 s; prior pause lifted by the human |
+| Full macOS native suite | 88 passed in 134.78 s; capture correctness passes but is very slow |
+| Portable validation | 2,665 passed and 2 skipped; two sandbox-blocked process cases pass in the host-enabled rerun |
+| EasyOCR complete corrected campaign | 865 images / 3,460 calls; zero execution errors; unchanged 550/865 strict target score |
+| EasyOCR model limit | Actual reader has only 913 Hangul output classes; 113 target tokens require missing classes, and all 113 fail |
+| Decoder/crop/quantization experiments | No tested option improves general target accuracy; no production OCR change promoted |
+| Native capture diagnosis | MSS returns after ~30 s per call in the bounded probe; not proven to hang indefinitely |
+| Real EasyOCR app hover | Attempted; native Hanly identity returns `permission_required` before capture |
+| Installation / manual acceptance / Windows/Linux / commit review | Remain open as described below |
+
+The old benchmark also bypassed the product's Torch thread bound by injecting
+a directly constructed reader. The Lab factory now creates the real product
+adapter once and shares its reader with staged diagnostics. Its new runs
+confirm CPU/four threads. The earlier MPS description was incorrect; the old
+adapter also selected CPU. There is no demonstrated product speedup from this
+Lab correction.
+
+The capture probe now waits long enough to observe three completed calls:
+30.122, 30.023 and 30.016 seconds. Native sampling locates the wait in the old
+macOS API's ScreenCaptureKit proxy. A Lab-only modern window-capture helper
+finishes in ~0.53 s; these different capture scopes are not a latency benchmark.
+The returned MSS bytes also fail the expected all-white check. Moving this call
+to another thread alone is not an accepted fix. A macOS capture-adapter change
+is proposed, not implemented, respecting the human's instruction to preserve
+the capture method and the architecture approval boundary.
+
+The separately responsible LaunchServices Hanly identity needs its own grants;
+the diagnostic shell's successful preflight does not establish them. One
+EasyOCR stress attempt records readiness and accepted shortcut input, then
+`capture_start_failed: permission_required`; it supplies no successful native
+OCR hover. It was cleaned up without requesting/resetting permissions.
+
+Full findings, rejected options, exact evidence, test limits and reproduction:
+[EasyOCR and capture investigation](../reports/easyocr-lab-investigation-2026-10-18.md).
+Local evidence is under `artifacts/lab/reviews/20261018-easyocr-investigation/`;
+the completed full campaign is `1d9298af-2cde-454d-94e9-19b9867c552b`.
+Final focused Lab gate: 64 passed; Ruff/mypy pass (361 files).
+
+The section below records the implementation baseline and earlier evidence.
+Its three-test pause and indefinite-stall interpretation are superseded here.
+
+## Popup/cursor implementation baseline — 2026-10-17
 
 **Implementation/payload commit:** `b9124b4f9e4e3737d8b2076835d1d55db9c166e8`.
 The follow-up containing this final report changes only Lab portability, test

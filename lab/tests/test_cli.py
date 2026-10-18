@@ -9,7 +9,34 @@ from typing import Any
 import pytest
 from hanly.easyocr_provider import EasyOCRConfig
 
-from lab.cli import _benchmark_ocr_config, _parser
+from lab.cli import _benchmark_ocr_config, _ocr_provider_factory, _parser
+
+
+@pytest.mark.parametrize("threads", [None, 2])
+def test_ocr_campaign_constructs_the_product_adapter_once(
+    monkeypatch: pytest.MonkeyPatch, threads: int | None,
+) -> None:
+    constructed: list[EasyOCRConfig] = []
+    engine = object()
+
+    class Provider:
+        def __init__(self, config: EasyOCRConfig) -> None:
+            constructed.append(config)
+            self._engine = engine
+
+    monkeypatch.setattr("lab.cli.EasyOCRProvider", Provider)
+    arguments = ["ocr-campaign", "--backend", "easyocr"]
+    if threads is not None:
+        arguments.extend(["--cpu-threads", str(threads)])
+    backend, factory, reader = _ocr_provider_factory(_parser().parse_args(arguments))
+
+    assert backend == "easyocr"
+    assert reader is not None
+    assert reader() is engine
+    assert factory() is factory()
+    assert len(constructed) == 1
+    assert constructed[0].cpu_threads == threads
+    assert constructed[0].to_reader_kwargs()["gpu"] is False
 
 
 def test_live_hover_parser_has_safe_defaults_and_does_not_import_runner() -> None:
