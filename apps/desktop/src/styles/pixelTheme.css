@@ -1,0 +1,230 @@
+@layer components {
+/* Hanly's approved pixel-art Control Center skin. Product state and content stay in JSX. */
+.app.skin-village {
+  --skin-paper: #fffaf4;
+  --skin-paper-raised: #fffdf9;
+  --skin-ink: #352441;
+  --skin-ink-soft: #665273;
+  --skin-ink-muted: #786584;
+  --skin-line: #dfd2e6;
+  --skin-purple: #6e4694;
+  --skin-warning-paper: #fff4d9;
+  --skin-warning-ink: #73572d;
+  --skin-danger-paper: #fff0ee;
+  --skin-danger-ink: #8b3b3a;
+  --night-filter: brightness(1);
+  --reading-font: HanlyGloss, HanlyUI, monospace;
+  --text-primary: var(--skin-ink);
+  --text-secondary: var(--skin-ink-soft);
+  --text-muted: var(--skin-ink-muted);
+  --surface: var(--skin-paper);
+  --surface-subtle: var(--skin-paper);
+  --surface-raised: var(--skin-paper-raised);
+  --surface-selected: var(--skin-paper-raised);
+  --surface-hover: #f1e8f5;
+  --border: var(--skin-line);
+  --border-soft: #eadfec;
+  --border-strong: #c7b4d2;
+  --accent: #9b7bc7;
+  --accent-hover: #8d6db7;
+  --accent-pressed: #7d5aa7;
+  --accent-strong: #6e4694;
+  --focus-ring: #6e4694;
+  --slider-track: url("/design/media/assets/sliders/chunky/track.png");
+  --slider-thumb: url("/design/media/assets/sliders/chunky/thumb.png");
+  --skin-panel-slices:
+    url("/design/media/assets/panels/panel-popup/nine-slice/top-left.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/top.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/top-right.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/left.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/center.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/right.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/bottom-left.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/bottom.png"),
+    url("/design/media/assets/panels/panel-popup/nine-slice/bottom-right.png");
+  --skin-window-slices:
+    url("/design/media/assets/frames/frame-default/nine-slice/top-left.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/top.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/top-right.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/left.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/center.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/right.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/bottom-left.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/bottom.png"),
+    url("/design/media/assets/frames/frame-default/nine-slice/bottom-right.png");
+  --skin-cloud-slices:
+    url("/design/media/assets/panels/panel-cloud/nine-slice/top-left.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/top.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/top-right.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/left.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/center.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/right.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/bottom-left.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/bottom.png"),
+    url("/design/media/assets/panels/panel-cloud/nine-slice/bottom-right.png");
+
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0;
+  background: #f6f0f8;
+  color: var(--skin-ink);
+  font-family: HanlyUI, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.app.skin-village::after {
+  content: "";
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  pointer-events: none;
+  image-rendering: pixelated;
+  background-image: var(--skin-window-slices);
+  background-size:
+    38px 29px, calc(100% - 76px) 29px, 38px 29px,
+    38px calc(100% - 58px), calc(100% - 76px) calc(100% - 58px),
+    38px calc(100% - 58px), 38px 29px, calc(100% - 76px) 29px, 38px 29px;
+  background-position:
+    left top, center top, right top, left 29px, center 29px, right 29px,
+    left bottom, center bottom, right bottom;
+  background-repeat: no-repeat;
+  transition: filter 1.5s ease;
+  filter: var(--night-filter);
+}
+
+html[data-mode="dark"] .app.skin-village {
+  --skin-paper: #362d43;
+  --skin-paper-raised: #3c314a;
+  --skin-ink: #efe7f6;
+  --skin-ink-soft: #c1b4cc;
+  --skin-ink-muted: #b8adc7;
+  --skin-purple: #d3b6f0;
+  --skin-line: #51445f;
+  --skin-warning-paper: #40362b;
+  --skin-warning-ink: #f2d69e;
+  --skin-danger-paper: #412d35;
+  --skin-danger-ink: #f0aaa4;
+  --night-filter: invert(.78) sepia(.6) saturate(1.35) hue-rotate(215deg) brightness(.92);
+  --surface-hover: #4b3c59;
+  --border: #51445f;
+  --border-soft: #44364f;
+  --border-strong: #675474;
+  --accent: #c3a0ea;
+  --accent-hover: #d0b3ef;
+  --accent-pressed: #b78dda;
+  --accent-strong: #d3b6f0;
+  --focus-ring: #e4caff;
+  background: #211d2b;
+  color: var(--skin-ink);
+}
+
+html[data-mode="dark"] .app.skin-village::after {
+  --skin-window-slices:
+    url("/design/media/assets/frames/frame-double/nine-slice/top-left.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/top.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/top-right.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/left.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/center.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/right.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/bottom-left.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/bottom.png"),
+    url("/design/media/assets/frames/frame-double/nine-slice/bottom-right.png");
+}
+
+/* Rail and brand */
+.app.skin-village .sidebar {
+  isolation: isolate;
+  border: 0;
+  background: transparent;
+  color: #302046;
+  scrollbar-width: thin;
+  scrollbar-color: #b59ac6 transparent;
+}
+
+.app.skin-village .sidebar::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  pointer-events: none;
+  image-rendering: pixelated;
+  background: url("/design/media/assets/frames/frame-default/nine-slice/right.png") center / 12px 100% no-repeat;
+  filter: var(--night-filter);
+}
+
+.app.skin-village .brand {
+  background: transparent;
+}
+
+.app.skin-village .brand-mark {
+  display: block;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  image-rendering: pixelated;
+}
+.app.skin-village .brand-name {
+  color: #352441;
+  font-family: HanlyUIBold, HanlyUI, monospace;
+  font-size: 24px;
+  line-height: 30px;
+  letter-spacing: 0;
+}
+.app.skin-village .brand-sub {
+  color: #4f3b64;
+  font-family: HanlyUI, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+html[data-mode="dark"] .app.skin-village .brand-name { color: #f1e0fc; }
+html[data-mode="dark"] .app.skin-village .brand-sub { color: #e0d6ee; }
+
+.app.skin-village .nav-bubble { display: none; }
+.app.skin-village .nav-item.sprite-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  height: 50px;
+  justify-content: center;
+  padding: 0;
+  font-size: 12px;
+}
+.app.skin-village .nav-dot {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+}
+.app.skin-village .nav-dot > img {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.app.skin-village .nav-label {
+  display: block;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  font: 12px/18px HanlyUIBold, HanlyUI, monospace;
+  text-align: center;
+  white-space: nowrap;
+  transform: none;
+}
+}

@@ -10,41 +10,6 @@
   z-index: 1;
 }
 
-.village-scene {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  overflow: hidden;
-  background: #9cb9fc;
-  pointer-events: none;
-}
-
-.village-scene__canvas {
-  position: absolute;
-  display: block;
-  max-width: none;
-  image-rendering: pixelated;
-  pointer-events: none;
-}
-
-.village-scene__celestial {
-  position: absolute;
-  z-index: 2;
-  top: 8px;
-  right: 21px;
-  display: grid;
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  place-items: center;
-  overflow: hidden;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-  pointer-events: auto;
-}
-
 .village-scene__celestial:focus-visible {
   outline: 2px solid #533474;
   outline-offset: 3px;
@@ -52,19 +17,6 @@
 
 .village-scene__celestial:disabled {
   cursor: default;
-}
-
-.village-scene__celestial img {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  image-rendering: pixelated;
-  pointer-events: none;
-  transition: opacity 1.5s ease;
-  user-select: none;
 }
 
 .mascot-stage {
@@ -102,8 +54,29 @@
   user-select: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .village-scene__celestial img {
-    transition-duration: 0.01ms;
+/* Match the gallery's compact plaque while keeping every pose inside its frame. */
+.app.skin-village .sidebar.is-compact .mascot-stage .sprite-canvas {
+  width: 58px;
+  height: 58px;
+  bottom: 0;
+}
+
+.app.skin-village .sidebar.is-compact .mascot-stage[data-pose="sleep"] .sprite-canvas {
+  width: 46px;
+  height: 46px;
+  bottom: -5px;
+}
+
+@media (max-width: 760px) {
+  .app.skin-village .sidebar .mascot-stage .sprite-canvas {
+    width: 58px;
+    height: 58px;
+    bottom: 0;
+  }
+
+  .app.skin-village .sidebar .mascot-stage[data-pose="sleep"] .sprite-canvas {
+    width: 46px;
+    height: 46px;
+    bottom: -5px;
   }
 }

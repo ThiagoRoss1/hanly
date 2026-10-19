@@ -1,131 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type {
-  HanlyState,
-  LogRecord,
-  LogSnapshot,
-  PermissionItem,
-  RuntimeResource,
-  UpdateState,
-} from "../contracts/desktop.ts";
-import type { DesktopMethod } from "../services/desktopBridgeCore.ts";
-import {
-  clearLogs,
-  exportDiagnostics,
-  getLogs,
-} from "../services/desktopBridge.ts";
-import {
-  hotkeyFromKeyboardEvent,
-  formatHotkey,
-  sharesAppShortcut,
-  validateHoverDelay,
-} from "../features/settings.ts";
-import { PixelProgress } from "../components/PixelProgress.tsx";
 import { PixelButton } from "../components/PixelButton.tsx";
 import { VillageScene } from "../components/village/VillageScene.tsx";
-import { Mascot } from "../components/village/Mascot.tsx";
+import { Brand, CaptureChoiceDialog, LiveCard, LoadingPanel } from "../components/controlCenter/Shared.tsx";
+import { AppearancePage } from "./controlCenter/AppearancePage.tsx";
+import { CapturePage } from "./controlCenter/CapturePage.tsx";
+import { LogsPage } from "./controlCenter/LogsPage.tsx";
+import { PermissionsPage } from "./controlCenter/PermissionsPage.tsx";
+import { ShortcutsPage } from "./controlCenter/ShortcutsPage.tsx";
+import { UpdatesPage } from "./controlCenter/UpdatesPage.tsx";
 import { useDesktopState } from "../hooks/useDesktopState.ts";
-
-type Section =
-  "capture" | "permissions" | "shortcuts" | "appearance" | "updates" | "logs";
-
-const SECTIONS: Array<{ id: Section; label: string }> = [
-  { id: "capture", label: "Capture" },
-  { id: "permissions", label: "Permissions" },
-  { id: "shortcuts", label: "Shortcuts" },
-  { id: "appearance", label: "Appearance" },
-  { id: "updates", label: "Updates" },
-  { id: "logs", label: "Logs" },
-];
-
-function sectionIcon(section: Section): string {
-  const name = section === "capture" ? "capture-plant" : `icon-${section}`;
-  return `/design/media/assets/icons/v2/${name}.png`;
-}
-
-const PAGE_COPY: Record<
-  Section,
-  { kicker: string; description: string }
-> = {
-  capture: {
-    kicker: "Capture",
-    description: "Choose where Hanly reads.",
-  },
-  permissions: {
-    kicker: "Permissions",
-    description: "The grants Hanly needs before it can read.",
-  },
-  shortcuts: {
-    kicker: "Shortcuts",
-    description: "What your keyboard does, and what the system accepted.",
-  },
-  appearance: {
-    kicker: "Appearance",
-    description: "How the Control Center and popup look.",
-  },
-  updates: {
-    kicker: "Updates",
-    description: "The app and its resources update separately.",
-  },
-  logs: {
-    kicker: "Logs",
-    description: "Runtime state and recent activity.",
-  },
-};
-
-const HOTKEYS = [
-  {
-    id: "hotkey",
-    action: "push_to_hover",
-    name: "Push to Hover",
-    hint: "Hold to read the word under the cursor.",
-  },
-  {
-    id: "hover_hotkey",
-    action: "toggle_hover",
-    name: "Pause automatic hover",
-    hint: "Mutes hover without stopping capture.",
-  },
-  {
-    id: "capture_hotkey",
-    action: "toggle_capture",
-    name: "Start / stop capture",
-    hint: "Begins and ends the capture session.",
-  },
-] as const;
-
-const UPDATE_BUSY = new Set([
-  "checking",
-  "preparing",
-  "inspecting",
-  "downloading",
-  "verifying",
-  "unpacking",
-  "installing",
-  "validating",
-]);
-
-function valueText(value: unknown, fallback = "—"): string {
-  if (typeof value !== "string" || !value) return fallback;
-  return value.replaceAll("_", " ");
-}
-
-function titleCase(value: unknown, fallback = "Unknown"): string {
-  return valueText(value, fallback).replace(/\b\w/g, (letter) =>
-    letter.toUpperCase(),
-  );
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function regionLabel(
-  region?: { left: number; top: number; width: number; height: number } | null,
-): string {
-  if (!region) return "No region selected";
-  return `${region.left}, ${region.top} · ${region.width} × ${region.height}`;
-}
+import {
+  PAGE_COPY,
+  SECTIONS,
+  sectionIcon,
+  type Section,
+} from "./controlCenter/constants.ts";
+import { errorText, settingPendingKey } from "./controlCenter/helpers.ts";
+import type { RunCommand } from "./controlCenter/types.ts";
 
 export function ControlCenterPage() {
   const {
@@ -137,14 +29,24 @@ export function ControlCenterPage() {
     runCommand,
   } = useDesktopState("control_center");
   const [section, setSection] = useState<Section>("capture");
-  const [busy, setBusy] = useState("");
+  const [pendingCommands, setPendingCommands] = useState<Record<string, number>>(
+    {},
+  );
   const [actionError, setActionError] = useState("");
   const [quitAsking, setQuitAsking] = useState(false);
   const [choosingArea, setChoosingArea] = useState(false);
 
-  const run = useCallback(
-    async (method: DesktopMethod, params: Record<string, unknown> = {}) => {
-      setBusy(method);
+  const isPending = useCallback(
+    (key: string) => Boolean(pendingCommands[key]),
+    [pendingCommands],
+  );
+
+  const run = useCallback<RunCommand>(
+    async (method, params = {}, pendingKey = method) => {
+      setPendingCommands((current) => ({
+        ...current,
+        [pendingKey]: (current[pendingKey] ?? 0) + 1,
+      }));
       setActionError("");
       try {
         return await runCommand(method, params);
@@ -152,14 +54,28 @@ export function ControlCenterPage() {
         setActionError(errorText(error));
         return undefined;
       } finally {
-        setBusy("");
+        setPendingCommands((current) => {
+          const count = current[pendingKey] ?? 0;
+          if (count <= 1) {
+            const next = { ...current };
+            delete next[pendingKey];
+            return next;
+          }
+          return { ...current, [pendingKey]: count - 1 };
+        });
       }
     },
     [runCommand],
   );
 
   const saveSettings = useCallback(
-    (changes: Record<string, unknown>) => run("update_settings", { changes }),
+    (changes: Record<string, unknown>) => {
+      const [setting] = Object.keys(changes);
+      const pendingKey = setting
+        ? settingPendingKey(setting)
+        : "update_settings";
+      return run("update_settings", { changes }, pendingKey);
+    },
     [run],
   );
 
@@ -194,23 +110,32 @@ export function ControlCenterPage() {
 
   if (!state) {
     return (
-      <div className="app skin-village">
-        <aside className="sidebar">
-          <VillageScene dark={dark} disabled={!state || Boolean(busy)} onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })} />
+      <div className="app skin-village flex h-full min-h-0">
+        <aside className="sidebar relative z-0 flex w-[268px] min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto px-4 pt-[18px] pb-4">
+          <VillageScene
+            dark={dark}
+            disabled
+            onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })}
+          />
           <Brand />
-          <div className="sidebar-foot">
+          <div className="sidebar-foot relative z-[1] mt-auto flex flex-none flex-col gap-2 px-0 pt-[9px]">
             <LiveCard activity={activity} engine={engine} runtime={runtime} />
           </div>
         </aside>
-        <main className="main">
-          <header className="page-head">
-            <div>
-              <div className="page-kicker">Control Center</div>
-              <h1 className="page-title">Hanly</h1>
-              <p className="page-desc">Desktop status and settings.</p>
+        <main className="main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 py-3">
+          <header className="page-head mx-auto flex min-h-[140px] w-full max-w-[1024px] flex-none items-center justify-between gap-6 border-0 px-8 py-6">
+            <div className="flex min-w-0 flex-1 items-center gap-4">
+              <div className="min-w-0">
+                <h1 className="page-title m-0 text-2xl font-normal leading-8 tracking-normal">
+                  Hanly
+                </h1>
+                <p className="page-desc mt-1.5 max-w-[370px] text-sm leading-[22px]">
+                  Desktop status and settings.
+                </p>
+              </div>
             </div>
           </header>
-          <div className="page-body">
+          <div className="page-body mx-auto min-h-0 w-full max-w-[1024px] flex-1 overflow-x-hidden overflow-y-auto px-8 pt-1 pb-10">
             {(connectionError || serviceStatus?.state === "failed") && (
               <div className="banner" data-tone="bad" role="alert">
                 <span className="banner-text">
@@ -249,19 +174,19 @@ export function ControlCenterPage() {
     content = (
       <CapturePage
         state={state}
-        busy={Boolean(busy)}
+        isPending={isPending}
         run={run}
         saveSettings={saveSettings}
         onSelectArea={selectArea}
       />
     );
   } else if (section === "permissions") {
-    content = <PermissionsPage state={state} busy={Boolean(busy)} run={run} />;
+    content = <PermissionsPage state={state} isPending={isPending} run={run} />;
   } else if (section === "shortcuts") {
     content = (
       <ShortcutsPage
         state={state}
-        busy={Boolean(busy)}
+        isPending={isPending}
         run={run}
         saveSettings={saveSettings}
       />
@@ -270,29 +195,26 @@ export function ControlCenterPage() {
     content = (
       <AppearancePage
         state={state}
-        busy={Boolean(busy)}
+        isPending={isPending}
         saveSettings={saveSettings}
       />
     );
   } else if (section === "updates") {
-    content = <UpdatesPage state={state} busy={Boolean(busy)} run={run} />;
+    content = <UpdatesPage state={state} isPending={isPending} run={run} />;
   } else {
-    content = <LogsPage state={state} busy={Boolean(busy)} run={run} />;
+    content = <LogsPage state={state} isPending={isPending} run={run} />;
   }
 
   return (
-    <div className="app skin-village">
-      <aside className={`sidebar${state?.config.sidebar_layout === "compact" ? " is-compact" : ""}`}>
-          <VillageScene dark={dark} disabled={!state || Boolean(busy)} onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })} />
-        <Brand />
-        <nav aria-label="Sections" className="nav">
-          <div
-            aria-hidden="true"
-            className="nav-bubble"
-            style={{
-              transform: `translate3d(0, ${SECTIONS.findIndex((item) => item.id === section) * 40}px, 0)`,
-            }}
+    <div className="app skin-village flex h-full min-h-0">
+      <aside className={`sidebar relative z-0 flex w-[268px] min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto px-4 pt-[18px] pb-4${state.config.sidebar_layout === "compact" ? " is-compact" : ""}`}>
+          <VillageScene
+            dark={dark}
+            disabled={isPending(settingPendingKey("theme"))}
+            onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })}
           />
+        <Brand />
+        <nav aria-label="Sections" className="nav relative z-[1] mt-0 flex flex-none flex-col gap-2">
           {SECTIONS.map((item) => (
             <PixelButton
               aria-current={section === item.id ? "page" : undefined}
@@ -306,14 +228,16 @@ export function ControlCenterPage() {
               }}
               type="button"
             >
-              <span className="nav-content">
-                <span aria-hidden="true" className="nav-dot"><img src={sectionIcon(item.id)} alt="" /></span>
+              <span className="nav-content flex w-full min-w-0 items-center justify-center gap-[10px]">
+                <span aria-hidden="true" className="nav-dot grid h-8 w-8 flex-none place-items-center bg-transparent">
+                  <img src={sectionIcon(item.id)} alt="" />
+                </span>
                 <span className="nav-label">{item.label}</span>
               </span>
             </PixelButton>
           ))}
         </nav>
-        <div className="sidebar-foot">
+        <div className="sidebar-foot relative z-[1] mt-auto flex flex-none flex-col gap-2 px-0 pt-[9px]">
           <LiveCard
             activity={activity}
             engine={engine}
@@ -322,14 +246,14 @@ export function ControlCenterPage() {
             detail={state.app.detail}
           />
           {quitAsking ? (
-            <div className="quit-confirm">
+            <div className="quit-confirm flex flex-col gap-[7px] p-[10px]">
               <span className="quit-note">
                 Capture stops and the tray icon goes away.
               </span>
-              <div className="quit-row">
+              <div className="quit-row flex flex-wrap gap-[6px]">
                 <PixelButton
                   className="btn btn-sm btn-exit"
-                  disabled={Boolean(busy)}
+                  disabled={isPending("quit")}
                   onClick={() => void run("quit")}
                   type="button"
                 >
@@ -358,20 +282,29 @@ export function ControlCenterPage() {
         </div>
       </aside>
 
-      <main className="main">
-        <header className="page-head">
-          <div data-anim="a">
-            <div className="page-kicker">{page.kicker}</div>
-            <img className="page-icon" src={sectionIcon(section)} alt="" />
-            <h1 className="page-title">{page.kicker}</h1>
-            <p className="page-desc">{page.description}</p>
+      <main className="main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 py-3">
+        <header className="page-head mx-auto flex min-h-[140px] w-full max-w-[1024px] flex-none items-center justify-between gap-6 border-0 px-8 py-6">
+          <div className="flex min-w-0 flex-1 items-center gap-4" data-anim="a">
+            <img
+              aria-hidden="true"
+              className="page-icon h-11 w-11 flex-none object-contain [image-rendering:pixelated]"
+              src={sectionIcon(section)}
+              alt=""
+            />
+            <div className="min-w-0">
+              <h1 className="page-title m-0 text-2xl font-normal leading-8 tracking-normal">
+                {page.kicker}
+              </h1>
+              <p className="page-desc mt-1.5 max-w-[370px] text-sm leading-[22px]">
+                {page.description}
+              </p>
+            </div>
           </div>
           {target && (
-            <div className="head-actions">
+            <div className="head-actions flex flex-none items-center gap-3">
               <PixelButton
                 className="btn"
                 icon="/design/media/assets/icons/v2/capture-frame.png"
-                disabled={Boolean(busy)}
                 onClick={selectArea}
                 type="button"
               >
@@ -382,7 +315,9 @@ export function ControlCenterPage() {
                 icon={sectionIcon("capture")}
                 data-art-role={state.app.capture_running ? "danger" : "primary"}
                 disabled={
-                  Boolean(busy) ||
+                  isPending(
+                    state.app.capture_running ? "stop_capture" : "start_capture",
+                  ) ||
                   (!state.app.capture_running &&
                     state.runtime.status.phase !== "ready")
                 }
@@ -406,7 +341,7 @@ export function ControlCenterPage() {
             </div>
           )}
         </header>
-        <div className="page-body" data-anim="a">
+        <div key={section} className="page-body mx-auto min-h-0 w-full max-w-[1024px] flex-1 overflow-x-hidden overflow-y-auto px-8 pt-1 pb-10" data-anim="a">
           {connectionError && (
             <div className="banner" data-tone="warn" role="status">
               <span className="banner-text">{connectionError}</span>
@@ -428,7 +363,9 @@ export function ControlCenterPage() {
           {content}
           {choosingArea && (
             <CaptureChoiceDialog
-              busy={Boolean(busy)}
+              busy={
+                isPending("set_capture_mode") || isPending("select_region")
+              }
               onCancel={() => setChoosingArea(false)}
               onChooseMonitor={() => {
                 setChoosingArea(false);
@@ -444,1719 +381,4 @@ export function ControlCenterPage() {
       </main>
     </div>
   );
-}
-
-function Brand() {
-  return (
-    <div className="brand">
-      <img aria-hidden="true" className="brand-mark" src="/design/media/assets/icons/custom/hanly-app.png" alt="" />
-      <div className="brand-words">
-        <div className="brand-name">Hanly</div>
-        <div className="brand-sub">Control Center</div>
-      </div>
-    </div>
-  );
-}
-
-function LiveCard({
-  activity,
-  engine,
-  runtime,
-  version,
-  detail,
-}: {
-  activity: string;
-  engine: string;
-  runtime: string;
-  version?: string | null;
-  detail?: string;
-}) {
-  const tone =
-    activity === "running" ? "ok" : activity === "error" ? "bad" : "";
-  const runtimeTone =
-    runtime === "ready" ? "ok" : runtime === "failed" ? "bad" : "warn";
-  const engineTone =
-    engine === "ready" ? "ok" : engine === "error" ? "bad" : "";
-  return (
-    <div className="live-card" title={`${activity} · Runtime ${runtime} · Engine ${engine}`} aria-label={`${activity} · Runtime ${runtime} · Engine ${engine}`}>
-      <Mascot activity={activity} />
-      <div className="live-head">
-        <span
-          aria-hidden="true"
-          className="dot"
-          data-tone={tone || undefined}
-        />
-        <span className="live-label">{titleCase(activity, "Preparing")}</span>
-      </div>
-      <div className="live-detail">{detail}</div>
-      <div aria-live="polite" className="live-facts" role="status">
-        <div className="live-fact" data-tone={runtimeTone}>
-          <span>runtime</span>
-          <span>{valueText(runtime)}</span>
-        </div>
-        <div className="live-fact" data-tone={engineTone}>
-          <span>engine</span>
-          <span>{valueText(engine)}</span>
-        </div>
-        {version && (
-          <div className="live-fact">
-            <span>version</span>
-            <span>{version}</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function LoadingPanel({ message }: { message: string }) {
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2 className="panel-title">Hanly</h2>
-      </div>
-      <div className="panel-rows">
-        <div className="readiness-row">
-          <span className="readiness-detail">{message}</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CaptureChoiceDialog({
-  busy,
-  onCancel,
-  onChooseMonitor,
-  onChooseRegion,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onChooseMonitor: () => void;
-  onChooseRegion: () => void;
-}) {
-  const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => dialogRef.current?.focus(), []);
-
-  return (
-    <div
-      className="choice-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-    >
-      <section
-        aria-labelledby="capture-choice-title"
-        aria-modal="true"
-        className="choice-dialog panel"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onCancel();
-        }}
-        ref={dialogRef}
-        role="dialog"
-        tabIndex={-1}
-      >
-        <h2 className="panel-title" id="capture-choice-title">
-          Where should Hanly read?
-        </h2>
-        <p className="panel-note">
-          Choose the area Hanly should watch. This is saved as a setting.
-        </p>
-        <div className="choice-actions">
-          <PixelButton
-            className="btn"
-            disabled={busy}
-            onClick={onChooseMonitor}
-            type="button"
-          >
-            Whole monitor
-          </PixelButton>
-          <PixelButton
-            className="btn btn-primary"
-            disabled={busy}
-            onClick={onChooseRegion}
-            type="button"
-          >
-            Select an area
-          </PixelButton>
-          <PixelButton
-            className="btn btn-quiet"
-            disabled={busy}
-            onClick={onCancel}
-            type="button"
-          >
-            Cancel
-          </PixelButton>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function CapturePage({
-  state,
-  busy,
-  run,
-  saveSettings,
-  onSelectArea,
-}: {
-  state: HanlyState;
-  busy: boolean;
-  run: (
-    method: DesktopMethod,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>;
-  saveSettings: (changes: Record<string, unknown>) => Promise<unknown>;
-  onSelectArea: () => void;
-}) {
-  const config = state.config;
-  const app = state.app;
-  const bounds = state.runtime.hover_delay_bounds ?? { min: 20, max: 2000 };
-  const delay = config.hover_delay_ms ?? 80;
-  const [delayDraft, setDelayDraft] = useState(String(delay));
-  const [regionDraft, setRegionDraft] = useState({
-    left: "",
-    top: "",
-    width: "",
-    height: "",
-  });
-  const [formError, setFormError] = useState("");
-  const region = app.region ?? config.capture_region ?? null;
-  const mode = config.capture_mode ?? app.capture_mode ?? "full_monitor";
-  const selectedTarget =
-    app.target ||
-    (config.capture_monitor == null
-      ? "cursor"
-      : `monitor:${config.capture_monitor}`);
-  const selectedMonitor = app.targets.find(
-    (monitor) => `monitor:${monitor.index}` === selectedTarget,
-  );
-  const targetLabel =
-    selectedTarget === "cursor"
-      ? "the display under the cursor"
-      : (selectedMonitor?.name ??
-        selectedTarget.replace("monitor:", "Monitor "));
-
-  useEffect(() => {
-    setDelayDraft(String(delay));
-  }, [delay]);
-  useEffect(() => {
-    if (!region) return;
-    setRegionDraft({
-      left: String(region.left),
-      top: String(region.top),
-      width: String(region.width),
-      height: String(region.height),
-    });
-  }, [region?.left, region?.top, region?.width, region?.height]);
-
-  async function saveDelay(raw: string) {
-    const result = validateHoverDelay(raw, bounds);
-    if (!result.valid) {
-      setFormError(result.message);
-      setDelayDraft(String(delay));
-      return;
-    }
-    setFormError("");
-    setDelayDraft(String(result.value));
-    await run("set_hover_delay", { delay_ms: result.value });
-  }
-
-  async function applyRegion() {
-    const values = Object.fromEntries(
-      Object.entries(regionDraft).map(([key, value]) => [key, Number(value)]),
-    );
-    if (Object.values(values).some((value) => !Number.isInteger(value))) {
-      setFormError("Enter whole numbers for each region coordinate.");
-      return;
-    }
-    const next = values as {
-      left: number;
-      top: number;
-      width: number;
-      height: number;
-    };
-    if (next.width < 2 || next.height < 2) {
-      setFormError("The region must be at least 2 × 2 pixels.");
-      return;
-    }
-    setFormError("");
-    await run("set_region", { region: next });
-  }
-
-  return (
-    <section className="page">
-      <div
-        className="capture-status"
-        data-live={Boolean(app.capture_running)}
-        data-rise="1"
-      >
-        <span
-          aria-hidden="true"
-          className="dot"
-          data-live={Boolean(app.capture_running)}
-          data-tone={app.capture_running ? "ok" : undefined}
-        />
-        <span className="capture-headline">
-          {app.activity === "preparing"
-            ? "Preparing capture"
-            : app.activity === "error"
-              ? "Capture needs attention"
-              : app.capture_running
-                ? "Reading now"
-                : "Not reading"}
-        </span>
-        <span className="capture-where">
-          {(app.activity === "preparing" || app.activity === "error") &&
-          app.detail
-            ? app.detail
-            : mode === "region"
-              ? region
-                ? `${targetLabel} · ${region.width} × ${region.height} at ${region.left}, ${region.top}`
-                : `${targetLabel} · no region saved, reading the whole monitor`
-              : `${targetLabel} · whole screen`}
-        </span>
-        <span className="capture-hint">
-          {app.activity === "preparing"
-            ? "please wait"
-            : app.capture_running
-              ? config.hover_activation === "push_to_hover" && config.hotkey
-                ? `hold ${formatHotkey(config.hotkey).join(" ")}`
-                : "hover active"
-              : "press start to read"}
-        </span>
-      </div>
-
-      <div className="capture-stage">
-        <section
-          aria-labelledby="target-heading"
-          className="panel capture-target-panel"
-          data-rise="2"
-        >
-          <div className="panel-head">
-            <h2 className="panel-title" id="target-heading">
-              Reading target
-            </h2>
-          </div>
-          <div
-            aria-label="Capture target"
-            className="panel-rows target-choices"
-            role="radiogroup"
-          >
-            <TargetOption
-              selected={mode !== "region"}
-              disabled={busy}
-              label="Current monitor"
-              art="/design/media/assets/icons/custom/icon-monitor.svg"
-              detail="Follows the display the cursor is on."
-              onSelect={() =>
-                void run("set_capture_mode", { mode: "full_monitor" })
-              }
-            />
-            <TargetOption
-              selected={mode === "region"}
-              disabled={busy}
-              label="Selected region"
-              art="/design/media/assets/icons/v2/capture-frame.png"
-              detail="A fixed rectangle you draw once."
-              onSelect={() => void run("set_capture_mode", { mode: "region" })}
-            />
-          </div>
-          <div className="capture-guidance">
-            <img src="/design/media/assets/icons/v2/icon-info.png" alt="" />
-            <p>Hover over a Korean word to see its meaning.</p>
-          </div>
-        </section>
-
-        <div
-          aria-hidden={mode !== "region"}
-          inert={mode !== "region"}
-          className="region-collapse"
-          data-open={mode === "region"}
-        >
-          <div className="collapse-inner">
-            <section
-              aria-labelledby="region-heading"
-              className="panel collapse-gap"
-              data-rise="3"
-            >
-              <div className="region-head">
-                <h2 className="panel-title" id="region-heading">
-                  Region
-                </h2>
-                <span className="region-coords">{regionLabel(region)}</span>
-                <PixelButton
-                  className="btn btn-sm btn-quiet"
-                  disabled={busy}
-                  onClick={onSelectArea}
-                  type="button"
-                >
-                  Select area
-                </PixelButton>
-              </div>
-              <div className="region-body">
-                <div className="region-fields">
-                  {(["left", "top", "width", "height"] as const).map((key) => (
-                    <label className="field" key={key}>
-                      <span className="field-label">{key}</span>
-                      <input
-                        aria-label={`Region ${key}`}
-                        className="input"
-                        disabled={busy || mode !== "region"}
-                        inputMode="numeric"
-                        onChange={(event) =>
-                          setRegionDraft((current) => ({
-                            ...current,
-                            [key]: event.target.value,
-                          }))
-                        }
-                        value={regionDraft[key]}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <div className="region-actions">
-                  <PixelButton
-                    className="btn btn-sm btn-text"
-                    disabled={busy || mode !== "region"}
-                    onClick={() => void run("set_region", { region: null })}
-                    type="button"
-                  >
-                    Clear
-                  </PixelButton>
-                  <PixelButton
-                    className="btn btn-sm btn-primary"
-                    disabled={busy || mode !== "region"}
-                    onClick={() => void applyRegion()}
-                    type="button"
-                  >
-                    Apply
-                  </PixelButton>
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <details
-          aria-labelledby="capture-settings-heading"
-          className="settings-card capture-settings"
-          data-rise="4"
-        >
-          <summary className="capture-settings-summary" id="capture-settings-heading">
-            <span className="settings-summary-title">Capture settings</span>
-            <span className="settings-summary-note">Monitor · hover delay · engine</span>
-            <span aria-hidden="true" className="settings-chevron">⌄</span>
-          </summary>
-          <div className="capture-settings-body">
-          <CaptureSetting
-            label="Monitor"
-            controlId="capture-target"
-            help="Which display Hanly reads, in either target."
-          >
-            <select
-              aria-describedby="capture-target-help"
-              className="select"
-              id="capture-target"
-              disabled={busy}
-              onChange={(event) =>
-                void run("set_target", { target: event.target.value })
-              }
-              value={selectedTarget}
-            >
-              <option value="cursor">Follow cursor</option>
-              {app.targets.map((monitor) => (
-                <option key={monitor.index} value={`monitor:${monitor.index}`}>
-                  {monitor.name}
-                </option>
-              ))}
-            </select>
-          </CaptureSetting>
-          <CaptureSetting
-            label="Hover delay"
-            controlId="hover-delay-slider"
-            help="How long the cursor rests before Hanly reads."
-          >
-            <input
-              aria-label="Hover delay in milliseconds"
-              aria-describedby="hover-delay-slider-help"
-              disabled={busy}
-              id="hover-delay-slider"
-              max={bounds.max}
-              min={bounds.min}
-              onChange={(event) => setDelayDraft(event.target.value)}
-              onPointerUp={(event) => void saveDelay(event.currentTarget.value)}
-              onKeyUp={(event) => {
-                if (event.key.startsWith("Arrow"))
-                  void saveDelay(event.currentTarget.value);
-              }}
-              step="10"
-              type="range"
-              value={delayDraft}
-            />
-            <span className="delay-value">
-              <input
-                aria-label="Hover delay value in milliseconds"
-                aria-describedby="hover-delay-slider-help"
-                className="delay-input"
-                disabled={busy}
-                inputMode="numeric"
-                onBlur={(event) => void saveDelay(event.currentTarget.value)}
-                onChange={(event) => setDelayDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-                value={delayDraft}
-              />
-              <span className="delay-unit">ms</span>
-            </span>
-          </CaptureSetting>
-          <CaptureSetting
-            label="Lookup engine"
-            controlId="lookup-preload"
-            help={
-              config.lookup_preload === "always"
-                ? "Loaded at launch and kept loaded, including through pause."
-                : config.lookup_preload === "on_demand"
-                  ? "Nothing is loaded until a lookup needs it."
-                  : "Loaded while watching the screen, retired on pause."
-            }
-          >
-            <select
-              aria-describedby="lookup-preload-help"
-              className="select"
-              disabled={busy}
-              id="lookup-preload"
-              onChange={(event) =>
-                void saveSettings({ lookup_preload: event.target.value })
-              }
-              value={String(config.lookup_preload ?? "when_capture_starts")}
-            >
-              <option value="when_capture_starts">
-                Load while watching the screen
-              </option>
-              <option value="always">Keep loaded</option>
-              <option value="on_demand">Load only for a lookup</option>
-            </select>
-          </CaptureSetting>
-          <CaptureSetting
-            label="Text recognizer"
-            controlId="ocr-backend"
-            help={
-              state.runtime.ocr_provider
-                ? `In use: ${state.runtime.ocr_provider}`
-                : "Recognizer availability has not been reported."
-            }
-          >
-            <select
-              aria-describedby="ocr-backend-help"
-              className="select"
-              disabled={busy || (state.runtime.ocr_backends ?? []).length === 0}
-              id="ocr-backend"
-              onChange={(event) =>
-                void saveSettings({ ocr_backend: event.target.value })
-              }
-              value={String(config.ocr_backend ?? "auto")}
-            >
-              <option value="auto">Automatic (recommended)</option>
-              {(state.runtime.ocr_backends ?? [])
-                .filter((backend) => backend !== "auto")
-                .map((backend) => (
-                  <option key={backend} value={backend}>
-                    {backend === "vision" ? "Apple Vision" : "EasyOCR"}
-                  </option>
-                ))}
-            </select>
-          </CaptureSetting>
-          {formError && (
-            <div className="banner" data-tone="bad" role="alert">
-              {formError}
-            </div>
-          )}
-          </div>
-        </details>
-      </div>
-    </section>
-  );
-}
-
-function CaptureSetting({
-  label,
-  controlId,
-  help,
-  children,
-}: {
-  label: string;
-  controlId: string;
-  help: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="settings-row">
-      <label className="settings-name" htmlFor={controlId}>
-        {label}
-      </label>
-      <div className="settings-control">{children}</div>
-      <span className="settings-help" id={`${controlId}-help`}>
-        {help}
-      </span>
-    </div>
-  );
-}
-
-function TargetOption({
-  selected,
-  disabled,
-  label,
-  detail,
-  art,
-  onSelect,
-}: {
-  selected: boolean;
-  disabled: boolean;
-  label: string;
-  detail: string;
-  art?: string;
-  onSelect: () => void;
-}) {
-  return (
-    <PixelButton
-      aria-checked={selected}
-      className="option"
-      disabled={disabled}
-      onClick={onSelect}
-      role="radio"
-      type="button"
-    >
-      <span aria-hidden="true" className="option-radio" />
-      {art && <img className="target-art" alt="" src={art} />}
-      <span className="option-text">
-        <span className="option-label">{label}</span>
-        <span className="option-desc">{detail}</span>
-      </span>
-    </PixelButton>
-  );
-}
-
-function PermissionsPage({
-  state,
-  busy,
-  run,
-}: {
-  state: HanlyState;
-  busy: boolean;
-  run: (
-    method: DesktopMethod,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>;
-}) {
-  const permissions = state.permissions;
-  const items = permissions.items ?? [];
-  const missing = items.filter((item) => !item.granted);
-  useEffect(() => {
-    if (!permissions.supported) return;
-    const refresh = () => void run("refresh_permissions");
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [permissions.supported, run]);
-
-  return (
-    <div className="page stack stack-wide narrow">
-      <section className="panel panel-quiet" data-rise="1">
-        <div className="panel-head">
-          <div>
-            <h2 className="panel-title">Desktop access</h2>
-            <p className="panel-note">
-              Permission grants are checked by Hanly before capture begins.
-            </p>
-          </div>
-          <PixelButton
-            className="btn btn-sm"
-            disabled={busy || !permissions.supported}
-            onClick={() => void run("refresh_permissions")}
-            type="button"
-          >
-            Recheck
-          </PixelButton>
-        </div>
-        {!permissions.supported ? (
-          <div className="panel-rows">
-            <div className="readiness-row">
-              <span className="readiness-detail">
-                {permissions.available === false
-                  ? permissions.message ||
-                    "Permission checks are not connected in this build."
-                  : "This platform does not require a separate permission check."}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <>
-            {missing.length > 0 && (
-              <div
-                aria-live="polite"
-                className="permission-onboarding"
-                role="status"
-              >
-                <strong>Before Hanly can read</strong>
-                <span>
-                  Grant the required desktop access, then return here and
-                  recheck.
-                </span>
-                <span>
-                  Grant access opens System Settings: switch Hanly on there.
-                  An entry already switched on belongs to an earlier copy of
-                  Hanly; Grant access clears it, so switch the new one on.
-                </span>
-              </div>
-            )}
-            <div className="panel-rows">
-              {items.map((item) => (
-                <PermissionCard
-                  key={item.id}
-                  item={item}
-                  busy={busy}
-                  onGrant={() =>
-                    void run("grant_permission", { permission: item.id })
-                  }
-                />
-              ))}
-            </div>
-          </>
-        )}
-        <p className="panel-note" style={{ padding: "0 14px 12px" }}>
-          Granted permissions stay listed so you can see what Hanly is using.
-        </p>
-      </section>
-    </div>
-  );
-}
-
-function PermissionCard({
-  item,
-  busy,
-  onGrant,
-}: {
-  item: PermissionItem;
-  busy: boolean;
-  onGrant: () => void;
-}) {
-  const tone = item.granted ? "ok" : item.state === "unknown" ? "warn" : "bad";
-  return (
-    <div className="permission" data-granted={item.granted}>
-      <span
-        aria-hidden="true"
-        className="dot"
-        data-tone={item.granted ? "ok" : "info"}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="permission-head">
-          <span className="permission-name">{item.label}</span>
-          <span className="tag" data-tone={tone}>
-            {item.granted
-              ? "granted"
-              : item.state === "unknown"
-                ? "unknown"
-                : "required"}
-          </span>
-        </div>
-        <div className="permission-why">
-          {item.requirement} {item.granted ? "" : item.restart_note}
-        </div>
-      </div>
-      {!item.granted && (
-        <PixelButton
-          className="btn btn-sm btn-primary"
-          data-art-role="mint"
-          disabled={busy}
-          onClick={onGrant}
-          type="button"
-        >
-          Grant access
-        </PixelButton>
-      )}
-    </div>
-  );
-}
-
-function ShortcutsPage({
-  state,
-  busy,
-  run,
-  saveSettings,
-}: {
-  state: HanlyState;
-  busy: boolean;
-  run: (
-    method: DesktopMethod,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>;
-  saveSettings: (changes: Record<string, unknown>) => Promise<unknown>;
-}) {
-  const [recording, setRecording] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!recording) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      event.preventDefault();
-      if (event.key === "Escape") {
-        setRecording(null);
-        return;
-      }
-      const binding = hotkeyFromKeyboardEvent(event);
-      if (!binding) return;
-      const field = recording;
-      setRecording(null);
-      setError("");
-      const update =
-        field === "hotkey"
-          ? run("set_hotkey", { hotkey: binding })
-          : saveSettings({ [field]: binding });
-      void update.catch((reason: unknown) => setError(errorText(reason)));
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [recording, run, saveSettings]);
-
-  const registered = state.runtime.hotkeys ?? {};
-  const prepared = (state.app.state ?? "new") !== "new";
-  return (
-    <div className="page stack stack-wide narrow">
-      {HOTKEYS.map((item, index) => {
-        const stored = String(state.config[item.id] ?? "");
-        const live = registered[item.action] ?? "";
-        const isRecording = recording === item.id;
-        const note =
-          !isRecording &&
-          (!stored
-            ? {
-                tone: "warn",
-                title: "Unassigned.",
-                text: "No free combination was left for this action. Choose one.",
-              }
-            : live && live !== stored
-              ? {
-                  tone: "warn",
-                  title: `Registered as ${live}.`,
-                  text: "The stored shortcut was not the one the system accepted.",
-                }
-              : prepared && stored && !live
-                ? {
-                    tone: "bad",
-                    title: "Not registered.",
-                    text: "Another application may already own this combination, so your keyboard does not do this yet.",
-                  }
-                : sharesAppShortcut(stored)
-                  ? {
-                      tone: "warn",
-                      title: "Used by other apps.",
-                      text: "Most apps already use this combination, and Hanly takes it from all of them while it runs. Add another modifier key.",
-                    }
-                  : null);
-        return (
-          <section
-            className="panel"
-            data-recording={isRecording}
-            data-rise={index + 1}
-            key={item.id}
-          >
-            <div className="shortcut-row">
-              <div className="shortcut-text">
-                <div className="shortcut-name">{item.name}</div>
-                <div className="shortcut-hint">{item.hint}</div>
-              </div>
-              <div
-                aria-label={`${item.name} shortcut`}
-                className="shortcut-keys"
-              >
-                {isRecording ? (
-                  <span className="key" data-kind="recording">
-                    Press keys… Esc cancels
-                  </span>
-                ) : !stored ? (
-                  <span className="key" data-kind="empty">
-                    unassigned
-                  </span>
-                ) : (
-                  formatHotkey(stored).map((key, keyIndex) => (
-                    <span className="key" key={`${key}-${keyIndex}`}>
-                      {key}
-                    </span>
-                  ))
-                )}
-              </div>
-              <PixelButton
-                aria-label={`${isRecording ? "Cancel" : stored ? "Change" : "Assign"} ${item.name} shortcut`}
-                icon={!isRecording ? "/design/media/assets/icons/v2/icon-edit.png" : undefined}
-                className={`btn btn-sm btn-fixed shortcut-edit${!stored && !isRecording ? " btn-primary" : ""}`}
-                disabled={busy}
-                onClick={() => setRecording(isRecording ? null : item.id)}
-                type="button"
-              >
-
-                {isRecording ? "Cancel" : stored ? "Change" : "Assign"}
-              </PixelButton>
-            </div>
-            {note && (
-              <div className="shortcut-note" data-tone={note.tone}>
-                <span aria-hidden="true" className="dot" />
-                <span>
-                  <span className="shortcut-note-title">{note.title}</span>{" "}
-                  {note.text}
-                </span>
-              </div>
-            )}
-          </section>
-        );
-      })}
-      {error && (
-        <div className="banner" data-tone="bad" role="alert">
-          {error}
-        </div>
-      )}
-      <section className="panel" data-rise="4">
-        <div className="panel-head">
-          <div>
-            <h2 className="panel-title">Automatic hover</h2>
-            <p className="panel-note">
-              Choose when the Push to Hover action is active.
-            </p>
-          </div>
-        </div>
-        <div className="panel-rows" role="radiogroup">
-          {[
-            {
-              value: "push_to_hover",
-              label: "Only while held",
-              desc: "Hover reads while the Push to Hover shortcut is held down.",
-            },
-            {
-              value: "always_active",
-              label: "Whenever capture is running",
-              desc: "Hover reads for the whole capture session, subject to permissions.",
-            },
-          ].map((mode) => (
-            <TargetOption
-              key={mode.value}
-              selected={state.config.hover_activation === mode.value}
-              disabled={busy}
-              label={mode.label}
-              detail={mode.desc}
-              onSelect={() =>
-                void saveSettings({ hover_activation: mode.value })
-              }
-            />
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function AppearancePage({
-  state,
-  busy,
-  saveSettings,
-}: {
-  state: HanlyState;
-  busy: boolean;
-  saveSettings: (changes: Record<string, unknown>) => Promise<unknown>;
-}) {
-  const config = state.config;
-  const groups = [
-    {
-      key: "sidebar_layout",
-      label: "Navigation",
-      note: "Use a compact rail without resizing the window.",
-      options: [
-        ["normal", "Normal"],
-        ["compact", "Compact"],
-      ],
-    },
-    {
-      key: "theme",
-      label: "Theme",
-      note: "System follows the desktop setting.",
-      options: [
-        ["system", "System"],
-        ["light", "Light"],
-        ["dark", "Dark"],
-      ],
-    },
-    {
-      key: "popup_font",
-      label: "Popup typeface",
-      note: "Choose crisp standard text or the original pixel lettering.",
-      options: [
-        ["pixel", "Pixel"],
-        ["normal", "Normal"],
-      ],
-    },
-    {
-      key: "popup_default_size",
-      label: "Default popup size",
-      note: "How each new dictionary popup opens.",
-      options: [
-        ["compact", "Compact"],
-        ["expanded", "Expanded"],
-      ],
-    },
-    {
-      key: "technical_details",
-      label: "Technical details",
-      note: "Off keeps the popup focused on reading.",
-      options: [
-        ["off", "Off"],
-        ["basic", "Basic"],
-        ["full", "Full"],
-      ],
-    },
-  ] as const;
-
-  return (
-    <div className="page stack stack-wide narrow">
-      {groups.map((group, index) => (
-        <section
-          className="panel"
-          data-rise={index + 1}
-          key={group.key}
-          aria-labelledby={`${group.key}-heading`}
-        >
-          <div className="panel-head">
-            <div>
-              <h2 className="panel-title" id={`${group.key}-heading`}>
-                {group.label}
-              </h2>
-              <p className="panel-note">{group.note}</p>
-            </div>
-            <div aria-label={group.label} className="segmented" role="group">
-              {group.options.map(([value, label]) => (
-                <PixelButton
-                  aria-pressed={(config[group.key] ?? (group.key === "popup_font" ? "pixel" : "normal")) === value}
-                  className="segment"
-                  disabled={busy}
-                  key={value}
-                  onClick={() => void saveSettings({ [group.key]: value })}
-                  type="button"
-                >
-                  {label}
-                </PixelButton>
-              ))}
-            </div>
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function UpdatesPage({
-  state,
-  busy,
-  run,
-}: {
-  state: HanlyState;
-  busy: boolean;
-  run: (
-    method: DesktopMethod,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>;
-}) {
-  const updates = state.updates;
-  const [resourcesOpen, setResourcesOpen] = useState(false);
-  const [activityOpen, setActivityOpen] = useState(false);
-  const application = updates.application;
-  const isBusy = UPDATE_BUSY.has(updates.status ?? "");
-  const availableResources = new Map(
-    (updates.resources ?? [])
-      .filter((resource) => resource.available)
-      .map((item) => [item.id, item]),
-  );
-  const resources = state.runtime.resources;
-  const activity = updates.activity ?? [];
-  const progress = updates.progress;
-  const fraction =
-    typeof progress?.fraction === "number"
-      ? Math.max(0, Math.min(1, progress.fraction))
-      : progress?.total
-        ? Math.max(0, Math.min(1, (progress.completed ?? 0) / progress.total))
-        : null;
-  const bytesLine = progress?.total
-    ? `${formatBytes(progress.completed ?? 0)} / ${formatBytes(progress.total)}`
-    : "";
-
-  return (
-    <div className="page stack stack-wide">
-      <section
-        className="panel"
-        data-tone={
-          updates.status === "failed"
-            ? "bad"
-            : application?.installable || updates.awaiting_confirmation
-              ? "accent"
-              : undefined
-        }
-        data-rise="1"
-      >
-        <div className="panel-head">
-          <div>
-            <h2 className="panel-title">Hanly application</h2>
-            <p className="panel-note">
-              Application files update separately from dictionary resources.
-            </p>
-          </div>
-          <span
-            className="tag"
-            data-tone={
-              updates.status === "failed"
-                ? "bad"
-                : application?.installable
-                  ? "accent"
-                  : "ok"
-            }
-          >
-            {valueText(updates.status, "not checked")}
-          </span>
-        </div>
-        {isBusy ? (
-          <div className="update-busy">
-            <div className="update-busy-line">
-              <span className="update-strong">
-                {updates.message || titleCase(updates.status)}
-              </span>
-              <span className="update-detail">{bytesLine}</span>
-              <span className="update-percent">
-                {fraction === null ? "" : `${Math.round(fraction * 100)}%`}
-              </span>
-            </div>
-            <PixelProgress fraction={fraction} />
-            {updates.cancellable && (
-              <div className="update-actions">
-                <PixelButton
-                  className="btn btn-sm btn-quiet"
-                  disabled={busy}
-                  onClick={() => void run("cancel_update")}
-                  type="button"
-                >
-                  Cancel
-                </PixelButton>
-              </div>
-            )}
-          </div>
-        ) : updates.restart_required || updates.status === "restart" ? (
-          <div className="update-line">
-            <div>
-              <div className="update-strong">Ready to restart</div>
-              <div className="update-sub">
-                {updates.message ||
-                  "Hanly restarts into the new build. Your settings stay."}
-              </div>
-            </div>
-          </div>
-        ) : updates.awaiting_confirmation ? (
-          <div className="update-block update-confirmation">
-            <div className="update-strong">
-              This installation needs the full download
-            </div>
-            <div className="update-sub">{updates.message}</div>
-            <div className="update-actions">
-              <PixelButton
-                className="btn btn-primary"
-                disabled={busy}
-                onClick={() =>
-                  void run("install_application_update", { confirm_full: true })
-                }
-                type="button"
-              >
-                Download full update
-              </PixelButton>
-              <PixelButton
-                className="btn btn-quiet"
-                disabled={busy}
-                onClick={() => void run("cancel_update")}
-                type="button"
-              >
-                Not now
-              </PixelButton>
-            </div>
-          </div>
-        ) : application?.installable ? (
-          <div className="update-block">
-            <div className="update-versions">
-              <span className="update-from">
-                {application.current_version ?? "Current"}
-              </span>
-              <span className="update-from">→</span>
-              <span className="update-to">{application.latest_version}</span>
-              {updates.plan && (
-                <span className="update-size">
-                  · {describePlan(updates.plan)}
-                </span>
-              )}
-            </div>
-            {application.message && (
-              <p className="update-sub">{application.message}</p>
-            )}
-            <div className="update-actions">
-              <PixelButton
-                className="btn btn-primary"
-                disabled={busy}
-                onClick={() =>
-                  void run("install_application_update", {
-                    confirm_full: false,
-                  })
-                }
-                type="button"
-              >
-                Install update
-              </PixelButton>
-              {application.release_url && (
-                <PixelButton
-                  className="btn btn-quiet"
-                  disabled={busy}
-                  onClick={() => void run("open_release_notes")}
-                  type="button"
-                >
-                  View release notes
-                </PixelButton>
-              )}
-            </div>
-          </div>
-        ) : updates.status === "failed" ? (
-          <div className="update-line">
-            <div>
-              <div className="update-strong">Update check failed</div>
-              <div className="update-sub" role="alert">
-                {updates.message ||
-                  application?.message ||
-                  "Hanly could not check for updates."}
-              </div>
-            </div>
-            <PixelButton
-              className="btn"
-              disabled={busy}
-              onClick={() => void run("check_for_updates")}
-              type="button"
-            >
-              Try again
-            </PixelButton>
-          </div>
-        ) : (
-          <div className="update-line">
-            <div>
-              <div className="update-strong">
-                Hanly {state.runtime.app_version ?? ""}
-              </div>
-              <div className="update-sub">
-                {updates.message ||
-                  application?.message ||
-                  "No update check has been run."}
-              </div>
-            </div>
-            <PixelButton
-              className="btn"
-              disabled={busy}
-              onClick={() => void run("check_for_updates")}
-              type="button"
-            >
-              Check now
-            </PixelButton>
-          </div>
-        )}
-      </section>
-
-      <section className="panel" data-rise="2">
-        <PixelButton
-          aria-controls="resource-collapse"
-          aria-expanded={resourcesOpen}
-          className="disclosure"
-          onClick={() => setResourcesOpen((open) => !open)}
-          type="button"
-        >
-          <span aria-hidden="true" className="disclosure-caret">
-            ▾
-          </span>
-          Dictionary and resources
-          <span className="disclosure-summary">{resources.length}</span>
-        </PixelButton>
-        <div
-          aria-hidden={!resourcesOpen}
-          inert={!resourcesOpen}
-          className="region-collapse"
-          data-open={resourcesOpen}
-          id="resource-collapse"
-        >
-          <div className="collapse-inner">
-            <div className="panel-rows">
-              {resources.length === 0 ? (
-                <p className="resource-foot">
-                  No local resources have been reported yet.
-                </p>
-              ) : (
-                resources.map((resource) => (
-                  <ResourceRow
-                    key={resource.id}
-                    resource={resource}
-                    offered={availableResources.get(resource.id)}
-                    busy={busy || isBusy}
-                    install={() =>
-                      void run("install_update", { resource_id: resource.id })
-                    }
-                  />
-                ))
-              )}
-            </div>
-            <p className="resource-foot">
-              Resources swap without restarting. Lookups pause for a moment
-              during the swap.
-            </p>
-          </div>
-        </div>
-      </section>
-      <section className="panel panel-quiet" data-rise="3">
-        <PixelButton
-          aria-controls="activity-collapse"
-          aria-expanded={activityOpen}
-          className="disclosure"
-          onClick={() => setActivityOpen((open) => !open)}
-          type="button"
-        >
-          <span aria-hidden="true" className="disclosure-caret">
-            ▾
-          </span>
-          Update activity
-          <span className="disclosure-summary">{activity.length}</span>
-        </PixelButton>
-        <div
-          aria-hidden={!activityOpen}
-          inert={!activityOpen}
-          className="region-collapse"
-          data-open={activityOpen}
-          id="activity-collapse"
-        >
-          <div className="collapse-inner">
-            <div
-              className="panel-rows"
-              style={{ borderTop: "1px solid var(--border)" }}
-            >
-              {activity.length ? (
-                activity.map((item, index) => (
-                  <div className="log-row" key={`${item.at ?? index}-${index}`}>
-                    <span className="log-time">
-                      {item.at
-                        ? new Date(item.at * 1000).toLocaleTimeString()
-                        : ""}
-                    </span>
-                    <span className="log-message">{item.message}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="resource-foot">
-                  No update activity has been reported.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ResourceRow({
-  resource,
-  offered,
-  busy,
-  install,
-}: {
-  resource: RuntimeResource;
-  offered?: { id: string; available?: boolean; version?: string };
-  busy: boolean;
-  install: () => void;
-}) {
-  return (
-    <div className="resource-row">
-      <div className="resource-text">
-        <div className="resource-name">{resource.id}</div>
-        <div className="resource-detail">
-          {[
-            resource.kind,
-            resource.version ? `v${resource.version}` : "version not reported",
-            resource.compatible ? "compatible" : "review needed",
-            offered?.version ? `→ v${offered.version}` : "",
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </div>
-      </div>
-      <span
-        className="tag"
-        data-tone={
-          offered?.available ? "accent" : resource.compatible ? "ok" : "warn"
-        }
-      >
-        {offered?.available ? "update available" : valueText(resource.status)}
-      </span>
-      {offered?.available && (
-        <PixelButton
-          className="btn btn-sm"
-          disabled={busy}
-          onClick={install}
-          type="button"
-        >
-          Install
-        </PixelButton>
-      )}
-    </div>
-  );
-}
-
-function LogsPage({
-  state,
-  busy,
-  run,
-}: {
-  state: HanlyState;
-  busy: boolean;
-  run: (
-    method: DesktopMethod,
-    params?: Record<string, unknown>,
-  ) => Promise<unknown>;
-}) {
-  const [snapshot, setSnapshot] = useState<LogSnapshot | null>(null);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [filter, setFilter] = useState("all");
-  const [subsystem, setSubsystem] = useState("all");
-  const [search, setSearch] = useState("");
-
-  const refreshLogs = useCallback(async () => {
-    setError("");
-    setNotice("");
-    try {
-      setSnapshot(await getLogs());
-    } catch (reason) {
-      setError(errorText(reason));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshLogs();
-  }, [refreshLogs]);
-  const records = useMemo(
-    () =>
-      (snapshot?.records ?? []).filter(
-        (record) =>
-          (filter === "all" || record.level === filter) &&
-          (subsystem === "all" || record.subsystem === subsystem) &&
-          (!search.trim() ||
-            record.message
-              .toLocaleLowerCase()
-              .includes(search.trim().toLocaleLowerCase())),
-      ),
-    [filter, search, snapshot, subsystem],
-  );
-  const readiness = readinessRows(state);
-  const levels = [
-    "all",
-    ...(snapshot?.levels ?? []).filter((level) => level !== "all"),
-  ];
-
-  async function copyLogs() {
-    const text = records
-      .map((record) =>
-        [record.timestamp, record.level, record.subsystem, record.message].join(
-          "\t",
-        ),
-      )
-      .join("\n");
-    try {
-      await run("copy_text", { text });
-      setError("");
-      setNotice(
-        `Copied ${records.length} visible ${records.length === 1 ? "record" : "records"}.`,
-      );
-    } catch (reason) {
-      setError(errorText(reason));
-    }
-  }
-
-  async function emptyLogs() {
-    try {
-      setSnapshot(await clearLogs());
-      setError("");
-      setNotice("Session log cleared.");
-    } catch (reason) {
-      setError(errorText(reason));
-    }
-  }
-
-  async function saveDiagnostics() {
-    try {
-      const saved = await exportDiagnostics();
-      setError("");
-      setNotice(`Saved ${saved.records} records to ${saved.path}`);
-    } catch (reason) {
-      setError(errorText(reason));
-    }
-  }
-
-  return (
-    <div className="page stack stack-wide">
-      <section className="panel" data-rise="1">
-        <div className="panel-head">
-          <div>
-            <h2 className="panel-title">Runtime readiness</h2>
-            <p className="panel-note">
-              Readiness and provider residency are separate states.
-            </p>
-          </div>
-          <PixelButton
-            className="btn btn-sm"
-            disabled={busy}
-            onClick={() => void run("retry_runtime")}
-            type="button"
-          >
-            Retry runtime
-          </PixelButton>
-        </div>
-        <div className="readiness-stage">
-          <div className="readiness-rows">
-            {readiness.map((row) => (
-              <div className="readiness-row" key={row.label}>
-                <span
-                  aria-hidden="true"
-                  className="dot"
-                  data-tone={row.tone || undefined}
-                />
-                <span className="readiness-label">{row.label}</span>
-                <span className="readiness-detail">{row.detail}</span>
-                <span
-                  className="readiness-value"
-                  data-tone={row.tone || undefined}
-                >
-                  {row.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-      <section className="panel panel-quiet" data-rise="2">
-        <div className="logs-head">
-          <h2 className="panel-title">Recent records</h2>
-          <div aria-label="Filter by log level" className="logs-filters">
-            {levels.map((level) => (
-              <PixelButton
-                aria-pressed={filter === level}
-                className="chip"
-                key={level}
-                onClick={() => setFilter(level)}
-                type="button"
-              >
-                {titleCase(level)}
-              </PixelButton>
-            ))}
-          </div>
-          <select
-            aria-label="Filter by subsystem"
-            className="select"
-            onChange={(event) => setSubsystem(event.target.value)}
-            value={subsystem}
-          >
-            <option value="all">All subsystems</option>
-            {(snapshot?.subsystems ?? []).map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <input
-            aria-label="Search logs"
-            className="log-search"
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search records"
-            value={search}
-          />
-        </div>
-        <div aria-live="polite" className="log-list">
-          {records.length === 0 ? (
-            <div className="log-empty">{error || "No records match."}</div>
-          ) : (
-            records.map((record, index) => (
-              <LogLine key={`${record.timestamp}-${index}`} record={record} />
-            ))
-          )}
-        </div>
-        <div className="logs-foot">
-          <span className="logs-summary">
-            {snapshot
-              ? `${records.length} of ${snapshot.records.length} records · ${snapshot.log_path ?? state.runtime.log_path ?? ""}`
-              : "Logs are loading."}
-          </span>
-          <div className="logs-actions">
-            <PixelButton
-              className="btn btn-sm"
-              disabled={busy || !snapshot}
-              onClick={() => void refreshLogs()}
-              type="button"
-            >
-              Refresh
-            </PixelButton>
-            <PixelButton
-              className="btn btn-sm"
-              disabled={busy || records.length === 0}
-              onClick={() => void copyLogs()}
-              type="button"
-            >
-              Copy visible
-            </PixelButton>
-            <PixelButton
-              className="btn btn-sm btn-quiet"
-              disabled={busy || !snapshot}
-              onClick={() => void emptyLogs()}
-              type="button"
-            >
-              Clear
-            </PixelButton>
-            <PixelButton
-              className="btn btn-sm btn-quiet"
-              disabled={busy}
-              onClick={() => void saveDiagnostics()}
-              type="button"
-            >
-              Export diagnostics
-            </PixelButton>
-          </div>
-        </div>
-      </section>
-      {error && (
-        <div className="banner" data-tone="bad" role="alert">
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="banner" data-tone="warn" role="status">
-          {notice}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LogLine({ record }: { record: LogRecord }) {
-  return (
-    <div className="log-row" data-level={record.level}>
-      <span className="log-time">
-        {new Date(record.timestamp).toLocaleTimeString()}
-      </span>
-      <span className="log-level">{record.level}</span>
-      <span className="log-subsystem">{record.subsystem}</span>
-      <span className="log-message">{record.message}</span>
-    </div>
-  );
-}
-
-function readinessRows(
-  state: HanlyState,
-): Array<{ label: string; value: string; detail: string; tone?: string }> {
-  const status = state.runtime.status ?? {};
-  const engine = state.runtime.engine ?? {};
-  const hotkeys = state.runtime.hotkeys ?? {};
-  const bound = HOTKEYS.filter((item) => Boolean(state.config[item.id]));
-  const active = bound.filter((item) => Boolean(hotkeys[item.action]));
-  const rows = [
-    {
-      label: "Runtime",
-      value: titleCase(status.phase),
-      detail: status.message || titleCase(status.stage, ""),
-      tone:
-        status.phase === "ready"
-          ? "ok"
-          : status.phase === "failed"
-            ? "bad"
-            : "warn",
-    },
-    {
-      label: "Lookup engine",
-      value:
-        engine.state === "ready"
-          ? "loaded"
-          : engine.state === "sleeping"
-            ? "sleeping"
-            : titleCase(engine.state),
-      detail: engine.message ?? "",
-      tone: engine.state === "error" ? "bad" : "",
-    },
-    {
-      label: "OCR",
-      value: state.runtime.ocr_provider ?? "not reported",
-      detail: "",
-      tone: "",
-    },
-    {
-      label: "Shortcuts",
-      value: `${active.length} / ${HOTKEYS.length}`,
-      detail: bound.length === HOTKEYS.length ? "" : "one action is unassigned",
-      tone: active.length === HOTKEYS.length ? "ok" : "warn",
-    },
-  ];
-  for (const resource of state.runtime.resources ?? []) {
-    rows.push({
-      label: resource.id,
-      value: resource.version
-        ? `v${resource.version}`
-        : titleCase(resource.status),
-      detail: [
-        resource.kind,
-        resource.compatible ? "compatible" : "review needed",
-        ...(resource.diagnostics ?? []),
-      ]
-        .filter(Boolean)
-        .join(" · "),
-      tone: resource.compatible ? "ok" : "warn",
-    });
-  }
-  const permissions = state.permissions.items ?? [];
-  if (state.permissions.supported) {
-    const granted = permissions.filter((item) => item.granted).length;
-    rows.push({
-      label: "Permissions",
-      value: `${granted} / ${permissions.length}`,
-      detail: permissions
-        .filter((item) => !item.granted)
-        .map((item) => item.label)
-        .join(", "),
-      tone: granted === permissions.length ? "ok" : "warn",
-    });
-  }
-  return rows;
-}
-
-function formatBytes(bytes?: number): string {
-  if (typeof bytes !== "number" || bytes <= 0) return "";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-function describePlan(plan: UpdateState["plan"]): string {
-  if (!plan) return "";
-  const kind =
-    plan.source === "delta" ? "Differential update" : "Full download";
-  const counts = [
-    plan.replace_count && `${plan.replace_count} replaced`,
-    plan.add_count && `${plan.add_count} added`,
-    plan.delete_count && `${plan.delete_count} removed`,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  return [kind, formatBytes(plan.download_bytes), counts]
-    .filter(Boolean)
-    .join(" · ");
 }

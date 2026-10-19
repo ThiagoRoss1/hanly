@@ -40,7 +40,16 @@ pub fn reset(presentation: &SharedPresentation) {
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
-        let window = tauri::WebviewWindowBuilder::from_config(app, config)?
+        let builder = tauri::WebviewWindowBuilder::from_config(app, config)?;
+        #[cfg(target_os = "macos")]
+        let builder = if config.label == "control-center" {
+            builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+        } else {
+            builder
+        };
+        let window = builder
             .incognito(
                 app.state::<crate::DesktopState>()
                     .options

@@ -5,14 +5,23 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ReactNode } from "react";
-import type {
-  DesktopPopupEvent,
-  PopupContent,
-  PopupEntry,
-  PopupPayload,
-  PopupSense,
-} from "../contracts/desktop.ts";
+import type { DesktopPopupEvent } from "../contracts/desktop.ts";
+import { PopupFooter } from "../components/popup/PopupFooter.tsx";
+import {
+  PopupNonSuccessContent,
+  PopupSuccessContent,
+} from "../components/popup/PopupContent.tsx";
+import {
+  COMPACT_POPUP_WIDTH,
+  EXPANDED_POPUP_WIDTH,
+  POPUP_MAX_HEIGHT,
+  initiallyExpanded,
+  maximumPopupWidth,
+  numberValue,
+  popupContent,
+  popupFont,
+  text,
+} from "../components/popup/popupModel.ts";
 import {
   desktopRequest,
   markFrontendReady,
@@ -20,75 +29,8 @@ import {
 import { listenToDesktopEvents } from "../services/desktopEvents.ts";
 import { normalizeDesktopError } from "../services/desktopBridgeCore.ts";
 
-function popupContent(payload: PopupPayload): PopupContent {
-  return payload.content ?? payload;
-}
-
-function initiallyExpanded(payload: PopupPayload): boolean {
-  if (typeof payload.expanded === "boolean") return payload.expanded;
-  return payload.config?.popup_default_size === "expanded";
-}
-
-function text(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function numberValue(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : fallback;
-}
-
-function maximumPopupWidth(): number {
-  const available = window.screen.availWidth;
-  return available > 0 ? Math.max(280, available - 16) : EXPANDED_POPUP_WIDTH;
-}
-
-type PopupFont = "pixel" | "normal";
-
-function popupFont(payload: PopupPayload | undefined): PopupFont {
-  if (!payload) return "pixel";
-
-  const withFont = payload as PopupPayload & {
-    popup_font?: unknown;
-    config?: PopupPayload["config"] & { popup_font?: unknown };
-  };
-  const configured = withFont.config?.popup_font ?? withFont.popup_font;
-
-  return configured === "normal" ? "normal" : "pixel";
-}
-
-function entryGloss(entry: PopupEntry): string {
-  const sense = entry.senses?.find((item) => item.gloss || item.definition);
-  return text(sense?.gloss || sense?.definition || entry.definitions?.[0]);
-}
-
-/** The card's own ceiling, as `.popup-frame` declares it. */
-const POPUP_MAX_HEIGHT = 560;
-const COMPACT_POPUP_WIDTH = 380;
-const EXPANDED_POPUP_WIDTH = 460;
-
-function wordTypes(raw?: string | null): [string, string] {
-  const pairs: Array<[string, string]> = [
-    ["명사", "Noun"],
-    ["대명사", "Pronoun"],
-    ["동사", "Verb"],
-    ["형용사", "Adjective"],
-    ["부사", "Adverb"],
-    ["관형사", "Determiner"],
-    ["수사", "Numeral"],
-    ["조사", "Particle"],
-    ["감탄사", "Interjection"],
-    ["의존 명사", "Bound noun"],
-  ];
-  const normalized = (raw ?? "").replaceAll(" ", "").toLowerCase();
-
-  return (
-    pairs.find((pair) =>
-      pair.some((name) => name.replaceAll(" ", "").toLowerCase() === normalized),
-    ) ?? [raw ?? "", ""]
-  );
-}
+const POPUP_FRAME_CLASS =
+  "popup-frame relative isolate flex max-h-[560px] max-w-[460px] flex-col overflow-hidden border-0 rounded-none bg-transparent p-[5px] shadow-none [color:var(--popup-ink)]";
 
 export function PopupPage() {
   const [current, setCurrent] = useState<Extract<
@@ -304,10 +246,14 @@ export function PopupPage() {
   if (!current || !content) {
     if (!bridgeError) return null;
     return (
-      <main className="popup-frame popup-connection-error" role="alert">
-        <div className="popup-content">
-          <h1 className="popup-title">Hanly</h1>
-          <p className="popup-secondary">{bridgeError}</p>
+      <main className={POPUP_FRAME_CLASS} role="alert">
+        <div className="px-[21px] pt-[22px] pb-[22px]">
+          <h1 className="m-0 text-[38px] leading-[46px] font-normal [color:var(--popup-ink)] [font-family:var(--popup-bold-font)] max-[361px]:text-[36px] max-[361px]:leading-[44px] [html[data-popup-font=normal]_&]:max-[361px]:text-[34px]">
+            Hanly
+          </h1>
+          <p className="m-0 text-[14px] leading-[23px] [color:var(--popup-ink)] [font-family:var(--popup-reading-font)] [overflow-wrap:anywhere]">
+            {bridgeError}
+          </p>
         </div>
       </main>
     );
@@ -316,7 +262,7 @@ export function PopupPage() {
   return (
     <main
       aria-label="Hanly dictionary result"
-      className="popup-frame"
+      className={POPUP_FRAME_CLASS}
       data-expanded={expanded}
       data-success={success}
       ref={cardRef}
@@ -328,267 +274,51 @@ export function PopupPage() {
             : undefined,
       }}
     >
-      <div className="popup-scroll">
+      <div className="popup-scroll min-h-0 max-h-none flex-[1_1_auto] overflow-x-hidden overflow-y-auto scroll-p-4">
         {success && entry ? (
           <>
-            <SuccessContent
+            <PopupSuccessContent
               content={content}
               entry={entry}
               expanded={expanded}
             />
             {detailLevel === "full" && technical.length > 0 && (
-              <section className="popup-details">
-                <h2 className="popup-section">Dictionary details</h2>
-                <p className="popup-muted">{technical.join(" · ")}</p>
+              <section className="flex-none border-t px-[18px] pt-2 [border-color:var(--popup-line)]">
+                <h2 className="mb-1 mt-0 text-[12px] leading-[18px] [color:var(--popup-muted)] [font-family:var(--popup-bold-font)]">
+                  Dictionary details
+                </h2>
+                <p className="m-0 text-[12px] leading-5 [color:var(--popup-muted)] [font-family:var(--popup-display-font)] [overflow-wrap:anywhere]">
+                  {technical.join(" · ")}
+                </p>
               </section>
             )}
           </>
         ) : (
-          <NonSuccessContent content={content} />
+          <PopupNonSuccessContent content={content} />
         )}
       </div>
       {(canExpand || (detailLevel === "basic" && technical.length > 0)) && (
-        <footer className="popup-footer">
-          {detailLevel === "basic" && technical.length > 0 && (
-            <span className="popup-muted popup-footer-detail">
-              {technical.join(" · ")}
-            </span>
-          )}
-          <span className="popup-more">
-            {!expanded && senses.length > 2
-              ? "+" + String(senses.length - 2) + " more meanings"
-              : ""}
-          </span>
-          <span className="popup-footer-spacer" />
-          {canExpand && (
-            <button
-              aria-expanded={expanded}
-              className="popup-button popup-details-button"
-              onClick={() => void toggleExpanded()}
-              type="button"
-            >
-              <span>{expanded ? "Less detail" : "Details"}</span>
-              <img
-                alt=""
-                className="popup-details-icon"
-                src={
-                  expanded
-                    ? "/design/media/assets/icons/custom/icon-details-minus.svg"
-                    : "/design/media/assets/icons/custom/icon-details-plus.svg"
-                }
-              />
-            </button>
-          )}
-        </footer>
+        <PopupFooter
+          content={content}
+          detailLevel={detailLevel}
+          expanded={expanded}
+          canExpand={canExpand}
+          senseCount={senses.length}
+          onToggleExpanded={() => void toggleExpanded()}
+        />
       )}
       <button
         aria-label="Close dictionary"
-        className="popup-close"
+        className="popup-close absolute top-3 right-3 z-[2] grid h-7 w-7 place-items-center border-0 bg-transparent p-0 cursor-pointer hover:bg-[rgb(180_154_202_/_13%)]"
         onClick={() => void closePopup()}
         type="button"
       >
-        <img alt="" src="/design/media/assets/panels/controls/close.png" />
+        <img
+          alt=""
+          className="block h-[22px] w-[22px] object-contain [image-rendering:pixelated] [filter:var(--popup-filter)]"
+          src="/design/media/assets/panels/controls/close.png"
+        />
       </button>
     </main>
-  );
-}
-
-function SuccessContent({
-  content,
-  entry,
-  expanded,
-}: {
-  content: PopupContent;
-  entry: PopupEntry;
-  expanded: boolean;
-}) {
-  const senses = entry.senses ?? [];
-  const visibleSenses = expanded ? senses : senses.slice(0, 2);
-  const primarySense = visibleSenses[0];
-  const analysis = content.analysis ?? [];
-  const source = content.source?.toUpperCase();
-  const changed = Boolean(
-    content.surface && content.lemma && content.surface !== content.lemma,
-  );
-  const [koreanType, englishType] = wordTypes(entry.part_of_speech);
-
-  return (
-    <div className="popup-content">
-      <header className="popup-entry-head">
-        <h1 className="popup-title" lang="ko">{entry.headword}</h1>
-        {entry.hanja && <span className="popup-hanja">{entry.hanja}</span>}
-      </header>
-      {koreanType && (
-        <div className="popup-type-row">
-          <span className="popup-chip" lang="ko">{koreanType}</span>
-          {englishType && <span className="popup-chip" lang="en">{englishType}</span>}
-        </div>
-      )}
-      {primarySense && (
-        <div className="popup-senses">
-          <PrimarySense sense={primarySense} numbered={senses.length > 1} />
-          {visibleSenses.slice(1).map((sense, index) => (
-            <div
-              className="popup-numbered-sense"
-              key={`${sense.definition ?? sense.gloss ?? "sense"}-${index}`}
-            >
-              <div className="popup-meaning-line">
-                <span className="popup-number">{index + 2}.</span>
-                <div className="popup-secondary-gloss">
-                  {sense.gloss || sense.definition}
-                </div>
-              </div>
-              {sense.gloss && sense.definition && (
-                <p className="popup-muted popup-sense-description">
-                  {sense.definition}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {visibleSenses.length === 0 && entry.definitions?.[0] && (
-        <div className="popup-primary">{entry.definitions[0]}</div>
-      )}
-      {expanded && (analysis.length > 0 || changed || source) && (
-        <PopupSection title="Read as">
-          <div className="popup-read-as">
-          {changed && (
-            <p className="popup-part">
-              {content.surface} <span aria-hidden="true">→</span>{" "}
-              {content.lemma}
-            </p>
-          )}
-          {source && <span className="popup-analysis-source">{source}</span>}
-          </div>
-          {analysis.length > 0 && (
-            <p className="popup-secondary">
-              {analysis.map((piece) => piece.text).join("  +  ")}
-            </p>
-          )}
-          {analysis.some((piece) => piece.role) && (
-            <p className="popup-muted">
-              {analysis
-                .map((piece) => piece.role)
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          )}
-        </PopupSection>
-      )}
-      {expanded && (content.components ?? []).length > 0 && (
-        <PopupSection title="How this form is built">
-          {(content.components ?? []).map((component, index) => (
-            <div
-              className="popup-component"
-              key={`${component.surface}-${index}`}
-            >
-              <span
-                className={
-                  component.selected
-                    ? "popup-part popup-part-selected"
-                    : "popup-part"
-                }
-              >
-                {component.surface}
-              </span>
-              <span
-                className={
-                  component.grammatical ? "popup-muted" : "popup-secondary"
-                }
-              >
-                {component.gloss ??
-                  (component.grammatical
-                    ? "grammatical"
-                    : "no dictionary entry")}
-              </span>
-            </div>
-          ))}
-        </PopupSection>
-      )}
-      {expanded && content.construction && (
-        <PopupSection title="Grammar pattern">
-          <div className="popup-component">
-            <span className="popup-part">{content.construction.headword}</span>
-            <span className="popup-secondary">
-              {content.construction.gloss ??
-                content.construction.definition ??
-                "listed in the dictionary"}
-            </span>
-          </div>
-        </PopupSection>
-      )}
-      {expanded && (content.other_entries ?? []).length > 0 && (
-        <PopupSection title="Other entries">
-          {(content.other_entries ?? []).map((other, index) => (
-            <p className="popup-secondary" key={`${other.headword}-${index}`}>
-              {[other.headword, other.part_of_speech, entryGloss(other)]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          ))}
-        </PopupSection>
-      )}
-      {expanded && entry.vocabulary_level && (
-        <p className="popup-entry-metadata">
-          Vocabulary level: {entry.vocabulary_level}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function PrimarySense({
-  sense,
-  numbered,
-}: {
-  sense: PopupSense;
-  numbered: boolean;
-}) {
-  const lead = sense.gloss || sense.definition || "";
-
-  return (
-    <div className="popup-primary-sense" data-numbered={numbered}>
-      <div className="popup-meaning-line">
-        {numbered && <span className="popup-number popup-number-primary">1.</span>}
-        <div className="popup-primary">{lead}</div>
-      </div>
-      {sense.gloss && sense.definition && (
-        <p className="popup-primary-note popup-sense-description">
-          {sense.definition}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function PopupSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="popup-section-block">
-      <div className="popup-divider" />
-      <h2 className="popup-section">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function NonSuccessContent({ content }: { content: PopupContent }) {
-  return (
-    <div className="popup-content popup-non-success">
-      {content.surface && (
-        <h1 className="popup-title popup-surface">{content.surface}</h1>
-      )}
-      <h2 className="popup-sense-title">
-        {content.title || "Lookup unavailable"}
-      </h2>
-      {content.body && <p className="popup-secondary">{content.body}</p>}
-      {content.tip && <p className="popup-muted">{content.tip}</p>}
-    </div>
   );
 }

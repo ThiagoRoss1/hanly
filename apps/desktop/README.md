@@ -70,6 +70,21 @@ or `normal` (default `pixel`), and `sidebar_layout` is `normal` or `compact`
 the desktop; scene and mascot animation pause when hidden or reduced motion is
 requested.
 
+The Control Center shell lives in `src/pages/ControlCenterPage.tsx`; each of its
+six sections is a separate module in `src/pages/controlCenter/`. Shared controls
+live in `src/components/controlCenter/`, popup presentation in
+`src/components/popup/`, and the village renderer and layer order in
+`src/components/village/`. Layout, spacing and type sizes use Tailwind utilities.
+The focused pixel styles own palette variables, nine-slice artwork, native
+range parts and responsive artwork fitting; the legacy interface cascade is
+removed. Saving one preference keeps unrelated controls and the scene mounted.
+
+On macOS the Control Center uses an overlay titlebar inside the pixel frame,
+retaining the native close, minimize and fullscreen controls. Its blank top
+strip drags only the Control Center window. Windows and Linux retain their
+native titlebars. Popup focus, native placement and measurement are independent
+of this Control Center decoration.
+
 The development preview additionally accepts `font=normal`,
 `navigation=compact`, `activity=stopped|armed|running|preparing|error`,
 `permissions=missing`, and `update=downloading|failed`. These are fixture states,

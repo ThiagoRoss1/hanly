@@ -66,7 +66,7 @@ def _pixel_tokens(path: Path, selector: str, mode: str) -> dict[str, str]:
 @pytest.mark.parametrize("surface", ["skin-paper", "skin-paper-raised"])
 def test_pixel_control_center_contrast(mode: str, ink: str, surface: str) -> None:
     tokens = _pixel_tokens(
-        ROOT / "apps/desktop/src/styles/pixelControls.css",
+        ROOT / "apps/desktop/src/styles/pixelTheme.css",
         r'(?:html\[data-mode="dark"\] )?\.app\.skin-village',
         mode,
     )

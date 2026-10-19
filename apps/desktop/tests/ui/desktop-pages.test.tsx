@@ -7,15 +7,17 @@ import type { HanlyState, LogSnapshot } from "../../src/contracts/desktop.ts";
 import { appRoutes } from "../../src/app/router.tsx";
 import { isHanlyState } from "../../src/features/desktopState.ts";
 
-const { invokeMock, eventHandlers, deferredListeners, deferListen } = vi.hoisted(() => ({
+const { invokeMock, eventHandlers, deferredListeners, deferListen, deferredSettings } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   eventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   deferredListeners: new Map<string, () => void>(),
   deferListen: { value: false },
+  deferredSettings: { enabled: false, resolvers: [] as Array<() => void> },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+  isTauri: () => false,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -99,6 +101,8 @@ beforeEach(() => {
   eventHandlers.clear();
   deferredListeners.clear();
   deferListen.value = false;
+  deferredSettings.enabled = false;
+  deferredSettings.resolvers = [];
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
@@ -128,6 +132,11 @@ beforeEach(() => {
         config: { ...state.config, ...changes },
         app: changes.capture_mode ? { ...state.app, capture_mode: String(changes.capture_mode) } : state.app,
       };
+      if (deferredSettings.enabled) {
+        return new Promise((resolve) => {
+          deferredSettings.resolvers.push(() => resolve(state));
+        });
+      }
       return state;
     }
     if (method === "set_capture_mode") {
@@ -215,6 +224,54 @@ describe("desktop React routes", () => {
         params: { changes: { theme: "dark" } },
       });
       expect(dark.getAttribute("aria-pressed")).toBe("true");
+    });
+  });
+
+  it("keeps appearance groups mounted and independently usable during a setting save", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Appearance" }));
+
+    const themeGroup = screen.getByRole("group", { name: "Theme" });
+    const dark = within(themeGroup).getByRole("button", { name: "Dark" });
+    const navigationGroup = screen.getByRole("group", { name: "Navigation" });
+    const compact = within(navigationGroup).getByRole("button", { name: "Compact" });
+
+    deferredSettings.enabled = true;
+    await user.click(dark);
+    await waitFor(() => expect(dark.getAttribute("aria-disabled")).toBe("true"));
+
+    expect(dark.hasAttribute("disabled")).toBe(false);
+    expect(compact.getAttribute("aria-disabled")).not.toBe("true");
+    expect(compact.hasAttribute("disabled")).toBe(false);
+
+    state = {
+      ...state,
+      app: { ...state.app, detail: "A newer desktop snapshot arrived." },
+    };
+    await act(async () => eventHandlers.get("desktop-state")?.({ payload: state }));
+
+    expect(screen.getByRole("group", { name: "Theme" })).toBe(themeGroup);
+    expect(within(themeGroup).getByRole("button", { name: "Dark" })).toBe(dark);
+    expect(dark.getAttribute("aria-disabled")).toBe("true");
+
+    await user.click(compact);
+    await waitFor(() => expect(compact.getAttribute("aria-disabled")).toBe("true"));
+    expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "update_settings",
+      params: { changes: { sidebar_layout: "compact" } },
+    });
+
+    await act(async () => {
+      for (const resolve of deferredSettings.resolvers.splice(0)) resolve();
+    });
+    await waitFor(() => {
+      expect(dark.getAttribute("aria-pressed")).toBe("true");
+      expect(compact.getAttribute("aria-pressed")).toBe("true");
+      expect(dark.getAttribute("aria-disabled")).not.toBe("true");
+      expect(compact.getAttribute("aria-disabled")).not.toBe("true");
     });
   });
 
@@ -921,9 +978,10 @@ describe("desktop React routes", () => {
     expect(screen.getByRole("progressbar", { name: "Update progress" })).toBe(progress);
     expect(fill?.getAttribute("style")).toContain("40%");
 
-    const css = await readFile(`${process.cwd()}/src/styles/controlCenter.css`, "utf8");
-    expect(css).toMatch(/\.track-fill\s*\{[^}]*transition:\s*width\s+var\(--motion-normal\)\s+linear/s);
-    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?animation-duration:\s*\.01ms\s*!important;[\s\S]*?transition-duration:\s*\.01ms\s*!important;/);
+    const pixelCss = await readFile(`${process.cwd()}/src/styles/pixelPanels.css`, "utf8");
+    const baseCss = await readFile(`${process.cwd()}/src/styles/controlCenter.css`, "utf8");
+    expect(pixelCss).toMatch(/\.track-fill\s*\{[^}]*transition:\s*width\s+180ms\s+linear/s);
+    expect(baseCss).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?animation-duration:\s*\.01ms\s*!important;[\s\S]*?transition-duration:\s*\.01ms\s*!important;/);
   });
 
   it("copies, clears, and exports only through the desktop diagnostics commands", async () => {

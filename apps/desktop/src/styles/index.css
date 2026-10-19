@@ -4,5 +4,9 @@
 @import "./regionSelector.css";
 @import "./tokens.css";
 @import "./pixelFonts.css";
+@import "./pixelTheme.css";
+@import "./pixelButtons.css";
+@import "./pixelPanels.css";
 @import "./pixelControls.css";
+@import "./pixelResponsive.css";
 @import "./villageScene.css";

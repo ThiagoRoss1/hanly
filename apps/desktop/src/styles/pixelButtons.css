@@ -1,0 +1,176 @@
+@layer components {
+/* Button artwork sits behind JSX content so labels and icons remain readable. */
+.app.skin-village {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/secondary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/secondary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/secondary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/secondary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/secondary-disabled.png");
+}
+
+.app.skin-village .sprite-button[data-art-role="primary"] {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/primary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/primary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/primary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
+}
+.app.skin-village .sprite-button[data-art-role="secondary"] {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/secondary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/secondary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/secondary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/secondary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/secondary-disabled.png");
+}
+.app.skin-village .sprite-button[data-art-role="mint"] {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/mint-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/mint-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/mint-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/mint-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/mint-disabled.png");
+}
+.app.skin-village .sprite-button[data-art-role="danger"] {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/danger-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/danger-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/danger-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/danger-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/danger-disabled.png");
+}
+.app.skin-village .sprite-button[data-art-role="confirm"] {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/confirm-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/confirm-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/confirm-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/confirm-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/confirm-disabled.png");
+}
+.app.skin-village .sprite-button.btn-primary:not([data-art-role]) {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/primary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/primary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/primary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
+}
+.app.skin-village .sprite-button.btn-exit:not([data-art-role]) {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/danger-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/danger-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/danger-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/danger-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/danger-disabled.png");
+}
+.app.skin-village .nav-item[aria-current="page"],
+.app.skin-village .segment[aria-pressed="true"] {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/primary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/primary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/primary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
+}
+
+.app.skin-village .sprite-button {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 91px;
+  min-height: 40px;
+  padding: 0 !important;
+  overflow: visible;
+  border: solid transparent !important;
+  border-width: 10px 16px 12px !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #47305d !important;
+  font-family: HanlyUIBold, HanlyUI, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transform: none !important;
+}
+.app.skin-village .sprite-button::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -10px -16px -12px;
+  pointer-events: none;
+  border: solid transparent;
+  border-width: 10px 16px 12px;
+  border-image-slice: 96 180 108 180 fill;
+  border-image-width: 10px 16px 12px;
+  border-image-repeat: stretch;
+  border-image-source: var(--sprite-normal);
+  transition: filter 1.5s ease;
+  image-rendering: pixelated;
+  filter: var(--night-filter);
+}
+.app.skin-village .sprite-button:hover:not(:disabled)::after {
+  border-image-source: var(--sprite-hover);
+  filter: var(--night-filter) brightness(1.075) saturate(1.08);
+}
+.app.skin-village .sprite-button:active:not(:disabled)::after {
+  border-image-source: var(--sprite-pressed);
+}
+.app.skin-village .sprite-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+.app.skin-village .sprite-button:focus-visible::after {
+  border-image-source: var(--sprite-focus);
+}
+.app.skin-village .sprite-button:disabled {
+  color: #977fa5 !important;
+  cursor: default;
+  opacity: 1;
+}
+.app.skin-village .sprite-button:disabled::after {
+  border-image-source: var(--sprite-disabled);
+}
+html[data-mode="dark"] .app.skin-village .sprite-button { color: #f5edf9 !important; }
+html[data-mode="dark"] .app.skin-village .sprite-button:disabled { color: #8f839e !important; }
+.app.skin-village .button-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  pointer-events: none;
+}
+.app.skin-village .button-label {
+  display: block;
+  min-width: 0;
+  color: inherit;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+}
+.app.skin-village .action-icon {
+  display: block;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.app.skin-village .btn-capture.sprite-button {
+  width: 196px;
+  min-width: 196px;
+  height: 60px;
+  min-height: 60px;
+  gap: 8px;
+  font-size: 13px;
+}
+.app.skin-village .btn-capture .action-icon { width: 40px; height: 40px; }
+.app.skin-village .head-actions > .btn:not(.btn-capture) {
+  width: 140px;
+  min-width: 140px;
+  height: 60px;
+  min-height: 60px;
+}
+.app.skin-village .btn-sm.sprite-button { min-height: 40px; }
+.app.skin-village .btn-exit-quiet.sprite-button { min-height: 40px; height: 40px; }
+}
