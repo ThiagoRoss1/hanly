@@ -1,5 +1,28 @@
 # Desktop Tauri Migration Review Handoff
 
+## Windows CI teardown follow-up — 2026-10-18
+
+After `46c6f68`, the human reports that the other CI jobs passed. The supplied
+Windows log records 87 passing cases and 33 skips; its only two errors happen
+in `quiet_com_teardown`, after the UIA test bodies finish. Restoring the fault
+handler with `faulthandler.enable()` uses pytest's `tee-sys` stderr wrapper,
+whose `fileno()` raises `io.UnsupportedOperation`.
+
+The fixture now uses a test-only context manager that restores reporting on
+the original stderr stream in a `finally` block and preserves its previous
+enabled/disabled state. Portable regressions exercise stderr without a file
+descriptor, normal and exceptional exits, and nested suppression. The native
+UIA assertions and COM reads remain intact. Production code, dependencies and
+workflows are unchanged; the Linux diagnostic capture fix remains enabled.
+
+Validation: all three regression cases pass under each of `tee-sys`, `fd` and
+`sys` capture; Ruff and mypy pass (365 source files). Full portable suites in
+minimal environments, both using `--capture=tee-sys`: Python 3.13.11 has
+2,565 passed / 105 skipped in 46.54 s; Python 3.10.20 has 2,552 passed /
+107 skipped in 47.93 s. This Mac cannot execute native Windows COM;
+the Windows job must confirm the complete native suite after the next push.
+The human authorized a local commit, not a push or merge.
+
 ## CI repair before merge — 2026-10-18
 
 The human reported the failures in [CI run 39176262492](https://github.com/ThiagoRoss1/hanly/actions/runs/39176262492)

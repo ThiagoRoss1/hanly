@@ -6,7 +6,6 @@ cases separately exercise the background apartment, which doubles cannot prove.
 
 from __future__ import annotations
 
-import faulthandler
 from threading import Thread
 from typing import Any
 
@@ -16,6 +15,7 @@ from hanly_app.acquisition import uia as uia
 from hanly_app.acquisition.direct_text import DirectTextCoordinator, Outcome
 from hanly_app.acquisition.uia import UIAutomationTextProvider
 
+from tests.hanly_fixtures.fault_handler import quiet_fault_handler
 from tests.hanly_fixtures.uia import (
     CHARACTER_WIDTH,
     LINE_BOTTOM,
@@ -416,9 +416,8 @@ def quiet_com_teardown() -> Any:
     pytest's fault handler would otherwise print it as though it were a crash.
     """
 
-    faulthandler.disable()
-    yield
-    faulthandler.enable()
+    with quiet_fault_handler():
+        yield
 
 
 def test_com_is_entered_and_left_on_the_worker_thread() -> None:
