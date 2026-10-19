@@ -1,7 +1,9 @@
 # Hanly Lab
 
-The developer lab: run the real Hanly under observation, let the lab drive it,
-and read a visual report of exactly what every process did. It also keeps the
+**1.1.0** — developer tools for the matching Hanly desktop.
+
+The developer lab: run the real Tauri desktop under observation, let the lab drive it,
+and read a visual report of the native app and its owned service family. It also keeps the
 measurement campaigns and regression checks that used to live in `benchmarks/`.
 
 Nothing here ships: neither `hanly` nor `hanly_app` imports this package, and it
@@ -9,17 +11,21 @@ is not part of either distribution.
 
 ## Setup
 
-Install the desktop as described in the root `README.md`, then add the `dev`
-extra on top of it:
+Install the desktop and the development dependencies as described in the root
+`README.md`. Lab pages and HUDs use the desktop runtime's Pillow and capture
+dependencies; they do not add a separate UI toolkit dependency:
 
 ```bash
-python -m pip install -e "packages/hanly-app[dev]"
+python -m pip install --group dev
+python -m pip install --editable packages/hanly
+python -m pip install --editable "packages/hanly-app[runtime]"
 ```
 
-That extra adds Pillow for image campaigns and psutil for process sampling. It
-must come *after* `packages/hanly` is installed — `hanly-app` depends on
-`hanly==1.1.0`, which exists only in this checkout. Every command runs from the
-repository root.
+macOS uses the runtime's PyObjC frameworks to host Lab-owned image windows.
+Windows and Linux use Tk; the Python build must include Tk support. Linux
+fixture windows require an X11 display with Shape input-region support. Lab
+reports a clear prerequisite error when a platform host is unavailable.
+Every command runs from the repository root.
 
 ## The three commands
 
@@ -34,16 +40,17 @@ run of every kind, and `python -m lab report <run-name>` reopens one.
 
 ### `python -m lab` (`run`) — you drive
 
-Starts the real desktop through `run_desktop`, the same composition `hanly`
-uses, with the lab's recorder as its trace sink. The lookup engine and the
-Control Center are still the real spawned children. Use Hanly normally; quit
-from the tray or with Ctrl+C, or pass `--duration SECONDS`. `--hud` also draws
-the on-screen HUD. Production tracing sends no recognized text to a sink that
-does not ask for it, and this mode does not ask.
+Starts the native Hanly desktop as a separate process with a disposable app
+profile and the selected runtime configuration. Lab observes its bounded trace
+stream and samples the desktop, its Python service, lookup child and WebKit
+helpers externally. Use Hanly normally; quit from the tray or with Ctrl+C, or
+pass `--duration SECONDS`. `--desktop PATH` selects a packaged app or binary;
+`--hud` also draws the Lab-owned on-screen HUD. A normal session does not opt in
+to recognized text or capture geometry.
 
 ### `python -m lab tour` — the lab drives
 
-Covers the screen with lab-authored Korean, presses the real capture shortcut,
+Covers the virtual desktop with lab-authored Korean, presses the real capture shortcut,
 glides the real pointer onto each word, and waits for the app's own trace to say
 how that hover ended. Every target has a known answer:
 
@@ -54,7 +61,8 @@ how that hover ended. Every target has a known answer:
   seed 7 and painted at 16, 22, 30 and 40 px across three themes and the
   installed Korean typefaces.
 
-The plain command is the **standard tour**: the whole story and 300 words, about
+The fixture page and HUD are opaque raster windows owned by Lab; the app being
+measured is the launched Tauri desktop. The plain command is the **standard tour**: the whole story and 300 words, about
 three and a half minutes. Tours with the same settings are comparable;
 `--baseline <earlier-run>` adds a before/after table to the new report.
 `--quick` is a 40-second smoke run (24 words, no story); `--words`,
@@ -62,9 +70,15 @@ three and a half minutes. Tours with the same settings are comparable;
 incomparable with the standard one.
 
 Text is painted, so each hover exercises capture and OCR. **Move the mouse
-yourself to stop the tour.** It checks before starting that Screen Recording and
-Accessibility (to move the pointer) are granted to the terminal and that the
-capture shortcut is bound, and says what to change if not.
+yourself to stop the tour.** It checks that the capture shortcut is bound.
+Hanly reports required screen-capture or accessibility access in its native
+Permissions pane; the Lab does not grant or change OS permissions.
+
+On macOS, the Lab sends an F1–F20 primary key through Quartz with the public
+SecondaryFn flag, because pynput's function-key event can be interpreted as a
+hardware alternate action before reaching Hanly's shortcut listener. Other
+chord keys continue through pynput, and the Lab records only edge order and
+index, never key contents.
 
 #### Scoring
 
@@ -102,10 +116,9 @@ the selection the target word), from which every rule since v2 is computed.
   is recorded in the run's `metadata.json`, and reports show read text only for
   such a run. This is retention of lab-authored fixture text; it is not the
   private-screen Export below, and it never applies to a session you drive.
-- **Diagnostics** mirrored into the timeline keep their text only for
-  informational lifecycle lines (startup, Control Center, lookup engine,
-  cleanup, capture, updates, resources); any other line keeps its subsystem and
-  level only. The run profile's own session log behaves as `hanly`'s does.
+- **Process and diagnostic data** comes from the isolated desktop profile and
+  the external sampler. The regular session never mirrors service log text
+  into the timeline.
 - **Private screen content** reaches disk only through `live-hover`'s explicit
   Export, under the gitignored `artifacts/lab/runs/`; Freeze stays in memory.
 
@@ -143,7 +156,7 @@ captured, re-grabbed from the lab's own page, and `python -m lab stress-replay
 re-capture replay.
 
 `--corpus <manifest> --repeats N` hovers a controlled-image corpus (below)
-instead of the seeded plan: each image is painted pixel for pixel on the lab's
+instead of the seeded plan: each image is painted pixel for pixel on the Lab's
 page, one per row, and hovered at its annotated point in N rounds, under the
 same ownership checks. Rule `corpus-surface-v1` judges these: a surface target
 passes when the selected word is the target, whatever the dictionary then
@@ -161,8 +174,8 @@ profile; the runtime configuration, dictionary and models are reused read-only):
 
 | File | |
 |---|---|
-| `events.jsonl` | every trace event from the shell and the lookup child (content fields removed), startup phases, lifecycle diagnostics, and the lab's own driver events, including each tour result as described above |
-| `processes.jsonl` | memory, CPU and threads of the shell, `hanly-lookup`, `hanly-control-center` and their helpers every 250 ms, sampled from a separate process so it cannot stall the shell; roles are exact, not inferred |
+| `events.jsonl` | every accepted trace event from the native desktop service and lookup child (content fields removed), plus Lab lifecycle and driver events, including each tour result as described above |
+| `processes.jsonl` | memory, CPU and threads for the native Tauri host and its owned Python service, lookup and webview helpers every 250 ms, sampled externally; macOS helper attribution uses the OS process-responsibility assignment when its runtime probe succeeds |
 | `report.html` | the visual report: findings, system map, where time goes, funnel, timeline, hover explorer, tour accuracy, startup, processes |
 | `report.json`, `summary.md` | the same model for scripts and agents |
 
@@ -170,10 +183,35 @@ The report rebuilds from the recorded files at any time and never writes beside
 a baseline it compares with. Its findings name the code where each cost lives;
 they are derived from the run, not hand-written.
 
-Measurement limits: child timestamps share the shell's clock (`perf_counter`
+Measurement limits: trace timestamps share the service's monotonic clock (`perf_counter`
 is system-wide on every supported OS). RSS is resident, not private, memory and
-is sampled, so short spikes can be missed. The shell's numbers include the lab
-recorder hosted in the same process.
+is sampled, so short spikes can be missed. On macOS, Lab launches the app through
+public LaunchServices and adopts the exact fresh app PID. It probes the OS
+process-responsibility interface before assigning WebKit helpers. An absent OS
+interface uses the process tree instead; each run records the chosen attribution
+path, and tree-only attribution may omit reparented helpers. Protocol v3 separates
+these runs from the previous launcher and Qt-painted fixture recordings.
+
+## EasyOCR crop, decoder and alphabet diagnosis
+
+`python -m lab.easyocr_audit --manifest PATH --output NEW_DIRECTORY` runs a
+deterministic font-balanced subset of authored synthetic images through the
+real CPU adapter. It records actual Torch threads/device, model hashes and
+alphabet limits, strict token/line scores, raw repetitions and staged replay
+agreement. It downloads no model, refuses private screenshots and never
+overwrites a previous output directory.
+
+Defaults compare product inference, the existing sensitive pass, beam search
+and annotated tight line crops. `--variants product model-alphabet
+line-oracle-padded` checks language masking and crop margin sensitivity;
+`--variants product --no-quantize` checks quantization. Annotated boxes are
+diagnostic ground truth unavailable at runtime, not an alternative production
+detector or an accuracy upper bound. No variant changes product settings.
+
+Use `--limit 120 --samples 2 --cpu-threads 4` for the recorded investigation's
+selection. Run comparisons sequentially and do not infer Windows performance
+from Mac timings. Full results and the observed Korean output-alphabet limit
+are in the [2026-10-18 investigation](../docs/execution/reports/easyocr-lab-investigation-2026-10-18.md).
 
 ## Evidence: identity, baselines, comparison, storage
 
@@ -266,11 +304,11 @@ none of them proves a complete real-release update.
 
 ## `dev-hud` — run Hanly with the on-screen HUD
 
-**This is the one to reach for.** It starts the *real* desktop — same
-composition, same providers, same hover behaviour — with a panel drawn on top
-showing what each hover actually did: the stage timeline (dwell, capture, OCR,
-token selection, morphology, dictionary), OCR hit rate, worker readiness, and
-process resources. A second overlay outlines the region that was captured.
+It supervises the *real* Tauri desktop and shows a separate Lab-owned panel
+with its bounded trace events: dwell, capture, OCR, token selection,
+morphology, dictionary and popup decisions. Process-family resource samples
+are recorded in the Lab report; the panel labels those measurements there.
+An optional second overlay outlines the last captured region.
 
 ```powershell
 python -m lab dev-hud
@@ -287,6 +325,7 @@ python -m lab dev-hud --config resources/dev/runtime-local.json
 |---|---|
 | `--config PATH` | explicit runtime configuration; omit for the normal per-user one |
 | `--app-config PATH` | explicit preferences file |
+| `--desktop PATH` | Hanly executable or `.app` |
 | `--roi-size WxH` | capture region size, for comparing detection areas |
 | `--dwell-ms N` | the dwell the panel labels its timeline with (display only) |
 | `--no-roi` | show only the panel, without the captured-region outline |
@@ -314,11 +353,12 @@ python -m lab real-lookup `
   --config resources/dev/runtime-local.json `
   --target-x 100 --target-y 24 --roi-size 192x48
 
-# Dwell through an actually visible Qt popup.
+# Dwell through the native Tauri popup using a controlled private ROI.
 python -m lab real-hover `
   --image tests/hanly_fixtures/assets/korean_reading_roi.png `
   --config resources/dev/runtime-local.json `
-  --target-x 100 --target-y 24 --roi-size 192x48
+  --target-x 100 --target-y 24 --roi-size 192x48 `
+  --expected-text 읽습니다.
 
 # OCR invocation opportunities by hover condition. Deterministic, no hardware.
 python -m lab hover-rate
@@ -335,8 +375,151 @@ python -m lab package `
 A committed Korean fixture is correctness-regression evidence, not an OCR
 accuracy corpus.
 
+`real-hover` paints the supplied image in a temporary Lab-owned page, drives
+the real desktop hover pipeline, and times the native popup trace. Its private
+image and expected surface are removed after the run; the report retains only
+text-free outcome facts and timing measurements.
+
 `resources/dev/runtime-local.json` is gitignored and machine-local; it points
 at a KRDICT database you built yourself. `tools/README.md` has its shape.
+
+## `resources` — what each part costs, and whether a change helps
+
+```bash
+python -m lab resources stages [--components ocr,kiwi,dictionary] [--repeats 3]
+python -m lab resources session <run>          # phases of a recorded session
+python -m lab resources compare <baseline> <candidate>
+```
+
+`stages` runs Hanly's real providers, built as the lookup child builds them, in
+fresh interpreters. Each child walks fixed stages and waits at every boundary
+while the parent reads it from outside:
+
+1. interpreter, imports and runtime validation;
+2. each provider's construction;
+3. worker assembly with prewarming;
+4. the first lookup;
+5. repeated lookups on varied inputs (fresh) and on the same input (cache hits);
+6. idle, unload, and idle after unloading.
+
+`--components` adds one isolated process per provider. The run records:
+- macOS physical footprint (RSS elsewhere), RSS and sampled peaks;
+- CPU, threads, disk reads and writes, latency and exit time;
+- a digest of each lookup's decision. No text and no pixels are kept.
+
+Inputs are minibook lines rendered in the bundled OFL Nanum Gothic face, kept in a
+temporary file that is deleted with the run. One unrecorded warm-up child runs
+before each experiment's repeats. A `calibration` experiment maps and releases a
+known 64 MiB; if it is not attributed and released, distrust the run.
+`summary.md` states the method and its limits:
+- Deltas between boundaries are estimates.
+- Native allocators keep freed pages, so what unloading leaves is released
+  only when the process exits.
+- RSS falls when idle pages are compressed.
+- GPU memory is always unavailable.
+
+`session` attributes an existing session's `processes.jsonl` to the phases its
+own events mark: startup, engine warm-up, active, idle and shutdown. It reports
+per-role peaks, sustained medians, growth, duplicate processes and anything
+still running after the stop. It writes `resources.md` beside the run.
+
+`compare` refuses pairs that differ in protocol, inputs, plan, recognizer,
+library versions or host, or that have fewer than two repeats a side. It then
+compares the decision digests before labelling any cost: `unchanged`,
+`improved`, `regressed` or `inconclusive`.
+It also refuses failed calibration on either side and failed or unfinished
+repeats. `resources-v3` includes morphological explanations in the decision
+digest and detects an OCR input missing from a later repeat. Earlier v2
+recordings remain unchanged and cannot be compared directly with v3.
+- Memory uses a band of max(5 %, 16 MiB); timing uses max(5 %, 5 ms).
+- Overlapping ranges are `inconclusive`.
+- A timing change needs five repeats a side. Two identical-code runs of three
+  repeats each produced six false timing labels and no false memory label.
+
+`compare` never accepts a change. An accepted optimization still needs
+reproducible evidence, stated trade-offs and regression coverage. Nothing here
+tunes a production setting.
+
+## `grammar` and `word-selection` — what the reader is shown, and why it misses
+
+`python -m lab grammar-pages --output artifacts/lab/grammar-pages` generates
+paired `text.html` and `ocr.html` pages without opening windows. The first
+contains selectable Korean; the second contains images with empty alt text
+and keeps ground truth outside the accessible page. Each case changes the
+actual browser/OS cursor; the selector can hold a cursor constant, including
+zoom-in/out. Image zoom and drag use native element behavior. Native tests
+that open windows or move the pointer require the operator's approval.
+
+The inventory enumerates every particle and ending entry in the selected
+KRDICT database and retains one locatable example per entry. Kiwi helps locate
+grammatical tokens rather than identically spelled noun characters. This is
+fixture construction, not an independent oracle for Kiwi or proof of complete
+Korean grammar coverage. Missing examples remain listed. Hand-authored lemma
+expectations, including prospective `-(으)ㄹ 거예요`, remain separate.
+
+Normal, handwritten/comic-like, display and pixel faces are pinned with their
+OFL licenses in `fixtures/fonts/`. A bounded matrix varies size, contrast,
+scaling, blur, compression and noise; `--stress-cases 0..12` controls its size.
+Missing glyphs are reported, never silently substituted. The external manifest
+records source, dictionary/font identities, generated pixels and target
+geometry. Authored lemma answers remain indexed by syllable; raw OCR token
+truth also retains punctuation, independently of the grammatical target.
+These pages are native-test inputs, **not** native detector/OCR
+acceptance results. The existing language/word-selection commands below keep
+their original measurement scopes.
+
+Run the image batch separately with `python -m lab ocr-campaign --backend vision
+--manifest artifacts/lab/grammar-pages/corpus.json --samples 1 --warmup 0`
+(or `--backend easyocr`). This measures the existing recognizer/word resolver
+over images; it does not exercise native screen capture or accessibility.
+
+```bash
+python -m lab grammar                                   # language stage only
+python -m lab word-selection --ocr-backend vision       # or easyocr; --stride N
+```
+
+`grammar` scores the language stage (Kiwi and KRDICT, no OCR) on
+`lab/fixtures/korean/grammar.json`. That is a reviewed, finite corpus covering:
+- particles and particle combinations;
+- syllables that look like particles but belong to the word;
+- conjugations and irregulars;
+- copulas;
+- auxiliary constructions;
+- ambiguous forms;
+- Korean fused to digits, emoji or punctuation.
+
+Every target is hovered at every syllable, in both forms acquisition produces:
+the whitespace-delimited word OCR resolves (with its neighbouring words), and
+the Korean run accessibility text yields. Every expected headword and
+construction is checked against KRDICT before scoring, so a corpus typo fails
+loudly instead of passing as a model error. Ambiguous cases list what is
+acceptable and say why.
+
+`word-selection` renders Lab-authored pages of three lines at several sizes,
+contrasts and display-edge positions. It hovers the first, middle and last
+syllable of each word on the middle line, and crops exactly as the desktop
+does (the shipped ROI and grid, clipped to the page as to a display). The real
+lookup worker then runs on the crop, constructed, used and closed on one
+provider thread. This is an in-process replica; it does not exercise the
+service, real process transport, native capture, accessibility or windows.
+Protocol v2 stamps source identity/diff before work, plus dependency, font,
+dictionary and corpus hashes and the stride/limit. Glyph geometry is exact, so every miss
+is classified against ground truth:
+
+| category | meaning |
+|---|---|
+| `clipped_by_roi` | the word extends past the captured crop |
+| `ocr_false_space` | the recognized line splits the word with a space |
+| `ocr_misread` | the line lacks or alters the word's characters |
+| `neighbor_word` | the line holds the word, but another one was selected |
+| `wrong_line` | a different line was selected |
+| `no_result` | nothing usable came back |
+| `lexical` | the right surface, a headword the corpus does not accept |
+
+It also counts genuine OCR calls (cache hits are not recognitions) and fresh
+lookup p50 and p95, and how often the resolved word touches the crop edge.
+Results are Mac evidence for the recognizer they name. They are never Windows
+evidence: Windows capture, DPI scaling and UIA need their own native runs.
 
 ## `live-hover` — human-operated session
 
@@ -344,10 +527,11 @@ at a KRDICT database you built yourself. `tools/README.md` has its shape.
 python -m lab live-hover --config resources/dev/runtime-local.json --duration 300
 ```
 
-Not part of normal startup and not covered by fixture benchmarks: it uses the
-current real mouse/capture/hover/OCR/lookup/popup composition and needs you to
-provide desktop input for two to five minutes. Only start it when you are ready
-to do that.
+This launches the checkout's debug Tauri app with an isolated profile and
+observes its real mouse, capture, hover, OCR, lookup, and native popup path. It
+needs you to provide desktop input for two to five minutes. Only start it when
+you are ready to do that. Pass `--desktop` to select a different debug app and
+`--app-config` to choose the preferences copied into the disposable profile.
 
 The session starts in `idle`; **`Ctrl+Alt+Shift+B`** advances to the next phase
 after each interval. The remaining phases are empty areas, non-Korean text,
@@ -355,10 +539,11 @@ repeated same Korean word, several Korean words, stationary changing content,
 fast movement, and normal browser/game use.
 
 Each run writes `metadata.json`, `live-events.jsonl`, `process.csv`,
-`summary.json`, and `stdout.log`. `process.csv` and the summary's resource use
-describe the benchmark's own shell process only; the lookup child that holds the
-OCR models is a separate process and is not sampled. Pixel hashing runs on a separate bounded
-thread; no screenshot or pixel buffer is written to disk.
+`processes.jsonl`, `summary.json`, and `stdout.log`. `process.csv` measures the
+native Tauri shell; `processes.jsonl` samples the owned desktop family, including
+its lookup child and macOS WebKit helpers where responsibility attribution is
+available. Pixel hashing runs on a separate bounded thread; no screenshot or
+pixel buffer is written to disk unless you explicitly export a frozen lookup.
 
 ### Freeze and export
 

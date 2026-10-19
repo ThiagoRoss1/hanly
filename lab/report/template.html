@@ -134,7 +134,7 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 8px 0; }
   <div class="findings" id="findings"></div>
 </section>
 <section id="map"><h2>System map</h2>
-  <p class="lede">How a hover travels through Hanly's three processes, annotated with what this run measured at every component: how often it ran and its median time. Thicker edges carried more traffic; the stronger the accent bar, the slower that component. Click a component for details.</p>
+  <p class="lede">How a hover travels through Hanly's native desktop, Python service, and lookup engine, annotated with what this run measured at every component: how often it ran and its median time. Thicker edges carried more traffic; the stronger the accent bar, the slower that component. Click a component for details.</p>
   <div class="wide"><svg id="mapsvg" viewBox="0 0 1200 600" style="min-width:900px;width:100%"></svg></div>
   <div class="panel" id="mapinfo"><span class="empty">Select a component.</span></div>
 </section>
@@ -163,11 +163,11 @@ details summary { cursor: pointer; color: var(--ink-2); margin: 8px 0; }
 </section>
 <section id="tour"><h2>Tour accuracy</h2><div id="tourbody"></div></section>
 <section id="startup"><h2>Startup</h2>
-  <p class="lede">Shell startup phases as the app's own StartupTimeline reports them, and the lookup engine's provider prewarm in its child process.</p>
+  <p class="lede">Lookup provider warm-up and native desktop readiness marks reported by the supervised service.</p>
   <div id="startupbody"></div>
 </section>
 <section id="processes"><h2>Processes</h2>
-  <p class="lede">Sampled every 250 ms. Roles are exact: the lab hosts the shell, so it knows its own children by name. Helpers are processes those children spawned (Qt WebEngine, the multiprocessing resource tracker). RSS is resident memory, not private memory; short spikes between samples can be missed.</p>
+  <p class="lede">An external sampler records the Tauri host and its owned service, lookup, and webview processes every 250 ms. On macOS, Lab also checks the operating system's process-responsibility assignment for WebKit helpers. RSS is resident memory, not private memory; short spikes between samples can be missed.</p>
   <table id="proctable"></table>
 </section>
 <section id="data"><h2>Data</h2>
@@ -248,41 +248,34 @@ for (const f of M.findings) {
 
 // system map ----------------------------------------------------------------------
 const NODES = [
-  { id: "mouse", label: "Mouse observer", x: 30, y: 70, lane: "shell", file: "hanly_app/hover/mouse_observer.py", about: "Observes global pointer movement through pynput. Every move is a hover opportunity; it only observes and decides nothing." },
-  { id: "hover", label: "Hover controller", x: 220, y: 70, lane: "shell", file: "hanly_app/hover/controller.py", about: "Debounces: a hover fires only after the pointer rests for the configured dwell. Movement invalidates the pending hover." },
-  { id: "direct", label: "Direct text (AX/UIA)", x: 410, y: 70, lane: "shell", file: "hanly_app/acquisition/direct_text.py", about: "Tries to read the word without pixels through the accessibility API. When the app under the pointer exposes nothing, Hanly falls back to capture." },
-  { id: "capture", label: "ROI capture", x: 600, y: 70, lane: "shell", file: "hanly_app/acquisition/capture.py", about: "Grabs a small region around the pointer (never continuous full-screen OCR). Runs on the shell's main thread." },
-  { id: "controller", label: "Lookup controller", x: 790, y: 70, lane: "shell", file: "hanly_app/lookup/controller.py", about: "Assigns request IDs, latest-wins submission, and stale handling." },
-  { id: "executor", label: "Executor thread", x: 980, y: 70, lane: "shell", file: "hanly_app/lookup/executor.py", about: "One job running, one latest pending; sends the request across the pipe to the lookup child." },
+  { id: "mouse", label: "Mouse observer", x: 30, y: 70, lane: "service", file: "packages/hanly-app/src/hanly_app/hover/mouse_observer.py", about: "Observes global pointer movement through pynput. Every move is a hover opportunity; it only observes and decides nothing." },
+  { id: "hover", label: "Hover controller", x: 220, y: 70, lane: "service", file: "packages/hanly-app/src/hanly_app/hover/controller.py", about: "Debounces: a hover fires only after the pointer rests for the configured dwell. Movement invalidates the pending hover." },
+  { id: "direct", label: "Direct text (AX/UIA)", x: 410, y: 70, lane: "service", file: "packages/hanly-app/src/hanly_app/acquisition/direct_text.py", about: "Tries to read the word without pixels through the accessibility API. When the app under the pointer exposes nothing, Hanly falls back to capture." },
+  { id: "capture", label: "ROI capture", x: 600, y: 70, lane: "service", file: "packages/hanly-app/src/hanly_app/acquisition/capture.py", about: "Grabs a small region around the pointer (never continuous full-screen OCR). The Python desktop service owns capture." },
+  { id: "controller", label: "Lookup controller", x: 790, y: 70, lane: "service", file: "packages/hanly-app/src/hanly_app/lookup/controller.py", about: "Assigns request IDs, latest-wins submission, and stale handling." },
+  { id: "executor", label: "Executor thread", x: 980, y: 70, lane: "service", file: "packages/hanly-app/src/hanly_app/lookup/executor.py", about: "One job running, one latest pending; sends the request across the lookup transport." },
   { id: "cache", label: "Lookup cache", x: 980, y: 320, lane: "lookup", file: "hanly_app/composition.py", about: "Identical requests are answered from an LRU cache without running any provider." },
   { id: "gate", label: "Text-presence gate", x: 790, y: 320, lane: "lookup", file: "hanly_app/composition.py", about: "Skips OCR for flat regions with no text-like transitions." },
   { id: "ocr", label: "OCR", x: 600, y: 320, lane: "lookup", file: "hanly/vision_provider.py · hanly/easyocr_provider.py", about: "Recognizes text in the region through the OCRProvider seam (Apple Vision or EasyOCR)." },
   { id: "resolver", label: "Word resolver", x: 410, y: 320, lane: "lookup", file: "hanly/word_resolver.py", about: "Picks the word under the pointer from the recognized regions, down to the character." },
   { id: "morphology", label: "Morphology (Kiwi)", x: 220, y: 320, lane: "lookup", file: "hanly/kiwi_provider.py", about: "Turns the surface form into dictionary candidates (lemmas)." },
   { id: "dictionary", label: "Dictionary (KRDICT)", x: 30, y: 320, lane: "lookup", file: "hanly/krdict_provider.py", about: "Read-only SQLite queries: exact surface, whole form, then components; at most five." },
-  { id: "currency", label: "Currency check", x: 30, y: 170, lane: "shell", file: "hanly_app/lookup/controller.py", about: "The correctness gate: an answer is shown only if it is still the current request." },
-  { id: "popup", label: "Popup", x: 220, y: 170, lane: "shell", file: "hanly_app/popup/qt.py", about: "Shows successful answers near the word; non-answers are not shown." },
-  { id: "retained", label: "Retained answer", x: 410, y: 170, lane: "shell", file: "hanly_app/hover/target.py", about: "While the pointer stays on an answered word or the popup, movement starts nothing." },
+  { id: "currency", label: "Currency check", x: 30, y: 170, lane: "service", file: "packages/hanly-app/src/hanly_app/lookup/controller.py", about: "The correctness gate: an answer is shown only if it is still the current request." },
+  { id: "popup", label: "Native React popup", x: 220, y: 170, lane: "desktop", file: "apps/desktop/src/pages/PopupPage.tsx", about: "The Tauri host shows successful answers near the word; non-answers are not shown." },
+  { id: "retained", label: "Retained answer", x: 410, y: 170, lane: "service", file: "packages/hanly-app/src/hanly_app/hover/target.py", about: "While the pointer stays on an answered word or the popup, movement starts nothing." },
 ];
 const EDGES = [["mouse", "hover"], ["hover", "direct"], ["direct", "capture"], ["capture", "controller"], ["controller", "executor"], ["executor", "cache", "ipc"], ["cache", "gate"], ["gate", "ocr"], ["ocr", "resolver"], ["resolver", "morphology"], ["morphology", "dictionary"], ["dictionary", "currency", "ipc"], ["currency", "popup"], ["popup", "retained"], ["retained", "hover", "loop"]];
 const W = 160, H = 64;
 function drawMap() {
   const svg = $("#mapsvg");
-  const lanes = [["Shell process · hanly", 20, 40, 240, M.map["process.shell"]], ["Lookup child · hanly-lookup (spawned)", 20, 290, 120, M.map["process.lookup"]], ["Control Center child · hanly-control-center (spawned on open)", 20, 450, 110, M.map["process.control_center"]]];
+  const lanes = [["Hanly Tauri host · React Control Center and popup", 20, 40, 240, M.map["process.shell"]], ["Owned Python service, lookup and WebKit helper processes", 20, 290, 120, M.map["process.desktop_helpers"]]];
   for (const [label, x, y, h, p] of lanes) {
     svg.append(sv("rect", { class: "lane", x, y, width: 1160, height: h, rx: 10 }));
     // Between the two vertical pipe edges, so neither crosses the text.
     svg.append(sv("text", { x: 220, y: y + 18, class: "ink", "font-weight": 600 }, label));
     if (p && p.rss_mib != null) svg.append(sv("text", { x: 1030, y: y + 18, "text-anchor": "end" }, `peak ${fmt(p.rss_mib, 0)} MiB · mean CPU ${fmt(p.mean_cpu, 0)}% · ${p.threads} threads`));
   }
-  svg.append(sv("text", { x: 600, y: 278, "text-anchor": "middle", class: "mute" }, "─ ─ inherited duplex pipe (lookup/transport.py) ─ ─"));
-  const cc = sv("g", { class: "node", transform: "translate(30,480)" });
-  cc.append(sv("rect", { class: "box", width: 520, height: 64, rx: 8 }));
-  cc.append(sv("text", { x: 12, y: 22, class: "ink", "font-weight": 600 }, "pywebview + Qt WebEngine + Control Center page"));
-  const ccp = M.map["process.control_center"] || {};
-  cc.append(sv("text", { x: 12, y: 42 }, ccp.rss_mib != null ? `peak ${fmt(ccp.rss_mib, 0)} MiB, alive ${ms((ccp.alive_ms[1] - ccp.alive_ms[0]))} of the session` : "not opened in this run"));
-  cc.append(sv("text", { x: 12, y: 58, class: "mute" }, "hanly_app/control_center/ · not on the hover path"));
-  svg.append(cc);
+  svg.append(sv("text", { x: 600, y: 278, "text-anchor": "middle", class: "mute" }, "─ ─ bounded JSONL service protocol · request and event IDs ─ ─"));
   const pos = Object.fromEntries(NODES.map((n) => [n.id, n]));
   const maxCount = Math.max(1, ...NODES.map((n) => M.map[n.id]?.count || 0));
   const p50s = NODES.map((n) => M.map[n.id]?.p50 || 0); const maxP = Math.max(1e-9, ...p50s);
@@ -317,7 +310,8 @@ function mapInfo(n, s) {
   p.append(el("h3", {}, s.label || n.label), el("p", { class: "lede" }, n.about));
   const kv = el("div", { class: "kv" });
   const stage = M.stages.find((r) => r.name === { hover: "hover.dwell", direct: "hover.direct_text", capture: "hover.capture", executor: "hover.to_engine", ocr: "engine.ocr", resolver: "engine.token_selection", morphology: "engine.morphology", dictionary: "engine.dictionary", popup: "hover.to_popup" }[n.id]);
-  const rows = [["Code", n.file], ["Process", n.lane === "shell" ? "hanly (shell)" : "hanly-lookup (child)"], ["Ran", `${s.count ?? 0} times`]];
+  const processName = n.lane === "desktop" ? "Hanly Tauri host" : n.lane === "lookup" ? "Hanly lookup child" : "Hanly Python service";
+  const rows = [["Code", n.file], ["Process", processName], ["Ran", `${s.count ?? 0} times`]];
   if (stage) rows.push(["Latency", `p50 ${ms(stage.p50)} · p90 ${ms(stage.p90)} · p99 ${ms(stage.p99)} · max ${ms(stage.max)} (n=${stage.n})`]);
   if (s.detail) rows.push(["Also", s.detail]);
   for (const [k, v] of rows) kv.append(el("div", {}, k), el("div", {}, v));
@@ -338,7 +332,7 @@ drawMap();
   }
   const t = $("#stagetable");
   t.innerHTML = "<tr><th>Stage</th><th>Process</th><th class=n>n</th><th class=n>p50</th><th class=n>p90</th><th class=n>p99</th><th class=n>max</th><th class=n>mean</th></tr>";
-  for (const r of M.stages) { const tr = el("tr"); const [where, name] = r.name.split("."); tr.append(el("td", {}, name.replaceAll("_", " ")), el("td", {}, where === "engine" ? "lookup child" : "shell (hover)"), ...[r.n, ms(r.p50), ms(r.p90), ms(r.p99), ms(r.max), ms(r.mean)].map((v) => el("td", { class: "n" }, String(v)))); t.append(tr); }
+  for (const r of M.stages) { const tr = el("tr"); const [where, name] = r.name.split("."); tr.append(el("td", {}, name.replaceAll("_", " ")), el("td", {}, where === "engine" ? "lookup child" : "Python service"), ...[r.n, ms(r.p50), ms(r.p90), ms(r.p99), ms(r.max), ms(r.mean)].map((v) => el("td", { class: "n" }, String(v)))); t.append(tr); }
 })();
 
 // funnel ----------------------------------------------------------------------------------------
@@ -476,6 +470,7 @@ function selectEpisode(e) {
   const max = Math.max(1, ...rows.map((r) => r[1]));
   for (const [label, v, color] of rows) { const row = el("div", { class: "hbar" }); row.style.gridTemplateColumns = "260px 1fr 80px"; const tr = el("div", { class: "track" }); const f = el("div", { class: "fill" }); f.style.width = (100 * v / max) + "%"; f.style.background = color; tr.append(f); row.append(el("div", {}, label), tr, el("div", { style: "text-align:right" }, ms(v))); b.append(row); }
   const kv = el("div", { class: "kv", style: "margin-top:10px" }); for (const m of S.milestones) kv.append(el("div", {}, m.name), el("div", {}, `${m.at_ms} ms after the shell's timeline started`)); if (S.engine_ready_t) kv.append(el("div", {}, "lookup engine ready"), el("div", {}, `${ms(S.engine_ready_t)} into the session`)); if (S.first_answer_t) kv.append(el("div", {}, "first answer shown"), el("div", {}, `${ms(S.first_answer_t)} into the session`)); b.append(kv);
+  if (S.lab_driver_input_preflight) { const p = S.lab_driver_input_preflight; const status = (v) => v === true ? "Available" : v === false ? "Unavailable" : "Not checked"; b.append(el("h3", { style: "font-size:14px;margin:16px 0 6px" }, "Lab driver input access (this process only)")); const pt = el("div", { class: "kv" }); for (const [label, value] of [["Synthetic keyboard/mouse events", p.post_event_access], ["Input event listening", p.listen_event_access], ["Accessibility trust", p.accessibility_trusted]]) pt.append(el("div", {}, label), el("div", {}, status(value))); if (p.preflight_available === false) pt.append(el("div", {}, "Preflight APIs"), el("div", {}, "Unavailable")); b.append(pt); }
   const pt = $("#proctable"); pt.innerHTML = "<tr><th>role</th><th class=n>processes</th><th class=n>peak RSS</th><th class=n>final RSS</th><th class=n>peak CPU</th><th class=n>mean CPU</th><th class=n>peak threads</th><th class=n>alive</th></tr>";
   for (const [role, r] of Object.entries(M.processes.summary)) pt.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(role)}</td><td class=n>${r.processes}</td><td class=n>${fmt(r.rss_mib, 0)} MiB</td><td class=n>${fmt(r.final_rss_mib, 0)} MiB</td><td class=n>${fmt(r.cpu, 0)}%</td><td class=n>${fmt(r.mean_cpu, 1)}%</td><td class=n>${r.threads}</td><td class=n>${ms(r.alive_ms[1] - r.alive_ms[0])}</td>` }));
   const ct = $("#counts"); ct.innerHTML = "<tr><th>event</th><th class=n>count</th></tr>"; for (const [k, v] of Object.entries(M.event_counts)) ct.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(k)}</td><td class=n>${v}</td>` }));

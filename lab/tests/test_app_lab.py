@@ -104,6 +104,62 @@ def test_profile_output_and_inherited_options_are_isolated(
     assert os.environ["HANLY_KRDICT_DB"] == "/private/user-dictionary"
 
 
+def test_update_ui_check_runs_the_focused_react_dom_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from lab.checks import ui_probe
+
+    frontend = runner.REPO_ROOT / "apps" / "desktop"
+    expected = ["node", "vitest", ui_probe.UI_TESTS["CC-UPDATE-STAGE"]]
+    monkeypatch.setattr(ui_probe, "command", lambda _test_name: expected)
+    observed: dict[str, Any] = {}
+
+    def fake(command: list[str], **kwargs: Any) -> Execution:
+        observed.update(command=command, **kwargs)
+        return _execution()
+
+    monkeypatch.setattr(runner, "execute", fake)
+    scenario = select_scenarios(("CC-UPDATE-STAGE",))[0]
+    result = runner._run_one(scenario, None, None)
+
+    assert result["outcome"] == "passed"
+    assert observed["command"] == expected
+    assert observed["cwd"] == str(frontend)
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "test_name"),
+    [
+        ("CC-LIFECYCLE", "waits for the /popup event listener"),
+        ("CC-CONTROLS", "persists an appearance setting"),
+        ("CAPTURE-CHOICE", "lets a user cancel the capture-scope dialog"),
+        ("HOVER-POPUP", "ignores stale popup events"),
+    ],
+)
+def test_replaced_control_center_scenarios_run_focused_react_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_id: str,
+    test_name: str,
+) -> None:
+    from lab.checks import ui_probe
+
+    assert test_name in ui_probe.UI_TESTS[scenario_id]
+    expected = ["node", "vitest", ui_probe.UI_TESTS[scenario_id]]
+    monkeypatch.setattr(ui_probe, "command", lambda _name: expected)
+    observed: dict[str, Any] = {}
+
+    def fake(command: list[str], **kwargs: Any) -> Execution:
+        observed.update(command=command, **kwargs)
+        return _execution(counts={"passed": 1, "skipped": 8})
+
+    monkeypatch.setattr(runner, "execute", fake)
+    result = runner._run_one(select_scenarios((scenario_id,))[0], None, None)
+
+    assert result["outcome"] == "passed"
+    assert observed["command"] == expected
+    assert observed["cwd"] == str(runner.REPO_ROOT / "apps" / "desktop")
+
+
 def test_bundle_identity_requires_an_explicit_build_and_commit() -> None:
     scenario = select_scenarios(("BUNDLE-IDENTITY",))[0]
     assert runner._unavailable(scenario, None, None) == "bundle_not_supplied"
@@ -132,7 +188,9 @@ def test_identity_needs_observation_and_refuses_a_transient_foreground_child(
             processes=events,
         ),
     )
-    result = runner._run_one(select_scenarios(("MAC-IDENTITY",))[0], None, None)
+    result = runner._run_one(
+        select_scenarios(("MAC-IDENTITY",))[0], runner.REPO_ROOT, None
+    )
     assert result["reason"] == reason and result["outcome"] != "passed"
 
 

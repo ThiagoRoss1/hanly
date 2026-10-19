@@ -26,7 +26,7 @@ Startup is ordered as follows:
    - `DictionaryProvider`: KRDICT backed by read-only SQLite is the initial implementation.
 5. **Initialize Lookup Pipeline.** `LookupPipeline` orchestrates target resolution, linguistic analysis, and dictionary lookup through provider contracts. It never references EasyOCR, Kiwi, or KRDICT directly.
 6. **Initialize Desktop Services.** Global hotkey, mouse observer, capture service, and system tray become available.
-7. **Prepare or open the Control Center.** Its HTML, CSS, and JavaScript interface is presented through pywebview.
+7. **Prepare or open the Control Center.** Its React interface runs in a Tauri-owned system webview.
 8. **Enter `READY`.** Hanly is loaded and can activate capture and lookup behavior.
 
 Provider initialization is the startup convergence point: the configured OCR adapter, morphology adapter, and dictionary adapter must be available before `LookupPipeline` can serve lookups. The desktop services and Control Center are then prepared before the application reports `READY`.
@@ -71,7 +71,7 @@ Hover lookup begins from `READY` while capture mode is active:
     - A superseded request is discarded because the cursor may have moved while worker processing was in progress.
     - A current request continues to presentation.
 12. `PopupController` chooses a popup position from the cursor and available screen area.
-13. The PyQt6 popup renders the completed `LookupResult` next to the cursor.
+13. The React popup in its Tauri-owned native window renders the completed `LookupResult` next to the cursor.
 14. Mouse observation continues. The loop remains active until capture mode is paused or cancelled.
 
 The hover delay is configurable and must be tuned empirically. Initial experimentation is expected around roughly `80–250 ms`; this is an experimental range, not a fixed performance SLA.
@@ -151,3 +151,27 @@ The approved flow defines these states and failure-relevant decisions without pr
 - The diagram does not define retry, fallback, notification, or recovery policy for provider initialization or lookup failures.
 
 > **Open clarification:** Startup failure presentation and recovery behavior are not specified by the approved Runtime Flow.
+
+## Approved desktop migration overlay — 2026-10-12
+
+The desktop composition uses one Tauri/Rust native root and React for every
+desktop surface. Native and packaged acceptance remains tracked in the
+checkpoint. The root supervises one Qt-free Python desktop service; that service retains configuration, provisioning, acquisition, hover
+decisions, update policy and lookup coordination, and keeps heavy providers in
+the isolated lookup child. The service remains responsive while resources and
+providers prepare. The numbered startup sequence describes lookup readiness:
+the native Control Center opens immediately and displays preparation state
+while the service initializes. `LookupPreload` controls actual provider
+construction and residency independently of runtime readiness.
+
+Private Rust-to-Python stdio JSONL uses protocol version 1, correlated request
+IDs, explicit methods and per-window authorization, bounded to 1 MiB per frame
+and 32 pending requests. Python still performs the final current-request check
+before publishing a popup result. Startup health, service readiness, runtime
+readiness and provider residency remain separate states. The updater waits for
+the new Tauri root to report readiness after its service handshake and React
+frontend readiness; a service handshake alone cannot acknowledge a
+replacement install. The detailed surface map and continuation order live in the [migration checkpoint](../execution/checkpoints/desktop-tauri-migration.md).
+
+This overlay does not renumber or reorder `RF-INV-*`; the V1 invariant list
+above and its visual companion stay 1:1.

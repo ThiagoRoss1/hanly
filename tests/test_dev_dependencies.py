@@ -1,8 +1,8 @@
 """Check suite dependency declarations against imports and capability skips.
 
 Portable runs use root dev dependencies and packages without extras: every third
-party must be declared or preceded by importorskip. Native/packaged suites may
-add their runtime extra, but nothing beyond it.
+party must be declared or preceded by importorskip. Native and packaged suites
+add only the desktop service runtime.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ _APP_PYPROJECT = ROOT / "packages" / "hanly-app" / "pyproject.toml"
 
 #: Locates ``runtime = [...]`` in the app project, read the same way.
 _RUNTIME_EXTRA = re.compile(r"^runtime\s*=\s*(\[.*?^\])", re.DOTALL | re.MULTILINE)
-
 #: Distributions whose importable name differs from the name pip installs.
 _IMPORT_NAMES = {
     "pillow": "PIL",
@@ -186,10 +185,10 @@ def _test_modules() -> list[Path]:
 
 def test_every_library_the_suite_reaches_is_declared_or_skippable() -> None:
     declared = _declared_modules()
-    with_runtime = declared | _runtime_modules()
+    with_native = declared | _runtime_modules()
 
     for path in _test_modules():
-        available = with_runtime if _needs_the_runtime(path) else declared
+        available = with_native if _needs_the_runtime(path) else declared
         undeclared = _undeclared_modules(path.read_text(encoding="utf-8"), available)
         assert not undeclared, (
             f"{path.relative_to(ROOT)} reaches {sorted(undeclared)}, which its CI "
@@ -206,15 +205,23 @@ def _needs_the_runtime(path: Path) -> bool:
 
 def test_the_dev_group_does_not_quietly_carry_the_desktop_runtime() -> None:
     """This is the rule the portable matrix exists to keep: four Python
-    versions on a machine with no Qt, no Torch, and no display. What each
+    versions on a machine with no window server, no Torch, and no display. What each
     module may reach is asserted above; this is what the group itself installs.
     """
 
     declared = _declared_modules()
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
     assert "PyQt6" not in declared
     assert "torch" not in declared
     assert "webview" not in declared
+    assert re.search(r"(?m)^lab\s*=", project) is None
+
+
+def test_the_python_runtime_does_not_install_ui_frameworks() -> None:
+    """The native Tauri shell owns the UI and no Python UI framework ships."""
+
+    assert not {"PyQt6", "webview", "pystray"} & _runtime_modules()
 
 
 def test_an_importorskip_below_an_import_does_not_excuse_it() -> None:
@@ -238,11 +245,7 @@ def test_an_importorskip_in_another_function_does_not_reach_across_scopes() -> N
         "def unguarded() -> None:\n"
         "    import polars\n"
     )
-    same_scope = (
-        "def guarded() -> None:\n"
-        "    pytest.importorskip('polars')\n"
-        "    import polars\n"
-    )
+    same_scope = "def guarded() -> None:\n    pytest.importorskip('polars')\n    import polars\n"
 
     assert _undeclared_modules(neighbour, set()) == {"polars"}
     assert _undeclared_modules(same_scope, set()) == set()

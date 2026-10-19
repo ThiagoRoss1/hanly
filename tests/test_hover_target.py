@@ -276,9 +276,23 @@ def test_moving_into_the_popup_keeps_it_open(hover: _Hover) -> None:
     assert hover.capture.cursors == []
 
 
-def test_crossing_the_gap_towards_the_popup_keeps_the_answer(hover: _Hover) -> None:
-    """The corridor exists so the popup can be reached, and only for that."""
+def test_diagonal_approach_to_the_footer_above_the_word_keeps_the_card(
+    continuous_hover: _Hover,
+) -> None:
+    hover = continuous_hover
+    hover.retain(ScreenRect(100, 500, 40, 20), ScreenRect(100, 150, 340, 330))
+    hover.move(120, 510)
+    for x, y in ((160, 500), (200, 490), (240, 480), (300, 460)):
+        hover.move(x, y)
+        assert hover.cleared == 0
+    assert hover.runtime.retained_target is not None
+    assert hover.capture.cursors == []
 
+
+def test_crossing_the_gap_towards_the_popup_keeps_the_answer(continuous_hover: _Hover) -> None:
+    """A paused crossing expires under continuous hover."""
+
+    hover = continuous_hover
     hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
 
     hover.move(200, 110)
@@ -374,6 +388,62 @@ def test_entering_the_popup_ends_the_crossing(hover: _Hover) -> None:
     assert getattr(crossing, "cancelled")
     assert hover.cleared == 0
     assert hover.runtime.retained_target is not None
+
+
+def test_sticky_crossing_expiry_releases_protection_without_dismissing(hover: _Hover) -> None:
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    hover.move(220, 110)
+    hover.fire_transfer()
+
+    assert hover.runtime.retained_target is None
+    assert hover.cleared == 0
+
+
+def test_pausing_in_the_approach_starts_a_normal_dwell_at_that_point(
+    continuous_hover: _Hover,
+) -> None:
+    hover = continuous_hover
+    hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    hover.move(220, 110)
+    hover.fire_transfer()
+
+    request = hover.runtime.hover_controller.current_request
+    assert request is not None and request.point == Point(220, 110)
+    assert hover.cleared == 1
+
+
+def test_queued_expiry_cannot_close_a_popup_the_cursor_already_entered(
+    continuous_hover: _Hover,
+) -> None:
+    continuous_hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    continuous_hover.move(220, 110)
+    expired = continuous_hover.transfer_handle()
+    continuous_hover.move(400, 150)
+
+    # A scheduler may already have queued the callback before cancellation.
+    getattr(expired, "callback")()
+
+    assert continuous_hover.cleared == 0
+    assert continuous_hover.runtime.retained_target is not None
+
+
+def test_progress_towards_the_popup_renews_the_crossing_deadline(
+    continuous_hover: _Hover,
+) -> None:
+    continuous_hover.retain(ScreenRect(100, 100, 40, 20), ScreenRect(300, 100, 320, 180))
+    continuous_hover.move(180, 110)
+    first = continuous_hover.transfer_handle()
+    continuous_hover.move(220, 110)
+    renewed = continuous_hover.transfer_handle()
+
+    assert first is not renewed
+    assert getattr(first, "cancelled")
+    getattr(first, "callback")()
+    assert continuous_hover.cleared == 0
+    continuous_hover.move(310, 110)
+    getattr(renewed, "callback")()
+    assert continuous_hover.cleared == 0
+    assert continuous_hover.capture.cursors == []
 
 
 def test_a_real_exit_arms_a_dwell_for_the_next_word_and_no_exit_delay(

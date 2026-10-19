@@ -105,6 +105,15 @@ class PopupComponent:
 
 
 @dataclass(frozen=True)
+class PopupConstruction:
+    """A dictionary-listed construction the hovered word is part of."""
+
+    headword: str
+    gloss: str | None = None
+    definition: str | None = None
+
+
+@dataclass(frozen=True)
 class PopupContent:
     """Typed, provider-independent presentation data for one popup."""
 
@@ -118,6 +127,7 @@ class PopupContent:
     analysis: tuple[PopupAnalysisPiece, ...] = ()
     components: tuple[PopupComponent, ...] = ()
     other_entries: tuple[PopupEntryContent, ...] = ()
+    construction: PopupConstruction | None = None
     confidence: float | None = None
     source: str | None = None
     technical_lines: tuple[str, ...] = ()
@@ -148,6 +158,23 @@ def should_present(result: LookupResult) -> bool:
     """Whether this outcome is worth putting on screen at all."""
 
     return isinstance(result, LookupResult) and result.status in _PRESENTED_STATUSES
+
+
+def _popup_construction(context: LookupContext | None) -> PopupConstruction | None:
+    construction = context.construction if context is not None else None
+    if construction is None:
+        return None
+    entry = construction.entries[0] if construction.entries else None
+    sense = entry.senses[0] if entry is not None and entry.senses else None
+    return PopupConstruction(
+        headword=construction.headword,
+        gloss=sense.gloss if sense is not None else None,
+        definition=(
+            sense.definition if sense is not None
+            else entry.definitions[0] if entry is not None and entry.definitions
+            else None
+        ),
+    )
 
 
 def _entry_content(entry: DictionaryEntry) -> PopupEntryContent:
@@ -298,6 +325,7 @@ def format_lookup_result(
             lemma=context.lemma if context is not None else entry.headword,
             analysis=analysis,
             other_entries=tuple(_entry_content(item) for item in result.entries[1:]),
+            construction=_popup_construction(context),
             confidence=confidence,
             source=source,
             technical_lines=technical,
@@ -412,6 +440,15 @@ class PopupController:
     def set_geometry_handler(self, handler: GeometryChanged | None) -> None:
         self._on_geometry_changed = handler
 
+    def vertical_band(
+        self, cursor: Point, anchor: BoundingBox | None
+    ) -> tuple[float, float]:
+        """The span a popup keeps clear: it ends above the top or starts below the bottom."""
+
+        if anchor is None:
+            return cursor.y - self._offset, cursor.y + self._offset
+        return anchor.top - _WORD_GAP_PIXELS, anchor.bottom + _WORD_GAP_PIXELS
+
     def position_for(
         self,
         cursor: Point,
@@ -448,20 +485,17 @@ class PopupController:
 
         width, height = size.width, size.height
         if anchor is None:
-            gap = self._offset
-            x = floor(cursor.x + gap)
+            x = floor(cursor.x + self._offset)
             if x + width > screen.right:
-                x = floor(cursor.x - gap - width)
-            top_edge = bottom_edge = cursor.y
+                x = floor(cursor.x - self._offset - width)
         else:
-            gap = _WORD_GAP_PIXELS
             x = floor(anchor.left)
-            top_edge, bottom_edge = anchor.top, anchor.bottom
 
-        below_y = floor(bottom_edge + gap)
+        band_top, band_bottom = self.vertical_band(cursor, anchor)
+        below_y = floor(band_bottom)
         if above is None:
             above = below_y + height > screen.bottom
-        y = floor(top_edge - gap - height) if above else below_y
+        y = floor(band_top - height) if above else below_y
         x = min(max(x, screen.left), max(screen.left, screen.right - width))
         y = min(max(y, screen.top), max(screen.top, screen.bottom - height))
         return PopupPosition(x, y), above
@@ -584,6 +618,7 @@ class PopupRuntime:
 __all__ = [
     "LookupStopper",
     "PopupAnalysisPiece",
+    "PopupConstruction",
     "PopupContent",
     "PopupController",
     "PopupEntryContent",

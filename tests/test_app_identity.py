@@ -2,40 +2,32 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
-from hanly_app import app_icon
-from hanly_app.control_center.bridge import control_center_document
-from hanly_app.control_center.host import ControlCenterHost
-from hanly_app.window_frame_win32 import FRAME_COLOURS, colorref
 
 ROOT = Path(__file__).parents[1]
+TAURI_CONFIG = ROOT / "apps/desktop/src-tauri/tauri.conf.json"
+ICONS = ROOT / "packages/hanly-app/src/hanly_app/assets/icons"
 
 
-@pytest.mark.parametrize("size", app_icon.ICON_SIZES)
-def test_every_packaged_icon_is_the_size_its_name_says(size: int) -> None:
+@pytest.mark.parametrize("size", (16, 24, 32, 48, 64, 128, 256, 512))
+def test_every_application_icon_is_the_size_its_name_says(size: int) -> None:
     from PIL import Image
 
-    with Image.open(app_icon.icon_path(size)) as image:
-        assert image.size == (size, size)
-        assert image.mode == "RGBA"
-
-
-@pytest.mark.parametrize("size", app_icon.WINDOW_FACE_SIZES)
-def test_every_packaged_window_face_is_the_size_its_name_says(size: int) -> None:
-    from PIL import Image
-
-    with Image.open(app_icon.window_face_path(size)) as image:
+    with Image.open(ICONS / f"hanly-icon-{size}.png") as image:
         assert image.size == (size, size)
         assert image.mode == "RGBA"
 
 
 def test_the_macos_icon_is_the_bundles_artwork_on_apples_icon_grid() -> None:
+    """The native root embeds this image as the Dock icon at compile time."""
+
     from PIL import Image
 
-    with Image.open(app_icon.macos_icon_path()) as image:
-        assert image.size == (app_icon.MACOS_ICON_SIZE, app_icon.MACOS_ICON_SIZE)
+    with Image.open(ICONS / "hanly-macos-icon.png") as image:
+        assert image.size == (1024, 1024)
         assert image.mode == "RGBA"
         runtime = image.copy()
     with Image.open(ROOT / "packaging/icons/hanly.icns") as bundle:
@@ -47,74 +39,30 @@ def test_the_macos_icon_is_the_bundles_artwork_on_apples_icon_grid() -> None:
     assert runtime.getchannel("A").getbbox() == (100, 100, 924, 924)
 
 
-def test_an_unpackaged_size_is_refused_rather_than_scaled() -> None:
-    with pytest.raises(ValueError):
-        app_icon.icon_path(20)
-    with pytest.raises(ValueError):
-        app_icon.window_face_path(32)
-
-
-def test_the_tray_gets_a_drawn_size_not_a_resampled_one() -> None:
-    from PIL import Image
-
-    image = app_icon.tray_image()
-
-    size = getattr(image, "size")[0]
-    assert size in app_icon.ICON_SIZES
-    with Image.open(app_icon.icon_path(size)) as application_icon:
-        assert image.tobytes() == application_icon.convert("RGBA").tobytes()
-
-
-def test_the_control_center_is_titled_hanly_with_an_inline_favicon() -> None:
-    document = control_center_document()
+def test_the_native_webview_document_is_titled_hanly_with_its_icon() -> None:
+    document = (ROOT / "apps/desktop/index.html").read_text(encoding="utf-8")
 
     assert "<title>Hanly</title>" in document
-    assert '<link rel="icon" href="data:image/x-icon;base64,' in document
-    assert 'href="favicon.ico"' not in document
+    assert 'href="/src/assets/icons/hanly-icon-32.png"' in document
 
 
-def test_the_control_center_window_is_named_hanly() -> None:
-    host = ControlCenterHost(object())
+def test_the_native_windows_keep_the_hanly_identity() -> None:
+    config = json.loads(TAURI_CONFIG.read_text(encoding="utf-8"))
 
-    assert getattr(host, "_title") == "Hanly"
-
-
-def test_windows_colours_are_written_blue_green_red() -> None:
-    assert colorref("#1C1D20") == 0x201D1C
-    assert colorref("#FAFAF9") == 0xF9FAFA
-
-
-def test_the_frame_matches_the_pages_own_surface_tokens() -> None:
-    css = (
-        ROOT / "packages/hanly-app/src/hanly_app/assets/control_center/control_center.css"
-    ).read_text(encoding="utf-8")
-
-    assert f"--surface: {FRAME_COLOURS['light'][0]};" in css
-    assert f"--surface: {FRAME_COLOURS['dark'][0]};" in css
+    assert config["productName"] == "Hanly"
+    assert config["version"] == "1.1.0"
+    assert config["identifier"] == "io.github.thiagoross1.hanly"
+    assert [window["label"] for window in config["app"]["windows"]] == [
+        "control-center",
+        "popup",
+        "region-selector",
+    ]
+    assert all(window["title"].startswith("Hanly") for window in config["app"]["windows"])
 
 
-@pytest.mark.parametrize("mode", [None, "", "sepia", 3, "DARK"])
-def test_the_frame_accepts_only_a_rendered_mode(mode: object) -> None:
-    assert ControlCenterHost(object()).frame_theme(mode) is False
+def test_the_native_root_carries_the_official_icons() -> None:
+    config = json.loads(TAURI_CONFIG.read_text(encoding="utf-8"))
+    icons = [ROOT / "apps/desktop/src-tauri" / path for path in config["bundle"]["icon"]]
 
-
-def test_builds_carry_the_icons_they_are_given() -> None:
-    spec = (ROOT / "packaging/hanly-desktop.spec").read_text(encoding="utf-8")
-    manifest = (ROOT / "packages/hanly-app/pyproject.toml").read_text(encoding="utf-8")
-
-    assert 'icon=str(ICON_DIRECTORY / "hanly.ico")' in spec
-    assert 'icon=str(ICON_DIRECTORY / "hanly.icns")' in spec
-    assert '"assets/icons/*.png"' in spec and '"assets/icons/*.png"' in manifest
-    assert (ROOT / "packaging/icons/hanly.ico").is_file()
-    assert (ROOT / "packaging/icons/hanly.icns").is_file()
-
-
-def test_the_packaged_inventory_requires_the_icons() -> None:
-    from tools.smoke_packaged_runtime import REQUIRED_DATA_FILES
-
-    for size in app_icon.ICON_SIZES:
-        assert f"hanly_app/assets/icons/hanly-icon-{size}.png" in REQUIRED_DATA_FILES
-    for size in app_icon.WINDOW_FACE_SIZES:
-        assert f"hanly_app/assets/icons/window-face-{size}.png" in REQUIRED_DATA_FILES
-    assert "hanly_app/assets/icons/hanly-macos-icon.png" in REQUIRED_DATA_FILES
-    assert "hanly_app/assets/icons/favicon.ico" in REQUIRED_DATA_FILES
+    assert {"hanly.ico", "hanly.icns", "hanly-icon-128.png"} <= {path.name for path in icons}
+    assert all(path.is_file() for path in icons)

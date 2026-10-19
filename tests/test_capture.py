@@ -23,6 +23,8 @@ from hanly_app.acquisition.capture import (
 )
 from hanly_app.config import CaptureMode
 
+from tests.hanly_fixtures.runtime_input import invoke_with_runtime_values
+
 
 @dataclass
 class FakeBackend:
@@ -499,9 +501,10 @@ def test_a_capture_result_rejects_a_plan_that_is_not_one() -> None:
     image = ROIImage(4, 2, PixelFormat.RGB_888, bytes(4 * 2 * 3))
 
     with pytest.raises(TypeError, match="plan must be a CapturePlan"):
-        CaptureResult(
+        invoke_with_runtime_values(
+            CaptureResult,
             image=image,
             region=ScreenRect(0, 0, 4, 2),
             target=Point(1, 1),
-            plan="not a plan",  # type: ignore[arg-type]
+            plan="not a plan",
         )

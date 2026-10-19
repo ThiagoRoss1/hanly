@@ -92,26 +92,36 @@ class VisionProvider:
 
         request_class, handler_class = self._load()
         try:
-            payload = _png_bytes(image, self._config.input_scale)
+            payload = self._payload(image)
         except Exception as exc:
             raise VisionProviderError(f"Vision input conversion failed: {exc}") from exc
 
-        try:
-            observations = self._run(request_class, handler_class, payload)
-        except VisionProviderError:
-            raise
-        except Exception as exc:
-            raise VisionProviderError(f"Vision recognition failed: {exc}") from exc
+        # The lookup child recognizes on a worker thread, which has no
+        # autorelease pool: everything Vision autoreleases per request would
+        # never be drained. Normalization reads those native observations, so
+        # it runs inside the same pool and copies out plain values first.
+        with _autorelease_pool():
+            try:
+                observations = self._run(request_class, handler_class, payload)
+            except VisionProviderError:
+                raise
+            except Exception as exc:
+                raise VisionProviderError(f"Vision recognition failed: {exc}") from exc
 
-        results = [
-            normalized
-            for observation in observations
-            if (normalized := _normalize(observation, image)) is not None
-        ]
+            results = [
+                normalized
+                for observation in observations
+                if (normalized := _normalize(observation, image)) is not None
+            ]
         # Vision returns observations in confidence order; the seam promises
         # reading order, which for one small ROI is top-to-bottom then left.
         results.sort(key=lambda result: (result.quad.p1.y, result.quad.p1.x))
         return tuple(results)
+
+    def _payload(self, image: ROIImage) -> Any:
+        """What :meth:`_run` hands Vision: the enlarged ROI as PNG bytes."""
+
+        return _png_bytes(image, self._config.input_scale)
 
     def prewarm(self) -> None:
         """Load the framework before the first real lookup pays for it."""
@@ -132,7 +142,7 @@ class VisionProvider:
 
         data = NSData.dataWithBytes_length_(payload, len(payload))
         handler = handler_class.alloc().initWithData_options_(data, {})
-        handler.performRequests_error_([request], None)
+        _perform(handler, request)
         return request.results() or ()
 
     def _load(self) -> tuple[Any, Any]:
@@ -162,6 +172,23 @@ class VisionProvider:
 
         self._classes = classes
         return classes
+
+
+def _perform(handler: Any, request: Any) -> None:
+    # Runtime-loaded classes can lack NSError out-parameter metadata and
+    # return just BOOL; metadata-aware bindings return (BOOL, NSError).
+    response = handler.performRequests_error_([request], None)
+    succeeded = response[0] if isinstance(response, tuple) else response
+    if not succeeded:
+        raise VisionProviderError("Vision request failed")
+
+
+def _autorelease_pool() -> Any:
+    """A pool that drains on exit, on success or error alike."""
+
+    import objc
+
+    return objc.autorelease_pool()
 
 
 def _png_bytes(image: ROIImage, scale: int = 1) -> bytes:
@@ -198,9 +225,12 @@ def _normalize(observation: Any, image: ROIImage) -> OCRResult | None:
     candidates = observation.topCandidates_(1)
     if not candidates:
         return None
-    text = candidates[0].string()
-    if not isinstance(text, str) or not text.strip():
+    native = candidates[0].string()
+    if not isinstance(native, str) or not native.strip():
         return None
+    # A plain copy: PyObjC's string still wraps the native one, which belongs
+    # to the pool this runs in.
+    text = str(native)
 
     box = observation.boundingBox()
     left = box.origin.x * image.width

@@ -17,18 +17,15 @@ hanly = "hanly_app.cli:main"
 runtime = [
     "hanly[concrete]==1.1.0",
     "mss>=10.2,<11",
+    "Pillow>=10,<13",
     "pynput>=1.8,<2",
-    "PyQt6>=6.7,<7",
-    "pywebview[qt6]>=6.2,<7",
-    "pystray>=0.19,<1",
     # Apple Vision, the default recognizer on macOS, is reached through these;
-    # they must not depend on pywebview happening to bring them along.
+    # keep them explicit so service imports do not depend on incidental extras.
     "pyobjc-core>=10,<13; sys_platform == 'darwin'",
     "pyobjc-framework-Cocoa>=10,<13; sys_platform == 'darwin'",
 ]
 dev = [
     "hanly-app[runtime]",
-    "Pillow>=10,<13",
     "psutil>=5.9,<8",
 ]
 
@@ -37,10 +34,5 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 hanly_app = [
-    "assets/control_center/*.html",
-    "assets/control_center/*.css",
-    "assets/control_center/*.js",
-    "assets/icons/*.png",
-    "assets/icons/*.ico",
     "assets/hanly-build.json",
 ]

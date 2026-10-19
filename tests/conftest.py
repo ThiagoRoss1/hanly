@@ -8,17 +8,9 @@ from pathlib import Path
 
 import pytest
 
-if sys.platform.startswith("linux") and not (
-    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-):
-    # Qt must choose its platform before any test imports QApplication.
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 
 @pytest.fixture(autouse=True)
-def isolate_hanly_user_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def isolate_hanly_user_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests away from real configuration, resources, logs, and caches."""
 
     profile = tmp_path / "profile"

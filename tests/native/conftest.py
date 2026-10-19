@@ -1,6 +1,6 @@
 """Which native cases this host can run at all, and what marks them.
 
-``shared`` holds real Qt, real child-process, and real window behavior that
+``shared`` holds real child-process and native window behavior that
 every platform must satisfy. Each OS directory beside it holds that platform's
 own adapters, and only the matching host ever imports one.
 """
@@ -8,15 +8,9 @@ own adapters, and only the matching host ever imports one.
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
-
-if TYPE_CHECKING:
-    from hanly_app.popup.qt import QtPopupView
-    from PyQt6.QtWidgets import QApplication
 
 #: The directory whose adapters this host actually has.
 HOST_DIRECTORY = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
@@ -43,28 +37,3 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         item.add_marker("native")
-
-
-@pytest.fixture(scope="session")
-def qt_application() -> QApplication:
-    """The one ``QApplication`` a process may have, shared by every Qt case.
-
-    Imported here rather than at module scope: this conftest also configures
-    the native cases that assert they never loaded Qt at all.
-    """
-
-    from PyQt6.QtWidgets import QApplication
-
-    existing = QApplication.instance()
-    if isinstance(existing, QApplication):
-        return existing
-    return QApplication([])
-
-
-@pytest.fixture
-def popup_view(qt_application: QApplication) -> Iterator[QtPopupView]:
-    from hanly_app.popup.qt import QtPopupView
-
-    popup = QtPopupView()
-    yield popup
-    popup.close()

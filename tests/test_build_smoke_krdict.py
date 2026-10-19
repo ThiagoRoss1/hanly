@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from hanly.krdict_provider import KRDICTProvider
 from hanly.krdict_schema import KRDICT_SCHEMA_VERSION, validate_krdict_connection
-from hanly_app.self_check import DICTIONARY_PROBE
+from hanly_app.service.self_check import DICTIONARY_PROBE
 
 from tools.build_smoke_krdict import (
     PROBE_LEMMAS,
@@ -58,6 +58,13 @@ def test_two_builds_of_the_same_source_produce_the_same_database(
     rebuilt = build_smoke_krdict(tmp_path / "again" / "krdict.sqlite3")
 
     assert rebuilt.read_bytes() == database.read_bytes()
+
+
+def test_smoke_dictionary_includes_the_spawned_context_probe(database: Path) -> None:
+    with KRDICTProvider(database) as dictionary:
+        for lemma in ("먹다", "있다", "돈", "-고 있다"):
+            assert dictionary.lookup(lemma), lemma
+        assert dictionary.lookup("-고 있다")[0].part_of_speech == "품사 없음"
 
 
 def test_the_command_writes_where_it_was_told_and_says_so(

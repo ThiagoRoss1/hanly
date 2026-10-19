@@ -1,1 +1,1 @@
-"""Control Center bridge and host."""
+"""UI-independent Control Center business contracts."""

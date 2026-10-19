@@ -51,7 +51,7 @@ PRODUCT_PACKAGE = "hanly-app"
 APPLICATION_STEM = "hanly-desktop"
 
 #: The macOS product, and the identity its Info.plist must carry. Both come
-#: from ``packaging/hanly-desktop.spec``.
+#: from ``tools/build_package.py`` and the Tauri bundle configuration.
 BUNDLE_NAME = "Hanly.app"
 BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
 

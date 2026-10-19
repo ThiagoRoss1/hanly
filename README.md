@@ -13,13 +13,15 @@ in a 56,555-entry KRDICT database. There is no continuous full-screen scanning,
 and captured pixels are never written to disk or sent anywhere — recognition
 and lookup both run locally.
 
-Windows, macOS, and Linux. Python 3.10 or newer. CPU only.
+Windows, macOS, and Linux. CPU only. Packaged applications include their Python
+runtime; source development requires Python 3.10+, Node and Rust.
 
 ---
 
 ## What you need
 
-- **Python 3.10+**
+- **For source development:** Python 3.10+, Node 22.12+ and Rust 1.99.
+  Packaged users install the Hanly application without these tools.
 - **A KRDICT database.** Hanly cannot start without it. It is a ~92 MB SQLite
   file built from the licensed official KRDICT source, and it is not part of
   this repository — `data/README.md` has the commands that build one.
@@ -50,7 +52,7 @@ looking for a package index that does not have it.
 
 `packages/hanly` is the engine and has no required dependencies of its own. The
 `[runtime]` extra on `packages/hanly-app` is what pulls the real stack —
-EasyOCR, Torch, Kiwi, Qt, capture, hotkeys, tray. Several GB and a few minutes,
+EasyOCR, Torch, Kiwi and capture dependencies. Several GB and a few minutes,
 most of it Torch.
 
 Editable means the installed commands run this checkout's code, so `git pull`
@@ -69,6 +71,10 @@ Hanly installs the database into its own settings directory the first time it
 starts — staged, checksummed, schema-validated, then activated atomically —
 so the copy you point at is read once and never used directly at runtime.
 
+Build the native shell following [desktop development](apps/desktop/README.md).
+The Python command launches that existing executable; it does not compile it or
+fall back to a Python UI.
+
 ## Run it
 
 ```bash
@@ -76,7 +82,7 @@ hanly                  # the command
 python -m hanly_app    # the same thing, without the script
 ```
 
-The packaged executable is the same command again — regular users just
+The packaged executable is the Tauri native desktop — regular users just
 double-click it. `hanly run` is accepted too: `run` is the default and the only
 verb, so it changes nothing.
 
@@ -93,17 +99,29 @@ drag, and the choice is saved for next time. Cancelling changes nothing.
 First start takes a few seconds longer, because the dictionary has to be
 installed and validated. Later starts skip the install.
 
+### macOS access
+
+Use Hanly's **Permissions** page to grant **Screen Recording** and
+**Accessibility**. Each required grant has an **Open settings** action that
+starts macOS's permission flow and opens its specific privacy pane. Complete
+the macOS confirmation there; Hanly checks again when you return to its window.
+Both grants remain listed after approval so their current state stays visible.
+
 ### Using it
 
 Three global shortcuts, and each one does exactly one thing:
 
-- **`Ctrl+Shift+F10`** starts and stops watching the screen. Stopping gives the
+On macOS, `⌃` means Control and `⌘` means Command. These defaults use letters
+so the media/function-key setting does not affect them. Custom bindings are kept;
+the complete old default set migrates to the Mac defaults automatically.
+
+- **`⌃⌘R` on macOS / `Ctrl+Shift+F10` on Windows and Linux** starts and stops watching the screen. Stopping gives the
   lookup engine's memory back; nothing is watched until you start again.
-- **`Ctrl+Shift+Space`** is **Push to Hover**: hold it, and hovering over
+- **`⌃⌘H` on macOS / `Ctrl+Shift+Space` on Windows and Linux** is **Push to Hover**: hold it, and hovering over
   Korean text for ~80 ms looks the word up. Let go and Hanly stops looking.
   An answer already on screen stays until you move away from its word, so you
   can read it, click it, and copy from it with the keys released.
-- **`Ctrl+Shift+F9`** pauses and continues hover without stopping capture. It
+- **`⌃⌘P` on macOS / `Ctrl+Shift+F9` on Windows and Linux** pauses and continues hover without stopping capture. It
   matters in **Whenever capture is running** mode, where hover has no key to
   let go of; in Push to Hover the chord is already the switch.
 
@@ -148,30 +166,38 @@ same program with the same behaviour.
 ## Build the desktop application
 
 ```bash
+npm ci --prefix apps/desktop
+python tools/prepare_easyocr_models.py
 python tools/build_package.py
 ```
 
-This produces a self-contained application under `dist/<platform>/` and the
-release products at the root of `dist/`: a Windows `.zip`, a Linux `.tar.gz`,
-and both a macOS `.zip` and `.dmg` containing `Hanly.app`. Run
-`hanly-desktop.exe` on Windows, `hanly-desktop` on Linux, or `Hanly.app` on
-macOS. Each is the same program as `hanly`, so it opens the same window and
-accepts the same flags. Unpacking an archive does not put `hanly` on your PATH;
-installing the Python package does.
+Build on the platform you intend to ship; the native root, Python service and
+updater helper are host binaries. The coordinated build produces a Tauri
+application with its React assets and frozen Python service under `dist/`, then
+creates the existing Windows ZIP, Linux tarball, and macOS ZIP and DMG. The
+native executable is `hanly-desktop.exe` on Windows, `hanly-desktop` in the
+Linux product, and `Contents/MacOS/hanly-desktop` inside `Hanly.app` on macOS.
+All three use the same native application and preserve the existing app identity
+and user-data paths.
 
-The build bundles Python, the engine, Qt, and the OCR runtime. It does **not**
-bundle the dictionary — a packaged install acquires that the same way a source
-install does. `packaging/README.md` covers the build and release flow.
+The product bundles Python, the engine, providers and OCR models. It does not
+bundle the licensed KRDICT database; first-run provisioning acquires and
+validates it through the existing resource flow. The production UI is Tauri and
+React. Lab fixtures render with Pillow in native AppKit windows on macOS and
+Tk windows on Windows/Linux; neither the product nor Lab needs Qt. The product
+build and updater release flow are documented in
+[`packaging/README.md`](packaging/README.md).
 
 ## The repository
 
 | Path | What it is |
 |---|---|
 | `packages/hanly` | The engine: OCR orchestration, Korean linguistics, dictionary lookup, resource validation. Depends on no desktop code |
-| `packages/hanly-app` | The desktop: capture, hover, hotkeys, popup, tray, Control Center, updates |
+| `packages/hanly-app` | Qt-free Python desktop service: capture, hover and lookup coordination, settings, resources, diagnostics and verified updates |
+| `apps/desktop` | Tauri/Rust native root and React Control Center, popup and region selector |
 | `tools/` | Builds the dictionary; developer rigs. Ships in neither package |
 | `lab/` | The developer lab: `python -m lab` runs Hanly under observation and reports. Ships in neither package |
-| `packaging/` | PyInstaller spec and the frozen entry point |
+| `packaging/` | Frozen Python service spec, updater helpers and product build/release tooling |
 | `docs/` | Architecture, `CODE-MAP.md`, and execution history; `docs/README.md` is the index |
 
 **[`docs/CODE-MAP.md`](docs/CODE-MAP.md) is where to start reading the code**:
@@ -186,9 +212,17 @@ python -m ruff check packages packaging tests tools lab
 python -m mypy packages packaging tests tools lab
 ```
 
-`python -m pytest --suite portable` runs only what needs no Qt, Torch or
-display; `--suite native` and `--suite packaged` select the rest
-(`packaging/README.md` has the details).
+`python -m pytest --suite portable` selects tests that need no native window
+server or OCR runtime. `--suite native` exercises host desktop behavior and
+`--suite packaged` checks a freshly built product. Lab's native raster fixtures
+use Pillow with AppKit on macOS and Tk on Windows/Linux. The desktop runtime
+provides the macOS frameworks; other hosts need a Python build with Tk support.
+
+See [`packaging/README.md`](packaging/README.md) for host requirements and
+packaged validation details. Build the frontend with `npm`. From
+`apps/desktop`, `npm run tauri -- dev` starts the Vite development workflow;
+the `hanly` command launches an already-built native root and never builds one
+automatically.
 
 `tools/dev_lookup.py` runs one real `image → EasyOCR → Kiwi → KRDICT` lookup
 and prints the result as JSON, without starting the desktop. `tools/README.md`

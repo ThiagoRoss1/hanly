@@ -19,7 +19,7 @@ dev = [
 testpaths = ["tests", "lab/tests"]
 pythonpath = ["."]
 markers = [
-    "native: runs real Qt, child-process, or OS-adapter behavior",
+    "native: runs the real Tauri/WebKit desktop, child-process, or OS-adapter behavior",
     "packaged: runs the frozen product rather than the checkout",
 ]
 
@@ -51,9 +51,6 @@ module = [
     "kiwipiepy.*",
     "PIL.*",
     "mss.*",
-    "PyQt6.*",
-    "pystray.*",
-    "webview.*",
     "psutil.*",
 ]
 ignore_missing_imports = true

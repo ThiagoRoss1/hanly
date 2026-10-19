@@ -22,7 +22,8 @@ fails the build if that is ever violated.
 - **`hanly`** — OCR orchestration, Korean linguistics, dictionary lookup,
   resource validation, contracts.
 - **`hanly_app`** — everything desktop: OS integration, capture, hotkeys, tray,
-  Qt popup, Control Center, worker threads, updates.
+  the supervised desktop service, worker threads, settings and updates.
+- **`apps/desktop`** — Tauri/Rust native shell and React product surfaces.
 
 ---
 
@@ -30,101 +31,47 @@ fails the build if that is ever violated.
 
 | You run | Reaches |
 |---|---|
-| `hanly` | `hanly_app/cli.py` → `main()` |
-| `python -m hanly_app` | `__main__.py` → the same `main()` |
-| the packaged `.exe` | `packaging/entrypoint.py` → the same `main()` |
+| `hanly` or `python -m hanly_app` | `hanly_app/cli.py:main` → existing native desktop executable |
+| packaged Hanly | Tauri native executable → bundled internal Python service |
+| `npm run tauri -- dev` | Development-only Vite + Tauri launch |
 
-**One command, one function.** `run` is the only verb and it is the default, so
-plain `hanly` and `hanly run` are identical. `tests/test_packaging.py` fails if
-a second entry point appears.
+The Python command remains `hanly`; npm builds or develops the frontend.
+`cli.main` calls `multiprocessing.freeze_support()` first and forwards only
+supported flags. POSIX uses `execv` so the native root keeps the launched PID.
+There is no second Python UI entry point or Qt fallback.
 
-```
-cli.main
-  └─ multiprocessing.freeze_support()            diverts a spawned child first of all
-  └─ diagnostics.open_diagnostics()              rotating log, before anything native
-  └─ application.run_desktop()                   the app itself
-        └─ qt_bootstrap.ensure_qt_application()  QApplication("hanly"), Qt Widgets only
-        └─ DesktopApplication.run()              the shell owns the one event loop
-        └─ startup.StartupCoordinator.start()    off-thread, behind the open window
-              └─ owned_cleanup                   what an interrupted session left
-              └─ application.resolve_runtime_config()
-                    └─ first_run.provision_runtime_config()   runtime.json, krdict
-              └─ runtime.load_runtime()
-  └─ cli._leave()                                ends the process, does not unwind
+```text
+Tauri root (native windows, tray, hotkeys, activation, lifecycle)
+  ├─ system webview helpers (React Control Center, popup, selector)
+  └─ hanly-service (configuration, startup, capture, hover, updates)
+       └─ hanly-lookup (Vision/EasyOCR, Kiwi, KRDICT)
 ```
 
-Nothing is asked before the window opens. The interface is on screen while
-resources download and providers warm, and it stays usable if either fails.
+The root owns a private bounded JSONL channel to its service: explicit methods,
+caller-derived window identity, protocol version, correlated IDs, deadlines,
+32 pending requests and 1 MiB frames. Lookup still uses `lookup/transport.py`:
+an inherited duplex pipe with checked sizes, one reader and serialized sends.
+There is no localhost server or production Node backend. Native root shutdown
+joins service threads and retires its owned process family; updater helpers
+explicitly detach because they must survive the installation they replace.
 
-### Three processes
+## 3. Startup and readiness
 
-The shell never exits while Hanly is running, so it must never hold memory a
-library will not give back. Qt WebEngine and the OCR/morphology/dictionary
-providers do exactly that, so each lives in a child the shell can retire.
+The native window opens while `service/application.py` prepares configuration,
+resources and composition off the UI thread. `first_run.py` provisions KRDICT,
+`runtime.py` validates resources, and `composition.py` supplies provider factories.
+`service/event_loop.py` owns callbacks and independent dwell/crossing timers.
 
-```
-hanly (the shell)                 Qt Widgets, tray, hotkeys, capture, hover,
-  │                               popup, settings, updates, the session log
-  ├── hanly-control-center        pywebview + Qt WebEngine + the page
-  │     (spawned on open, gone on close; opening again is a new process)
-  └── hanly-lookup                Vision or EasyOCR + Kiwi + KRDICT + the pipeline
-        (spawned by the preload policy; retired on Stop, or after an idle
-         manual session; a lookup wakes a sleeping engine on demand)
-```
+`RuntimeStatus` describes whether lookup is usable. `LookupEngine.state`
+describes provider residency; `config.LookupPreload` controls prewarming.
+Providers initialize and close on the lookup child's owner thread, and the
+service never imports the OCR/morphology runtime during its own bootstrap.
+Capture starts only through a user action, regardless of readiness or hover mode.
 
-`lookup/transport.py` is the one way they talk: an inherited duplex `Pipe`,
-explicitly pickled messages with a checked size, serialized sends, and one
-reader per direction. There is no listening port, no dispatch by name from the
-wire, and no shell command line.
-
-Measured on macOS: the shell holds about 60 MiB for a whole session. The window
-costs roughly 300 MiB while it is open and gives all of it back on close; the
-lookup engine costs roughly 800 MiB while it is loaded and gives all of it back
-when it is retired.
-
-`main` ends the process rather than returning into interpreter finalization.
-Qt WebEngine keeps Chromium alive until the process is gone, and unloading its
-libraries on the way out is what a quit used to hang or fail fast on. See
-`cli._terminate_without_unloading`.
-
----
-
-## 3. Startup, in order
-
-1. **`hanly_app/lookup/preload.py`** — imports EasyOCR before anything else *in the
-   lookup child*. On Windows Qt changes native-library resolution once it
-   initializes, and the child loads the OCR stack before it does anything else.
-   The shell never imports it at all. A failure here is a reported diagnostic,
-   not a crash.
-2. **`hanly_app/first_run.py`** — a launch with no configuration of its own
-   writes a default `runtime.json` under the per-user settings directory, then
-   provisions any missing resource through `UpdateService`. Today that is only
-   `krdict`; EasyOCR fetches its own models.
-3. **`hanly_app/runtime.py`** — reads that JSON, asks `ResourceManager` to
-   validate every declared resource, and returns a `HanlyRuntime` holding
-   *factories* (not instances) for the three providers.
-4. **`hanly_app/composition.py`** — wires those factories into a
-   `LookupWorker`, wrapping them in caching, text-presence, and tracing layers.
-5. **`hanly_app/application.py`** — builds the shell (tray, settings,
-   diagnostics, runtime status, and the Control Center child) first, then
-   everything that needs a validated runtime once `startup.StartupCoordinator`
-   has one. The event loop belongs to the shell, with
-   `setQuitOnLastWindowClosed(False)`: every Hanly window is transient, and the
-   Control Center is not even in this process.
-
-Steps 2 and 3 happen **after** the window is visible, on the startup
-coordinator's thread. Readiness is reported through
-`runtime_status.RuntimeStatus`, which is separate from the capture lifecycle:
-launching reaches `ready` without watching the screen, and the Start action is
-what begins capture.
-
-Providers are constructed **on the thread that will later close them**, inside
-the lookup child — a SQLite connection belongs to the thread that opened it.
-
-**Readiness is not residency.** `runtime_status.RuntimeStatus` says whether a
-lookup can happen at all; `LookupEngine.state` (sleeping, preparing, ready,
-error) says whether the providers are loaded right now. Which of those the
-launch pays for is `config.LookupPreload`.
+The root derives native monitor context and registers both shortcut edges.
+Python resolves `auto` before launching the lookup child: probing a framework
+from a spawned process can hang. Startup errors stay visible with retry, and
+service disconnects settle pending requests before an explicit restart.
 
 ---
 
@@ -149,7 +96,7 @@ hover (while the push chord is held, or for the whole session)
         (exact surface, surface without particles,
          whole form, components)
   → final request-currency check              lookup/controller.py
-  → popup, and the word it came from retained popup/qt.py / hover/target.py
+  → popup, and the word it came from retained service/application.py / hover/target.py
 ```
 
 `LookupPipeline` (`packages/hanly/src/hanly/lookup_pipeline.py`) is the only
@@ -299,8 +246,8 @@ Five rules hold the whole thing together:
 
 - **The previous build outlives the update.** It is discarded only once the new
   one has answered that transaction's challenge - its own build UUID, a random
-  nonce, and the manifest digest - which `cli.main` answers through
-  `--update-ready-v2` when the shell's event loop starts. A version number is
+  nonce, and the manifest digest - which the Tauri root answers through
+  `--update-ready-v2` after the service handshake and React readiness. A version number is
   not an acknowledgement; `--update-ready` remains exactly as it was for
   helpers an older Hanly installed.
 - **Correctness comes from the filesystem, not the record.** Every apply,
@@ -351,74 +298,33 @@ the migration routes.
 
 ### `packages/hanly-app` — the desktop
 
-**Startup and composition**
+**Service and desktop behavior**
 
 | File | What it does |
 |---|---|
-| `application.py` | Composition root: `run_desktop`, the desktop session, shutdown |
-| `cli.py` | The one entry point: parser, dispatch, `--self-check`, process exit |
-| `qt_bootstrap.py` | The one `QApplication` per process, with a program name. Nothing heavy |
-| `startup.py` | Prepares the runtime off the UI thread, behind the open window |
-| `lookup/preload.py` | Imports EasyOCR first, in the lookup child |
-| `first_run.py` | Writes the default config, provisions missing resources |
-| `runtime.py` | JSON config → validated `HanlyRuntime` with provider factories |
-| `composition.py` | Builds the worker: caching, text-presence gate, tracing wrappers |
-| `config.py` | Per-user preferences, including the capture target and region |
-| `paths.py` | Per-user settings, runtime-config, and log locations |
-| `diagnostics.py` | Rotating session log, the filterable record tail, and the sanitized export |
-| `updates/cleanup.py` | What an interrupted session left behind, and what must never be removed |
-| `lookup/transport.py` | The one way the shell and its children talk |
-| `runtime_status.py` | Readiness, separate from the capture lifecycle and from engine residency |
-| `self_check.py` | `--self-check`: the frozen bundle proving its own runtime and window |
-
-**Input and capture**
-
-| File | What it does |
-|---|---|
-| `hover/mouse_observer.py` | Observes the cursor. Only observes |
-| `hover/controller.py` | Decides when a hover is worth acting on |
-| `hover/qt_scheduler.py` | Hover timing on the Qt thread |
-| `acquisition/capture.py` | Screen ROI capture |
-| `acquisition/selector.py` | The "which area?" overlay, reached from settings |
-| `acquisition/direct_text.py` | Whether the word under the pointer can be read without pixels, and the fallback to capture when it cannot |
-| `acquisition/ax.py` | The macOS reader, through the Accessibility API |
-| `acquisition/uia.py` | The Windows reader, through UI Automation |
-| `hotkeys.py` | Global hotkeys, both edges of a chord, and the backend per platform |
-| `hotkeys_darwin.py` | The macOS backend: Carbon `RegisterEventHotKey`, pressed and released |
-| `popup/macos.py` | Keeps the macOS popup panel on screen while Hanly is inactive |
-| `app_identity_darwin.py` | What macOS thinks a Hanly process is, so only one is an application |
-| `app_reopen_darwin.py` | Routes a macOS reactivation (Dock click) back to the Control Center |
-| `permissions.py` | Which grant each feature needs, and how it is reported |
-| `permissions_darwin.py` | The macOS status and grant flows, through ctypes |
-
-**Lookup execution**
-
-| File | What it does |
-|---|---|
-| `lookup/controller.py` | Request IDs, stale handling, bounded / latest-wins submission |
-| `lookup/executor.py` | The executor thread: one job running, one latest pending |
-| `lookup/process.py` | The lookup child, its transport, and the engine that owns provider residency |
-| `hover/lookup.py` | The hover-driven lookup runtime, and the answer the cursor may rest on |
-| `hover/target.py` | Where a result came from on screen, what protects it, and the crossing to the popup |
-| `manual_lookup.py` | The shortcut-driven runtime, the preload policy, and the Qt composition |
-| `runtime_trace.py` | Structured per-stage trace events, forwarded from the child |
-| `lookup/evidence.py` | Encodes the private diagnostic structures only an evidence-retaining developer sink asks for |
-
-**Presentation and shell**
-
-| File | What it does |
-|---|---|
-| `popup/presentation.py` / `popup/qt.py` | The dictionary popup |
-| `qt_theme.py` | The Qt palette every shell-drawn window shares |
-| `hanly_dialog.py` | Hanly's own small dialogs, styled like the popup |
-| `app_icon.py` | The icon set, at the sizes it was drawn for |
-| `window_frame_win32.py` | The Windows title bar in Hanly's colours (imported on every platform, acts only on Windows) |
-| `tray.py` | System tray |
-| `control_center/bridge.py` | The bridge behind the window (`assets/control_center/`), which stays in the shell |
-| `control_center/process.py` | The window's own process, its operation allowlist, and the proxy the page calls |
-| `control_center/host.py` | One pywebview window and the loop it runs in |
-| `desktop_controller.py` | Start / pause / resume state |
-| `signal_bridge.py` | Ctrl+C → clean Qt shutdown |
+| `cli.py` | User command, bounded native flag forwarding and executable resolution |
+| `service/server.py`, `service/protocol.py` | Private JSONL dispatch, framing, request authorization and shutdown |
+| `service/application.py` | Qt-free composition, event-backed popup, host input adapter and bridge actions |
+| `service/event_loop.py` | Serialized callbacks and cancellable dwell/crossing timers |
+| `service/snapshot.py` | Active-selector-only bounded in-memory capture; no tracing or disk |
+| `service/self_check.py` | Inventory, worker, OCR and UI service checks |
+| `service/application.py`, `first_run.py`, `runtime.py` | Asynchronous provisioning and validated resource/provider factories |
+| `composition.py` | Worker composition, caching, text-presence gates and tracing wrappers |
+| `config.py`, `paths.py` | Persisted desktop preferences and per-user locations |
+| `diagnostics.py` | Rotating session log, filtered tail and sanitized export |
+| `control_center/bridge.py` | UI-independent state snapshots, validation and desktop business actions |
+| `desktop_controller.py`, `runtime_status.py` | Capture lifecycle and readiness, separate from residency |
+| `manual_lookup.py` | Qt-free lookup composition and shortcut/preload behavior |
+| `hover/mouse_observer.py`, `hover/controller.py` | Cursor observation and debounce decisions |
+| `hover/lookup.py`, `hover/target.py` | Acquisition/lookup coordination, retained answer and crossing grace |
+| `acquisition/capture.py`, `acquisition/selection.py` | Small ROI capture, monitor plans and pure region-selection geometry |
+| `acquisition/direct_text.py`, `acquisition/ax.py`, `acquisition/uia.py` | Direct-first platform acquisition, with pixel fallback |
+| `permissions.py`, `permissions_darwin.py` | Required grants, native status and settings flows |
+| `hotkeys.py` | Canonical shortcut validation and action contracts used by the service |
+| `lookup/controller.py`, `lookup/executor.py` | Request currency and bounded latest-wins worker execution |
+| `lookup/process.py`, `lookup/transport.py`, `lookup/preload.py` | Isolated providers and private lookup IPC |
+| `popup/presentation.py` | UI-independent content, placement and resize/retention contracts |
+| `runtime_trace.py`, `lookup/evidence.py` | Privacy-safe stage metadata and opt-in in-memory diagnostic evidence |
 
 **Updates**
 
@@ -451,13 +357,35 @@ the migration routes.
 | `tools/dev_lookup.py` | Engine-only lookup rig |
 | `tools/build_package.py`, `tools/release_version.py` | Release tooling: freeze the bundle, prove a tag matches the packages |
 | `tools/release_build.py`, `tools/tagged_metadata.py` | The release lane's decisions — peel the tag, verify its build, classify an existing release, read the tagged identity |
-| `packaging/` | PyInstaller spec, runtime hook, frozen entry point |
-| `lab/` | The developer lab: `python -m lab` runs the real desktop under observation (`session/`), `lab tour` drives it over lab-authored Korean, `report/` turns a run into a visual report; `identity.py`, `pins.py`, `comparison.py` and `storage.py` say what a run is, which runs are baselines, what a comparison may claim and what may be cleaned; `synthetic_ocr.py`, `synthetic_profiles.py`, `stage_evidence.py` and `differential.py` build and score controlled-image corpora; plus measurement campaigns, `checks/`, its own `tests/` and the `hud/`. Nothing in `packages/` imports it |
+| `packaging/` | Internal service spec/runtime hook, native updater helper and platform bundle configuration |
+| `lab/` | The developer lab: `python -m lab` runs the real desktop under observation (`session/`), `lab tour` drives it over lab-authored Korean, `report/` turns a run into a visual report; `identity.py`, `pins.py`, `comparison.py` and `storage.py` say what a run is, which runs are baselines, what a comparison may claim and what may be cleaned; `synthetic_ocr.py`, `synthetic_profiles.py`, `stage_evidence.py` and `differential.py` build and score controlled-image corpora; `grammar_inventory.py` and `grammar_pages.py` build paired selectable-text/image-only Korean fixtures with real browser cursor styles and pinned test fonts; `resources/` attributes memory, CPU, threads, latency and I/O to stages in fresh processes, splits recorded sessions into phases and compares two experiments; plus measurement campaigns, `checks/`, its own `tests/` and the `hud/`. Nothing in `packages/` imports it |
 | `data/` | Local KRDICT source and build outputs. Gitignored except the README |
+| `lab/easyocr_audit.py` | Developer-only synthetic-image comparison of EasyOCR decoder/crop options, effective CPU policy and model/language alphabet limits; never changes product OCR |
 | `resources/dev/` | Machine-local benchmark configuration. Gitignored |
-| `tests/` | Product tests for both packages, in three selectable suites: portable by default, `tests/native/` for real Qt and OS adapters, `tests/packaged/` for the frozen product |
+| `tests/` | Product tests for both packages, in three selectable suites: portable by default, `tests/native/` for real desktop and OS adapters, `tests/packaged/` for the frozen product |
 
 ---
+
+
+## 7a. Native shell and React
+
+| Path | Responsibility |
+|---|---|
+| `apps/desktop/src/pages/` | React Control Center, popup and region selector |
+| `apps/desktop/src/services/`, `src/hooks/` | Restricted bridge, subscriptions, state and structured errors |
+| `apps/desktop/src-tauri/src/commands/` | Per-window authorization and parameter validation |
+| `apps/desktop/src-tauri/src/lifecycle/` | Service supervision, bounded IPC and process-family cleanup |
+| `apps/desktop/src-tauri/src/platform/` | Public OS adapters, monitor context and native shortcut transactions |
+| `apps/desktop/src-tauri/src/platform/popup_macos.rs` | Nonactivating AppKit panel, fixed webview canvas and painted-frame presentation barrier |
+| `apps/desktop/src-tauri/src/windows/` | Window lifecycle, coalesced presentation and selector geometry |
+| `apps/desktop/tests/`, `tests/test_desktop_service.py` | React interactions, state/contract checks and service behavior |
+| `lab/session/raster_ui.py`, `raster_fonts.py` | Developer-only AppKit/Tk image windows, explicit coordinate transforms and Pillow font resolution |
+
+Current acceptance evidence and outstanding gates live in the single
+[migration checkpoint](execution/checkpoints/desktop-tauri-migration.md).
+See [desktop development instructions](../apps/desktop/README.md) and
+[packaging runbooks](../packaging/README.md). The updater remains the existing
+receipt/challenge-based updater; it is not replaced by a Tauri plugin.
 
 ## 8. Running it from a fresh clone
 
@@ -468,8 +396,8 @@ python -m pip install --editable "packages/hanly-app[runtime]"
 hanly
 ```
 
-The `runtime` extra is what pulls the real stack — EasyOCR, Torch, Kiwi, Qt,
-capture, hotkeys, tray. Several GB, mostly Torch.
+The `runtime` extra is what pulls the real stack — EasyOCR, Torch, Kiwi and capture dependencies. Build the native shell using
+`apps/desktop/README.md`; Node and Rust are development/build tools only. Several GB, mostly Torch.
 
 **The dictionary is not in this repository.** Until the GitHub release carrying
 it exists, point a fresh clone at an already-built copy:

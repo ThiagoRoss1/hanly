@@ -21,6 +21,8 @@ from hanly import (
 )
 from hanly.language_pipeline import LanguagePipeline
 
+from tests.hanly_fixtures.runtime_input import invoke_with_runtime_values
+
 
 class _Morphology:
     def __init__(self, analysis: MorphologyAnalysis) -> None:
@@ -99,7 +101,9 @@ def test_a_component_requires_a_lemma_and_typed_fields() -> None:
     with pytest.raises(ValueError):
         LexicalComponent(lemma="", start=0, end=1)
     with pytest.raises(TypeError):
-        LexicalComponent(lemma="x", start=0, end=1, gloss=3)  # type: ignore[arg-type]
+        invoke_with_runtime_values(
+            LexicalComponent, lemma="x", start=0, end=1, gloss=3
+        )
     with pytest.raises(TypeError):
         LexicalComponent(lemma="x", start=True, end=2)
 
@@ -343,7 +347,9 @@ def test_a_listed_word_keeps_parts_that_read_as_themselves() -> None:
     result = language.lookup(TextSelection(text, 0))
 
     assert result.entries[0].headword == text
-    assert [c.lemma for c in result.context.components] == ["두통", "거리"]  # type: ignore[union-attr]
+    context = result.context
+    assert context is not None
+    assert [c.lemma for c in context.components] == ["두통", "거리"]
 
 
 def test_a_listed_word_drops_a_part_that_names_a_different_word() -> None:
@@ -357,7 +363,9 @@ def test_a_listed_word_drops_a_part_that_names_a_different_word() -> None:
     result = language.lookup(TextSelection(text, 0))
 
     assert result.entries[0].headword == text
-    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+    context = result.context
+    assert context is not None
+    assert [c for c in context.components if not c.grammatical] == []
 
 
 def test_a_listed_word_drops_a_part_whose_span_swallowed_a_suffix() -> None:
@@ -373,7 +381,9 @@ def test_a_listed_word_drops_a_part_whose_span_swallowed_a_suffix() -> None:
     result = language.lookup(TextSelection(text, 0))
 
     assert result.entries[0].headword == text
-    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+    context = result.context
+    assert context is not None
+    assert [c for c in context.components if not c.grammatical] == []
 
 
 def test_a_listed_word_drops_a_part_the_dictionary_does_not_hold() -> None:
@@ -386,7 +396,9 @@ def test_a_listed_word_drops_a_part_the_dictionary_does_not_hold() -> None:
 
     result = language.lookup(TextSelection(text, 0))
 
-    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+    context = result.context
+    assert context is not None
+    assert [c for c in context.components if not c.grammatical] == []
 
 
 def test_a_surface_the_dictionary_lacks_still_decomposes() -> None:
@@ -397,7 +409,9 @@ def test_a_surface_the_dictionary_lacks_still_decomposes() -> None:
 
     result = language.lookup(TextSelection(_SURFACE, 0))
 
-    assert [c.lemma for c in result.context.components] == [  # type: ignore[union-attr]
+    context = result.context
+    assert context is not None
+    assert [c.lemma for c in context.components] == [
         "초대",
         "받다",
         "었",
@@ -433,5 +447,7 @@ def test_an_exhausted_budget_shows_only_the_complete_form() -> None:
     result = language.lookup(TextSelection(text, 0))
 
     assert result.entries[0].headword == text
-    assert [c for c in result.context.components if not c.grammatical] == []  # type: ignore[union-attr]
+    context = result.context
+    assert context is not None
+    assert [c for c in context.components if not c.grammatical] == []
     assert len(dictionary.queries) <= 5

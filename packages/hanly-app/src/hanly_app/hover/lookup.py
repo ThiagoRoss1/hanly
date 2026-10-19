@@ -163,8 +163,8 @@ class HoverLookupRuntime:
         self._readiness_generation = 0
         self._readiness_waiting = False
         self._origins = origins if origins is not None else CaptureOrigins()
-        # Dwell and popup crossing overlap; sharing one QTimer lets a new
-        # dwell replace the callback that should dismiss the popup.
+        # Dwell and popup crossing overlap; they need independent timer slots
+        # so new movement cannot replace the dismissal callback.
         self._exit_scheduler = exit_scheduler
         self._scheduler = scheduler
         self._transfer_ms = float(transfer_ms)
@@ -175,9 +175,11 @@ class HoverLookupRuntime:
         self._sticky = bool(sticky)
         self._retained: RetainedTarget | None = None
         self._target_generation = 0
+        self._transfer_generation = 0
         self._transfer_timer: Cancellable | None = None
         self._protected_point: Point | None = None
         self._transfer_distance: float | None = None
+        self._transfer_point: Point | None = None
         self._hover = HoverController(
             self._on_stable,
             delay_ms=delay_ms,
@@ -426,6 +428,7 @@ class HoverLookupRuntime:
             # next movement is already outside it.
             self._protected_point = None if target is None else _centre(target.word)
             self._transfer_distance = None
+            self._transfer_point = None
             timer = self._transfer_timer
             self._transfer_timer = None
         if timer is not None:
@@ -497,9 +500,9 @@ class HoverLookupRuntime:
     def _crossing_to_popup(self, point: Point, retained: RetainedTarget) -> bool:
         """Whether this movement is the user reaching for the popup.
 
-        Only a cursor that left the word inside the narrow corridor towards the
-        popup, and that keeps getting closer to it, is crossing. Anything else
-        -- sideways, backwards, or towards the next word -- is a real exit.
+        Movement must point into the popup and keep getting closer. A pause
+        ends that approach and lets a neighbouring word start its own dwell;
+        movement away from the card releases it immediately.
         """
 
         popup = retained.popup
@@ -512,13 +515,17 @@ class HoverLookupRuntime:
             return False
 
         distance = distance_to(popup, point)
-        if previous is not None and distance > previous:
-            # Turning back is leaving, whatever the corridor says.
+        best = distance_to(popup, origin) if previous is None else previous
+        if distance > best + 2.0:
+            # Tolerate hand jitter without allowing a gradual retreat.
             return False
         with self._lock:
-            self._transfer_distance = distance
-            starting = self._transfer_timer is None
-        if starting:
+            self._transfer_point = point
+            progress = previous is None or distance < previous - 0.5
+            if progress:
+                self._transfer_distance = distance
+            renew = progress or self._transfer_timer is None
+        if renew:
             self._arm_transfer()
         return True
 
@@ -551,6 +558,7 @@ class HoverLookupRuntime:
             self._target_generation += 1
             self._protected_point = None
             self._transfer_distance = None
+            self._transfer_point = None
             timer = self._transfer_timer
             self._transfer_timer = None
         if timer is not None:
@@ -568,35 +576,54 @@ class HoverLookupRuntime:
         self._dispatcher(self._dismiss_retained)
 
     def _arm_transfer(self) -> None:
-        """Bound the crossing, so a cursor parked in the gap does not hold it."""
+        """Expire a paused crossing; progress renews its bounded idle grace."""
 
         with self._lock:
             generation = self._target_generation
+            self._transfer_generation += 1
+            crossing = self._transfer_generation
+            previous = self._transfer_timer
+            self._transfer_timer = None
             scheduler = self._exit_scheduler
+        if previous is not None:
+            previous.cancel()
         if scheduler is None:
-            # Nothing can end the crossing later, so it does not begin.
-            self._dismiss_retained()
+            self._leave_retained_target()
             return
         try:
             timer = scheduler(
-                self._transfer_ms, lambda: self._transfer_expired(generation)
+                self._transfer_ms, lambda: self._transfer_expired(generation, crossing)
             )
         except Exception as error:
             self._report_error("popup transfer", error)
-            self._dismiss_retained()
+            self._leave_retained_target()
             return
         with self._lock:
-            current = generation == self._target_generation and not self._closed
+            current = (
+                generation == self._target_generation
+                and crossing == self._transfer_generation
+                and not self._closed
+            )
             if current:
                 self._transfer_timer = timer
         if not current:
             timer.cancel()
 
-    def _transfer_expired(self, generation: int) -> None:
+    def _transfer_expired(self, generation: int, crossing: int) -> None:
         with self._lock:
-            if self._closed or generation != self._target_generation:
+            if (
+                self._closed
+                or generation != self._target_generation
+                or crossing != self._transfer_generation
+                or self._transfer_timer is None
+            ):
                 return
-        self._dismiss_retained()
+            point = self._transfer_point
+        self._leave_retained_target()
+        # Pausing over a neighbouring word ends the approach and starts its
+        # normal dwell; it must not require another mouse movement to read it.
+        if point is not None and self.running and self.accepting:
+            self._hover.on_position(point)
 
     def _dismiss_retained(self) -> None:
         """Drop the answer on screen and whatever was protecting it."""
@@ -606,6 +633,7 @@ class HoverLookupRuntime:
             self._target_generation += 1
             self._protected_point = None
             self._transfer_distance = None
+            self._transfer_point = None
             timer = self._transfer_timer
             self._transfer_timer = None
         if timer is not None:
@@ -615,9 +643,11 @@ class HoverLookupRuntime:
 
     def _cancel_transfer(self) -> None:
         with self._lock:
+            self._transfer_generation += 1
             timer = self._transfer_timer
             self._transfer_timer = None
             self._transfer_distance = None
+            self._transfer_point = None
         if timer is not None:
             timer.cancel()
 
@@ -904,7 +934,7 @@ class HoverLookupRuntime:
                 self._dispatcher(lambda: self._on_direct_text(request, acquired))
             except Exception as error:
                 # This runs on the native worker, which may neither capture nor
-                # touch Qt, so the rejection is only recorded, by its class.
+                # mutate service state, so the rejection is recorded by class.
                 emit_trace(
                     self._trace_sink,
                     "hover_direct_text_dispatch_failed",

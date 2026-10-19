@@ -1,4 +1,4 @@
-"""Focused validation for the local PyInstaller packaging contract."""
+"""Focused validation for the native Tauri product and Python service bundle."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from hanly_app import self_check
-from hanly_app.self_check import SELF_CHECK_MODES
+from hanly_app.service import self_check as service_self_check
 
 from tools import build_package, prepare_easyocr_models, smoke_packaged_runtime
 from tools.build_package import (
@@ -19,13 +18,15 @@ from tools.build_package import (
     BUNDLE_NAME,
     NATIVE_HELPER_FLAGS,
     NATIVE_HELPER_SOURCE,
-    RESOURCE_ARCHIVE_STEM,
+    RESOURCE_DIRECTORY,
     PackageLayout,
     PackagingError,
     archive_application,
     build_command,
     create_disk_image,
     host_platform,
+    stage_native_application,
+    write_tauri_build_config,
 )
 from tools.prepare_easyocr_models import (
     WEIGHTS,
@@ -41,16 +42,15 @@ from tools.smoke_packaged_runtime import (
     BUNDLE_SIGNATURE,
     EASYOCR_MODEL_SUBDIRECTORY,
     EASYOCR_PATH_VARIABLES,
-    HEADLESS_QT_PLATFORM,
     HEADLESS_SELF_CHECK_MODES,
     HOME_VARIABLES,
     LOCAL_KRDICT_VARIABLE,
-    QT_PLATFORM_VARIABLE,
     REQUIRED_DATA_FILES,
     REQUIRED_MODEL_FILES,
     _executable_in,
     _iter_failures,
     _ProfileContext,
+    _self_check_command,
     compare_to_manifest,
     inspect_bundle,
     isolated_environment,
@@ -62,7 +62,7 @@ from tools.smoke_packaged_runtime import (
 from tools.smoke_packaged_runtime import main as smoke_main
 
 ROOT = Path(__file__).parents[1]
-SPEC = ROOT / "packaging" / "hanly-desktop.spec"
+SPEC = ROOT / "packaging" / "hanly-service.spec"
 RUNTIME_HOOK = ROOT / "packaging" / "runtime_hook.py"
 RELEASE_CONSTRAINTS = ROOT / "packaging" / "release-constraints.txt"
 
@@ -77,7 +77,7 @@ def test_package_layout_exposes_handoff_artifact_conventions(tmp_path: Path) -> 
     layout = PackageLayout.for_platform(tmp_path, "windows")
 
     assert APPLICATION_STEM == "hanly-desktop"
-    assert RESOURCE_ARCHIVE_STEM == "hanly-resources"
+    assert RESOURCE_DIRECTORY == "resources"
     assert layout.application_directory == tmp_path / "dist" / "windows" / APPLICATION_STEM
     assert layout.executable == layout.application_directory / "hanly-desktop.exe"
     assert layout.application_archive == tmp_path / "dist" / "hanly-desktop-windows.zip"
@@ -113,10 +113,8 @@ def test_build_command_uses_spec_and_platform_scoped_dist(tmp_path: Path) -> Non
     assert "--windowed" not in command
     assert "--name" not in command
     assert "--specpath" not in command
-    assert command[command.index("--distpath") + 1] == str(
-        tmp_path / "dist" / "linux"
-    )
-    assert command[-1] == str(tmp_path / "packaging" / "hanly-desktop.spec")
+    assert command[command.index("--distpath") + 1] == str(tmp_path / "dist")
+    assert command[-1] == str(tmp_path / "packaging" / "hanly-service.spec")
 
 
 def test_a_windows_build_neither_builds_nor_collects_the_posix_helper(
@@ -171,18 +169,17 @@ def test_a_released_helper_carries_none_of_its_fault_injection() -> None:
     assert _unguarded_fault_hooks((ROOT / NATIVE_HELPER_SOURCE).read_text(encoding="utf-8")) == []
 
 
-def test_packaging_spec_collects_app_engine_native_runtime_and_assets() -> None:
+def test_service_spec_collects_python_runtime_and_excludes_old_desktop_frameworks() -> None:
     source = SPEC.read_text(encoding="utf-8")
 
-    for package_name in ("hanly", "hanly_app", "easyocr", "torch"):
+    for package_name in ("hanly", "hanly_app.service", "hanly_app.lookup", "easyocr", "torch"):
         assert package_name in source
-    assert "assets/control_center" in source
     assert "collect_submodules" in source
     assert "exclude_binaries=True" in source
-    for backend in ("_win32", "_darwin", "_xorg"):
-        assert backend in source
+    assert "console=True" in source
+    assert "PyQt6" in source and "PySide6" in source
+    assert "pywebview" in source and "pystray" in source
     assert "pynput.mouse._darwin" in source
-    assert "pynput.keyboard._darwin" not in source
     assert "resources/dev" not in source
     assert "paddle" not in source
 
@@ -194,21 +191,32 @@ def test_packaging_spec_keeps_pkg_resources_out_of_the_bundle() -> None:
 
     source = SPEC.read_text(encoding="utf-8")
 
-    assert 'EXCLUDED_MODULES = ("tests", "test", "pkg_resources")' in source
+    assert '"pkg_resources"' in source
     assert "excludes=list(EXCLUDED_MODULES)" in source
 
 
-def test_the_macos_spec_does_not_force_the_hardened_runtime() -> None:
-    """PyInstaller adds ``--options=runtime`` for any named identity, the ad hoc
-    ``"-"`` included, and a hardened process then refuses to map the bundle's
-    own ad hoc signed libraries. Naming no identity keeps the ad hoc signature
-    without that restriction, which is why no entitlements file is needed."""
+def test_macos_bundle_signing_stays_ad_hoc_without_hardened_runtime_options() -> None:
+    """The local unsigned release keeps the ad-hoc, cdhash-bound designated requirement."""
 
-    source = SPEC.read_text(encoding="utf-8")
+    commands: list[list[str]] = []
 
-    assert "codesign_identity=" not in source
-    assert "entitlements_file=" not in source
-    assert not (ROOT / "packaging" / "entitlements.plist").exists()
+    def run(command: list[str], **_options: object) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(returncode=0)
+
+    build_package.sign_macos_bundle(ROOT / "dist/Hanly.app", runner=run)
+
+    assert commands[0][1:6] == ["--force", "--deep", "--sign", "-", "--timestamp=none"]
+    assert commands[1][1:4] == ["--verify", "--deep", "--strict"]
+    assert len(commands) == 2
+    # An explicit requirement such as `identifier "…"` would let any ad-hoc
+    # code naming that identifier inherit Hanly's privacy grants.
+    assert not any(argument.startswith(("-r", "--requirements")) for argument in commands[0])
+    assert not any(
+        "runtime" in argument or "entitlements" in argument
+        for command in commands
+        for argument in command
+    )
 
 
 def test_the_runtime_hook_loads_no_role_specific_library() -> None:
@@ -227,37 +235,105 @@ def test_the_entry_point_diverts_spawned_children_before_anything_else() -> None
     """A frozen child re-enters through this same executable. Without this
     first, it would parse arguments and start a second desktop."""
 
-    source = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "cli.py"
-    ).read_text(encoding="utf-8")
-    body = source.split("def main(", 1)[1]
-
+    source = (ROOT / "packaging" / "service_entrypoint.py").read_text(encoding="utf-8")
+    body = source.split("def run(", 1)[1]
     assert "multiprocessing.freeze_support()" in body
-    assert body.index("multiprocessing.freeze_support()") < body.index("parse_args")
+    assert body.index("multiprocessing.freeze_support()") < body.index(
+        "from hanly_app.service.server import main"
+    )
 
 
 def test_there_is_exactly_one_way_to_start_hanly() -> None:
-    """One command, one entry function. The packaged executable,
-    `python -m hanly_app`, and the installed script all reach
-    `hanly_app.cli:main`, and no launcher script is shipped beside the
-    executable."""
+    """The native root is the product entry; Python is only its service child."""
 
-    app_project = (ROOT / "packages" / "hanly-app" / "pyproject.toml").read_text(
+    cargo = (ROOT / "apps" / "desktop" / "src-tauri" / "Cargo.toml").read_text(
         encoding="utf-8"
     )
-    entrypoint = (ROOT / "packaging" / "entrypoint.py").read_text(encoding="utf-8")
-    module_main = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "__main__.py"
-    ).read_text(encoding="utf-8")
-    spec = (ROOT / "packaging" / "hanly-desktop.spec").read_text(encoding="utf-8")
+    native_main = (ROOT / "apps" / "desktop" / "src-tauri" / "src" / "main.rs").read_text(
+        encoding="utf-8"
+    )
+    assert 'name = "hanly-desktop"' in cargo
+    assert "hanly_desktop::run" in native_main
+    assert "console=True" in SPEC.read_text(encoding="utf-8")
 
-    scripts = app_project.split("[project.scripts]", 1)[1].split("[", 1)[0]
-    assert scripts.strip() == 'hanly = "hanly_app.cli:main"'
 
-    assert "from hanly_app.cli import main" in entrypoint
-    assert "from .cli import main" in module_main
-    assert "hanly.cmd" not in spec
-    assert not (ROOT / "packaging" / "hanly.cmd").exists()
+def test_service_inventory_self_check_does_not_construct_runtime_providers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = tmp_path / "_internal"
+    for relative in service_self_check._REQUIRED_DATA_FILES:
+        required = runtime_root / relative
+        required.parent.mkdir(parents=True, exist_ok=True)
+        required.write_bytes(b"present")
+
+    stamp = SimpleNamespace(
+        build_id="build-id",
+        source_commit="a" * 40,
+        version="1.1.0",
+    )
+    monkeypatch.setattr(service_self_check.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(service_self_check.sys, "_MEIPASS", str(runtime_root), raising=False)
+    monkeypatch.setattr(service_self_check, "read_build_stamp", lambda: stamp)
+    monkeypatch.setattr(
+        service_self_check,
+        "_load_runtime",
+        lambda _path: pytest.fail("inventory must not load the runtime"),
+    )
+
+    report = service_self_check.run_service_self_check("inventory")
+    versions = cast(dict[str, str], report["versions"])
+    stages = cast(list[dict[str, object]], report["stages"])
+
+    assert report["ok"] is True
+    assert report["mode"] == "inventory"
+    assert versions["build_id"] == "build-id"
+    assert [stage["name"] for stage in stages] == ["inventory"]
+
+
+def test_service_worker_self_check_closes_providers_and_omits_lookup_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Worker:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def __call__(self, _request: object) -> SimpleNamespace:
+            entry = SimpleNamespace(word="한국어")
+            context = SimpleNamespace(analyses=(object(),), ocr_results=())
+            return SimpleNamespace(entries=(entry,), context=context)
+
+        def close(self) -> None:
+            self.closed = True
+
+    worker = Worker()
+    runtime = SimpleNamespace(
+        create_worker_factory=lambda: lambda: worker,
+    )
+    config = tmp_path / "runtime.json"
+    config.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(service_self_check, "_inventory", lambda: "inventory ok")
+    monkeypatch.setattr(service_self_check, "_load_runtime", lambda _path: runtime)
+    monkeypatch.setattr(
+        service_self_check, "_versions", lambda: {"hanly-app": "1.1.0"}
+    )
+
+    report = service_self_check.run_service_self_check(
+        "worker", runtime_config=config
+    )
+    stages = cast(list[dict[str, object]], report["stages"])
+
+    assert report["ok"] is True
+    assert worker.closed is True
+    assert "한국어" not in str(report)
+    assert {stage["name"] for stage in stages} == {
+        "inventory",
+        "runtime configuration",
+        "runtime",
+        "lookup worker",
+        "dictionary",
+        "morphology",
+        "worker close",
+    }
 
 
 def test_host_platform_rejects_an_unsupported_system_by_name() -> None:
@@ -270,8 +346,44 @@ def test_build_command_defaults_to_current_interpreter_and_platform(tmp_path: Pa
 
     assert command[0] == sys.executable
     assert command[command.index("--distpath") + 1] == str(
-        tmp_path / "dist" / host_platform()
+        tmp_path / "dist"
     )
+
+
+def test_tauri_resources_are_mapped_only_after_the_frozen_inputs_exist(
+    tmp_path: Path,
+) -> None:
+    layout = PackageLayout.for_platform(tmp_path, "macos")
+    layout.service_executable.parent.mkdir(parents=True)
+    layout.service_executable.write_bytes(b"service")
+    layout.native_helper_input.write_bytes(b"helper")
+
+    overlay = write_tauri_build_config(layout)
+    config = json.loads(overlay.read_text(encoding="utf-8"))
+
+    assert config["bundle"]["active"] is True
+    assert config["bundle"]["resources"][str(layout.service_root.resolve())] == "hanly-service"
+    assert (
+        config["bundle"]["resources"][str(layout.native_helper_input.resolve())]
+        == "hanly-update-posix"
+    )
+
+
+def test_portable_native_product_stages_service_under_resources(tmp_path: Path) -> None:
+    layout = PackageLayout.for_platform(tmp_path, "linux")
+    layout.tauri_release_executable.parent.mkdir(parents=True)
+    layout.tauri_release_executable.write_bytes(b"native root")
+    layout.service_executable.parent.mkdir(parents=True)
+    layout.service_executable.write_bytes(b"service")
+    layout.native_helper_input.write_bytes(b"helper")
+
+    stage_native_application(layout)
+
+    assert layout.executable.read_bytes() == b"native root"
+    assert (
+        layout.resource_directory / "hanly-service" / "hanly-service"
+    ).read_bytes() == b"service"
+    assert (layout.resource_directory / "hanly-update-posix").read_bytes() == b"helper"
 
 
 def test_packaging_spec_collects_morphology_as_a_mandatory_dependency() -> None:
@@ -294,12 +406,32 @@ def _write_bundle(
     root: Path,
     *,
     with_morphology: bool,
-    internal_parts: tuple[str, ...] = ("_internal",),
+    internal_parts: tuple[str, ...] | None = None,
 ) -> Path:
-    """Build a frozen-layout directory, optionally with the v0.1.0 defect."""
+    """Build a native-root/service layout, optionally missing morphology."""
 
-    internal = root.joinpath(*internal_parts)
+    resources = (
+        root / "Contents" / "Resources"
+        if root.suffix == ".app"
+        else root / "resources"
+    )
+    service_root = resources / "hanly-service"
+    internal = service_root.joinpath(
+        *(internal_parts if internal_parts is not None else ("_internal",))
+    )
     (internal / "easyocr").mkdir(parents=True)
+    service_executable = service_root / (
+        "hanly-service.exe" if sys.platform == "win32" else "hanly-service"
+    )
+    service_executable.parent.mkdir(parents=True, exist_ok=True)
+    service_executable.write_bytes(b"service")
+    native_executable = (
+        root / "Contents" / "MacOS" / APPLICATION_STEM
+        if root.suffix == ".app"
+        else root / f"{APPLICATION_STEM}{'.exe' if sys.platform == 'win32' else ''}"
+    )
+    native_executable.parent.mkdir(parents=True, exist_ok=True)
+    native_executable.write_bytes(b"native root")
     for relative in REQUIRED_DATA_FILES:
         data_file = internal.joinpath(*relative.split("/"))
         data_file.parent.mkdir(parents=True, exist_ok=True)
@@ -345,13 +477,13 @@ def test_the_frozen_smoke_names_a_signal_when_no_stage_survived() -> None:
                 "stdout": "",
                 "exit_code": -int(signal.SIGABRT),
                 "exit_timeout": False,
-                "stderr": "qt.qpa.plugin: Could not load the Qt platform plugin\n",
+                "stderr": "native runtime could not load a required platform library\n",
             }
         )
     )
 
     assert "SIGABRT" in failures[0]
-    assert "Could not load the Qt platform plugin" in failures[1]
+    assert "required platform library" in failures[1]
 
 
 def test_the_frozen_smoke_names_a_fatal_windows_exception() -> None:
@@ -405,89 +537,53 @@ def test_the_frozen_smoke_reports_a_failed_stage_rather_than_the_exit() -> None:
 def test_the_self_check_traces_a_native_crash_before_it_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Qt, torch, and Kiwi end the process rather than raise. Without the fault
+    """Torch and Kiwi end the process rather than raise. Without the fault
     handler a crashed frozen bundle reports an exit status and nothing else."""
 
     enabled: list[str] = []
     monkeypatch.setattr(
-        self_check.faulthandler, "enable", lambda *_, **__: enabled.append("on")
+        service_self_check.faulthandler, "enable", lambda *_, **__: enabled.append("on")
     )
 
     with pytest.raises(ValueError):
-        self_check.report_self_check(None, mode="worker")
+        service_self_check.run_service_self_check("unsupported")
 
     assert enabled == ["on"]
 
 
-@pytest.mark.parametrize(
-    ("mode", "expected"), [("worker", HEADLESS_QT_PLATFORM), ("ui", None)]
-)
-def test_the_worker_check_is_the_one_that_runs_without_a_display(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, expected: str | None
+@pytest.mark.parametrize("mode", service_self_check.SELF_CHECK_MODES)
+def test_native_service_checks_preserve_the_callers_display_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    """The decision is worthless unless the mode actually carries it into the
-    environment the bundle is launched with."""
+    """Only the native UI check needs a display; service checks dispatch headlessly."""
 
-    monkeypatch.setattr(sys, "platform", "linux")
-    # The suite runs headless on Linux CI and sets this for itself; an
-    # inherited value would hide the mode's own decision.
-    monkeypatch.delenv(QT_PLATFORM_VARIABLE, raising=False)
-    launched: dict[str, str] = {}
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "xcb")
+    launched: dict[str, object] = {}
 
     def popen(*args: object, **kwargs: object) -> SimpleNamespace:
-        launched.update(cast("dict[str, str]", kwargs["env"]))
+        launched["command"] = args[0]
+        launched["environment"] = kwargs["env"]
         return SimpleNamespace(pid=0, wait=lambda timeout=None: 0)
 
     monkeypatch.setattr(smoke_packaged_runtime.subprocess, "Popen", popen)
 
     run_packaged_self_check(tmp_path / "hanly-desktop", mode=mode)
 
-    assert launched.get(QT_PLATFORM_VARIABLE) == expected
+    environment = cast(dict[str, str], launched["environment"])
+    command = cast(list[str], launched["command"])
+    assert environment["DISPLAY"] == ":99"
+    assert environment["QT_QPA_PLATFORM"] == "xcb"
+    assert command[-2:] == ["--self-check", mode]
 
 
-@pytest.mark.parametrize("inherited", [{}, {"DISPLAY": ":99"}, {"QT_QPA_PLATFORM": "xcb"}])
-def test_a_headless_check_names_the_qt_platform_linux_can_always_load(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inherited: dict[str, str]
-) -> None:
-    """A hosted runner advertises a display it cannot serve, and Qt aborts on
-    an unloadable plugin rather than raising. The inherited session is
-    therefore overruled, not consulted."""
+def test_inventory_ocr_and_worker_checks_dispatch_without_the_native_window() -> None:
+    """The Rust launcher routes service-only modes without constructing Tauri."""
 
-    monkeypatch.setattr(sys, "platform", "linux")
-    profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
-
-    environment = isolated_environment(
-        inherited, profile, home, models, headless=True
-    )
-
-    assert environment[QT_PLATFORM_VARIABLE] == HEADLESS_QT_PLATFORM
-
-
-@pytest.mark.parametrize(
-    ("platform", "headless"),
-    [("linux", False), ("win32", True), ("darwin", True)],
-)
-def test_no_other_check_has_its_qt_platform_chosen_for_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, headless: bool
-) -> None:
-    """The window check needs the real display Xvfb gives it, and Windows and
-    macOS load their platform plugin without being told to."""
-
-    monkeypatch.setattr(sys, "platform", platform)
-    profile, home, models = (tmp_path / name for name in ("profile", "home", "models"))
-
-    environment = isolated_environment(
-        {}, profile, home, models, headless=headless
-    )
-
-    assert QT_PLATFORM_VARIABLE not in environment
-
-
-def test_only_the_worker_check_runs_headless() -> None:
-    """The window check opens a real window; nothing else opens one at all."""
-
-    assert HEADLESS_SELF_CHECK_MODES == ("worker",)
-    assert set(HEADLESS_SELF_CHECK_MODES) < set(SELF_CHECK_MODES)
+    assert HEADLESS_SELF_CHECK_MODES == ("inventory", "ocr", "worker")
+    assert set(HEADLESS_SELF_CHECK_MODES) == set(service_self_check.SELF_CHECK_MODES) - {
+        "ui"
+    }
 
 
 def test_the_frozen_smoke_cannot_fall_back_to_a_developer_model_cache(
@@ -664,16 +760,14 @@ def test_archiving_a_onedir_build_still_needs_no_native_tool(tmp_path: Path) -> 
     assert archive.is_file()
 
 
-def test_the_spec_builds_a_named_app_bundle_on_macos() -> None:
-    source = SPEC.read_text(encoding="utf-8")
+def test_the_tauri_bundle_preserves_product_identity_and_version() -> None:
+    source = (
+        ROOT / "apps" / "desktop" / "src-tauri" / "tauri.conf.json"
+    ).read_text(encoding="utf-8")
 
-    assert 'BUNDLE_NAME = "Hanly.app"' in source
-    assert 'BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"' in source
-    assert "BUNDLE(" in source
-    assert 'name=APPLICATION_STEM' in source
-    # The plist version is the packaged product's own metadata, never a literal.
-    assert 'APPLICATION_VERSION = version("hanly-app")' in source
-    assert '"CFBundleShortVersionString": APPLICATION_VERSION' in source
+    assert '"identifier": "io.github.thiagoross1.hanly"' in source
+    assert '"productName": "Hanly"' in source
+    assert '"version": "1.1.0"' in source
 
 
 def test_the_spec_collects_the_inputs_a_frozen_build_cannot_fetch() -> None:
@@ -690,80 +784,22 @@ def test_the_spec_collects_the_inputs_a_frozen_build_cannot_fetch() -> None:
 def test_the_spec_uses_targeted_easyocr_hook_and_keeps_other_collections() -> None:
     source = SPEC.read_text(encoding="utf-8")
 
-    assert 'for package_name in ("torchvision",):' in source
-    assert 'collect_all("easyocr")' not in source
+    assert 'for package_name in ("easyocr", "torchvision"):' in source
     # Korean recognition decodes against both character sets, and ``easyocr``
     # configuration may legally name either, so neither may be dropped.
     assert 'hooksconfig={"easyocr": {"lang_codes": ["ko", "en"]}}' in source
     assert 'for distribution in ("hanly-app", "hanly", "easyocr"):' in source
-    assert "collect_dynamic_libs" not in source
-    # The uncertain surfaces stay collected; only duplication was removed.
     assert 'collect_all(package_name)' in source
-    assert "kiwipiepy" in source
+    assert "MANDATORY_PACKAGES" in source
 
 
-def test_the_spec_keeps_only_the_webengine_locales_hanly_can_present() -> None:
-    """The filter has to run on the analysis result and before the bundle is
-    built: the locales arrive from QtWebEngine's hook during analysis, and a
-    macOS bundle is signed as it is assembled, so nothing may be removed after.
-    """
-
-    source = SPEC.read_text(encoding="utf-8")
-
-    assert 'KEPT_WEBENGINE_LOCALES = ("en-US.pak", "ko.pak")' in source
-    assert "a.datas = _without_unused_webengine_locales(a.datas)" in source
-    assert source.index("a.datas = _without_unused_webengine_locales") < source.index(
-        "pyz = PYZ("
-    )
-
-
-def test_the_spec_drops_qt_catalogues_without_touching_webengine_locales() -> None:
-    """Windows and Linux keep ``qtwebengine_locales`` inside the same
-    ``translations`` directory, so the rule matches the file suffix rather than
-    the directory the catalogues happen to share with them."""
-
-    source = SPEC.read_text(encoding="utf-8")
-
-    assert 'entry for entry in collected if not entry[0].endswith(".qm")' in source
-    assert "a.datas = _without_qt_translation_catalogues(a.datas)" in source
-    assert source.index("a.datas = _without_qt_translation_catalogues") < source.index(
-        "pyz = PYZ("
-    )
-
-
-def test_release_inputs_are_pinned_without_touching_package_ranges() -> None:
+def test_release_inputs_pin_freezer_without_a_gui_runtime() -> None:
     pins = RELEASE_CONSTRAINTS.read_text(encoding="utf-8")
 
     assert "easyocr==1.7.2" in pins
     assert "pyinstaller==6.22.2" in pins
     assert "pyinstaller-hooks-contrib==2026.7" in pins
-    assert "PyQt6-Qt6==6.11.2" in pins
-    app_manifest = ROOT / "packages" / "hanly-app" / "pyproject.toml"
-    assert '"PyQt6>=6.7,<7"' in app_manifest.read_text(encoding="utf-8")
-
-
-def test_release_builds_cannot_resolve_the_qt_runtime_that_breaks_torch() -> None:
-    """PyQt6-Qt6 6.10 ships MSVC runtime 14.26; loaded before Torch on Windows,
-    ``c10.dll`` fails to initialize. 6.11.2 is the verified replacement."""
-
-    from packaging.requirements import Requirement
-    from packaging.utils import canonicalize_name
-
-    lines = RELEASE_CONSTRAINTS.read_text(encoding="utf-8").splitlines()
-    requirements = [
-        Requirement(line.split("#", 1)[0])
-        for line in lines
-        if line.split("#", 1)[0].strip()
-    ]
-    qt_runtime = [
-        requirement.specifier
-        for requirement in requirements
-        if canonicalize_name(requirement.name) == "pyqt6-qt6"
-    ]
-
-    assert len(qt_runtime) == 1
-    assert "6.11.2" in qt_runtime[0]
-    assert not any(qt_runtime[0].contains(v) for v in ("6.10.0", "6.10.1", "6.10.2"))
+    assert "PyQt" not in pins and "Qt" not in pins
 
 
 def test_the_bundled_weights_are_the_two_easyocr_actually_loads() -> None:
@@ -960,7 +996,9 @@ def test_the_inventory_names_the_inputs_a_frozen_build_cannot_fetch(
     bundle = _write_bundle(tmp_path / "app", with_morphology=True)
     missing = inspect_bundle(bundle)
     for relative in REQUIRED_DATA_FILES:
-        bundle.joinpath("_internal", *relative.split("/")).unlink()
+        bundle.joinpath(
+            "resources", "hanly-service", "_internal", *relative.split("/")
+        ).unlink()
 
     assert missing.ok
     assert set(REQUIRED_DATA_FILES) <= set(missing.present)
@@ -974,10 +1012,10 @@ def test_the_inventory_reads_a_macos_bundles_split_collection(tmp_path: Path) ->
     _write_bundle(
         application,
         with_morphology=True,
-        internal_parts=("Contents", "Frameworks", "_internal"),
+        internal_parts=("_internal",),
     )
     program = application / "Contents" / "MacOS" / APPLICATION_STEM
-    program.parent.mkdir(parents=True)
+    program.parent.mkdir(parents=True, exist_ok=True)
     program.write_bytes(b"frozen executable")
     signature = application.joinpath(*BUNDLE_SIGNATURE.split("/"))
     signature.parent.mkdir(parents=True)
@@ -1067,39 +1105,23 @@ def test_a_disk_image_that_cannot_be_read_fails_without_leaving_a_mount(
         verify_disk_image(image, runner=_NativeTool(returncode=1))
 
 
-def test_neither_child_process_does_the_shell_s_work() -> None:
-    """A child opens a window or builds providers. It must not provision a
-    first run, answer an update handoff, register a shortcut, or start a second
-    desktop: those belong to the one process that keeps running."""
+def test_lookup_child_does_not_own_desktop_lifecycle() -> None:
+    """The lookup child only builds providers; the service provisions resources
+    and the native root owns windows, shortcuts and update acknowledgement."""
 
     forbidden = (
         "provision_runtime_config",
         "confirm_started",
         "run_desktop",
-        "HotkeyService",
-        "hotkeys.register",
+        "hanly_app.hotkeys",
     )
-    children = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "control_center" / "process.py",
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "lookup" / "process.py",
-    )
+    app = ROOT / "packages" / "hanly-app" / "src" / "hanly_app"
+    assert not (app / "control_center" / "process.py").exists()
+    children = (app / "lookup" / "process.py",)
     for path in children:
         source = path.read_text(encoding="utf-8")
         for name in forbidden:
             assert name not in source, f"{path.name} reaches {name}"
-
-
-def test_the_shell_s_bootstrap_carries_neither_heavy_runtime() -> None:
-    """Memory a library never returns can only be returned by its process
-    exiting, so the process that never exits must not load one."""
-
-    application = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "application.py"
-    ).read_text(encoding="utf-8")
-
-    assert "QtWebEngine" not in application
-    assert "preload_ocr_runtime" not in application
-    assert "prepare_control_center_qt" not in application
 
 
 # --- progress markers, which are all a killed frozen run leaves behind -------
@@ -1109,13 +1131,12 @@ def test_the_shell_s_bootstrap_carries_neither_heavy_runtime() -> None:
 _COMPLETED_PROGRAM = """
 import json
 
-from hanly_app import self_check
+from hanly_app.service import self_check
 
 stages = []
-self_check._stage(stages, "runtime", lambda: "loaded")
-self_check._stage(stages, "dictionary", lambda: "1 entry")
-report = self_check.SelfCheckReport(mode="worker", stages=tuple(stages), versions={})
-print(json.dumps(report.to_dict(), indent=2), flush=True)
+self_check._stage(stages, "runtime", lambda: "loaded", success_detail="loaded")
+self_check._stage(stages, "dictionary", lambda: "1 entry", success_detail="1 entry")
+print(json.dumps({"mode": "worker", "ok": True, "stages": stages}, indent=2), flush=True)
 """
 
 #: A run killed inside a stage. ``os._exit`` rather than a real fault: the
@@ -1124,10 +1145,10 @@ print(json.dumps(report.to_dict(), indent=2), flush=True)
 _KILLED_PROGRAM = """
 import os
 
-from hanly_app import self_check
+from hanly_app.service import self_check
 
 stages = []
-self_check._stage(stages, "runtime", lambda: "loaded")
+self_check._stage(stages, "runtime", lambda: "loaded", success_detail="loaded")
 self_check._stage(stages, "ocr", lambda: os._exit(134))
 """
 
@@ -1135,7 +1156,7 @@ self_check._stage(stages, "ocr", lambda: os._exit(134))
 _HANGING_PROGRAM = """
 import time
 
-from hanly_app import self_check
+from hanly_app.service import self_check
 
 self_check._emit_marker(self_check.STAGE_STARTED, "main window")
 time.sleep(120)
@@ -1191,6 +1212,38 @@ def test_a_completed_run_still_parses_and_keeps_its_stage_timings(
     ]
     # Nothing is still open, so nothing is blamed.
     assert progress["current_stage"] is None
+
+
+def test_macos_ui_self_check_enters_through_the_application_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke_packaged_runtime.sys, "platform", "darwin")
+    executable = tmp_path / "Hanly.app" / "Contents" / "MacOS" / "hanly-desktop"
+    output = tmp_path / "self-check.out"
+    errors = tmp_path / "self-check.err"
+
+    command, bundle = _self_check_command(
+        executable,
+        ["--self-check", "ui"],
+        mode="ui",
+        stdout_path=output,
+        stderr_path=errors,
+    )
+
+    assert bundle == tmp_path / "Hanly.app"
+    assert command == [
+        "/usr/bin/open",
+        "-n",
+        "-W",
+        "--stdout",
+        str(output),
+        "--stderr",
+        str(errors),
+        str(bundle),
+        "--args",
+        "--self-check",
+        "ui",
+    ]
 
 
 def test_a_killed_run_names_the_stage_it_was_inside(tmp_path: Path) -> None:
@@ -1347,18 +1400,18 @@ def test_both_sides_of_the_marker_seam_agree_on_what_a_marker_looks_like() -> No
     one side would cost every crashed run its stage without failing a test."""
 
     for name in ("STAGE_MARKER_PREFIX", "STAGE_STARTED", "STAGE_COMPLETED"):
-        assert getattr(smoke_packaged_runtime, name) == getattr(self_check, name), name
+        assert getattr(smoke_packaged_runtime, name) == getattr(service_self_check, name), name
 
 
 def test_the_self_check_flushes_a_start_marker_before_the_work_it_names() -> None:
     """A marker written after the action would never survive the action."""
 
     source = (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "self_check.py"
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "service" / "self_check.py"
     ).read_text(encoding="utf-8")
     body = source.split("def _stage(", 1)[1]
 
-    assert body.index("_emit_marker(STAGE_STARTED") < body.index("value = action()")
+    assert body.index("_emit_marker(STAGE_STARTED") < body.index("value = operation()")
     assert "flush=True" in source
 
 
@@ -1366,9 +1419,10 @@ def test_closing_the_worker_is_a_stage_of_its_own() -> None:
     """Releasing native handles can crash; blaming the dictionary for it is a
     diagnosis that sends the next person to the wrong provider."""
 
-    assert '_stage(stages, "worker close", worker.close)' in (
-        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "self_check.py"
+    source = (
+        ROOT / "packages" / "hanly-app" / "src" / "hanly_app" / "service" / "self_check.py"
     ).read_text(encoding="utf-8")
+    assert '_stage(stages, "worker close", worker.close' in source
 
 
 # --- the products a run checks, each independently of the others -------------
@@ -1671,6 +1725,27 @@ def test_naming_two_subjects_to_reconstruct_is_refused() -> None:
     assert smoke_main(["--against-manifest", "m.json", "--disk-image", "b.dmg"]) == 2
 
 
+@pytest.mark.parametrize("tampered", [False, True])
+def test_reconstruction_only_preserves_the_manifest_comparison_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tampered: bool,
+) -> None:
+    from tests.hanly_fixtures.update_tree import LINUX, manifest_for, write_tree
+
+    root = write_tree(tmp_path / "build", LINUX)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(manifest_for(root, LINUX).to_json(), encoding="utf-8")
+    if tampered:
+        (root / "hanly-desktop").write_bytes(b"different executable")
+    monkeypatch.setattr(smoke_packaged_runtime, "reconstruct_application", lambda *_args: root)
+
+    status = smoke_main([
+        "--from-archive", str(tmp_path / "release.zip"), "--reconstruct-only",
+        "--against-manifest", str(manifest_path),
+    ])
+
+    assert status == int(tampered)
+
+
 def test_a_packaging_tool_that_names_no_file_writes_none(tmp_path: Path) -> None:
     """`hdiutil detach <mount> -force` ends in a flag; a stub that took it for
     a path once left a file called `-force` in the repository root."""
@@ -1700,27 +1775,7 @@ def test_the_windows_reader_needs_no_dependency_and_no_hidden_import() -> None:
     assert "pywinauto" not in manifest
     assert "uiautomation" not in manifest
     assert "text_acquisition_uia" not in source
-    assert 'collect_submodules("hanly_app")' in source
-
-
-@pytest.mark.parametrize("size", (16, 20, 24))
-def test_a_bundle_missing_a_window_face_fails_its_inventory(tmp_path: Path, size: int) -> None:
-    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
-    relative = f"hanly_app/assets/icons/window-face-{size}.png"
-    bundle.joinpath("_internal", *relative.split("/")).unlink()
-
-    inventory = inspect_bundle(bundle)
-
-    assert not inventory.ok
-    assert inventory.missing == (relative,)
-
-
-def test_a_bundle_missing_the_macos_icon_fails_its_inventory(tmp_path: Path) -> None:
-    bundle = _write_bundle(tmp_path / "app", with_morphology=True)
-    relative = "hanly_app/assets/icons/hanly-macos-icon.png"
-    bundle.joinpath("_internal", *relative.split("/")).unlink()
-
-    inventory = inspect_bundle(bundle)
-
-    assert not inventory.ok
-    assert inventory.missing == (relative,)
+    assert 'collect_submodules("hanly_app.acquisition")' in source
+    assert 'collect_submodules("hanly_app.lookup")' in source
+    assert 'collect_submodules("hanly_app.service")' in source
+    assert 'collect_submodules("hanly_app")' not in source

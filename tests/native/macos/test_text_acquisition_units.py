@@ -30,20 +30,26 @@ def _adapter_for(line: str, utf16_index: int) -> AccessibilityTextProvider:
     """An adapter whose native reads answer the way macOS really answers."""
 
     provider = AccessibilityTextProvider()
-    provider._string_attribute = staticmethod(  # type: ignore[method-assign]
-        lambda bridge, element, name: "AXTextArea" if name == "AXRole" else None
+    setattr(
+        provider,
+        "_string_attribute",
+        staticmethod(lambda bridge, element, name: "AXTextArea" if name == "AXRole" else None),
     )
-    provider._index_at = staticmethod(  # type: ignore[method-assign]
-        lambda bridge, element, point: utf16_index
+    setattr(provider, "_index_at", staticmethod(lambda bridge, element, point: utf16_index))
+    setattr(
+        provider,
+        "_line_range",
+        staticmethod(lambda bridge, element, index: (0, len(line.encode("utf-16-le")) // 2)),
     )
-    provider._line_range = staticmethod(  # type: ignore[method-assign]
-        lambda bridge, element, index: (0, len(line.encode("utf-16-le")) // 2)
+    setattr(
+        provider,
+        "_string_for_range",
+        staticmethod(lambda bridge, element, start, length: line),
     )
-    provider._string_for_range = staticmethod(  # type: ignore[method-assign]
-        lambda bridge, element, start, length: line
-    )
-    provider._bounds_for_range = staticmethod(  # type: ignore[method-assign]
-        lambda bridge, element, start, length: None
+    setattr(
+        provider,
+        "_bounds_for_range",
+        staticmethod(lambda bridge, element, start, length: None),
     )
     return provider
 

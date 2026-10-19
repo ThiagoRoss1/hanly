@@ -58,7 +58,7 @@ python -m ruff check packages packaging tests tools lab
 python -m mypy packages packaging tests tools lab
 ```
 
-`--suite portable` (no Qt, Torch or display), `--suite native` (`tests/native/`,
+`--suite portable` (no OCR runtime or display), `--suite native` (`tests/native/`,
 real desktop runtime and window server) and `--suite packaged`
 (`tests/packaged/`, a frozen bundle) select by the machine a case needs;
 `packaging/README.md` has the details. The venv (`.venv/`) runs Python 3.13,
@@ -82,17 +82,18 @@ details.
 
 ## Runtime rules that are easy to break
 
-- **One entry point:** `hanly_app.cli:main`. The `hanly` script,
-  `python -m hanly_app` and the frozen executable all call it, and
-  `tests/test_packaging.py` fails if a second one appears. It calls
-  `multiprocessing.freeze_support()` first because spawned children re-enter a
-  frozen build through it.
-- **Three processes:** the persistent shell (Qt Widgets, tray, hotkeys,
-  capture, hover, popup, settings, updates, session log, the one event loop)
-  imports neither Qt WebEngine nor the OCR runtime. `control_center/process.py`
-  spawns the window and `lookup/process.py` spawns the providers, both with
-  `multiprocessing.get_context("spawn")`; `lookup/transport.py` is the only
-  channel. `lookup/preload.py` runs inside the lookup child, never in the shell.
+- **One desktop root:** `hanly_app.cli:main` backs `hanly` and
+  `python -m hanly_app` and launches the existing Tauri executable. Packaged
+  users start that native executable, which supervises its bundled Python
+  service. The Python launcher calls `multiprocessing.freeze_support()` first;
+  it contains no fallback UI.
+- **Three runtime owners:** Tauri owns native windows, React system-webview
+  surfaces, tray, shortcuts and root lifecycle. The Qt-free Python service owns
+  capture, hover policy, settings, updates, logs and its serialized event loop.
+  `lookup/process.py` loads providers in an isolated child using
+  `multiprocessing.get_context("spawn")`; `lookup/transport.py` is its only
+  channel. `lookup/preload.py` runs inside that child, never in the shell or
+  service. System-webview helpers are additional OS-owned processes.
 - **Readiness is not residency:** `RuntimeStatus` says whether a lookup can
   happen; `LookupEngine.state` says whether providers are loaded;
   `config.LookupPreload` decides which a launch pays for.
@@ -173,5 +174,9 @@ Agents may propose architecture changes and draft ADRs, but approved
 architecture changes need human approval before becoming authoritative. Commit,
 push and merge are human actions unless explicitly authorized; editing,
 testing and preparing changes need no such instruction.
+Commits and pull requests are authored by the human alone: never add a
+`Co-Authored-By:` trailer, a "Generated with" line, or any other agent
+attribution to a commit message or PR description, whatever a tool's default
+says.
 `docs/architecture/REVIEW-2026-08-18.md` grades findings A/B/C; category C binds
 only where marked `[ACCEPTED]`.

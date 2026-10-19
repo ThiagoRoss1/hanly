@@ -1,12 +1,9 @@
-"""Launch the real desktop under observation and turn the session into a report.
+"""Launch the native desktop under observation and turn the session into a report.
 
-The shell runs in this process through ``run_desktop``, the same composition
-``hanly`` uses, with the lab's recorder as its trace sink and diagnostics log.
-Its lookup engine and Control Center are still the real spawned children.
-
-Each run gets its own profile under the run directory, so settings changes,
-logs and leftovers never touch the everyday profile. The runtime configuration
-(and therefore the dictionary and OCR models) is the everyday one, read only.
+Hanly runs as an external Tauri process. Lab observes its bounded trace stream
+and samples the owned desktop family separately from its raster fixtures. Each
+run has a disposable profile; the selected runtime configuration and its
+dictionary and OCR models are reused read only.
 """
 
 from __future__ import annotations
@@ -15,7 +12,6 @@ import json
 import os
 import platform
 import re
-import signal
 import sys
 import threading
 import webbrowser
@@ -31,7 +27,8 @@ from hanly_app.paths import default_app_config_path, default_runtime_config_path
 from ..identity import RUNS_ROOT, fingerprint
 from ..metadata import SESSION_MEASUREMENT_PROTOCOL, provenance, source_identity
 from .browser_text import FOLDER as BROWSER_FOLDER
-from .recorder import LabDiagnosticLog, LabRecorder
+from .desktop_process import DesktopProcess, desktop_executable, is_debug_executable
+from .recorder import LabRecorder, is_content_field
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEV_RUNTIME = REPO_ROOT / "resources" / "dev" / "runtime-local.json"
@@ -43,7 +40,16 @@ _SESSION_NAME = re.compile(r"^\d{8}-\d{6}-(run|tour|stress)$")
 class SessionOptions:
     mode: str  # "run" (a person drives), "tour" or "stress" (the lab drives)
     runtime_config: Path | None = None
+    app_config: Path | None = None
+    desktop: Path | None = None
+    output_root: Path | None = None
     duration: float | None = None
+    roi_size: tuple[int, int] | None = None
+    hover_delay_ms: int | None = None
+    hud_dwell_ms: int = 80
+    show_roi: bool = True
+    cpu_threads: int | None = None
+    hover_timeout: float | None = None
     hud: bool = False
     open_report: bool = True
     story_sizes: tuple[int, ...] = (22,)
@@ -92,27 +98,36 @@ def resolve_run(name: str | Path) -> Path:
 
 
 def run_session(options: SessionOptions) -> int:
+    if options.mode == "tour" and options.words <= 0 and not options.story_sizes:
+        raise SystemExit("lab: a tour needs at least one story target or dictionary word")
+
     runtime_config = _runtime_config(options.runtime_config)
-    user_settings = _read_user_settings()
+    user_settings = _read_user_settings(options.app_config or default_app_config_path())
     if options.drives:
         _require_tour_prerequisites(user_settings)
     plan = _stress_plan(options, runtime_config) if options.mode == "stress" else None
+    executable = desktop_executable(options.desktop, REPO_ROOT)
+    if options.drives and not is_debug_executable(executable, REPO_ROOT):
+        raise SystemExit(
+            "lab: driven tours require this checkout's debug Hanly binary so verified "
+            "fixture evidence can stay in memory"
+        )
 
-    run_dir = RUNS_ROOT / f"{datetime.now():%Y%m%d-%H%M%S}-{options.mode}"
+    run_root = (
+        RUNS_ROOT if options.output_root is None else options.output_root.expanduser().resolve()
+    )
+    run_dir = run_root / f"{datetime.now():%Y%m%d-%H%M%S}-{options.mode}"
     profile = run_dir / "profile"
     profile.mkdir(parents=True)
-    _isolate_profile(profile)
+    app_config = profile / "config.json"
     settings = _lab_settings(user_settings, options)
-    ConfigManager(default_app_config_path()).save(settings)
+    ConfigManager(app_config).save(settings)
 
     recorder = LabRecorder(
         run_dir / "events.jsonl",
-        # Recognized text is retained only when every pixel hovered is the lab's.
+        # The service provides evidence only to the verified Lab driver in memory.
         retain_evidence=options.drives,
         retain_geometry=options.drives,
-    )
-    diagnostics = LabDiagnosticLog(
-        recorder, default_app_config_path().parent / "logs" / "hanly.log"
     )
     started = datetime.now().isoformat(timespec="seconds")
     source = source_identity(REPO_ROOT)
@@ -122,42 +137,124 @@ def run_session(options: SessionOptions) -> int:
     )
     print(f"lab: recording to {_display(run_dir)}", flush=True)
 
-    from hanly_app.qt_bootstrap import ensure_qt_application
-
     from .sampler import ProcessSampler
 
-    application = ensure_qt_application(diagnostics=diagnostics)
-    sampler = ProcessSampler(run_dir / "processes.jsonl", recorder.origin_ns)
-    sampler.start()
+    needs_ui = options.drives or options.hud
+    ui = None
+    if needs_ui:
+        from .raster_ui import create_ui_host
 
-    sinks: list[Any] = [recorder]
+        ui = create_ui_host()
+
+    sampler = ProcessSampler(run_dir / "processes.jsonl", recorder.origin_ns, sample_parent=False)
+    environment = _desktop_environment(profile, options, executable)
+    desktop = DesktopProcess(
+        executable,
+        runtime_config=runtime_config,
+        app_config=app_config,
+        environment=environment,
+        recorder=recorder,
+        sampler=sampler,
+        repo_root=REPO_ROOT,
+        roi_size=options.roi_size,
+    )
     closers: list[Any] = []
     if options.hud:
-        sinks.extend(_hud(application, runtime_config, closers))
+        if ui is None:
+            raise RuntimeError("the Lab HUD needs the Lab native window host")
+        from ..hud.session import _resolved_backend
+
+        for sink in _hud(
+            ui,
+            settings,
+            closers,
+            dwell_ms=options.hud_dwell_ms,
+            backend=_resolved_backend(runtime_config),
+            show_roi=options.show_roi,
+        ):
+            recorder.subscribe(_listener(sink))
+    start_driver = None
     if options.mode == "tour":
-        _start_tour(options, recorder, settings, runtime_config, closers)
+        assert ui is not None
+        start_driver = _start_tour(options, recorder, settings, runtime_config, ui, closers)
     elif plan is not None:
-        _start_stress(options, plan, recorder, settings, run_dir, closers)
-    elif options.duration:
-        _stop_after(options.duration, recorder)
+        assert ui is not None
+        start_driver = _start_stress(options, plan, recorder, settings, run_dir, ui, closers)
 
     recorder.lab("session_started", mode=options.mode)
     exit_code = 1
+    duration_timer: threading.Timer | None = None
     try:
-        from hanly_app.application import run_desktop
-
-        exit_code = run_desktop(
-            runtime_config,
-            trace_sink=sinks[0] if len(sinks) == 1 else _Broadcast(sinks),
-            diagnostics=diagnostics,
+        sampler.start()
+        desktop.start(
+            retain_evidence=recorder.retain_evidence,
+            retain_geometry=recorder.retain_geometry,
         )
-        if _QUIT_REQUESTED.is_set() and exit_code == 128 + signal.SIGINT:
-            # The interrupt was the lab ending a finished tour or timed run.
-            exit_code = 0
+        if start_driver is not None:
+            start_driver(desktop)
+        if ui is not None:
+            if options.duration:
+
+                def stop_after_duration() -> None:
+                    recorder.lab("session_duration_reached", seconds=options.duration)
+                    desktop.request_stop()
+
+            else:
+
+                def stop_after_duration() -> None:
+                    return
+
+            exit_code = ui.run(
+                desktop.poll,
+                interval_ms=100,
+                duration_s=options.duration,
+                on_duration=stop_after_duration,
+            )
+            if desktop.poll() is None:
+                desktop.request_stop()
+            result = desktop.poll()
+            if result is None:
+                result = desktop.wait(timeout=10)
+            exit_code = result
+        else:
+            if options.duration:
+
+                def stop_after_duration() -> None:
+                    recorder.lab("session_duration_reached", seconds=options.duration)
+                    desktop.request_stop()
+
+                duration_timer = threading.Timer(options.duration, stop_after_duration)
+                duration_timer.daemon = True
+                duration_timer.start()
+            exit_code = desktop.wait()
+    except KeyboardInterrupt:
+        desktop.request_stop()
+        try:
+            exit_code = desktop.wait(timeout=10)
+        except Exception:
+            exit_code = 130
+    except Exception as error:
+        recorder.lab("desktop_launch_failed", reason=type(error).__name__)
+        print(f"lab: Hanly could not start ({type(error).__name__})", file=sys.stderr)
+        exit_code = 1
     finally:
+        if duration_timer is not None:
+            duration_timer.cancel()
+        cleanup = desktop.cleanup()
+        if cleanup["survivors"]:
+            recorder.lab("desktop_children_reaped", **cleanup)
+        exit_code = _driven_exit_code(options.mode, exit_code, recorder.counts)
         recorder.lab("session_ended", exit_code=exit_code)
         for close in closers:
-            close()
+            try:
+                close()
+            except Exception:
+                continue
+        if ui is not None:
+            try:
+                ui.close()
+            except Exception:
+                pass
         sampler.stop()
         recorder.close()
         _write_json(
@@ -173,6 +270,13 @@ def run_session(options: SessionOptions) -> int:
                     source_at_end=source_identity(REPO_ROOT),
                 ),
                 "exit_code": exit_code,
+                "desktop": {
+                    "build": "debug" if is_debug_executable(executable, REPO_ROOT) else "packaged",
+                    "trace_lines": desktop.trace_lines,
+                    "invalid_trace_lines": desktop.invalid_trace_lines,
+                    "ignored_output_lines": desktop.ignored_output_lines,
+                    "process_attribution": desktop.responsibility_attribution,
+                },
                 "dropped_events": recorder.dropped_events,
                 "process_samples": sampler.samples,
                 "process_access_denied": sampler.denied,
@@ -195,6 +299,18 @@ def run_session(options: SessionOptions) -> int:
     if options.open_report:
         webbrowser.open(report.as_uri())
     return exit_code
+
+
+def _driven_exit_code(mode: str, process_exit_code: int, counts: dict[str, int]) -> int:
+    """Keep failed driven sessions from looking like successful app exits."""
+
+    if mode not in {"tour", "stress"} or process_exit_code != 0:
+        return process_exit_code
+    if counts.get("tour_aborted", 0):
+        return 2
+    if not (counts.get("tour_finished", 0) or counts.get("tour_stopped_by_user", 0)):
+        return 2
+    return process_exit_code
 
 
 def _score_line(run_dir: Path) -> str | None:
@@ -221,16 +337,7 @@ def _require_tour_prerequisites(settings: AppConfig) -> None:
     """Refuse before taking the pointer, with what to do about it."""
 
     problems = []
-    if sys.platform == "darwin":
-        from hanly_app import permissions_darwin
-
-        if not permissions_darwin.screen_recording_granted():
-            problems.append("Screen Recording is not granted to this terminal")
-        if not permissions_darwin.accessibility_trusted():
-            problems.append(
-                "Accessibility is not granted to this terminal (needed to move the pointer)"
-            )
-    elif sys.platform != "win32":
+    if sys.platform not in {"darwin", "win32"}:
         problems.append(
             "a tour cannot verify window ownership on this platform, so nothing would be scored"
         )
@@ -261,8 +368,7 @@ def _runtime_config(explicit: Path | None) -> Path:
     )
 
 
-def _read_user_settings() -> AppConfig:
-    path = default_app_config_path()
+def _read_user_settings(path: Path) -> AppConfig:
     if not path.is_file():
         return AppConfig()
     try:
@@ -271,12 +377,36 @@ def _read_user_settings() -> AppConfig:
         return AppConfig()
 
 
-def _isolate_profile(profile: Path) -> None:
-    """Point every per-user path the desktop resolves at the run's own profile."""
+def _desktop_environment(
+    profile: Path, options: SessionOptions, executable: Path
+) -> dict[str, str]:
+    """Build a disposable child environment without changing Lab's own paths."""
 
-    os.environ["XDG_CONFIG_HOME"] = str(profile)
-    if sys.platform == "win32":
-        os.environ["LOCALAPPDATA"] = str(profile)
+    environment = os.environ.copy()
+    environment["XDG_CONFIG_HOME"] = str(profile)
+    environment["XDG_DATA_HOME"] = str(profile / "data")
+    environment["LOCALAPPDATA"] = str(profile)
+    environment["APPDATA"] = str(profile)
+    if options.cpu_threads is not None:
+        for name in (
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+            "VECLIB_MAXIMUM_THREADS",
+        ):
+            environment[name] = str(options.cpu_threads)
+    environment.pop("HANLY_DESKTOP_SERVICE_MODULE", None)
+    environment.pop("HANLY_LAB_RETAIN_EVIDENCE", None)
+    environment.pop("HANLY_LAB_RETAIN_GEOMETRY", None)
+    if is_debug_executable(executable, REPO_ROOT) and (options.drives or options.hud):
+        environment["HANLY_DESKTOP_SERVICE_MODULE"] = "lab.service_observer"
+        if options.drives:
+            environment["HANLY_LAB_RETAIN_EVIDENCE"] = "1"
+            environment["HANLY_LAB_RETAIN_GEOMETRY"] = "1"
+        elif options.hud:
+            environment["HANLY_LAB_RETAIN_GEOMETRY"] = "1"
+    return environment
 
 
 def _lab_settings(user: AppConfig, options: SessionOptions) -> AppConfig:
@@ -288,6 +418,8 @@ def _lab_settings(user: AppConfig, options: SessionOptions) -> AppConfig:
     if options.drives:
         # The lab cannot hold a chord while it glides the pointer.
         settings = replace(settings, hover_activation=HoverActivation.ALWAYS_ACTIVE)
+    if options.hover_delay_ms is not None:
+        settings = replace(settings, hover_delay_ms=options.hover_delay_ms)
     return settings
 
 
@@ -299,15 +431,16 @@ def _start_tour(
     recorder: LabRecorder,
     settings: AppConfig,
     runtime_config: Path,
+    ui: Any,
     closers: list[Any],
-) -> None:
+) -> Any:
     from .corpus import story_targets, word_targets
     from .driver import TourDriver
     from .page import TourPage
 
     story = story_targets() if options.story_sizes else []
     words = word_targets(_krdict(runtime_config), options.words, seed=options.seed)
-    page = TourPage()
+    page = TourPage(ui)
     page.lay_out(story, words, list(options.story_sizes), list(options.word_sizes))
     total = sum(len(p.placed) for p in page.pages)
     recorder.lab(
@@ -315,29 +448,38 @@ def _start_tour(
         pages=len(page.pages),
         targets=total,
         plan_fingerprint=plan_fingerprint(page.pages),
-        display_scale=page.devicePixelRatioF(),
+        display_scale=page.display_scale,
     )
     print(f"lab: tour of {total} hovers over {len(page.pages)} pages", flush=True)
-    driver = TourDriver(
-        recorder,
-        page,
-        capture_hotkey=settings.capture_hotkey,
-        retain_fixture_text=options.retain_fixture_text,
-    )
     closers.append(page.close)
 
-    def drive() -> None:
-        try:
-            driver.run()
-        except Exception as error:
-            import traceback
+    def start(desktop: DesktopProcess) -> None:
+        desktop_pid = desktop.process.pid if desktop.process is not None else None
+        driver = TourDriver(
+            recorder,
+            page,
+            capture_hotkey=settings.capture_hotkey,
+            retain_fixture_text=options.retain_fixture_text,
+            owned_pids=set() if desktop_pid is None else {desktop_pid},
+            settle_timeout=options.hover_timeout or 4.0,
+            first_timeout=options.hover_timeout or 90.0,
+        )
 
-            traceback.print_exc()
-            recorder.lab("tour_aborted", reason=type(error).__name__)
-        finally:
-            _request_quit()
+        def drive() -> None:
+            try:
+                driver.run()
+            except Exception as error:
+                import traceback
 
-    threading.Thread(target=drive, name="lab-tour", daemon=True).start()
+                traceback.print_exc()
+                recorder.lab("tour_aborted", reason=type(error).__name__)
+            finally:
+                recorder.lab("tour_driver_finished", completed=driver.completed)
+                desktop.request_stop()
+
+        threading.Thread(target=drive, name="lab-tour", daemon=True).start()
+
+    return start
 
 
 def _stress_plan(options: SessionOptions, runtime_config: Path) -> list[Any]:
@@ -373,12 +515,13 @@ def _start_stress(
     recorder: LabRecorder,
     settings: AppConfig,
     run_dir: Path,
+    ui: Any,
     closers: list[Any],
-) -> None:
+) -> Any:
     from .stress_driver import StressDriver
     from .stress_page import StressPage
 
-    page = StressPage()
+    page = StressPage(ui)
     uia = [item for item in plan if item.family in {"uia_korean", "uia_latin"}]
     page.lay_out_plan(plan, options.seed)
     for omitted in page.omitted:
@@ -390,32 +533,41 @@ def _start_stress(
         targets=total,
         plan_fingerprint=plan_fingerprint(page.pages, uia),
         # Physical pixels per point of the page: what a 1:1 painted image is drawn at.
-        display_scale=page.devicePixelRatioF(),
+        display_scale=page.display_scale,
     )
     print(f"lab: stress campaign of {total} hovers over {len(page.pages)} pages", flush=True)
-    driver = StressDriver(
-        recorder,
-        page,
-        uia,
-        capture_hotkey=settings.capture_hotkey,
-        run_dir=run_dir,
-        retain_fixture_text=options.retain_fixture_text,
-        retain_fixture_images=options.retain_fixture_images,
-    )
     closers.append(page.close)
 
-    def drive() -> None:
-        try:
-            driver.run()
-        except Exception as error:
-            import traceback
+    def start(desktop: DesktopProcess) -> None:
+        desktop_pid = desktop.process.pid if desktop.process is not None else None
+        driver = StressDriver(
+            recorder,
+            page,
+            uia,
+            capture_hotkey=settings.capture_hotkey,
+            run_dir=run_dir,
+            retain_fixture_text=options.retain_fixture_text,
+            retain_fixture_images=options.retain_fixture_images,
+            owned_pids=set() if desktop_pid is None else {desktop_pid},
+            settle_timeout=options.hover_timeout or 4.0,
+            first_timeout=options.hover_timeout or 90.0,
+        )
 
-            traceback.print_exc()
-            recorder.lab("tour_aborted", reason=type(error).__name__)
-        finally:
-            _request_quit()
+        def drive() -> None:
+            try:
+                driver.run()
+            except Exception as error:
+                import traceback
 
-    threading.Thread(target=drive, name="lab-stress", daemon=True).start()
+                traceback.print_exc()
+                recorder.lab("tour_aborted", reason=type(error).__name__)
+            finally:
+                recorder.lab("tour_driver_finished", completed=driver.completed)
+                desktop.request_stop()
+
+        threading.Thread(target=drive, name="lab-stress", daemon=True).start()
+
+    return start
 
 
 def _campaign_line(campaign: dict[str, Any]) -> str:
@@ -457,26 +609,6 @@ def plan_fingerprint(pages: Sequence[Any], unplaced: Sequence[Any] = ()) -> str:
     return fingerprint(rows)
 
 
-def _stop_after(seconds: float, recorder: LabRecorder) -> None:
-    def stop() -> None:
-        recorder.lab("session_duration_reached", seconds=seconds)
-        _request_quit()
-
-    timer = threading.Timer(seconds, stop)
-    timer.daemon = True
-    timer.start()
-
-
-_QUIT_REQUESTED = threading.Event()
-
-
-def _request_quit() -> None:
-    # The shell's own SIGINT route: the same shutdown Ctrl+C in a terminal takes.
-    # Not os.kill: on Windows that is TerminateProcess, which skips the shutdown.
-    _QUIT_REQUESTED.set()
-    signal.raise_signal(signal.SIGINT)
-
-
 def _krdict(runtime_config: Path) -> Path:
     raw = json.loads(runtime_config.read_text(encoding="utf-8"))
     path = Path(raw["resources"]["krdict"]["path"]).expanduser()
@@ -486,34 +618,37 @@ def _krdict(runtime_config: Path) -> Path:
 # -- the HUD ---------------------------------------------------------------------
 
 
-class _Broadcast:
-    """Feed one trace event to several sinks; the lab recorder decides evidence."""
+def _listener(sink: Any) -> Any:
+    """Give Lab-owned visual tools only geometry-free, text-free trace fields."""
 
-    def __init__(self, sinks: list[Any]) -> None:
-        self._sinks = sinks
-        self.retain_evidence = getattr(sinks[0], "retain_evidence", False)
-        self.retain_geometry = getattr(sinks[0], "retain_geometry", False)
+    def receive(name: str, _observed_ns: int, fields: Any) -> None:
+        event = {"event_kind": name}
+        event.update({key: value for key, value in fields.items() if not is_content_field(key)})
+        sink.emit(event)
 
-    def emit(self, event: Any) -> object:
-        for sink in self._sinks:
-            try:
-                sink.emit(event)
-            except Exception:
-                continue
-        return None
+    return receive
 
 
-def _hud(application: Any, runtime_config: Path, closers: list[Any]) -> list[Any]:
+def _hud(
+    ui: Any,
+    settings: AppConfig,
+    closers: list[Any],
+    *,
+    dwell_ms: int,
+    backend: str,
+    show_roi: bool,
+) -> list[Any]:
     from ..hud.capture_overlay import CaptureOverlay
     from ..hud.hover_hud import HoverHUD
-    from ..hud.session import _resolved_backend, _virtual_desktop
 
-    panel = HoverHUD(dwell_ms=80, backend=_resolved_backend(runtime_config))
-    panel.show()
-    overlay = CaptureOverlay(_virtual_desktop(application))
-    overlay.show()
-    closers.extend([panel.close, overlay.close])
-    return [panel, overlay]
+    panel = HoverHUD(ui, dwell_ms=dwell_ms, backend=backend)
+    sinks: list[Any] = [panel]
+    closers.append(panel.close)
+    if show_roi:
+        overlay = CaptureOverlay(ui)
+        closers.append(overlay.close)
+        sinks.append(overlay)
+    return sinks
 
 
 # -- metadata --------------------------------------------------------------------
@@ -557,6 +692,10 @@ def _metadata(
             "word_sizes": list(options.word_sizes),
             "seed": options.seed,
             "duration": options.duration,
+            "roi_size": list(options.roi_size) if options.roi_size else None,
+            "hover_delay_ms": options.hover_delay_ms,
+            "cpu_threads": options.cpu_threads,
+            "hover_timeout": options.hover_timeout,
             "hud": options.hud,
             "baseline": None if options.baseline is None else Path(options.baseline).name,
             "per_family": options.per_family,

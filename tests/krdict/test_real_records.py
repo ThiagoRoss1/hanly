@@ -1,6 +1,4 @@
 """Literal regressions transcribed manually from the 2026-08-19 raw XML."""
-# ruff: noqa: E501 -- exact source values must remain easy to compare verbatim.
-
 from __future__ import annotations
 
 import os
@@ -143,8 +141,20 @@ def test_ga_27733_preserves_the_complete_two_sense_record() -> None:
                     (5, 1, "구", "가에 달라붙다."),
                     (6, 1, "구", "가에 세우다."),
                     (7, 1, "구", "가에 앉다."),
-                    (8, 1, "문장", "공원의 중앙에는 잔디밭이 있고 가에는 울타리가 둘러쳐져 있었다."),
-                    (9, 1, "문장", "민준이는 금방이라도 일어날 듯이 의자 가에 엉덩이만 살짝 걸치고 앉았다."),
+                    (
+                        8,
+                        1,
+                        "문장",
+                        "공원의 중앙에는 잔디밭이 있고 가에는 "
+                        "울타리가 둘러쳐져 있었다.",
+                    ),
+                    (
+                        9,
+                        1,
+                        "문장",
+                        "민준이는 금방이라도 일어날 듯이 의자 가에 엉덩이만 살짝 "
+                        "걸치고 앉았다.",
+                    ),
                     (10, 1, "대화", "차는 어디에 주차했어요?"),
                     (10, 2, "대화", "저기 운동장 가에 세워 뒀어요."),
                 ],
@@ -199,14 +209,16 @@ def test_cheomseongdae_600265_preserves_the_complete_v1_record() -> None:
             {
                 "source_sense_id": 1,
                 "sense_order": 1,
-                "korean_definition": "경주시에 있는 신라 선덕 여왕 때 만들어진 천문 기상 관측 시설. ",
+                "korean_definition": "경주시에 있는 신라 선덕 여왕 때 만들어진 천문 기상 "
+                "관측 시설. ",
                 "annotation": None,
                 "syntactic_annotation": None,
                 "translations": [
                     (
                         "en",
                         "Cheomseongdae",
-                        "An astronomical and meteorological observation facility that was built during the reign of Queen Seondeok of Silla, located in Gyeongju.",
+                        "An astronomical and meteorological observation facility that was built "
+                        "during the reign of Queen Seondeok of Silla, located in Gyeongju.",
                     )
                 ],
                 "examples": [],

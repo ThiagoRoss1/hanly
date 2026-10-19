@@ -9,6 +9,8 @@ never library objects or foreign exceptions.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -770,6 +772,8 @@ def _lookup_message(request: LookupRequest) -> Message:
             "selection_text": selection.text,
             "selection_cursor_index": selection.cursor_index,
             "selection_source": selection.source,
+            "selection_context_before": selection.context_before,
+            "selection_context_after": selection.context_after,
         }
 
     image = request.image
@@ -1032,6 +1036,8 @@ def _request_from(message: Message) -> LookupRequest:
             text=str(message["selection_text"]),
             cursor_index=int(message["selection_cursor_index"]),
             source=source if isinstance(source, str) else None,
+            context_before=message.get("selection_context_before", ""),
+            context_after=message.get("selection_context_after", ""),
         )
         return LookupRequest(
             int(message["request_id"]), None, target,
@@ -1055,6 +1061,14 @@ def lookup_child(connection: PipeEnd, settings: LookupSettings) -> None:
     Importable under ``spawn`` and deliberately narrow. It provisions nothing,
     acknowledges no update, registers no hotkey, and opens no window.
     """
+
+    # The supervised service owns stdout as a framed JSONL channel. A library
+    # that prints from the spawned lookup child must not corrupt its protocol.
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    try:
+        os.dup2(sys.stdout.fileno(), 1)
+    except (OSError, ValueError):
+        pass
 
     from hanly_app.lookup.preload import preload_ocr_runtime
 

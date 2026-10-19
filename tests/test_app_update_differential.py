@@ -375,7 +375,9 @@ def test_a_payload_that_does_not_match_its_published_digest_is_refused(
     root = _installed(tmp_path, BASE_BUILD, release.base_manifest)
     installer = _installer(release, root, tmp_path)
     prepared = installer.prepare("1.1.0")
-    release.corrupt(release.metadata.delta.payload.name)  # type: ignore[union-attr]
+    delta = release.metadata.delta
+    assert delta is not None
+    release.corrupt(delta.payload.name)
 
     with pytest.raises(DifferentialUpdateError, match="size the release declares"):
         installer.stage(prepared)
@@ -394,10 +396,12 @@ def test_metadata_that_is_not_what_the_release_published_is_refused(
         _installer(release, root, tmp_path).prepare("1.1.0")
 
 
-def test_a_release_that_moved_on_since_the_check_is_not_installed(tmp_path: Path) -> None:
+def test_a_release_that_moved_on_since_the_check_is_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     release = _Release(tmp_path)
     root = _installed(tmp_path, BASE_BUILD, release.base_manifest)
-    release.payload = lambda: {"tag_name": "v2.0.0"}  # type: ignore[method-assign]
+    monkeypatch.setattr(release, "payload", lambda: {"tag_name": "v2.0.0"})
 
     with pytest.raises(DifferentialUpdateError, match="no longer offers"):
         _installer(release, root, tmp_path).prepare("1.1.0")
@@ -639,7 +643,9 @@ def test_a_member_that_expands_past_its_declared_size_is_abandoned(
 
     # Every member the plan needs is still there; one of them lies about its
     # size, which is the only thing a digest check alone would catch too late.
-    delta = release.root / release.metadata.delta.payload.name  # type: ignore[union-attr]
+    metadata_delta = release.metadata.delta
+    assert metadata_delta is not None
+    delta = release.root / metadata_delta.payload.name
     with zipfile.ZipFile(delta, "w") as payload:
         payload.writestr("hanly-desktop.exe", "x" * 50_000_000)
         added = release.target_root / "_internal" / "added.txt"

@@ -37,7 +37,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from hanly import PixelFormat, Point, ROIImage
+from hanly import PixelFormat, Point, ROIImage, TextSelection
 from hanly.easyocr_provider import EasyOCRConfig
 from hanly_app.lookup.controller import LookupRequest
 from hanly_app.lookup.process import LookupEngine, LookupSettings
@@ -112,6 +112,19 @@ def main(krdict, models, fixture):
         report["status"] = result.status.value
         report["headwords"] = [entry.headword for entry in result.entries]
         report["generation"] = engine.generation
+
+        # Identical target and cursor, different neighbour: exercise the real
+        # pipe and child cache, rather than only a transport round trip.
+        report["contextual_constructions"] = []
+        for number, before in enumerate(("먹고", "돈이", "먹고"), start=3):
+            contextual = engine(LookupRequest(
+                number, None, Point(0, 0),
+                selection=TextSelection("있어요", 0, context_before=before),
+            ))
+            construction = contextual.context.construction if contextual.context else None
+            report["contextual_constructions"].append(
+                construction.headword if construction else None
+            )
 
         report["children_while_ready"] = owned_children()
 
@@ -232,6 +245,7 @@ def test_a_real_korean_lookup_runs_in_a_child_the_shell_can_retire(tmp_path: Pat
     assert report["state_after_attach"] == "ready"
     assert report["status"] == "SUCCESS"
     assert report["headwords"]
+    assert report["contextual_constructions"] == ["-고 있다", None, "-고 있다"]
 
     # A stopped engine can still accept a new request, on a new child.
     assert report["state_after_retire"] == "sleeping"

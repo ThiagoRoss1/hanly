@@ -1470,12 +1470,16 @@ class PosixTreeStaging:
         store: ReceiptStore,
         source_commit: str,
         runner: Any = None,
+        owner_pid: int | None = None,
     ) -> None:
+        if owner_pid is not None and owner_pid <= 0:
+            raise ValueError("owner_pid must be positive")
         self._install_root = Path(install_root).resolve()
         self._platform = platform
         self._store = store
         self._source_commit = source_commit
         self._runner = runner
+        self._owner_pid = owner_pid
 
     def precheck(self, prepared: PreparedTreeUpdate) -> None:
         """Refuse before anything is fetched what cannot be installed at all."""
@@ -1614,7 +1618,7 @@ class PosixTreeStaging:
             expected=challenge.expected(),
             executable=prepared.target.layout.executable,
             launch=launch_mode(_platform_launch(self._platform)),
-            parent_pid=os.getpid(),
+            parent_pid=self._owner_pid if self._owner_pid is not None else os.getpid(),
             exit_timeout=EXIT_WAIT_SECONDS,
             ready_timeout=READY_WAIT_SECONDS,
             install_device=install.st_dev,

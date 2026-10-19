@@ -581,10 +581,9 @@ def test_a_slow_load_is_observable_as_preparing_then_ready(
 
     import hanly.easyocr_provider as easyocr_provider
 
-    slow = easyocr_provider.EasyOCRProvider
     release = threading.Event()
 
-    class SlowOCR(slow):  # type: ignore[misc, valid-type]
+    class SlowOCR(easyocr_provider.EasyOCRProvider):
         def prewarm(self) -> None:
             release.wait(5.0)
             super().prewarm()

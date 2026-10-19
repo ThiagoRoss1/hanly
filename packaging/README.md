@@ -1,51 +1,40 @@
 # Hanly Desktop packaging
 
-`hanly-desktop.spec` is the production PyInstaller definition. Windows and
-Linux build a **onedir** application; macOS wraps the same collection in
-**`Hanly.app`**, whose program is `Hanly.app/Contents/MacOS/hanly-desktop`. It
-includes the `hanly` engine, `hanly_app`, Control Center assets, and the native
-EasyOCR/torch and Qt runtime libraries. The frozen startup hook preserves the
-required OCR-before-Qt ordering.
-`hanly-desktop.exe` is the whole interface: it calls `hanly_app.cli:main`, the
-same function the installed `hanly` script calls, so it accepts the same flags
-and opens the same window. No launcher script is shipped beside it.
+The official desktop product is a native Tauri root with React-owned windows and
+a private, console-capable Python service. Rust supervises the service through
+bounded JSONL pipes and hides the child console on Windows. The service keeps
+the Hanly engine, desktop business rules, providers, resource acquisition, and
+verified updater; it does not contain a second user-facing shell.
 
-The macOS bundle identifier is `io.github.thiagoross1.hanly`, and its
-`CFBundleShortVersionString`/`CFBundleVersion` come from the installed
-`hanly-app` metadata that `tools/release_version.py` checks against the tag.
-Builds are signed ad hoc, which is what an unnotarized build can honestly
-claim; a Developer ID and notarization are separate, later work. The spec names
-no `codesign_identity`, and that absence is deliberate. PyInstaller ad-hoc signs
-every macOS binary either way, but its `sign_binary` adds `--options=runtime`
-whenever an identity is named - the ad-hoc `"-"` included - and that hardened
-runtime is what an unsigned bundle cannot survive: library validation refuses to
-map the bundle's own ad-hoc signed libraries into a hardened process, and the
-app dies on `libpython3.13.dylib ... different Team IDs` before Python starts.
-Naming no identity keeps the ad-hoc signature and drops the restriction, so the
-V1 bundle needs no entitlements and carries none. It signs as
-`flags=0x2(adhoc)` and passes `codesign --verify --deep --strict`.
+| Platform | Product root | Native executable | Python service |
+| --- | --- | --- | --- |
+| macOS | `Hanly.app` | `Contents/MacOS/hanly-desktop` | `Contents/Resources/hanly-service/` |
+| Windows | `hanly-desktop/` | `hanly-desktop.exe` | `resources/hanly-service/` |
+| Linux portable | `hanly-desktop/` | `hanly-desktop` | `resources/hanly-service/` |
 
-### What Developer ID and notarization will need
+Each Python service directory is PyInstaller onedir output with `_internal/`.
+The macOS bundle also carries `hanly-update-posix` in `Contents/Resources`; the
+portable Linux product carries it in `resources/`. Windows keeps its existing
+PowerShell updater. Product identity remains `io.github.thiagoross1.hanly`,
+and the Tauri and Python product versions continue to come from `hanly-app`.
+The build inventory rejects a missing service payload or required provider
+inputs and rejects collected Qt, WebEngine, pywebview, and pystray modules.
 
-Notarization requires the hardened runtime, so the entitlement question returns
-then rather than now. Measured on this bundle under `--options=runtime`:
+macOS products are ad-hoc signed after the service and helper are staged, then
+checked with `codesign --verify --deep --strict`. The designated requirement is
+the default ad-hoc one, the build's cdhash, so each rebuild or update needs
+Screen Recording and Accessibility granted again. An identifier-only
+requirement must not replace it: any ad-hoc code naming that identifier would
+satisfy it and inherit the grants. This is an unnotarized local and release
+build. Developer ID signing and notarization need separate release
+credentials and configuration; the Python freezer does not force the hardened
+runtime on this product.
 
-- `com.apple.security.cs.disable-library-validation` was required, and should
-  stop being required once every nested binary carries one real Team ID.
-- `com.apple.security.cs.allow-jit` was still required with library validation
-  already disabled: QtWebEngine's V8 aborted with "Failed to reserve virtual
-  memory for CodeRange" without it.
-- `com.apple.security.cs.allow-unsigned-executable-memory` and
-  `com.apple.security.cs.allow-dyld-environment-variables` were **not** needed
-  in any configuration measured, hardened or not; PyInstaller's own PyQt6 hook
-  sets `DYLD_LIBRARY_PATH` for non-`.app` builds only. Neither should be
-  adopted without its own evidence.
+## Build inputs a frozen service cannot fetch
 
-## Build inputs a frozen bundle cannot fetch
-
-A packaged Hanly verifies TLS against a bundled `certifi` store and reads its
+A packaged Hanly verifies TLS against its bundled `certifi` store and reads its
 EasyOCR weights from `hanly_app/assets/easyocr_models`, with downloading
-switched off. Both are therefore build inputs:
+switched off. Both are build inputs:
 
 ```bash
 python tools/prepare_easyocr_models.py
@@ -53,284 +42,213 @@ python tools/prepare_easyocr_models.py
 
 That fetches exactly two files over HTTPS - `craft_mlt_25k.pth` and
 `korean_g2.pth` - checks each against the MD5 EasyOCR 1.7.2 publishes for it,
-extracts only that one member from the release archive, and reuses a file that
-already matches. The digests identify the content EasyOCR itself re-checks on
-load; they are not a claim of cryptographic authenticity. The spec refuses to
-build without both files rather than producing a bundle that cannot read
-anything.
+extracts only that member from the release archive, and reuses a file that
+already matches. The digest identifies the content EasyOCR itself re-checks on
+load; it is not a claim of cryptographic authenticity. The spec refuses to
+build without both files rather than producing a service that cannot read text.
 
-`packaging/release-constraints.txt` pins the four inputs that decide what a
-released bundle contains - `easyocr`, `pyinstaller`,
-`pyinstaller-hooks-contrib`, and the Qt runtime wheel `PyQt6-Qt6` - and the
-build workflow installs with `-c packaging/release-constraints.txt`. It is a
-release-build constraint file, not a lock file for the whole dependency graph;
-`hanly-app` keeps its wider `PyQt6>=6.7,<7` range.
+`packaging/release-constraints.txt` pins EasyOCR, PyInstaller, and
+`pyinstaller-hooks-contrib`; it is a release-build constraint file, not a lock
+for the full dependency graph. Kiwi, its model data and native extension are
+collected as mandatory inputs: a service missing any of them cannot perform a
+lookup. Qt and webview packages are not required or collected by the service.
 
-The Qt runtime is pinned because PyQt6-Qt6 6.10 ships MSVC runtime 14.26. A
-frozen Windows bundle collects it into the same tree as Torch, and loading it
-first makes `c10.dll` fail to initialize (WinError 1114). 6.11.2 ships 14.44 and
-passed the same load boundaries. The packaged gate's frozen worker is the check
-that a built bundle really imports Torch.
+## Build the official product
 
-Morphology is collected unconditionally. `kiwipiepy`, `kiwipiepy_model`, and
-the top-level `_kiwipiepy` extension are imported by name at runtime, so
-PyInstaller cannot see them, and the worker warms Kiwi before reporting
-readiness — a bundle without them can never look a word up. Their collection is
-deliberately outside the tolerant loop that may skip an absent optional
-package: failing to collect them fails the build.
+Build on the target operating system with the matching Python, Node, and Rust
+toolchains:
 
-Build with the authoritative interpreter for the current host:
-
-```powershell
+```bash
+npm ci --prefix apps/desktop
+python tools/prepare_easyocr_models.py
 python tools/build_package.py
 ```
 
-Use `--platform windows|macos|linux` to select the explicit handoff name (the
-default is the current host), and `--dry-run` to inspect the PyInstaller
-command. The tool creates the release archive after a successful onedir build;
-it never installs dependencies, downloads models, or contacts a remote service.
+Use `--platform windows|macos|linux` to select the explicit product name; the
+default is the current host. `--dry-run` prints the PyInstaller command.
+Cross-platform builds are not supported: PyInstaller, Tauri, and the native
+updater helper produce host-specific binaries. The builder stamps
+`hanly_app/assets/hanly-build.json`, compiles the POSIX helper when applicable,
+freezes the Python service, creates a generated Tauri resource overlay, builds
+the native root, stages both payloads, verifies the complete product, and then
+creates the archive and existing update metadata. The overlay lives under the
+ignored `dist/` directory and is generated only after its resources exist, so
+ordinary Cargo tests do not need a frozen service.
 
-PyInstaller loads `PyQt6.QtWidgets` while analyzing a Linux build, which needs
-the system `libEGL.so.1` loader. On Ubuntu 22.04 and 24.04 that loader is
-provided by `libegl1`. Qt's xcb platform plugin then needs the X client
-libraries `libqxcb.so` and `libQt6XcbQpa` are linked against — thirteen xcb
-and xkbcommon libraries the distribution owns rather than the Qt wheel. A
-local Ubuntu builder prepares both with:
+For Ubuntu release builds, install Tauri's WebKit and native build dependencies
+before freezing:
 
 ```bash
-packages=(
-  libegl1 libgl1 libfontconfig1 libx11-xcb1
-  libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1
-  libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0
-  libxcb-sync1 libxcb-util1 libxcb-xfixes0 libxcb-xkb1
-  libxkbcommon-x11-0 xvfb
-)
 sudo apt-get update
-sudo apt-get install --yes --no-install-recommends "${packages[@]}"
+sudo apt-get install --yes --no-install-recommends \
+  build-essential curl file libssl-dev libxdo-dev librsvg2-dev \
+  libwebkit2gtk-4.1-dev libayatana-appindicator3-dev xvfb
 ```
 
-This list is not only the build machine's display stack. PyInstaller collects
-a shared library only if the machine it builds on has it, so a builder missing
-these freezes a Linux bundle carrying no loadable platform plugin, and the
-artifact fails on every user's machine that does not happen to supply them
-itself. `xvfb` is the display the frozen window check opens in.
+Linux support remains the existing portable tarball. This Mac session cannot
+prove Linux runtime behavior; Linux native and packaged gates must run on Linux
+CI or a Linux host. Windows native packaging and updater behavior likewise
+require a Windows host. Do not treat a cross-compiled executable or static test
+as native validation.
 
-Qt does not raise when a platform plugin will not load: it aborts the process,
-so an unprepared machine used to lose the window check to SIGABRT with no
-report. `hanly_app.qt_bootstrap.verify_platform_plugin` now loads that plugin
-before the `QApplication` exists and names the missing library instead.
+## Proving the packaged product
 
-## Proving a build before it ships
-
-A build that passes every pre-freeze gate can still be unusable: v0.1.0 did,
-in two independent ways. Three checks run against the produced bundle, in this
-order.
+A built Python tree is not the shipped product. Run inventory, provider, and
+native-window checks against the resulting root:
 
 ```bash
-# Deterministic and offline: names any runtime dependency the build forgot.
-python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop --inventory-only
-
-# Runs the executable itself on a temporary profile, outside the checkout,
-# with no developer virtual environment or model cache to fall back on.
+python tools/smoke_packaged_runtime.py dist/macos/Hanly.app --inventory-only
 python tools/build_smoke_krdict.py /tmp/hanly-smoke/krdict.sqlite3
-python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop \
-    --image tests/hanly_fixtures/assets/korean_reading_roi.png \
-    --krdict /tmp/hanly-smoke/krdict.sqlite3
-
-# Opens the frozen main window and makes its page call the bridge.
-python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop --window-only
+python tools/smoke_packaged_runtime.py dist/macos/Hanly.app \
+  --image tests/hanly_fixtures/assets/korean_reading_roi.png \
+  --krdict /tmp/hanly-smoke/krdict.sqlite3 --expect-version 1.1.0
+python tools/smoke_packaged_runtime.py dist/macos/Hanly.app --window-only
 ```
 
-The last two drive `hanly --self-check worker` and `hanly --self-check ui`,
-internal modes on the same entry point rather than a second application.
-`worker` loads the runtime, constructs the real providers, reads the Korean
-fixture with EasyOCR, analyzes it with Kiwi, looks the word up in KRDICT, and
-prints one JSON report. `ui` opens the one main window, waits for its document
-and injected bridge, calls `get_state` from the page, and closes it; it needs
-no runtime, because the window deliberately opens before any resource exists.
-Inventory alone is not evidence of readiness, ready providers are not evidence
-of a usable window, and a skipped check is not a pass.
+Inventory checks the native root and service payload without constructing
+providers. The worker self-check runs through the native entry point and tests
+the actual packaged service against an isolated profile; the image check also
+exercises its configured OCR provider. The UI check opens the native window,
+waits for React's `frontend_ready`, calls the state bridge, and exits cleanly.
+A check that is unavailable on its host is not a pass, and
+`HANLY_REQUIRE_PACKAGED=1` makes missing products a failure.
 
-Every run redirects the settings root, the home directory, and all three
-EasyOCR model locations into a temporary profile, so no developer cache can be
-what makes a check succeed. That makes the worker run *cold*: it fetches its
-own models. `--model-cache DIR` copies a named EasyOCR model directory into
-the isolated profile instead, which is the deterministic offline scenario.
+The packaged suite also exercises the ordinary update-ready startup path on a
+test-owned copy of the product. It stages a v2 challenge and pending receipt in
+an isolated per-user profile, launches the native root with
+`--update-ready-v2`, and verifies the exact acknowledgement and receipt
+promotion after the React page reports ready. This path does not use self-check
+mode to acknowledge an update. macOS and Windows process-identity checks verify
+that the native root owns the service and UI family without QtWebEngine or
+pystray processes.
 
-The dictionary is redirected for the same reason and answered the same way. It
-is licensed, so it ships in neither the bundle nor the repository, and a frozen
-run given none provisions itself from the public release channel — an
-unauthenticated GitHub API call that a hosted macOS runner is rate-limited on,
-which is how one release run reached its timeout instead of a result.
-`--krdict PATH` names an already-built database for the run to install through
-the ordinary local-seed path, and `tools/build_smoke_krdict.py` builds a small
-one carrying the words the self-check probes. What it writes is temporary and
-belongs to no bundle and no artifact; the released dictionary is still the
-independently published resource a real first run downloads.
+On POSIX, the packaged gate also runs the shipped native update helper against
+disposable copies of the app. A test launcher passes an unsupported argument to
+the real native root, which exits before creating a window; the helper must
+reject that candidate, restore the previous executable, and leave no launcher
+or root process alive. Its two-second readiness deadline is test-only data in
+the helper descriptor. Windows rollback remains covered by the native
+PowerShell handoff tests on Windows CI; this Mac host cannot validate that
+platform's helper or process-family behavior.
 
-On macOS the checks run against the application unpacked back out of the
-published ZIP, not the build directory it was made from. Reconstruction and the
-disk image are separate invocations, because they check separate published
-products and a ZIP that will not unpack says nothing about the DMG:
+The smoke harness redirects settings, home, KRDICT and OCR model paths into a
+temporary profile so a developer environment cannot make a damaged bundle pass.
+The dictionary is licensed and ships in neither the application nor repository.
+`--krdict PATH` and `tools/build_smoke_krdict.py` provide the small local test
+resource; this does not change the separately published dictionary used by a
+real first launch. The model cache can be supplied explicitly for deterministic
+offline runs; otherwise the cold test measures the bundle's own provisioning.
+
+On macOS, also reconstruct the published ZIP and inspect the published disk
+image separately. The ZIP must preserve the signed bundle's symlinks and
+permissions; opening a DMG alone is not proof that it contains `Hanly.app`:
 
 ```bash
 python tools/smoke_packaged_runtime.py \
-    --from-archive dist/hanly-desktop-macos.zip \
-    --reconstruct-into dist/reconstructed \
-    --reconstruct-only
+  --from-archive dist/hanly-desktop-macos.zip \
+  --reconstruct-into dist/reconstructed --reconstruct-only
 python tools/smoke_packaged_runtime.py --disk-image dist/hanly-desktop-macos.dmg
 python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --inventory-only
 python tools/smoke_packaged_runtime.py dist/reconstructed/Hanly.app --window-only
 ```
 
-Mounting is not the disk-image check: a DMG that opens onto something other
-than `Hanly.app` fails, because that is the download a person would find empty.
+### Product build identity
 
-### Which source the bundle came from
-
-A stale bundle passes every check it ever passed. Working is therefore not
-evidence that an artifact is this tree's build, and one tested bundle reported
-`0.1.3` beside a `0.5.0` checkout with nothing in the run saying so.
-
-`--expect-version` makes the bundle answer for itself, from the metadata its
-own interpreter collected:
+A stale bundle can pass functional checks. The embedded build stamp carries a
+fresh UUID, source commit, platform, architecture, and version; release tooling
+compares those values with the manifest generated from the finished tree.
+`HANLY_EXPECTED_SOURCE_COMMIT` names the full commit required by the packaged
+test gate and is never inferred from the checkout that runs the test:
 
 ```bash
-python tools/smoke_packaged_runtime.py dist/windows/hanly-desktop \
-    --image tests/hanly_fixtures/assets/korean_reading_roi.png \
-    --krdict /tmp/hanly-smoke/krdict.sqlite3 \
-    --expect-version "$(python tools/release_version.py)"
+HANLY_EXPECTED_SOURCE_COMMIT="$(git rev-parse HEAD)" \
+  python -m pytest --suite packaged
 ```
 
-Both `hanly` and `hanly-app` must report that version. A mismatch fails, and so
-does a report that names no version at all — a missing identity leaves the
-release in the same position a wrong one does. The option is refused alongside
-`--inventory-only` and `--reconstruct-only`: neither starts the executable, so
-neither has anything to compare. `dist/reports/hanly-artifact-<platform>.json`
-records the build commit and the source version beside the archive hashes,
-because a hash says two downloads are the same file, not which source made it.
+The bundle's own `hanly-build.json`, together with its version, platform and
+architecture, is the identity source. Package versions alone cannot tell two
+builds of one version apart. CI stores the build's source commit explicitly;
+a locally built bundle without that expected commit has incomplete source
+identity evidence.
 
-The inventory also names the two build inputs a frozen bundle cannot fetch:
-`certifi/cacert.pem` and both EasyOCR weights. A bundle missing them has
-working code and no way to verify a certificate or read a word.
+## Test suites and host requirements
 
-`tests/packaged/shared/test_packaged_desktop.py` is the same gate as a test. It
-uses the platform's build output (`dist/<platform>/hanly-desktop`, or
-`dist/macos/Hanly.app`) by default, or the bundle named by
-`HANLY_PACKAGED_APP`:
+`python -m pytest` remains the full local gate. Each suite is selectable because
+it needs a different machine:
 
 ```bash
-HANLY_EXPECTED_SOURCE_COMMIT="$(git rev-parse HEAD)" python -m pytest --suite packaged
-```
-
-`HANLY_EXPECTED_SOURCE_COMMIT` names the full commit the bundle must have been
-built from, and the gate compares it with the `source_commit` in the bundle's
-own `hanly_app/assets/hanly-build.json`, together with its version, platform
-and architecture. Package versions alone cannot tell two builds of one version
-apart, so a stale bundle of the current version would otherwise pass. The
-commit is supplied by whoever runs the gate -- CI passes the commit it built --
-and is never inferred from the checkout running the tests. Without it the
-identity case skips locally and fails under `HANLY_REQUIRE_PACKAGED`.
-
-## Three suites, three machines
-
-`python -m pytest` runs everything and stays the full local gate. Each suite is
-also selectable on its own, because each needs a different machine:
-
-```bash
-python -m pytest --suite portable   # no Qt, no Torch, no display
-python -m pytest --suite native     # the desktop runtime and a window server
-python -m pytest --suite packaged   # a frozen bundle
+python -m pytest --suite portable   # no native window server or OCR runtime
+python -m pytest --suite native     # desktop runtime and a window server
+python -m pytest --suite packaged   # a built native root and Python service
 ```
 
 | Suite | Where it lives | What it needs |
 | --- | --- | --- |
-| portable | everything outside the two below | the root `dev` group only |
-| native | `tests/native/shared/`, plus `tests/native/<os>/` for this host | `hanly-app[runtime]`, a display, the EasyOCR weights, a KRDICT database |
-| packaged | `tests/packaged/` | a built bundle |
+| portable | everything outside the two below | root development dependencies |
+| native | `tests/native/shared/`, plus `tests/native/<os>/` for this host | native desktop runtime, display, EasyOCR weights, KRDICT database |
+| packaged | `tests/packaged/` | built product, native UI session, isolated appcopy for update acknowledgement |
 
-Selection excludes a suite **before its modules are imported**, so a portable
-run never loads Qt, pywebview, or the OCR stack, and one platform's adapters
-are never imported on another. A marker cannot do that: deselection by marker
-happens after the import.
+Selection excludes a suite before its modules are imported, so portable tests
+do not load platform window libraries or the OCR stack, and one platform's
+native adapters are not imported on another. `ci.yml` owns portable and native
+checks; `build.yml` owns frozen bundle checks and does not repeat those gates.
+A capability unavailable on a developer's machine is a skip with a reason.
+`HANLY_REQUIRE_NATIVE=1` and `HANLY_REQUIRE_PACKAGED=1` turn those skips into
+failures in jobs whose purpose is to exercise the capability.
 
-`ci.yml` owns the first two — a Python matrix for the portable suite plus one
-native job per platform, each installing the runtime and building the
-dictionary its cases read. `build.yml` owns the third and no longer repeats the
-portable suite, the lint, or the type check.
+## What a failed packaged check leaves behind
 
-A capability a developer's machine lacks is a skip with a reason. In the jobs
-that exist to exercise it, `HANLY_REQUIRE_NATIVE=1` and
-`HANLY_REQUIRE_PACKAGED=1` turn every one of those reasons into a failure: a
-native gate that skipped everything would be a green run proving nothing.
-
-The portable suite builds real installation trees, and two of the things a
-published tree carries are the host's to give. A macOS or Linux tree is only
-itself where permission bits survive being read back and a framework's symbolic
-links exist, so a Windows session skips those cases rather than reading back a
-tree nothing wrote. A signed build's `com.apple.cs.*` attributes are macOS's
-alone - Linux refuses every namespace but `user.`, and Windows has no attribute
-at all - so elsewhere a published build is simply unsigned, and the three cases
-whose subject is that material are skipped. The rules a manifest applies to
-those attributes are checked on every host, from entries built in memory; the
-round trip through a real filesystem is a macOS one, and the portable matrix
-does not run there.
-
-## What a failed run leaves behind
-
-A native fault ends the frozen process before it prints its report, so the exit
-status used to be the whole account — and `3221225501` names no suspect. Two
-things now survive that.
-
-The self-check writes one flushed JSON line per stage boundary on **stderr**,
-which the harness reads before it truncates anything. The stage that was
-started and never completed is reported as `current_stage`, so a failed run
-says `current_stage: ocr; exit: ILLEGAL_INSTRUCTION (0xC000001D)` rather than a
-number. A crash before the first marker stays `current_stage: unknown`; naming
-the last stage that passed would invent a diagnosis. Provider construction,
-OCR, morphology, dictionary, closing the worker, the Qt WebEngine import, the
-window itself, and each page probe all carry a marker.
-
-Two native boundaries now say what they could not do instead of reaching into
-it. The Control Center checks for a usable primary screen after Qt
-initializes and before pywebview creates its window: pywebview reads the
-primary screen's geometry there without checking that there is one, so a
-screenless session used to fail from inside that library, under Qt's own fatal
-"no screens available". The check runs after the `QApplication` exists, so it
-cannot prevent an abort inside the constructor — that case stays with the
-stage markers above. And the process inventory the native smokes embed raises
-rather than returning nothing when the host refuses to answer: a denied `ps`
-and an empty child list look identical and mean opposite things, and only one
-of them is a retired child.
-
-`tools/native_host_fingerprint.py` records what the machine actually is —
-operating system and build, CPU model and vendor, core counts, the build
-interpreter — before the first install, so a run that dies later still says
-which host it died on. `--with-torch` adds what Torch reports about the CPU
-from a subprocess of its own, since importing Torch is one of the things that
-ends a packaging run. A field the host will not answer for carries the reason;
-nothing is filled in with a plausible default, and neither environment
-variables nor process inventories are collected.
+The root self-check writes its JSON result to a file before shutdown, and the
+smoke harness stores stdout and stderr separately. This leaves a report when a
+native framework or OCR library aborts before the ordinary reply. Process
+inventory includes the native root, Python service, WebKit/WebView2 family and
+isolated lookup worker;
+a denied operating-system query is reported as an error, not as an empty
+process family. `tools/native_host_fingerprint.py` records the OS, CPU, core
+counts and build interpreter before installation. `--with-torch` records what
+Torch reports from a separate process. A host field that cannot be queried
+carries its reason rather than an invented default.
 
 ```bash
 python tools/native_host_fingerprint.py --context "before install" \
-    --output dist/reports/hanly-host-macos.json
+  --output dist/reports/hanly-host-macos.json
 ```
 
-In CI every check states the product it needs, so one failure no longer skips
-the rest. A failed worker smoke still leaves the window smoke, the archive
-checks, and the artifact identity; a failed reconstruction still leaves the
-disk-image evidence. The `hanly-diagnostics-<platform>` artifact is uploaded
-whether or not the run succeeded, and carries `dist/reports/` — every JSON
-report, the captured stdout and stderr of each smoke, and the host
-fingerprints — plus PyInstaller's warning and cross-reference output. It is
-never a release product, and a required failure still fails the job.
+CI uploads `dist/reports/` and freezer diagnostics whether the build succeeds
+or fails. These reports are evidence, not release products; a failed required
+check still fails the build.
+
+## Transition from the Qt product layout
+
+The migration retains the application bundle identifier, product version,
+user-data paths, executable stem, and existing updater. Windows and Linux keep
+their established `hanly-desktop` installation root. macOS keeps `Hanly.app`;
+its native root replaces the old Python UI executable and the service is staged
+under `Contents/Resources/hanly-service/`. Existing user settings, logs,
+resources, and update receipts remain outside the app.
+
+The updater determines deletions from the prior installation's verified
+ownership manifest or receipt. It must not remove old Qt files merely because
+the new product no longer contains them. On an installation without a receipt,
+the updater first proves the installed tree against the release that produced
+it. Once ownership is established, the regular update plan removes only paths
+the previous product owned and the Tauri product dropped. If the predecessor
+cannot be established, update stops for manual installation rather than
+assuming every existing file belongs to Hanly.
+
+The native root owns update readiness. After replacement it starts the Python
+service, receives the service handshake, waits for the actual React page to
+report ready, and only then sends the existing host-only acknowledgement. If
+that readiness is not reached, the helper restores the prior product. Windows
+and POSIX helpers continue to keep their previous staging, ownership, recovery,
+and rollback behavior.
 
 ## Artifact and resource conventions
 
-Windows and Linux write a onedir tree under `dist/<platform>/hanly-desktop/`;
-macOS writes `dist/macos/Hanly.app`. The tool then creates the platform's
-products at the root of `dist/`:
+Windows and Linux write the native root and `resources/` payload under
+`dist/<platform>/hanly-desktop/`; macOS writes `dist/macos/Hanly.app` with the
+Python service and updater helper under `Contents/Resources`. The tool then
+creates the platform products at the root of `dist/`:
 
 | Platform | Products |
 | --- | --- |
@@ -340,10 +258,10 @@ products at the root of `dist/`:
 
 macOS publishes two products from the one built application. The **ZIP** is
 made with `ditto --keepParent`, so it holds `Hanly.app` with its symlinks and
-permissions intact; that is what the in-app updater downloads and installs.
-The **DMG** is made with `hdiutil` from the same application and is what a
-person downloads and drags to Applications. The disk image is never an update
-input, and neither product modifies the built application.
+permissions intact; it remains available to clients from before update
+packages. The **DMG** is made with `hdiutil` from the same application. It is
+the human-facing download and the full-tree payload referenced by the HUP
+update package. Neither product modifies the built application.
 
 A release's asset set is **derived from the update package it publishes**, not
 kept as a list beside it. `python tools/release_build.py assets --package
@@ -381,7 +299,8 @@ The order inside one build matters and is the same everywhere:
    `Hanly.app` after signing would change the seal it describes.
 2. **Compile the POSIX helper**, also before the freeze, so macOS signs it with
    the bundle rather than breaking the seal by adding it afterwards.
-3. **Freeze**, and on macOS sign.
+3. **Freeze the Python service and build the Tauri root.** Stage both into
+   the product and ad-hoc sign the completed macOS bundle.
 4. **Windows only:** write `.hanly-manifest.json` into the tree, so the archive
    beside it carries what an older client reads.
 5. **Archive** the products.
@@ -416,12 +335,13 @@ is still open:
 
 Then Hanly hands the transaction to `hanly-update-helper.ps1`, waits for it to
 acknowledge ownership, and quits. The helper waits for every process running an
-executable **inside the installation** to exit — the shell, the Control Center,
-and the lookup child — then applies the plan one file at a time: the original is
-moved into `backup/`, the staged file is moved into place. It relaunches the
-build with `--update-ready-v2` and waits for it to answer that transaction's
-challenge. Only then are the backups discarded. If it does not answer within ten
-minutes, every backup goes back and the previous build is relaunched.
+executable **inside the installation** to exit — the native root, Python service,
+and isolated lookup worker — then applies the plan one file at a time: the
+original is moved into `backup/`, the staged file is moved into place. It
+relaunches the native root with the transaction challenge. The root acknowledges
+only after its Python service handshake and frontend readiness gates pass. Only
+then are the backups discarded. If it does not answer within ten minutes, every
+backup goes back and the previous build is relaunched.
 
 Four properties are worth knowing:
 
@@ -491,10 +411,11 @@ is a real second copy, and the disk it needs is the whole product.
 
 The helper takes the installation's lock, waits for every process running out
 of the installation to exit, renames the old root aside, renames the candidate
-into place, relaunches it, and waits for it to answer that transaction's
-challenge with the exact bytes the installer decided it would accept. Only then
-is the previous installation discarded. If it does not answer, the candidate is
-moved to `rejected/`, the previous installation goes back, and it is relaunched.
+into place, relaunches the native root, and waits for its host-authorized service
+acknowledgement of that transaction's challenge. The root sends it only after
+the service handshake and desktop readiness gates pass. Only then is the previous
+installation discarded. If it does not answer, the candidate is moved to
+`rejected/`, the previous installation goes back, and it is relaunched.
 
 **A whole product is downloaded only when a delta cannot be used**, and Hanly
 asks first, with the real size. On macOS that product is the disk image: it is
@@ -671,24 +592,21 @@ python tools/release_version.py --tag v1.1.0   # check the local package/tag mat
 
 ## Runtime configuration
 
-The packaged application looks for `runtime.json` beside the executable, then in
-the settings directory (`%LOCALAPPDATA%\Hanly` or `~/.config/hanly`). What a
-first launch then does — and where the KRDICT database comes from — is in the
-root `README.md`; `docs/CODE-MAP.md` names the files that do it.
+The native root and Python service preserve the established per-user settings
+and runtime locations (`%LOCALAPPDATA%\Hanly` on Windows or `~/.config/hanly`
+on Linux and macOS). A packaged app checks for `runtime.json` beside its
+executable where that layout permits, then uses the per-user settings
+directory. A macOS service does not write inside the signed, replaceable app
+bundle. What first launch provisions and where KRDICT comes from is in the root
+`README.md`; `docs/CODE-MAP.md` names the responsible files.
 
-Two facts specific to a packaged build: the application embeds no resource
-artifacts, so a corresponding public release must exist for first-run
-acquisition to succeed, and each activated artifact's release identity is
-stored as `installed_version`, so later launches skip provisioning while the
-local resources remain valid.
+The product does not embed the licensed dictionary. A corresponding public
+resource release must exist for first-run acquisition unless the operator
+provides a local database through `HANLY_KRDICT_DB`. Activated resource
+identities remain in the existing runtime manifest, so later launches skip
+provisioning while those resources validate.
 
-`--runtime-config` overrides discovery and bypasses automatic configuration
-creation and remote provisioning:
-
-```powershell
-dist/windows/hanly-desktop/hanly-desktop.exe --runtime-config path/to/runtime.json
-```
-
-Paths inside that JSON resolve relative to the configuration file. Remote updates
-stay off until the configuration declares an `updates` block naming a release
-channel, so a build with no such block never contacts GitHub.
+The native root accepts `--runtime-config` and `--app-config` and passes the
+resolved values to its supervised service. Paths inside the runtime JSON stay
+relative to that file. Remote updates remain disabled unless the configuration
+declares an `updates` block naming a release channel.

@@ -108,7 +108,7 @@ The V1 plan distinguishes four ownership layers: provider and engine implementat
 - `MouseObserver` observes global cursor movement and position and emits events to `HoverController`.
 - `HoverController` owns debounce, hover delay, cursor stability, and the decision to start a lookup. It performs no OCR.
 - `CaptureService` captures screenshots and ROIs. Hover prefers a small ROI around the cursor over continuous full-screen OCR.
-- `HotkeyService` registers and handles global hotkeys for manual lookup, start / pause capture, and future actions.
+- Global shortcuts are registered by the native root, which reports each press and release; the service maps them to hold-to-hover, hover toggle and capture toggle actions.
 
 ### Lookup execution
 
@@ -123,9 +123,9 @@ LookupController → JobExecutor / Worker → LookupPipeline
 ### User interface
 
 - `PopupController` receives a completed `LookupResult`, decides placement, and owns popup lifecycle.
-- The PyQt6 popup renders successful and normal non-success result states. It knows nothing about EasyOCR, Kiwi, or KRDICT.
-- The Control Center uses pywebview with HTML, CSS, and JavaScript. It exposes capture start / stop, target / region selection, settings, application and resource status, dictionary status, OCR implementation status, update controls, diagnostics, preferences, hover delay, and hotkeys. JavaScript contains no linguistic logic and talks to Python through the pywebview bridge.
-- `TrayService`, initially using pystray, exposes application status, pause / resume, opening the Control Center, and quit.
+- The React popup in a Tauri-owned native window renders successful and normal non-success result states. It knows nothing about EasyOCR, Kiwi, or KRDICT.
+- The Control Center uses React and TypeScript in a Tauri-owned system webview. It exposes capture start / stop, target / region selection, settings, application and resource status, dictionary status, OCR implementation status, update controls, diagnostics, preferences, hover delay, and hotkeys. TypeScript contains no linguistic logic and reaches the Python service through restricted native IPC.
+- The Tauri native tray exposes application status, pause / resume, opening the Control Center, and quit.
 
 ### Resource delivery
 
@@ -175,9 +175,9 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 | Kiwi / kiwipiepy | `KiwiProvider` |
 | KRDICT | `KRDICTProvider` |
 | SQLite (local, read-only at runtime) | `KRDICTProvider` |
-| PyQt6 | `PopupController` / PyQt6 popup |
-| pywebview | Control Center |
-| pystray | `TrayService` |
+| React | Control Center, dictionary popup and region selector |
+| Tauri / system webview | Native windows and restricted IPC |
+| Tauri tray / global-shortcut | Native tray and global shortcut edges |
 | GitHub Releases | `UpdateService` / `ResourceFetcher` |
 
 ## Dependency invariants
@@ -201,3 +201,27 @@ UI code consumes normalized contracts, chiefly `LookupResult` and resource/updat
 - **CA-INV-14:** Desktop lookup execution is bounded / latest-wins, with final request-currency validation before presentation.
 - **CA-INV-15:** `LookupResult` can model success, normal non-success, and processing-error outcomes without treating every non-success as an exception.
 - **CA-INV-16:** The language stage is acquisition-neutral: it accepts a `TextSelection` and never receives an image, screen geometry, or a desktop object, so one implementation serves pixel and non-pixel clients alike.
+
+## Approved desktop migration overlay — 2026-10-12
+
+The approved desktop composition is implemented across these ownership seams:
+
+```text
+React UI → Tauri/Rust native shell → supervised Qt-free Python desktop service → hanly
+                                                   └→ isolated lookup child
+```
+
+React owns every product surface and presentation. Tauri/Rust owns native
+windows, tray, activation, platform adapters, child supervision and validated
+IPC. Python retains desktop business rules, configuration, acquisition,
+resources, updates and lookup coordination; the existing `hanly` package stays
+independent, and concrete heavy providers stay in the unloadable lookup child.
+There is one native root and one service owner for each lifecycle operation.
+The migration does not add a production Node backend or
+move client-specific concerns into `hanly`.
+
+The bridge is private versioned JSONL with typed request/reply/event envelopes,
+explicit methods, per-window authorization, a 1 MiB frame ceiling and 32
+outstanding-request limit. Its complete schema and the old-to-new ownership map
+are in the [migration checkpoint](../execution/checkpoints/desktop-tauri-migration.md).
+Existing `CA-INV-*` IDs and order are unchanged.

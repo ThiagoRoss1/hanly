@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Bundled Hanly views may use the restricted native bridge and receive state.",
+  "windows": ["control-center", "popup", "region-selector"],
+  "permissions": ["allow-desktop-request", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

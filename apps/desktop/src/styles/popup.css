@@ -1,0 +1,154 @@
+html[data-popup="true"],
+html[data-popup="true"] body {
+  width: max-content;
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+html[data-popup="true"] body {
+  color: var(--text-primary);
+}
+
+html[data-popup="true"] #root {
+  display: inline-block;
+  height: auto;
+  width: max-content;
+  min-width: 0;
+  background: transparent;
+}
+
+.popup-frame {
+  display: flex;
+  flex-direction: column;
+  max-height: 560px;
+  overflow: hidden;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  /* The native window owns the shadow; a CSS shadow would be clipped. */
+  box-shadow: none;
+}
+
+.popup-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 494px;
+  overflow: auto;
+}
+
+.popup-content {
+  padding: 15px 16px 12px;
+}
+
+.popup-entry-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.popup-title {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.popup-hanja {
+  flex: none;
+  padding-bottom: 2px;
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+.popup-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.popup-chip {
+  padding: 2px 8px;
+  color: var(--accent-strong);
+  background: var(--accent-wash);
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+.popup-meta,
+.popup-muted {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.popup-senses { margin-top: 12px; }
+.popup-primary-sense { display: flex; flex-direction: column; gap: 3px; }
+.popup-primary { color: var(--text-primary); font-size: 16px; font-weight: 600; line-height: 1.4; }
+.popup-primary-note { color: var(--text-secondary); font-size: 13px; line-height: 1.4; }
+
+.popup-numbered-sense {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.popup-number { color: var(--text-muted); font-size: 12px; }
+.popup-secondary { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.popup-part { margin: 0; color: var(--text-primary); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.popup-part-selected { color: var(--accent-strong); font-weight: 600; }
+.popup-section-block { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; }
+.popup-divider { height: 1px; margin-bottom: 2px; background: var(--border); }
+.popup-section { margin: 0 0 2px; color: var(--text-muted); font-size: 10px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; }
+.popup-component { display: grid; grid-template-columns: minmax(56px, auto) minmax(0, 1fr); gap: 10px; align-items: start; }
+.popup-component .popup-part { min-width: 56px; }
+
+.popup-non-success { display: flex; flex-direction: column; gap: 7px; }
+.popup-surface { margin-bottom: 1px; }
+.popup-sense-title { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 500; }
+.popup-details { padding: 0 16px 8px; }
+.popup-details .popup-section { margin-bottom: 4px; }
+.popup-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  min-height: 43px;
+  padding: 7px 12px;
+  background: var(--surface-subtle);
+  border-top: 1px solid var(--border);
+}
+
+.popup-footer-spacer { flex: 1; }
+.popup-footer-detail { max-width: 58%; }
+.popup-button {
+  flex: none;
+  min-height: 26px;
+  padding: 0 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.popup-button:hover { color: var(--text-primary); background: var(--surface-hover); border-color: var(--border-strong); }
+.popup-size { color: var(--accent-strong); background: var(--accent-wash); border-color: transparent; }
+.popup-size:hover { color: var(--accent-strong); background: var(--accent-wash); }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .popup-button { transition: none; }
+}

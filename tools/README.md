@@ -8,7 +8,7 @@ and it is not part of either package.
 |---|---|---|
 | `krdict/` | developer, release operator | Builds, validates and packages the dictionary (below) |
 | `dev_lookup.py` | developer | One real engine lookup from an image, printed as JSON (below) |
-| `build_smoke_krdict.py` | CI, build | The three-word dictionary native tests and the packaged smoke install; refuses to overwrite anything that is not an earlier smoke build without `--replace` |
+| `build_smoke_krdict.py` | CI, build | The small dictionary for native OCR/context tests and the packaged smoke; refuses to overwrite anything that is not an earlier smoke build without `--replace` |
 | `prepare_easyocr_models.py` | CI, build | Fetches the two EasyOCR weights a packaged Hanly carries |
 | `build_package.py` | build | Freezes the desktop and writes the platform products |
 | `smoke_packaged_runtime.py` | build | Proves a frozen bundle's inventory, lookup and window with only what it ships |

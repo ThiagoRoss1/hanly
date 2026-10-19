@@ -9,7 +9,7 @@ import re
 import sys
 import tempfile
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -97,30 +97,44 @@ def _run_one(scenario: Scenario, bundle: Path | None, commit: str | None) -> dic
             environment["HANLY_EXPECTED_SOURCE_COMMIT"] = commit
         if scenario.id == "APP-STARTUP":
             environment["HANLY_KRDICT_DB"] = str(build_smoke_krdict(workspace / "seed.sqlite3"))
-        command = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--suite",
-            "all",
-            "-q",
-            "--tb=no",
-            "-rN",
-            "--disable-warnings",
-            "--basetemp",
-            str(workspace / "tests"),
-            *scenario.targets,
-        ]
+        if scenario.id in _ui_test_scenarios():
+            from .ui_probe import UI_TESTS
+            from .ui_probe import command as ui_command
+
+            command = ui_command(UI_TESTS[scenario.id])
+            cwd = str(REPO_ROOT / "apps" / "desktop")
+        else:
+            command = [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--suite",
+                "all",
+                "-q",
+                "--tb=no",
+                "-rN",
+                "--disable-warnings",
+                "--basetemp",
+                str(workspace / "tests"),
+                *scenario.targets,
+            ]
+            cwd = str(REPO_ROOT)
         try:
             result = execute(
                 command,
-                cwd=str(REPO_ROOT),
+                cwd=cwd,
                 environment=environment,
                 timeout_seconds=scenario.timeout_seconds,
                 observe_identity=scenario.observe_identity,
             )
         except OSError:
             return {**base, "outcome": "unavailable", "reason": "process_launch_failed"}
+        if scenario.id in _ui_test_scenarios() and result.counts.get("passed"):
+            # The focused Vitest name filter intentionally skips other UI cases.
+            result = replace(
+                result,
+                counts={key: value for key, value in result.counts.items() if key != "skipped"},
+            )
         outcome, reason = _verdict(result)
         if outcome == "passed" and scenario.observe_identity and sys.platform == "darwin":
             if not result.identity_samples:
@@ -137,6 +151,14 @@ def _run_one(scenario: Scenario, bundle: Path | None, commit: str | None) -> dic
         **asdict(result),
         "workspace_removed": not workspace.exists(),
     }
+
+
+def _ui_test_scenarios() -> frozenset[str]:
+    """IDs whose target is a focused React DOM test rather than pytest."""
+
+    from .ui_probe import UI_TESTS
+
+    return frozenset(UI_TESTS)
 
 
 def run_scenarios(

@@ -184,7 +184,7 @@ This capability integrates only behavior already implemented by the current prov
 
 ### C — Basic Popup
 
-- **Goal:** Provide `PopupController` and a borderless PyQt6 popup that positions and renders `LookupResult` with a reasonable V1 visual baseline.
+- **Goal:** Provide `PopupController` and a borderless Tauri/React popup that positions and renders `LookupResult` with a reasonable V1 visual baseline.
 - **Dependencies:** `Concrete Hanly V1 Engine Integration` and `Desktop Foundation`.
 - **Blocks:** `Manual Hotkey Lookup`.
 - **Parallelism:** May run in parallel with B, D, and E after the concrete-runtime gate.
@@ -202,7 +202,7 @@ This capability integrates only behavior already implemented by the current prov
 
 ### E — Basic Control Center
 
-- **Goal:** Establish the pywebview HTML/CSS/JavaScript interface for capture start / stop, target / region selection, basic settings and app state, local resource status, OCR implementation status, update controls, hover delay, and hotkeys.
+- **Goal:** Establish the Tauri/React interface for capture start / stop, target / region selection, basic settings and app state, local resource status, OCR implementation status, update controls, hover delay, and hotkeys.
 - **Dependencies:** `Concrete Hanly V1 Engine Integration`, `Desktop Foundation`, and `ResourceManager Core`.
 - **Blocks:** Final `Hover Lookup Integration` and `Resource / Update UI Integration`.
 - **Parallelism:** May run beside B–D once all of its dependencies are satisfied. It is the inserted planning capability after Hotkey Service, tracked operationally as HAN-34.
@@ -479,3 +479,15 @@ Detailed implementation plans are created just in time when a capability becomes
 - **DAG-INV-16:** Korean Test Fixtures are small deterministic inputs for ordinary automated tests, distinct from the non-blocking HanlyOCR benchmark dataset.
 - **DAG-INV-17:** The desktop lifecycle and packaging feasibility spikes are non-blocking risk-discovery capabilities unless their evidence leads to a later human-approved DAG change.
 - **DAG-INV-18:** The official concrete EasyOCR + Kiwi + KRDICT runtime is composed through ResourceManager-backed application wiring before capture, popup, hotkey, and manual-lookup capabilities consume it; later update/distribution work remains separate.
+
+## Approved desktop migration overlay — 2026-10-12
+
+This DAG continues to describe the V1 capability dependencies and order. The
+approved Tauri/React desktop migration is tracked by the single
+[migration checkpoint](../execution/checkpoints/desktop-tauri-migration.md),
+which sequences implementation as A–F: inventory/contracts, Tauri and Python
+service foundation, React parity, Qt infrastructure replacement, packaging and
+updater/CI, then Lab convergence and legacy removal. That execution sequence
+does not rewrite V1 capability blockers, add speculative engine work, or
+renumber/reorder `DAG-INV-*`; this source and its visual companion remain in
+sync with the existing DAG.

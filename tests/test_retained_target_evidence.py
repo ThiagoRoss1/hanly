@@ -27,7 +27,6 @@ from hanly import (
 )
 from hanly_app.acquisition.capture import CaptureResult, ScreenRect
 from hanly_app.config import AppConfig, HoverActivation
-from hanly_app.hotkeys import HotkeyAction, HotkeyEdge
 from hanly_app.hover.target import (
     SCREEN_SCALE,
     TRANSFER_CORRIDOR_PIXELS,
@@ -38,6 +37,8 @@ from hanly_app.hover.target import (
 from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import create_manual_lookup
 from hanly_app.runtime_trace import RuntimeTraceSink
+
+from tests.hanly_fixtures.hotkeys import FakeHotkeys
 
 _ORIGIN = ScreenRect(400, 300, 200, 100)
 _IMAGE = ROIImage(
@@ -130,31 +131,6 @@ class _Runtime:
         )
 
 
-class _Hotkeys:
-    """A hotkey runtime that registers nothing; these tests call the path."""
-
-    def __call__(
-        self,
-        _on_action: Callable[[HotkeyAction, HotkeyEdge], None],
-        _bindings: Mapping[HotkeyAction | str, str],
-        _dispatcher: Callable[[Callable[[], None]], None],
-    ) -> _Hotkeys:
-        return self
-
-    @property
-    def bindings(self) -> Mapping[HotkeyAction, str]:
-        return {}
-
-    @property
-    def registered(self) -> bool:
-        return True
-
-    def register(self) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
-
 
 class _MouseListener:
     """A portable listener; these tests drive lookup directly, not by motion."""
@@ -182,12 +158,11 @@ def _lookup_once(result: LookupResult) -> _Sink:
         close_popup=lambda: None,
         current_cursor=lambda: _CURSOR,
         dispatcher=dispatcher,
-        hotkey_factory=_Hotkeys(),
+        hotkey_factory=FakeHotkeys(),
         hover_listener_factory=_MouseListener,
         trace_sink=sink,
         hover_enabled=True,
         app_config=_ALWAYS_ACTIVE,
-        lookup_hotkey="ctrl+alt+space",
     )
     composition.start()
     composition.lookup_at_cursor()

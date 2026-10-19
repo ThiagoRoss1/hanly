@@ -30,7 +30,9 @@ from hanly_app.updates.manifest import (
     content_fingerprint,
 )
 
-from .update_handoff import PROGRAM_SUFFIX, _compile, c_string  # noqa: F401
+from .update_handoff import PROGRAM_SUFFIX as PROGRAM_SUFFIX
+from .update_handoff import _compile as _compile
+from .update_handoff import c_string as c_string
 
 OLD_VERSION = "0.5.0"
 NEW_VERSION = "0.5.1"

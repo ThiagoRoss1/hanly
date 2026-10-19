@@ -28,11 +28,11 @@ from hanly_app.acquisition.direct_text import Acquisition, Outcome
 from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import create_manual_lookup
 
+from tests.hanly_fixtures.hotkeys import FakeHotkeys
 from tests.test_hover_lookup import (
     _ALWAYS_ACTIVE,
     _await_hover_ready,
     _Capture,
-    _HotkeyFactory,
     _ListenerFactory,
     _QueueDispatcher,
     _Scheduler,
@@ -121,7 +121,7 @@ def test_moving_inside_one_word_never_looks_it_up_again(
         close_popup=lambda: None,
         current_cursor=lambda: Point(0, 0),
         dispatcher=dispatcher,
-        hotkey_factory=_HotkeyFactory(),
+        hotkey_factory=FakeHotkeys(),
         hover_enabled=True,
         hover_delay_ms=120,
         hover_scheduler=scheduler,

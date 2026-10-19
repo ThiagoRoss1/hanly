@@ -2,7 +2,7 @@
 
 These live apart from the composition root so early bootstrap -- diagnostics
 in particular -- can resolve a writable directory before importing the
-desktop, Qt, or the update stack.
+desktop runtime or the update stack.
 """
 
 from __future__ import annotations

@@ -9,7 +9,34 @@ from typing import Any
 import pytest
 from hanly.easyocr_provider import EasyOCRConfig
 
-from lab.cli import _benchmark_ocr_config, _parser
+from lab.cli import _benchmark_ocr_config, _ocr_provider_factory, _parser
+
+
+@pytest.mark.parametrize("threads", [None, 2])
+def test_ocr_campaign_constructs_the_product_adapter_once(
+    monkeypatch: pytest.MonkeyPatch, threads: int | None,
+) -> None:
+    constructed: list[EasyOCRConfig] = []
+    engine = object()
+
+    class Provider:
+        def __init__(self, config: EasyOCRConfig) -> None:
+            constructed.append(config)
+            self._engine = engine
+
+    monkeypatch.setattr("lab.cli.EasyOCRProvider", Provider)
+    arguments = ["ocr-campaign", "--backend", "easyocr"]
+    if threads is not None:
+        arguments.extend(["--cpu-threads", str(threads)])
+    backend, factory, reader = _ocr_provider_factory(_parser().parse_args(arguments))
+
+    assert backend == "easyocr"
+    assert reader is not None
+    assert reader() is engine
+    assert factory() is factory()
+    assert len(constructed) == 1
+    assert constructed[0].cpu_threads == threads
+    assert constructed[0].to_reader_kwargs()["gpu"] is False
 
 
 def test_live_hover_parser_has_safe_defaults_and_does_not_import_runner() -> None:
@@ -20,6 +47,8 @@ def test_live_hover_parser_has_safe_defaults_and_does_not_import_runner() -> Non
     )
 
     assert args.config == Path("resources/dev/runtime-local.json")
+    assert args.desktop is None
+    assert args.app_config is None
     assert args.duration == 300
     assert args.output_root == Path("artifacts/lab/runs")
     assert args.marker_hotkey == "Ctrl+Alt+Shift+B"
@@ -35,6 +64,10 @@ def test_live_hover_parser_accepts_explicit_session_and_microscope_options() -> 
             "live-hover",
             "--config",
             "runtime.json",
+            "--desktop",
+            "native/hanly-desktop",
+            "--app-config",
+            "preferences.json",
             "--duration",
             "120",
             "--output-root",
@@ -53,6 +86,8 @@ def test_live_hover_parser_accepts_explicit_session_and_microscope_options() -> 
     )
 
     assert args.duration == 120
+    assert args.desktop == Path("native/hanly-desktop")
+    assert args.app_config == Path("preferences.json")
     assert args.output_root == Path("evidence")
     assert args.marker_hotkey == "Ctrl+Alt+M"
     assert args.freeze_hotkey == "Ctrl+Alt+P"
@@ -165,15 +200,14 @@ def test_the_lab_commands_lead_the_help() -> None:
     assert "dev-hud" in action.choices
 
 
-def test_the_desktop_accepts_a_trace_sink_without_importing_the_harness() -> None:
-    """The HUD attaches through `run_desktop`'s optional sink parameter. The
-    application must not know the harness exists."""
+def test_the_desktop_service_accepts_a_trace_sink_without_importing_the_harness() -> None:
+    """Tracing is an opt-in service seam; the product must not import Lab."""
 
     import inspect
 
-    from hanly_app import application
+    import hanly_app.service.application as application
 
-    parameters = inspect.signature(application.run_desktop).parameters
+    parameters = inspect.signature(application.DesktopService.__init__).parameters
 
     assert parameters["trace_sink"].default is None
     assert "lab." not in inspect.getsource(application)

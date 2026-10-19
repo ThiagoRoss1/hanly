@@ -211,6 +211,56 @@ def test_a_selection_request_survives_the_process_transport() -> None:
     )
 
 
+def test_neighbouring_words_survive_the_lookup_transport() -> None:
+    from hanly_app.lookup.process import _lookup_message, _request_from
+
+    selection = TextSelection(
+        text="있어요", source="accessibility", context_before="먹고", context_after="지금",
+    )
+    request = LookupRequest(8, None, _TARGET, selection=selection)
+
+    assert _request_from(_lookup_message(request)).selection == selection
+
+
+def test_direct_cache_distinguishes_context_but_reuses_an_identical_selection() -> None:
+    class RecordingMorphology(_Morphology):
+        def __init__(self) -> None:
+            self.inputs: list[str] = []
+
+        def analyze(self, text: str) -> MorphologyAnalysis:
+            self.inputs.append(text)
+            return super().analyze(text)
+
+    morphology = RecordingMorphology()
+    sink = _Sink()
+    worker = LookupWorker(
+        _ExplodingOCR, lambda: morphology, _Dictionary, trace_sink=sink,
+    )
+    try:
+        for request_id, before in enumerate(("어제", "오늘", "오늘"), start=1):
+            selection = TextSelection(
+                text=_KOREAN, source="accessibility", context_before=before,
+            )
+            worker(LookupRequest(request_id, None, _TARGET, selection=selection))
+    finally:
+        worker.close()
+
+    assert f"어제 {_KOREAN}" in morphology.inputs
+    assert f"오늘 {_KOREAN}" in morphology.inputs
+    assert morphology.inputs.count(f"오늘 {_KOREAN}") == 1
+    cache_events = [e for e in sink.events if e.get("event_kind") in {
+        "lookup_cache_hit", "lookup_cache_miss",
+    }]
+    assert [e["event_kind"] for e in cache_events] == [
+        "lookup_cache_miss", "lookup_cache_miss", "lookup_cache_hit",
+    ]
+    assert (
+        cache_events[0]["lookup_cache_fingerprint"]
+        != cache_events[1]["lookup_cache_fingerprint"]
+    )
+    assert "어제" not in repr(sink.events) and "오늘" not in repr(sink.events)
+
+
 def test_a_captured_request_still_survives_the_process_transport() -> None:
     from hanly_app.lookup.process import _lookup_message, _request_from
 
@@ -270,7 +320,9 @@ class _Service:
         self.closed = True
 
 
-def _hover_runtime(service: Any) -> tuple[Any, _Capture, list[Any], Any]:
+def _hover_runtime(
+    service: Any, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Any, _Capture, list[Any], Any]:
     from hanly_app.hover.lookup import HoverLookupRuntime
     from hanly_app.lookup.controller import LookupController
 
@@ -293,12 +345,12 @@ def _hover_runtime(service: Any) -> tuple[Any, _Capture, list[Any], Any]:
         submitted.append(selection)
         return original(selection, target, **kwargs)
 
-    controller.submit_selection = _spy  # type: ignore[method-assign]
+    monkeypatch.setattr(controller, "submit_selection", _spy)
     capture = _Capture()
     runtime = HoverLookupRuntime(
         controller, capture, delay_ms=1, acquisition=service
     )
-    runtime._hover.is_current = lambda request: True  # type: ignore[method-assign]
+    monkeypatch.setattr(runtime._hover, "is_current", lambda request: True)
     return runtime, capture, submitted, controller
 
 
@@ -308,13 +360,15 @@ def _hover_request() -> Any:
     return HoverRequest(request_id=1, point=Point(20, 10))
 
 
-def test_the_ui_thread_only_schedules_and_never_performs_the_read() -> None:
+def test_the_ui_thread_only_schedules_and_never_performs_the_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Scheduling must return before the native call has produced anything."""
 
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.UNSUPPORTED))
-    runtime, capture, _submitted, controller = _hover_runtime(service)
+    runtime, capture, _submitted, controller = _hover_runtime(service, monkeypatch)
     try:
         assert runtime._start_direct_text(_hover_request()) is True
         assert service.submissions == 1
@@ -332,13 +386,15 @@ def test_the_ui_thread_only_schedules_and_never_performs_the_read() -> None:
         "ambiguous", "empty", "timed_out", "failed", "superseded",
     ],
 )
-def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
+def test_every_refusal_reaches_the_capture_path(
+    outcome: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A refusal is never a failure: it is the ordinary OCR lookup."""
 
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome(outcome)))
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     try:
         runtime._start_direct_text(_hover_request())
         service.deliver_now()
@@ -350,13 +406,15 @@ def test_every_refusal_reaches_the_capture_path(outcome: str) -> None:
     assert capture.calls == 1
 
 
-def test_verified_non_korean_text_ends_the_hover_without_a_capture() -> None:
+def test_verified_non_korean_text_ends_the_hover_without_a_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """OCR could only misread the pixels the control already read as Latin."""
 
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.NOT_KOREAN))
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     try:
         runtime._start_direct_text(_hover_request())
         service.deliver_now()
@@ -385,14 +443,14 @@ def test_an_unverifiable_windows_cursor_is_captured_exactly_once(
         span = bridge.get(pointer)
         return "초" if (span.start, span.end) == (0, 2) else honest(pointer, limit)
 
-    bridge.text_of = text_of  # type: ignore[method-assign]
+    monkeypatch.setattr(bridge, "text_of", text_of)
     monkeypatch.setattr(uia, "_bridge_for_thread", lambda: bridge)
     acquired = DirectTextCoordinator(uia.UIAutomationTextProvider()).acquire(
         point_at(2)
     )
 
     service = _Service(acquired)
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     try:
         runtime._start_direct_text(_hover_request())
         service.deliver_now()
@@ -405,7 +463,9 @@ def test_an_unverifiable_windows_cursor_is_captured_exactly_once(
     assert capture.calls == 1
 
 
-def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
+def test_valid_direct_text_submits_a_selection_and_captures_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(
@@ -417,7 +477,7 @@ def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
             bounds=BoundingBox(10, 10, 60, 30),
         )
     )
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     try:
         runtime._start_direct_text(_hover_request())
         service.deliver_now()
@@ -430,7 +490,9 @@ def test_valid_direct_text_submits_a_selection_and_captures_nothing() -> None:
     assert all(item.source == "accessibility" for item in submitted)
 
 
-def test_an_outcome_arriving_after_the_hover_moved_on_is_discarded() -> None:
+def test_an_outcome_arriving_after_the_hover_moved_on_is_discarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(
@@ -439,8 +501,8 @@ def test_an_outcome_arriving_after_the_hover_moved_on_is_discarded() -> None:
             selection=TextSelection(text=_KOREAN, cursor_index=0),
         )
     )
-    runtime, capture, submitted, controller = _hover_runtime(service)
-    runtime._hover.is_current = lambda request: False
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
+    monkeypatch.setattr(runtime._hover, "is_current", lambda request: False)
     try:
         runtime._start_direct_text(_hover_request())
         service.deliver_now()
@@ -452,8 +514,10 @@ def test_an_outcome_arriving_after_the_hover_moved_on_is_discarded() -> None:
     assert capture.calls == 0
 
 
-def test_without_a_reader_the_runtime_never_tries_direct_text() -> None:
-    runtime, capture, submitted, controller = _hover_runtime(None)
+def test_without_a_reader_the_runtime_never_tries_direct_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, capture, submitted, controller = _hover_runtime(None, monkeypatch)
     try:
         assert runtime._start_direct_text(_hover_request()) is False
     finally:
@@ -463,9 +527,11 @@ def test_without_a_reader_the_runtime_never_tries_direct_text() -> None:
     assert submitted == []
 
 
-def test_shutdown_closes_the_acquisition_service() -> None:
+def test_shutdown_closes_the_acquisition_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = _Service()
-    runtime, _capture, _submitted, controller = _hover_runtime(service)
+    runtime, _capture, _submitted, controller = _hover_runtime(service, monkeypatch)
     runtime.shutdown()
     controller.stop(wait=True)
 
@@ -530,13 +596,15 @@ class _Rejecting:
         raise RuntimeError("초대받았어요 at (20, 10) wrapped object has been deleted")
 
 
-def test_a_rejected_outcome_is_traced_by_its_class_alone() -> None:
+def test_a_rejected_outcome_is_traced_by_its_class_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The native worker can neither capture nor touch Qt; it can only record."""
 
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.UNSUPPORTED))
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     sink, dispatcher = _Sink(), _Rejecting()
     runtime._trace_sink = sink
     runtime._dispatcher = dispatcher
@@ -556,11 +624,13 @@ def test_a_rejected_outcome_is_traced_by_its_class_alone() -> None:
     assert capture.calls == 0 and submitted == []
 
 
-def test_an_outcome_after_shutdown_is_suppressed_without_a_failure() -> None:
+def test_an_outcome_after_shutdown_is_suppressed_without_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from hanly_app.acquisition.direct_text import Acquisition, Outcome
 
     service = _Service(Acquisition(Outcome.UNSUPPORTED))
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     sink, dispatcher = _Sink(), _Rejecting()
     runtime._trace_sink = sink
     runtime._dispatcher = dispatcher
@@ -575,7 +645,9 @@ def test_an_outcome_after_shutdown_is_suppressed_without_a_failure() -> None:
     assert capture.calls == 0 and submitted == []
 
 
-def test_a_rejecting_dispatcher_does_not_stop_the_real_worker() -> None:
+def test_a_rejecting_dispatcher_does_not_stop_the_real_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Later hovers must still be read after one outcome could not be handed over."""
 
     from threading import Event
@@ -591,7 +663,7 @@ def test_a_rejecting_dispatcher_does_not_stop_the_real_worker() -> None:
             return None
 
     service = DirectTextService(DirectTextCoordinator(_Reader()))
-    runtime, capture, submitted, controller = _hover_runtime(service)
+    runtime, capture, submitted, controller = _hover_runtime(service, monkeypatch)
     rejected, delivered = Event(), Event()
 
     def dispatcher(callback: Any) -> None:

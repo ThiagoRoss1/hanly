@@ -14,10 +14,7 @@ import argparse
 import importlib
 import json
 import os
-import queue
 import sys
-import threading
-import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -145,9 +142,7 @@ def prepare_roi(
     crop_height = min(requested_height, source.height)
     crop_left = min(max(round(target.x - crop_width / 2), 0), source.width - crop_width)
     crop_top = min(max(round(target.y - crop_height / 2), 0), source.height - crop_height)
-    cropped = source.crop(
-        (crop_left, crop_top, crop_left + crop_width, crop_top + crop_height)
-    )
+    cropped = source.crop((crop_left, crop_top, crop_left + crop_width, crop_top + crop_height))
 
     pad_left = (requested_width - crop_width) // 2
     pad_top = (requested_height - crop_height) // 2
@@ -190,8 +185,6 @@ def _versions() -> dict[str, str]:
             "easyocr": "easyocr",
             "torch": "torch",
             "kiwipiepy": "kiwipiepy",
-            "PyQt6": "PyQt6",
-            "pywebview": "pywebview",
             "mss": "mss",
             "pynput": "pynput",
             "psutil": "psutil",
@@ -291,10 +284,7 @@ def _serialize_result(result: Any) -> dict[str, Any]:
                 {
                     "text": region.text,
                     "confidence": region.confidence,
-                    "quad": [
-                        {"x": point.x, "y": point.y}
-                        for point in region.quad.points
-                    ],
+                    "quad": [{"x": point.x, "y": point.y} for point in region.quad.points],
                 }
                 for region in context.ocr_results
             ],
@@ -346,6 +336,7 @@ def run_real_lookup(args: argparse.Namespace) -> int:
     morphology: Any | None = None
     dictionary: Any | None = None
     with stdout_path.open("w", encoding="utf-8", newline="\n") as log:
+
         def report(message: str) -> None:
             print(message)
             log.write(message + "\n")
@@ -400,12 +391,8 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                     confidence_threshold=runtime.confidence_threshold,
                 )
                 if args.idle_seconds > 0:
-                    report(
-                        f"observing resident-provider idle state for {args.idle_seconds:g}s"
-                    )
-                    ProcessSampler(run_dir / "process.csv", append=True).run(
-                        args.idle_seconds
-                    )
+                    report(f"observing resident-provider idle state for {args.idle_seconds:g}s")
+                    ProcessSampler(run_dir / "process.csv", append=True).run(args.idle_seconds)
                 results = run_lookup_campaign(
                     pipeline,
                     image,
@@ -446,13 +433,8 @@ def run_real_lookup(args: argparse.Namespace) -> int:
                 result_payload = _serialize_result(results[-1])
                 _write_json(run_dir / "result.json", result_payload)
 
-                failed = sum(
-                    sample["correctness_status"] != "success"
-                    for sample in total_samples
-                )
-                report(
-                    f"completed {len(total_samples)} lookups; correctness failures={failed}"
-                )
+                failed = sum(sample["correctness_status"] != "success" for sample in total_samples)
+                report(f"completed {len(total_samples)} lookups; correctness failures={failed}")
                 if "total_pipeline" in summaries:
                     report(
                         "warm total p50={p50:.3f} ms p95={p95:.3f} ms".format(
@@ -499,22 +481,19 @@ def _ocr_provider_factory(
             config = runtime_config
     config = _benchmark_ocr_config(config, args)
 
-    def reader() -> Any:
-        from easyocr import Reader
-
-        return Reader(**config.to_reader_kwargs())
-
     shared: list[Any] = []
 
-    def shared_reader() -> Any:
+    def shared_provider() -> Any:
         if not shared:
-            shared.append(reader())
+            # Construct through the real adapter so the benchmark also pays
+            # for, and applies, the product's Torch thread policy.
+            shared.append(EasyOCRProvider(config))
         return shared[0]
 
     return (
         EASYOCR,
-        lambda: EasyOCRProvider(config, engine=shared_reader()),
-        shared_reader,
+        shared_provider,
+        lambda: shared_provider()._engine,
     )
 
 
@@ -667,16 +646,12 @@ def run_corpus_generate(args: argparse.Namespace) -> int:
         rendered = render_sample(spec)
         relative = f"generated/{spec.case_id}.png"
         write_sample(rendered, destination.parent / relative)
-        cases.append(
-            corpus_entry(rendered, relative, redistributable=resolved.redistributable)
-        )
+        cases.append(corpus_entry(rendered, relative, redistributable=resolved.redistributable))
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "distribution": "committed" if resolved.redistributable else "local",
-        "description": (
-            f"Synthetic Korean samples rendered from {font.name} ({font.licence})."
-        ),
+        "description": (f"Synthetic Korean samples rendered from {font.name} ({font.licence})."),
         "cases": cases,
     }
     _write_json(destination, manifest)
@@ -728,9 +703,7 @@ def run_package(args: argparse.Namespace) -> int:
         hash_max_bytes=args.hash_max_bytes,
         archive=args.archive,
     )
-    print(
-        f"analyzed {report['file_count']} files / {report['total_bytes']} bytes -> {args.output}"
-    )
+    print(f"analyzed {report['file_count']} files / {report['total_bytes']} bytes -> {args.output}")
     return 0
 
 
@@ -744,14 +717,14 @@ def run_hover_rate(args: argparse.Namespace) -> int:
 
 def run_desktop_capture(args: argparse.Namespace) -> int:
     from hanly_app.acquisition.capture import CaptureService
-    from PyQt6.QtGui import QCursor
+    from pynput import mouse
 
-    cursor = QCursor.pos()
+    cursor = mouse.Controller().position
     service = CaptureService(roi_size=args.roi_size)
     try:
         report = measure_capture_service(
             service,
-            cursor=Point(float(cursor.x()), float(cursor.y())),
+            cursor=Point(float(cursor[0]), float(cursor[1])),
             enumeration_samples=args.enumerations,
             capture_samples=args.captures,
         )
@@ -778,220 +751,18 @@ def run_live_hover(args: argparse.Namespace) -> int:
 
 
 def run_real_hover(args: argparse.Namespace) -> int:
-    """Measure dwell-to-visible latency through the real resident controller."""
+    """Measure a controlled image through the native Tauri popup path."""
 
-    image, target, prepared_image, transformation = prepare_roi(
-        args.image,
-        target=Point(args.target_x, args.target_y),
-        size=args.roi_size,
-    )
-    scenario = f"real_hover_roi_{image.width}x{image.height}"
-    metadata = build_metadata(
-        repo_root=Path.cwd(),
-        kind="real_hover",
-        config={
-            "runtime_config": args.config,
-            "dwell_ms": args.dwell_ms,
-            "cpu_threads": args.cpu_threads,
-            "capture_source": "retained_static_fixture",
-            "visible_endpoint": "development_qt_popup",
-            "ledger_fsync": False,
-        },
-        scenario={
-            "name": scenario,
-            "image": args.image,
-            "transformation": transformation,
-            "warmup_samples": args.warmup,
-            "warm_samples": args.samples,
-        },
-        versions=_versions(),
-    )
-    run_dir = args.output_root / str(metadata["run_id"])
-    run_dir.mkdir(parents=True, exist_ok=True)
-    log = (run_dir / "stdout.log").open("w", encoding="utf-8", newline="\n")
+    from .session.real_hover import run_real_hover as run_native_hover
 
-    def report(message: str) -> None:
-        print(message)
-        log.write(message + "\n")
-        log.flush()
-
-    report(f"Benchmark run {metadata['run_id']} ({scenario})")
-    runtime = load_runtime(args.config)
-    runtime = replace(
-        runtime,
-        easyocr_config=_benchmark_ocr_config(runtime.easyocr_config, args),
-    )
-    factory = runtime.create_worker_factory()
-    counters = {"worker_constructions": 0, "lookup_invocations": 0}
-
-    class CountingWorker:
-        def __init__(self) -> None:
-            counters["worker_constructions"] += 1
-            self._delegate = factory()
-
-        def __call__(self, request: Any) -> Any:
-            counters["lookup_invocations"] += 1
-            return self._delegate(request)
-
-        def close(self) -> None:
-            self._delegate.close()
-
-    callbacks: queue.Queue[Any] = queue.Queue()
-    delivered = threading.Event()
-    latest_result: list[Any] = []
-    current: dict[str, Any] = {}
-
-    # OCR runs in this process here, unlike the desktop, so its native runtime
-    # is prepared before Qt exactly as the lookup child prepares its own.
-    from hanly_app.lookup.preload import preload_ocr_runtime
-
-    preload_ocr_runtime()
-    from hanly_app.hover.controller import HoverController
-    from hanly_app.lookup.controller import LookupController
-    from hanly_app.popup.presentation import PopupPosition
-    from hanly_app.popup.qt import QtPopupView
-    from PyQt6.QtWidgets import QApplication
-
-    application = QApplication.instance() or QApplication([])
-    popup = QtPopupView()
-
-    with RunStore(run_dir, metadata, fsync=False) as store:
-        ProcessSampler(run_dir / "process.csv").run(0)
-
-        def on_result(result: Any) -> None:
-            render_started = time.perf_counter_ns()
-            popup.show_result(result, PopupPosition(20, 20))
-            application.processEvents()
-            render_duration = time.perf_counter_ns() - render_started
-            visible = popup.isVisible()
-            store.append_sample(
-                evidence_class="measured",
-                scenario=scenario,
-                stage="popup_visible",
-                iteration=current["iteration"],
-                condition=current["condition"],
-                duration_ns=render_duration,
-                correctness_status="success" if visible else "failed",
-                development_runtime=True,
-            )
-            latest_result[:] = [result]
-            delivered.set()
-
-        controller = LookupController(
-            CountingWorker,
-            on_result,
-            result_dispatcher=callbacks.put,
-            thread_name="benchmark-real-hover",
-        )
-        controller.start()
-
-        def on_stable(_request: Any) -> None:
-            dwell_duration = time.perf_counter_ns() - current["started_ns"]
-            store.append_sample(
-                evidence_class="measured",
-                scenario=scenario,
-                stage="dwell",
-                iteration=current["iteration"],
-                condition=current["condition"],
-                duration_ns=dwell_duration,
-                correctness_status="success",
-                configured_dwell_ms=args.dwell_ms,
-            )
-            capture_started = time.perf_counter_ns()
-            captured_image, captured_target = image, target
-            capture_duration = time.perf_counter_ns() - capture_started
-            store.append_sample(
-                evidence_class="measured",
-                scenario=scenario,
-                stage="capture_static_fixture",
-                iteration=current["iteration"],
-                condition=current["condition"],
-                duration_ns=capture_duration,
-                correctness_status="success",
-            )
-            controller.submit(captured_image, captured_target)
-
-        hover = HoverController(on_stable, delay_ms=args.dwell_ms)
-        results: list[Any] = []
-        try:
-            for iteration, condition in enumerate(
-                CampaignPlan(args.warmup, args.samples).conditions()
-            ):
-                delivered.clear()
-                latest_result.clear()
-                current.update(
-                    iteration=iteration,
-                    condition=condition,
-                    started_ns=time.perf_counter_ns(),
-                )
-                hover.on_position(Point(target.x, target.y))
-                deadline = time.monotonic() + args.timeout
-                while not delivered.is_set():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("hover result did not become visible in time")
-                    try:
-                        callback = callbacks.get(timeout=min(0.05, remaining))
-                    except queue.Empty:
-                        application.processEvents()
-                        continue
-                    callback()
-                result = latest_result[0]
-                status = "success" if result.status.value == args.expected_status else "failed"
-                store.append_sample(
-                    evidence_class="measured",
-                    scenario=scenario,
-                    stage="perceived_hover_total",
-                    iteration=iteration,
-                    condition=condition,
-                    duration_ns=time.perf_counter_ns() - current["started_ns"],
-                    correctness_status=status,
-                    endpoint="development_qt_popup_visible",
-                    request_current=controller.current_request_id is not None,
-                )
-                results.append(result)
-        finally:
-            hover.shutdown()
-            controller.stop(wait=True)
-            popup.close()
-            application.processEvents()
-
-        samples = store.read_samples()
-        summaries = summarize_stages(samples)
-        _write_json(run_dir / "summary.json", summaries)
-        _write_json(run_dir / "counts.json", counters)
-        if results:
-            _write_json(run_dir / "result.json", _serialize_result(results[-1]))
-        prepared_image.save(run_dir / "input.png", format="PNG")
-        prepared_image.close()
-
-        failed = sum(
-            sample["correctness_status"] != "success"
-            for sample in samples
-            if sample["stage"] == "perceived_hover_total"
-        )
-        report(
-            f"completed {len(results)} visible hover traces; failures={failed}; "
-            f"worker constructions={counters['worker_constructions']}; "
-            f"lookup/OCR invocations={counters['lookup_invocations']}"
-        )
-        if "perceived_hover_total" in summaries:
-            report(
-                "warm perceived p50={p50:.3f} ms p95={p95:.3f} ms".format(
-                    p50=summaries["perceived_hover_total"]["p50"] / 1_000_000,
-                    p95=summaries["perceived_hover_total"]["p95"] / 1_000_000,
-                )
-            )
-        report(f"evidence: {run_dir}")
-    log.close()
-    return 1 if failed else 0
+    return run_native_hover(args)
 
 
 def run_dev_hud(args: argparse.Namespace) -> int:
     """Start the real desktop with the on-screen HUD attached.
 
-    Imported here rather than at module scope: this is the only command that
-    needs Qt, and the others must stay runnable without it.
+    Imported here rather than at module scope: only this command needs to
+    create the native Lab image-window host.
     """
 
     from .hud.session import run_hud_session
@@ -999,6 +770,7 @@ def run_dev_hud(args: argparse.Namespace) -> int:
     return run_hud_session(
         runtime_config=args.config,
         app_config=args.app_config,
+        desktop=args.desktop,
         roi_size=args.roi_size,
         dwell_ms=args.dwell_ms,
         show_roi=not args.no_roi,
@@ -1017,7 +789,9 @@ def run_app_lab(args: argparse.Namespace) -> int:
     from .checks.runner import run_scenarios
 
     run_dir, summary = run_scenarios(
-        tuple(args.scenario), bundle=args.bundle, expected_commit=args.expected_commit,
+        tuple(args.scenario),
+        bundle=args.bundle,
+        expected_commit=args.expected_commit,
     )
     for item in summary["results"]:
         print(f"{item['id']}: {item['outcome']} ({item['reason']})")
@@ -1054,7 +828,7 @@ def _parser() -> argparse.ArgumentParser:
 
     hud = subcommands.add_parser(
         "dev-hud",
-        help="run the real Hanly desktop with the on-screen developer HUD",
+        help="run Hanly under Lab observation with the on-screen developer HUD",
     )
 
     lab = subcommands.add_parser(
@@ -1092,6 +866,7 @@ def _parser() -> argparse.ArgumentParser:
         help="explicit runtime configuration; omit to use the normal per-user one",
     )
     hud.add_argument("--app-config", type=Path)
+    hud.add_argument("--desktop", type=Path, help="Hanly executable or .app")
     hud.add_argument("--roi-size", type=_parse_size)
     hud.add_argument(
         "--dwell-ms",
@@ -1128,22 +903,25 @@ def _parser() -> argparse.ArgumentParser:
     real.set_defaults(handler=run_real_lookup)
 
     hover = subcommands.add_parser(
-        "real-hover", help="measure dwell through a visible development Qt popup"
+        "real-hover", help="measure dwell through the native Tauri popup with a controlled ROI"
     )
     hover.add_argument("--image", type=Path, required=True)
     hover.add_argument("--config", type=Path, required=True)
+    hover.add_argument("--desktop", type=Path, help="Hanly executable or .app")
     hover.add_argument("--target-x", type=float, required=True)
     hover.add_argument("--target-y", type=float, required=True)
     hover.add_argument("--roi-size", type=_parse_size)
     hover.add_argument("--dwell-ms", type=float, default=150.0)
+    hover.add_argument(
+        "--expected-text",
+        required=True,
+        help="Korean surface under the pointer, used only to score this private local run",
+    )
     hover.add_argument("--cpu-threads", type=_parse_cpu_threads)
     hover.add_argument("--warmup", type=int, default=2)
     hover.add_argument("--samples", type=int, default=10)
     hover.add_argument("--timeout", type=float, default=120.0)
-    hover.add_argument("--expected-status", default="SUCCESS")
-    hover.add_argument(
-        "--output-root", type=Path, default=Path("artifacts/lab/runs")
-    )
+    hover.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
     hover.set_defaults(handler=run_real_hover)
 
     live = subcommands.add_parser(
@@ -1157,6 +935,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     live.add_argument("--config", type=Path, required=True)
+    live.add_argument("--desktop", type=Path, help="Hanly debug executable or .app")
+    live.add_argument(
+        "--app-config",
+        type=Path,
+        help="preferences file used as the source for the disposable Lab profile",
+    )
     live.add_argument(
         "--duration",
         type=_parse_live_duration,
@@ -1271,17 +1055,13 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     ocr.add_argument("--cpu-threads", type=_parse_cpu_threads)
-    ocr.add_argument(
-        "--output-root", type=Path, default=Path("artifacts/lab/runs")
-    )
+    ocr.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
     ocr.set_defaults(handler=run_ocr_campaign)
 
     corpus = subcommands.add_parser(
         "ocr-corpus", help="enumerate a corpus without loading an OCR runtime"
     )
-    corpus.add_argument(
-        "--manifest", type=Path, default=Path("lab/fixtures/ocr/manifest.json")
-    )
+    corpus.add_argument("--manifest", type=Path, default=Path("lab/fixtures/ocr/manifest.json"))
     corpus.add_argument(
         "--fonts",
         action="store_true",
@@ -1303,12 +1083,8 @@ def _parser() -> argparse.ArgumentParser:
             "not permit redistribution."
         ),
     )
-    generate.add_argument(
-        "--generator", type=Path, default=Path("lab/fixtures/ocr/generator.json")
-    )
-    generate.add_argument(
-        "--output", type=Path, default=Path("lab/fixtures/ocr/manifest.json")
-    )
+    generate.add_argument("--generator", type=Path, default=Path("lab/fixtures/ocr/generator.json"))
+    generate.add_argument("--output", type=Path, default=Path("lab/fixtures/ocr/manifest.json"))
     generate.add_argument(
         "--profile",
         choices=("golden", "smoke", "balanced", "difficult"),
@@ -1374,9 +1150,7 @@ def _session_parsers(subcommands: Any) -> None:
         default=300,
         help="KRDICT headwords to hover (default: 300, the standard comparable tour)",
     )
-    tour.add_argument(
-        "--quick", action="store_true", help="a short smoke tour: 24 words, no story"
-    )
+    tour.add_argument("--quick", action="store_true", help="a short smoke tour: 24 words, no story")
     _baseline_option(tour, "tour")
     tour.add_argument(
         "--retain-fixture-text",
@@ -1393,7 +1167,9 @@ def _session_parsers(subcommands: Any) -> None:
         help="font pixel sizes for the story, comma separated; 0 skips it (default: 22)",
     )
     tour.add_argument(
-        "--word-sizes", type=_parse_sizes, default=(16, 22, 30, 40),
+        "--word-sizes",
+        type=_parse_sizes,
+        default=(16, 22, 30, 40),
         help="font pixel sizes cycled over words (default: 16,22,30,40)",
     )
     tour.add_argument("--seed", type=int, default=7, help="word sample seed (default: 7)")
@@ -1466,6 +1242,80 @@ def _session_parsers(subcommands: Any) -> None:
     gc.add_argument("--apply", action="store_true", help="delete exactly the given preview")
     gc.add_argument("--plan", type=Path, help="the plan file a preview wrote")
     gc.set_defaults(handler=run_lab_gc)
+
+    grammar = subcommands.add_parser(
+        "grammar", help="score the language stage on the reviewed Korean grammar corpus"
+    )
+    grammar.add_argument("--dictionary", type=Path, default=Path("data/generated/krdict.sqlite3"))
+    grammar.add_argument("--output", type=Path, help="summary.md path")
+    grammar.set_defaults(handler=run_grammar)
+
+    pages = subcommands.add_parser(
+        "grammar-pages", help="build paired text/image native-cursor acquisition fixtures"
+    )
+    pages.add_argument("--dictionary", type=Path, default=Path("data/generated/krdict.sqlite3"))
+    pages.add_argument("--output", type=Path, required=True)
+    pages.add_argument("--stress-cases", type=int, default=3)
+    pages.set_defaults(handler=run_grammar_pages)
+
+    selection = subcommands.add_parser(
+        "word-selection", help="reproduce hover word selection over OCR and classify misses"
+    )
+    selection.add_argument("--config", type=Path, help="runtime configuration (default: hanly's)")
+    selection.add_argument("--ocr-backend", choices=("vision", "easyocr"), required=True)
+    selection.add_argument("--stride", type=int, default=1, help="keep every n-th line")
+    selection.add_argument("--limit", type=int, help="stop after this many hovers")
+    selection.add_argument("--edge-retry", action="store_true",
+                           help="evaluate one wider re-capture when the word reaches the crop edge")
+    selection.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
+    selection.set_defaults(handler=run_word_selection)
+
+    resources = subcommands.add_parser(
+        "resources",
+        help="attribute memory, CPU, threads, latency and I/O to Hanly's stages",
+        description=(
+            "Developer-only. 'stages' runs Hanly's real providers in fresh processes and "
+            "measures each stage from outside; 'session' attributes a recorded session's "
+            "process samples to its phases; 'compare' decides whether two stage runs are "
+            "comparable before labelling any difference. Nothing is tuned or accepted."
+        ),
+    )
+    resource_actions = resources.add_subparsers(dest="resource_action", required=True)
+    stages = resource_actions.add_parser("stages", help="run isolated stage experiments")
+    stages.add_argument("--config", type=Path, help="runtime configuration (default: hanly's)")
+    stages.add_argument(
+        "--ocr-backend", choices=("auto", "vision", "easyocr"), default="auto",
+        help="recognizer to measure; auto resolves as the desktop would",
+    )
+    stages.add_argument("--repeats", type=int, default=3, help="fresh processes per experiment")
+    stages.add_argument("--lookups", type=int, default=12, help="operations per repeated stage")
+    stages.add_argument("--idle", type=float, default=5.0, help="seconds of idle observation")
+    stages.add_argument("--inputs", type=int, default=8, help="distinct rendered inputs")
+    stages.add_argument(
+        "--components", default="",
+        help="also measure these alone, one process each: ocr,kiwi,dictionary",
+    )
+    stages.add_argument("--warmup", type=int, default=1,
+                        help="unrecorded children per experiment before the repeats")
+    stages.add_argument("--ocr-variant", default="product",
+                        help="recognizer: product, or a name in lab/resources/ocr_variants.py")
+    stages.add_argument("--no-sequence", action="store_true",
+                        help="skip the whole-lookup sequence (its repeats are cache hits)")
+    stages.add_argument("--no-calibration", action="store_true",
+                        help="skip the known-allocation calibration experiment")
+    stages.add_argument("--calibration-only", action="store_true",
+                        help="measure only the calibration experiment")
+    stages.add_argument("--output-root", type=Path, default=Path("artifacts/lab/runs"))
+    stages.set_defaults(handler=run_resource_stages)
+    session = resource_actions.add_parser(
+        "session", help="attribute a recorded session's process samples to its phases"
+    )
+    session.add_argument("run", help="a session run under artifacts/lab/runs")
+    session.set_defaults(handler=run_resource_session)
+    compare = resource_actions.add_parser("compare", help="compare two stage runs")
+    compare.add_argument("baseline")
+    compare.add_argument("candidate")
+    compare.set_defaults(handler=run_resource_compare)
 
     stress = subcommands.add_parser(
         "stress",
@@ -1542,6 +1392,11 @@ def _common_session_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend", choices=("auto", "vision", "easyocr"), help="text recognizer for this run"
     )
+    parser.add_argument(
+        "--desktop",
+        type=Path,
+        help="Hanly desktop executable or .app (default: this checkout's debug build)",
+    )
     parser.add_argument("--no-open", action="store_true", help="do not open the report")
 
 
@@ -1567,6 +1422,7 @@ def run_lab_session(args: argparse.Namespace) -> int:
             baseline=_baseline_argument(getattr(args, "baseline", None)),
             retain_fixture_text=getattr(args, "retain_fixture_text", False),
             runtime_config=args.config,
+            desktop=getattr(args, "desktop", None),
             duration=getattr(args, "duration", None),
             hud=args.hud,
             open_report=not args.no_open,
@@ -1784,6 +1640,133 @@ def run_lab_pin(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_grammar(args: argparse.Namespace) -> int:
+    """Score the language stage and print where the report is."""
+
+    from .korean_grammar import run
+
+    summary, path = run(args.dictionary, args.output)
+    for form, counts in summary["by_form"].items():
+        print(f"lab: {form}: {counts.get('correct', 0)} correct, {counts.get('wrong', 0)} wrong")
+    print(f"lab: grammar report in {path}")
+    return 0
+
+
+def run_grammar_pages(args: argparse.Namespace) -> int:
+    from .grammar_pages import run
+
+    try:
+        summary = run(args.dictionary, args.output, args.stress_cases)
+    except (ValueError, OSError) as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    print(f"lab: acquisition fixtures in {summary}")
+    return 0
+
+
+def run_word_selection(args: argparse.Namespace) -> int:
+    """Run the hover word-selection reproduction for one recognizer."""
+
+    from .session.runner import _runtime_config
+    from .word_selection import run
+
+    if args.stride < 1:
+        print("lab: --stride must be positive", file=sys.stderr)
+        return 2
+    run_dir = run(_runtime_config(args.config), args.ocr_backend, limit=args.limit,
+                  stride=args.stride, output_root=args.output_root, edge_retry=args.edge_retry)
+    print(f"lab: word-selection evidence in {run_dir}/summary.md")
+    return 0
+
+
+def run_resource_stages(args: argparse.Namespace) -> int:
+    """Run the planned stage experiments and print where the evidence is."""
+
+    from .resources.experiment import ExperimentPlan, run_experiment
+
+    components = tuple(name for name in args.components.split(",") if name)
+    from .resources.ocr_variants import VARIANTS
+
+    if args.ocr_variant != "product" and args.ocr_variant not in VARIANTS:
+        print(f"lab: unknown OCR variant {args.ocr_variant!r}", file=sys.stderr)
+        return 2
+    unknown = sorted(set(components) - {"ocr", "kiwi", "dictionary"})
+    if unknown:
+        print(f"lab: unknown component(s): {', '.join(unknown)}", file=sys.stderr)
+        return 2
+    if min(args.repeats, args.lookups, args.inputs) < 1 or min(args.idle, args.warmup) < 0:
+        print("lab: --repeats, --lookups and --inputs must be positive; --idle and "
+              "--warmup must not be negative", file=sys.stderr)
+        return 2
+
+    config: Path | None = None
+    backend = args.ocr_backend
+    if not args.calibration_only:
+        from hanly_app.config import OCRBackend
+
+        from .session.runner import _runtime_config
+
+        config = _runtime_config(args.config)
+        runtime = load_runtime(config)
+        # Resolved here, as the desktop shell does, so no child probes a framework.
+        backend = replace(runtime, ocr_backend=OCRBackend(args.ocr_backend)) \
+            .resolved_ocr_backend().value
+
+    plan = ExperimentPlan(
+        runtime_config=config,
+        ocr_backend=backend,
+        lookups=args.lookups,
+        idle_seconds=args.idle,
+        repeats=args.repeats,
+        inputs=args.inputs,
+        components=() if args.calibration_only else components,
+        calibrate=not args.no_calibration,
+        warmup_runs=args.warmup,
+        ocr_variant=args.ocr_variant,
+        sequence=not args.no_sequence,
+    )
+    run_dir = run_experiment(plan, args.output_root, report=lambda line: print(f"lab: {line}"))
+    print(f"lab: resource evidence in {run_dir}/summary.md")
+    return 0
+
+
+def run_resource_session(args: argparse.Namespace) -> int:
+    """Attribute a recorded session's samples to its phases, beside its report."""
+
+    from .identity import resolve_name
+    from .resources.app_phases import analyze_session, write_session_summary
+
+    try:
+        run_dir = resolve_name(args.run)
+        analysis = analyze_session(run_dir)
+    except ValueError as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    _write_json(run_dir / "resources.json", analysis)
+    path = write_session_summary(run_dir, analysis, run_dir / "resources.md")
+    print(f"lab: session resources in {path}")
+    return 0
+
+
+def run_resource_compare(args: argparse.Namespace) -> int:
+    """Compare two stage runs; exit 1 when they are not comparable."""
+
+    from .identity import resolve_name
+    from .resources.compare import compare, write_comparison
+
+    try:
+        baseline, candidate = resolve_name(args.baseline), resolve_name(args.candidate)
+        result = compare(baseline, candidate)
+    except (ValueError, OSError, KeyError) as error:
+        print(f"lab: {error}", file=sys.stderr)
+        return 2
+    destination = candidate / f"compare-{baseline.name}.md"
+    _write_json(destination.with_suffix(".json"), result)
+    write_comparison(result, destination)
+    print(f"lab: comparison in {destination}")
+    return 0 if result["comparable"] else 1
+
+
 def with_default_verb(arguments: Sequence[str]) -> list[str]:
     """Like `hanly`, the lab's one obvious action needs no verb."""
 
@@ -1798,7 +1781,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "warmup", 0) < 0 or getattr(args, "samples", 0) < 0:
         raise SystemExit("--warmup and --samples must be non-negative")
     return int(args.handler(args))
-
 
 
 __all__ = [

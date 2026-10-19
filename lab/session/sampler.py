@@ -1,15 +1,4 @@
-"""Sample memory, CPU and threads of the shell and every process it owns.
-
-The lab hosts the shell in its own process, so child identity is exact: the
-names ``hanly-lookup`` and ``hanly-control-center`` come from
-``multiprocessing.active_children()``, not from guessing at command lines.
-Grandchildren (Qt WebEngine helpers) are attributed to the child that owns them.
-
-The sampling itself runs in a separate process. psutil holds the interpreter
-lock while it walks the process table, and doing that inside the shell delayed
-the shell's own work -- direct-text reads missed their deadline -- so the shell
-only publishes its children's roles, which costs nothing measurable.
-"""
+"""Sample the native desktop and every process it owns from a separate process."""
 
 from __future__ import annotations
 
@@ -23,23 +12,36 @@ import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import psutil
 
-_ROLES = {"hanly-lookup": "lookup", "hanly-control-center": "control_center"}
+_ROLES = {"hanly-lookup": "lookup"}
+_MAX_ANCESTORS = 256
 
 
 class ProcessSampler:
     """Write one JSON line per sample to ``processes.jsonl`` from a separate process."""
 
-    def __init__(self, path: Path, origin_ns: int, *, interval: float = 0.25) -> None:
+    def __init__(
+        self,
+        path: Path,
+        origin_ns: int,
+        *,
+        interval: float = 0.25,
+        sample_parent: bool = True,
+    ) -> None:
         self._path = path
         self._origin_ns = origin_ns
         self._interval = interval
+        self._sample_parent = sample_parent
         self._roles_path = path.with_name("processes.roles.json")
         self._summary_path = path.with_name("processes.summary.json")
         self._stop = threading.Event()
+        self._roles_lock = Lock()
+        self._write_lock = Lock()
+        self._registered: dict[int, str] = {}
         self._publisher = threading.Thread(target=self._publish, name="lab-roles", daemon=True)
         self._process: subprocess.Popen[bytes] | None = None
         self.samples = 0
@@ -58,6 +60,7 @@ class ProcessSampler:
                 str(self._summary_path),
                 str(self._origin_ns),
                 str(self._interval),
+                "1" if self._sample_parent else "0",
             ],
             cwd=str(Path(__file__).resolve().parents[2]),
             stdin=subprocess.PIPE,
@@ -76,6 +79,7 @@ class ProcessSampler:
                 process.wait(10)
             except subprocess.TimeoutExpired:
                 process.kill()
+                process.wait(3)
         try:
             summary = json.loads(self._summary_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -89,18 +93,38 @@ class ProcessSampler:
         while not self._stop.wait(self._interval):
             self._write_roles()
 
+    def register_process(self, pid: int, role: str) -> None:
+        """Add a directly launched process to the observed Hanly family."""
+
+        if pid <= 0 or not role or not role.replace("_", "").isalnum():
+            raise ValueError("a positive PID and simple process role are required")
+        with self._roles_lock:
+            self._registered[pid] = role
+        self._write_roles()
+
+    def unregister_process(self, pid: int) -> None:
+        """Stop treating a Lab-launched process as a product root."""
+
+        with self._roles_lock:
+            self._registered.pop(pid, None)
+        self._write_roles()
+
     def _write_roles(self) -> None:
-        roles = {str(os.getpid()): "shell"}
+        with self._roles_lock:
+            roles = {str(pid): role for pid, role in self._registered.items()}
+        if self._sample_parent:
+            roles[str(os.getpid())] = "shell"
         for child in multiprocessing.active_children():
             if child.pid is not None:
                 roles[str(child.pid)] = _ROLES.get(child.name, child.name)
-        temporary = self._roles_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(roles), encoding="utf-8")
-        try:
-            os.replace(temporary, self._roles_path)
-        except PermissionError:
-            # Windows refuses while the sampler is reading it; the next tick retries.
-            pass
+        with self._write_lock:
+            temporary = self._roles_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(roles), encoding="utf-8")
+            try:
+                os.replace(temporary, self._roles_path)
+            except PermissionError:
+                # Windows refuses while the sampler is reading it; the next tick retries.
+                pass
 
 
 class _Sampling:
@@ -121,7 +145,9 @@ class _Sampling:
             rows.append(self._row(process, role))
             try:
                 descendants = process.children(recursive=True)
-            except psutil.Error:
+            except (psutil.Error, OSError):
+                # The registered root still gives a useful sample when process
+                # enumeration is restricted by the host or test sandbox.
                 continue
             for descendant in descendants:
                 if descendant.pid in self._own or descendant.pid in owned:
@@ -133,9 +159,39 @@ class _Sampling:
                 if handle is not None:
                     rows.append(self._row(handle, f"{role}.helper", detail=_name(handle)))
         live = {row["pid"] for row in rows}
+        if sys.platform == "darwin":
+            self._responsible_helpers(owned, rows, live)
+            live = {row["pid"] for row in rows}
         for stale in set(self._handles) - live:
             del self._handles[stale]
         return rows
+
+    def _responsible_helpers(
+        self, owned: Mapping[int, str], rows: list[dict[str, Any]], live: set[int]
+    ) -> None:
+        """Include WebKit helpers assigned to the launched app by macOS."""
+
+        from .macos_responsibility import responsible_pid
+
+        roots = {
+            pid
+            for pid, role in owned.items()
+            if role == "shell" and responsible_pid(pid) == pid
+        }
+        if not roots:
+            return
+        try:
+            processes = psutil.process_iter()
+            for process in processes:
+                if process.pid in live or process.pid in self._own:
+                    continue
+                if responsible_pid(process.pid) not in roots:
+                    continue
+                handle = self._handle(process.pid, process)
+                if handle is not None:
+                    rows.append(self._row(handle, "shell.helper", detail=_name(handle)))
+        except (psutil.Error, OSError):
+            return
 
     def _handle(self, pid: int, known: psutil.Process | None = None) -> psutil.Process | None:
         # A cached handle keeps cpu_percent's baseline and survives PID reuse checks.
@@ -171,11 +227,15 @@ def nearest_owner(process: Any, owned: Mapping[int, str]) -> int | None:
     """The closest ancestor of ``process`` that is a sampled Hanly process."""
 
     try:
-        for ancestor in process.parents():
-            if ancestor.pid in owned:
-                return int(ancestor.pid)
-    except psutil.Error:
-        pass
+        parent_pid = int(process.ppid())
+        for _ in range(_MAX_ANCESTORS):
+            if parent_pid <= 0:
+                break
+            if parent_pid in owned:
+                return parent_pid
+            parent_pid = int(psutil.Process(parent_pid).ppid())
+    except (psutil.Error, OSError):
+        return None
     return None
 
 
@@ -191,11 +251,13 @@ def _sampler_chain(own_pid: int, shell_pid: int) -> frozenset[int]:
 
     chain = {own_pid}
     try:
-        for ancestor in psutil.Process(own_pid).parents():
-            if ancestor.pid == shell_pid:
+        parent_pid = int(psutil.Process(own_pid).ppid())
+        for _ in range(_MAX_ANCESTORS):
+            if parent_pid <= 0 or parent_pid == shell_pid:
                 break
-            chain.add(ancestor.pid)
-    except psutil.Error:
+            chain.add(parent_pid)
+            parent_pid = int(psutil.Process(parent_pid).ppid())
+    except (psutil.Error, OSError):
         pass
     return frozenset(chain)
 
@@ -214,8 +276,9 @@ def main(argv: list[str]) -> None:
     # A terminal's Ctrl+C reaches this process too; ending the run is the shell's
     # decision, and it closes our input once it has made it.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    shell, out, roles_path, summary, origin, interval = argv
+    shell, out, roles_path, summary, origin, interval, *optional = argv
     shell_pid, origin_ns, period = int(shell), int(origin), float(interval)
+    sample_parent = not optional or optional[0] != "0"
     stopped = threading.Event()
 
     def watch_input() -> None:
@@ -224,12 +287,14 @@ def main(argv: list[str]) -> None:
 
     threading.Thread(target=watch_input, daemon=True).start()
     sampling = _Sampling(os.getpid(), shell_pid)
-    owned = {shell_pid: "shell"}
+    owned = {shell_pid: "shell"} if sample_parent else {}
     with Path(out).open("a", encoding="utf-8") as stream:
-        while not stopped.is_set() and psutil.pid_exists(shell_pid):
+        while not stopped.is_set():
             started = time.perf_counter_ns()
             # A read that races the shell's replace keeps the last roles it saw.
-            owned = _roles(Path(roles_path)) or owned
+            published = _roles(Path(roles_path))
+            if published is not None:
+                owned = published
             rows = sampling.sample(owned)
             stream.write(
                 json.dumps(

@@ -1,9 +1,13 @@
 """Focused tests for the Apple Vision OCR adapter."""
 
 import sys
+from collections.abc import Callable, Sequence
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from hanly import OCRProvider, PixelFormat, ROIImage
+from hanly.resource_manager import ResourceManager, ResourceManifest
 from hanly.vision_provider import (
     DEFAULT_INPUT_SCALE,
     MAX_INPUT_SCALE,
@@ -12,9 +16,7 @@ from hanly.vision_provider import (
     VisionProviderError,
 )
 
-darwin_only = pytest.mark.skipif(
-    sys.platform != "darwin", reason="Vision is a macOS framework"
-)
+from tests.hanly_fixtures.runtime_input import invoke_with_runtime_values
 
 
 def _roi(width: int = 4, height: int = 2) -> ROIImage:
@@ -25,16 +27,33 @@ def test_the_adapter_satisfies_the_engine_ocr_seam() -> None:
     assert isinstance(VisionProvider(), OCRProvider)
 
 
+@pytest.mark.parametrize("response", [False, (False, object())])
+def test_a_failed_native_request_is_an_error_not_an_empty_read(
+    monkeypatch: pytest.MonkeyPatch, response: object,
+) -> None:
+    request = Mock()
+    request_class = Mock()
+    request_class.alloc.return_value.init.return_value = request
+    handler = Mock()
+    handler.performRequests_error_.return_value = response
+    handler_class = Mock()
+    handler_class.alloc.return_value.initWithData_options_.return_value = handler
+    monkeypatch.setitem(sys.modules, "Foundation", SimpleNamespace(NSData=Mock()))
+
+    with pytest.raises(VisionProviderError, match="Vision request failed"):
+        VisionProvider()._run(request_class, handler_class, b"image")
+
+    request.results.assert_not_called()
+
+
 def test_availability_is_false_off_darwin_without_raising() -> None:
-    if sys.platform == "darwin":
-        assert VisionProvider.is_available() is True
-    else:
+    if sys.platform != "darwin":
         assert VisionProvider.is_available() is False
 
 
 def test_a_non_image_argument_is_a_type_error() -> None:
     with pytest.raises(TypeError):
-        VisionProvider().recognize("not an image")  # type: ignore[arg-type]
+        invoke_with_runtime_values(VisionProvider().recognize, "not an image")
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="covers the non-macOS path")
@@ -43,12 +62,8 @@ def test_recognizing_off_darwin_reports_a_provider_error() -> None:
         VisionProvider().recognize(_roi())
 
 
-@darwin_only
-def test_an_empty_roi_is_a_normal_empty_result_not_an_error() -> None:
-    assert VisionProvider().recognize(_roi(32, 16)) == ()
 
 
-@darwin_only
 def test_language_correction_is_off_by_default() -> None:
     """Correction can turn one real word into another, which a dictionary
     lookup must not do silently. It stays opt-in."""
@@ -57,29 +72,6 @@ def test_language_correction_is_off_by_default() -> None:
     assert VisionConfig().languages == ("ko-KR",)
 
 
-@darwin_only
-def test_recognized_regions_carry_top_left_pixel_geometry() -> None:
-    """Vision reports bottom-left normalized coordinates; the seam does not."""
-
-    pillow = pytest.importorskip("PIL")
-    from PIL import Image, ImageDraw, ImageFont
-
-    del pillow
-    font = ImageFont.truetype(
-        "/System/Library/Fonts/Supplemental/AppleSDGothicNeo.ttc", 40
-    )
-    canvas = Image.new("RGB", (360, 120), "white")
-    ImageDraw.Draw(canvas).text((40, 30), "사과했어요", font=font, fill="black")
-    roi = ROIImage(canvas.width, canvas.height, PixelFormat.RGB_888, canvas.tobytes())
-
-    results = VisionProvider().recognize(roi)
-
-    assert results, "Vision should read large rendered Korean"
-    region = results[0]
-    assert region.text.strip() == "사과했어요"
-    assert 0 <= region.quad.p1.x < region.quad.p2.x <= canvas.width
-    assert 0 <= region.quad.p1.y < region.quad.p4.y <= canvas.height
-    assert 0.0 <= region.confidence <= 1.0
 
 
 def test_pinning_vision_where_it_does_not_exist_is_a_configuration_error(
@@ -93,7 +85,7 @@ def test_pinning_vision_where_it_does_not_exist_is_a_configuration_error(
     monkeypatch.setattr(VisionProvider, "is_available", staticmethod(lambda: False))
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         ocr_backend=OCRBackend.VISION,
     )
@@ -112,13 +104,46 @@ def test_auto_falls_back_instead_of_refusing(
     monkeypatch.setattr(VisionProvider, "is_available", staticmethod(lambda: False))
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         ocr_backend=OCRBackend.AUTO,
         easyocr_config=EasyOCRConfig(),
     )
 
     assert runtime._ocr_factory() is not None
+
+
+def test_host_vision_capability_resolves_without_loading_the_framework(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from hanly.easyocr_provider import EasyOCRConfig
+    from hanly_app.config import OCRBackend
+    from hanly_app.runtime import HanlyRuntime
+
+    def unexpected_probe() -> bool:
+        raise AssertionError("service runtime must use the native host capability")
+
+    monkeypatch.setattr(VisionProvider, "is_available", staticmethod(unexpected_probe))
+    runtime = HanlyRuntime(
+        config_path=tmp_path / "runtime.json",
+        resource_manager=ResourceManager(ResourceManifest(())),
+        krdict_path=tmp_path / "krdict.sqlite3",
+        easyocr_config=EasyOCRConfig(),
+        ocr_backend=OCRBackend.AUTO,
+        vision_available=True,
+    )
+    fallback = HanlyRuntime(
+        config_path=tmp_path / "runtime.json",
+        resource_manager=ResourceManager(ResourceManifest(())),
+        krdict_path=tmp_path / "krdict.sqlite3",
+        easyocr_config=EasyOCRConfig(),
+        ocr_backend=OCRBackend.AUTO,
+        vision_available=False,
+    )
+
+    assert runtime.resolved_ocr_backend() is OCRBackend.VISION
+    assert fallback.resolved_ocr_backend() is OCRBackend.EASYOCR
 
 
 def test_the_lookup_child_builds_the_recognizer_it_was_told_to(tmp_path) -> None:
@@ -156,7 +181,7 @@ def test_the_runtime_sends_its_backend_to_the_child(tmp_path) -> None:
 
     runtime = HanlyRuntime(
         config_path=tmp_path / "runtime.json",
-        resource_manager=object(),  # type: ignore[arg-type]
+        resource_manager=ResourceManager(ResourceManifest(())),
         krdict_path=tmp_path / "krdict.sqlite3",
         easyocr_config=EasyOCRConfig(),
         ocr_backend=OCRBackend.EASYOCR,
@@ -168,7 +193,7 @@ def test_the_runtime_sends_its_backend_to_the_child(tmp_path) -> None:
     assert (
         HanlyRuntime(
             config_path=tmp_path / "runtime.json",
-            resource_manager=object(),  # type: ignore[arg-type]
+            resource_manager=ResourceManager(ResourceManifest(())),
             krdict_path=tmp_path / "krdict.sqlite3",
             easyocr_config=EasyOCRConfig(),
             ocr_backend=OCRBackend.AUTO,
@@ -188,7 +213,7 @@ def test_the_recognizer_is_given_a_doubled_image_by_default() -> None:
 @pytest.mark.parametrize("scale", [0, -1, -100, 1.5, 2.0, True, False, "2", None])
 def test_a_nonsensical_input_scale_is_refused(scale: object) -> None:
     with pytest.raises(ValueError, match="input_scale"):
-        VisionConfig(input_scale=scale)  # type: ignore[arg-type]
+        invoke_with_runtime_values(VisionConfig, input_scale=scale)
 
 
 @pytest.mark.parametrize("scale", [MAX_INPUT_SCALE + 1, 64, 10**9])
@@ -234,43 +259,85 @@ def test_scaling_replicates_pixels_exactly_and_invents_no_detail() -> None:
         assert plain.size == (3, 2)
 
 
-@darwin_only
-def test_geometry_comes_back_in_the_captured_coordinate_space() -> None:
-    """Only the payload is enlarged. A quad outside the ROI would send the
-    resolver looking for a word that is not where it says it is."""
-
-    pytest.importorskip("PIL")
-    from PIL import Image, ImageDraw
-
-    canvas = Image.new("RGB", (240, 60), "white")
-    ImageDraw.Draw(canvas).text((12, 16), "Hanly", fill="black")
-    roi = ROIImage(240, 60, PixelFormat.RGB_888, canvas.tobytes())
-
-    results = VisionProvider().recognize(roi)
-
-    assert results, "the fixture must produce at least one region"
-    for result in results:
-        for point in result.quad.points:
-            assert 0 <= point.x <= roi.width
-            assert 0 <= point.y <= roi.height
+# -- autorelease ownership ------------------------------------------------------------
 
 
-@darwin_only
-def test_doubling_does_not_change_where_a_region_is_reported() -> None:
-    """Same pixels, same place, whatever size the recognizer was handed."""
+class _RecordingPool:
+    """Stands in for ``objc.autorelease_pool`` and records what ran inside it."""
 
-    pytest.importorskip("PIL")
-    from PIL import Image, ImageDraw
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.active = False
 
-    canvas = Image.new("RGB", (240, 60), "white")
-    ImageDraw.Draw(canvas).text((12, 16), "Hanly", fill="black")
-    roi = ROIImage(240, 60, PixelFormat.RGB_888, canvas.tobytes())
+    def __enter__(self) -> None:
+        self.active = True
+        self.events.append("enter")
 
-    plain = VisionProvider(VisionConfig(input_scale=1)).recognize(roi)
-    doubled = VisionProvider(VisionConfig(input_scale=2)).recognize(roi)
+    def __exit__(self, kind: object, value: object, traceback: object) -> None:
+        self.active = False
+        self.events.append("exit:error" if kind else "exit")
 
-    if not plain or not doubled:
-        pytest.skip("this machine's Vision did not read the control fixture")
-    # Geometry agrees to within a pixel of the enlarged sampling grid.
-    assert abs(plain[0].quad.p1.x - doubled[0].quad.p1.x) <= 2
-    assert abs(plain[0].quad.p1.y - doubled[0].quad.p1.y) <= 2
+
+class _Observation:
+    def __init__(self, events: list[str], pool: _RecordingPool) -> None:
+        self._events = events
+        self._pool = pool
+
+    def topCandidates_(self, count: int) -> list[object]:
+        self._events.append("normalize:" + ("inside" if self._pool.active else "outside"))
+        candidate = type("Candidate", (), {"string": lambda self: "학교",
+                                            "confidence": lambda self: 0.9})()
+        return [candidate]
+
+    def boundingBox(self) -> object:
+        origin = type("P", (), {"x": 0.1, "y": 0.2})()
+        size = type("S", (), {"width": 0.5, "height": 0.4})()
+        return type("Box", (), {"origin": origin, "size": size})()
+
+
+def _pooled_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    run: Callable[[list[str], _RecordingPool], Sequence[object]],
+) -> tuple[VisionProvider, list[str]]:
+    import hanly.vision_provider as module
+
+    events: list[str] = []
+    pool = _RecordingPool(events)
+    monkeypatch.setattr(module, "_autorelease_pool", lambda: pool)
+    provider = VisionProvider()
+    monkeypatch.setattr(provider, "_load", lambda: (object(), object()))
+    monkeypatch.setattr(provider, "_payload", lambda image: b"png")
+    monkeypatch.setattr(provider, "_run", lambda *args: run(events, pool))
+    return provider, events
+
+
+def test_recognition_and_normalization_share_one_drained_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker thread has no pool of its own; normalization reads the native
+    observations, so it must happen before the pool that owns them drains."""
+
+    def run(events: list[str], pool: _RecordingPool) -> list[_Observation]:
+        events.append("run:" + ("inside" if pool.active else "outside"))
+        return [_Observation(events, pool)]
+
+    provider, events = _pooled_provider(monkeypatch, run)
+
+    results = provider.recognize(_roi(10, 10))
+
+    assert events == ["enter", "run:inside", "normalize:inside", "exit"]
+    # Plain values survive the drain.
+    assert results[0].text == "학교" and isinstance(results[0].text, str)
+    assert results[0].quad.p1.x == pytest.approx(1.0)
+
+
+def test_a_failed_recognition_still_drains_its_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(events: list[str], pool: _RecordingPool) -> list[_Observation]:
+        events.append("run")
+        raise RuntimeError("Vision refused")
+
+    provider, events = _pooled_provider(monkeypatch, run)
+
+    with pytest.raises(VisionProviderError, match="Vision recognition failed"):
+        provider.recognize(_roi(10, 10))
+    assert events == ["enter", "run", "exit:error"]

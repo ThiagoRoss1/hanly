@@ -7,9 +7,9 @@ desktop's `dev` extra for `pytest` and `psutil`, then run from the repository ro
 ```bash
 python -m lab check list
 python -m lab check run \
-  --scenario APP-STARTUP --scenario MAC-IDENTITY \
   --scenario UPDATE-COORDINATOR --scenario UPDATE-APPLY-POSIX
 python -m lab check run \
+  --scenario APP-STARTUP --scenario MAC-IDENTITY \
   --scenario BUNDLE-IDENTITY --scenario BUNDLE-WINDOW --scenario BUNDLE-WORKER \
   --bundle dist/macos/Hanly.app --expected-commit <full-source-sha>
 ```
@@ -22,10 +22,10 @@ installation. The bundled app is inspected or self-checked; it is not updated.
 Fixed test selectors are the scenario's executable actions and assertions.
 Use `catalog.py` to see the scope, prerequisites and expected transitions.
 
-Evidence labels distinguish real source startup, real UI with injected services,
-real helpers with simulated builds, and a real frozen runtime. A scripted update
-state does **not** prove that an application update downloaded or installed.
-Human hover remains an explicit coverage gap.
+Evidence labels distinguish React DOM interaction with mocked IPC, the real
+packaged Tauri/React self-check, real helpers with simulated builds, and a frozen
+runtime. A scripted update state does **not** prove that an application update
+downloaded or installed. Human hover remains an explicit coverage gap.
 
 ## A complete Windows update
 
@@ -74,9 +74,11 @@ and discarded. No screenshot, OCR output, profile path or arbitrary exception
 message enters the report. Capture/export semantics of `live-hover` are unchanged.
 
 RSS is the sampled **sum of the scenario runner and observed descendants**, not
-the application's private memory or a precise peak. Process roles are inferred
-from fixed command markers; `spawned_python` does not distinguish lookup from
-Control Center. Nominal sampling is 100 ms plus inspection overhead: absence of
+the application's private memory or a precise peak. Process roles for a check
+are inferred from fixed command markers; they describe the test tree, not the
+full desktop family. `python -m lab` records the Tauri root, service, lookup
+child and attributed WebKit helpers separately. Nominal sampling is 100 ms plus
+inspection overhead: absence of
 a transient event is not proof that nothing happened between samples. Retained
 events are capped at 1,000, with an explicit dropped count. Denied inspection is
 unavailable. Cleanup addresses tracked process handles and the spawned POSIX

@@ -36,7 +36,7 @@ EXIT_WAIT_SECONDS = 180
 MOVE_ATTEMPTS = 30
 
 #: How long the newly installed build has to report that it started. A cold
-#: first launch pays for Qt initialization and model loading, and treating a
+#: first launch pays for desktop initialization and model loading, and treating a
 #: slow start as a failure would roll back a working update.
 READY_WAIT_SECONDS = 600
 

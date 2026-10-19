@@ -97,7 +97,7 @@ def _changing_on_refinement(
         current = control if lookups["count"] == 1 else change(control)
         return None if current is None else bridge.hold(current)
 
-    bridge.element_at = element_at  # type: ignore[method-assign]
+    setattr(bridge, "element_at", element_at)
     return bridge
 
 
@@ -195,7 +195,7 @@ def _answering(
         answer = wrong(bridge.get(pointer))
         return honest(pointer, limit) if answer is None else answer
 
-    bridge.text_of = text_of  # type: ignore[method-assign]
+    setattr(bridge, "text_of", text_of)
     return bridge
 
 
@@ -238,7 +238,7 @@ def test_a_character_whose_rectangle_misses_the_pointer_is_refused(
         span = bridge.get(pointer)
         return [] if span.end - span.start == 1 else honest(pointer)
 
-    bridge.rectangles = rectangles  # type: ignore[method-assign]
+    setattr(bridge, "rectangles", rectangles)
     provider = _install(monkeypatch, bridge)
 
     assert provider.read_at(point_at(2), timeout_ms=40) is None

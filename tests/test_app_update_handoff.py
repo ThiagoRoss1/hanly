@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from hanly_app.updates.desktop_update import APPLICATION_STEM
@@ -100,6 +101,67 @@ def test_macos_relaunches_the_application_and_never_the_program_inside_it() -> N
 
     assert '/usr/bin/open "$install" --args' in script
     assert MACOS_PROGRAM not in script
+
+
+def test_windows_service_update_helper_breaks_out_of_its_supervised_job(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A helper that waits for Hanly to exit must survive job close."""
+
+    expected_breakaway = 0x01000000
+    popen = Mock(return_value=object())
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("hanly_app.updates.handoff.subprocess.Popen", popen)
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NEW_PROCESS_GROUP", 0x200, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NO_WINDOW", 0x800, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_BREAKAWAY_FROM_JOB",
+        expected_breakaway,
+        raising=False,
+    )
+    monkeypatch.setenv("HANLY_SUPERVISED_JOB", "1")
+    monkeypatch.setenv("HANLY_UPDATE_TEST_VALUE", "preserved")
+
+    from hanly_app.updates.handoff import spawn_detached
+
+    spawn_detached(["powershell.exe"], tmp_path)
+
+    options = popen.call_args.kwargs
+    assert options["creationflags"] == 0x200 | 0x800 | expected_breakaway
+    assert options["env"]["HANLY_UPDATE_TEST_VALUE"] == "preserved"
+    assert "HANLY_SUPERVISED_JOB" not in options["env"]
+
+
+def test_windows_unsupervised_update_helper_does_not_request_job_breakaway(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    popen = Mock(return_value=object())
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("hanly_app.updates.handoff.subprocess.Popen", popen)
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NEW_PROCESS_GROUP", 0x200, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_NO_WINDOW", 0x800, raising=False
+    )
+    monkeypatch.setattr(
+        "hanly_app.updates.handoff.subprocess.CREATE_BREAKAWAY_FROM_JOB",
+        0x01000000,
+        raising=False,
+    )
+    monkeypatch.delenv("HANLY_SUPERVISED_JOB", raising=False)
+
+    from hanly_app.updates.handoff import spawn_detached
+
+    spawn_detached(["powershell.exe"], tmp_path)
+
+    options = popen.call_args.kwargs
+    assert options["creationflags"] == 0x200 | 0x800
+    assert options["env"] is None
 
 
 @pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
@@ -247,31 +309,31 @@ def test_the_script_is_written_outside_the_directory_it_removes(
 # --------------------------------------------------------------------------
 
 
-def _native(tmp_path: Path, **overrides: object) -> NativeTransaction:
-    values: dict[str, object] = {
-        "transaction_id": "t1",
-        "lock_path": tmp_path / "state" / "native-lock",
-        "install_path": tmp_path / "apps" / "hanly-desktop",
-        "staging_path": tmp_path / "apps" / ".hanly-update-t1",
-        "candidate_path": tmp_path / "apps" / ".hanly-update-t1" / "candidate",
-        "backup_path": tmp_path / "apps" / ".hanly-update-t1" / "previous",
-        "rejected_path": tmp_path / "apps" / ".hanly-update-t1" / "rejected",
-        "result_path": tmp_path / "apps" / ".hanly-update-t1" / "result",
-        "ack_path": tmp_path / "state" / "challenge-t1.ack",
-        "challenge_path": tmp_path / "state" / "challenge-t1.json",
-        "expected": "HANLY-READY-2\nt1\ndeadbeef\n",
-        "executable": "hanly-desktop",
-        "launch": LAUNCH_EXEC,
-        "parent_pid": 4321,
-        "exit_timeout": 120,
-        "ready_timeout": 600,
-        "install_device": 16777232,
-        "install_inode": 991122,
-        "candidate_device": 16777232,
-        "candidate_inode": 991123,
-    }
-    values.update(overrides)
-    return NativeTransaction(**values)  # type: ignore[arg-type]
+def _native(
+    tmp_path: Path, *, executable: str = "hanly-desktop"
+) -> NativeTransaction:
+    return NativeTransaction(
+        transaction_id="t1",
+        lock_path=tmp_path / "state" / "native-lock",
+        install_path=tmp_path / "apps" / "hanly-desktop",
+        staging_path=tmp_path / "apps" / ".hanly-update-t1",
+        candidate_path=tmp_path / "apps" / ".hanly-update-t1" / "candidate",
+        backup_path=tmp_path / "apps" / ".hanly-update-t1" / "previous",
+        rejected_path=tmp_path / "apps" / ".hanly-update-t1" / "rejected",
+        result_path=tmp_path / "apps" / ".hanly-update-t1" / "result",
+        ack_path=tmp_path / "state" / "challenge-t1.ack",
+        challenge_path=tmp_path / "state" / "challenge-t1.json",
+        expected="HANLY-READY-2\nt1\ndeadbeef\n",
+        executable=executable,
+        launch=LAUNCH_EXEC,
+        parent_pid=4321,
+        exit_timeout=120,
+        ready_timeout=600,
+        install_device=16777232,
+        install_inode=991122,
+        candidate_device=16777232,
+        candidate_inode=991123,
+    )
 
 
 def test_a_descriptor_round_trips_through_the_bytes_the_helper_reads(

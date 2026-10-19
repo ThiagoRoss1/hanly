@@ -1,9 +1,8 @@
 """Which process owns the window at a screen point, asked of the window server.
 
-A tour keeps recognized text, so before each hover it proves the pixels under
-the capture region are this process's own window (the tour page, or Hanly's
-popup, which the shell draws). Anything else means another application is on
-top, and the hover is skipped rather than read.
+A tour keeps recognized text, so before each hover it verifies that the capture
+region belongs to its fixture page or the native Hanly desktop. Anything else
+means another application is on top, and the hover is skipped rather than read.
 """
 
 from __future__ import annotations
@@ -56,12 +55,38 @@ def _windows_owner(x: float, y: float) -> int | None:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
-    handle = user32.WindowFromPoint(wintypes.POINT(int(x), int(y)))
-    if not handle:
-        return None
-    pid = wintypes.DWORD()
-    user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
-    return int(pid.value) or None
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+    owner: int | None = None
+
+    def visit(handle: int, _parameter: int) -> bool:
+        nonlocal owner
+        if not user32.IsWindowVisible(handle) or user32.IsIconic(handle):
+            return True
+        bounds = wintypes.RECT()
+        if not user32.GetWindowRect(handle, ctypes.byref(bounds)):
+            return False
+        if not (bounds.left <= x < bounds.right and bounds.top <= y < bounds.bottom):
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+        owner = int(pid.value) or None
+        return False
+
+    # WindowFromPoint performs input hit testing, which skips the Lab's opaque
+    # WS_EX_TRANSPARENT fixture. Check visible windows in desktop stacking order.
+    user32.EnumWindows(callback_type(visit), 0)
+    return owner
 
 
 __all__ = ["owner_at"]

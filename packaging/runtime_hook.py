@@ -1,8 +1,4 @@
-"""Set warning policy in every frozen process without importing heavy runtimes.
-
-WebEngine and OCR imports belong to their respective children, keeping the shell
-light.
-"""
+"""Set the process warning policy without importing provider runtimes."""
 
 from hanly_app.lookup.preload import silence_runtime_warnings
 

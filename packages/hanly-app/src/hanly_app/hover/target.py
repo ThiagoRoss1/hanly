@@ -19,10 +19,10 @@ from hanly_app.acquisition.capture import ScreenRect
 #: the distance to the next word.
 WORD_MARGIN_PIXELS = 4
 
-#: How long the cursor may spend crossing the gap between a word and its popup.
-#: This is a cap on a transfer that is already under way, not a delay every
-#: exit pays: a cursor leaving in any other direction is dismissed at once.
-POPUP_TRANSFER_MS = 120.0
+#: Idle grace while crossing the narrow word-to-popup corridor. Actual progress
+#: renews it, so reaching a footer is not a race against one fixed deadline.
+#: A stationary cursor expires; leaving the corridor still exits immediately.
+POPUP_TRANSFER_MS = 350.0
 
 #: How far to either side of the straight line from the word to the popup the
 #: cursor may stray and still count as crossing towards it. Narrow on purpose:
@@ -78,14 +78,34 @@ def in_transfer_corridor(
     *,
     half_width: int = TRANSFER_CORRIDOR_PIXELS,
 ) -> bool:
-    """Whether the cursor is in the narrow band from ``origin`` to the popup.
+    """Whether movement can enter the popup, including a diagonal footer approach.
 
-    Deliberately a band around one line rather than a rectangle enclosing both:
-    the hull of a word and a popup placed diagonally from it covers whatever is
-    between them, which is usually the next words the user wants to read.
+    The nearest-edge band tolerates jitter; a ray into the actual card admits
+    its other controls. The caller additionally requires progress and expires
+    pauses, so this never becomes a permanently protected bounding rectangle.
     """
 
-    return _distance_to_segment(point, origin, nearest_point(popup, origin)) <= half_width
+    return (
+        _distance_to_segment(point, origin, nearest_point(popup, origin)) <= half_width
+        or _ray_enters_popup(point, origin, popup)
+    )
+
+
+def _ray_enters_popup(point: Point, origin: Point, popup: ScreenRect) -> bool:
+    enter, leave = 0.0, float("inf")
+    for start, delta, low, high in (
+        (origin.x, point.x - origin.x, popup.left, popup.right),
+        (origin.y, point.y - origin.y, popup.top, popup.bottom),
+    ):
+        if delta == 0:
+            if not low <= start <= high:
+                return False
+            continue
+        first, last = sorted(((low - start) / delta, (high - start) / delta))
+        enter, leave = max(enter, first), min(leave, last)
+        if enter > leave:
+            return False
+    return leave >= max(1.0, enter)
 
 
 def _distance_to_segment(point: Point, start: Point, end: Point) -> float:

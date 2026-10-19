@@ -1,6 +1,4 @@
 """Production validator tests over source-independent literal fixtures."""
-# ruff: noqa: E501 -- literal official-shape XML is intentionally unwrapped.
-
 from __future__ import annotations
 
 import os
@@ -18,24 +16,25 @@ from tools.krdict.validate_seed import ValidationError, validate_database
 
 def _built_pair(tmp_path: Path) -> tuple[Path, Path]:
     source = tmp_path / "source.zip"
-    xml = """<LexicalResource><Lexicon>
-<LexicalEntry att="id" val="77610">
- <feat att="lexicalUnit" val="단어"/><feat att="homonym_number" val="0"/>
- <feat att="vocabularyLevel" val="없음"/><Lemma><feat att="writtenForm" val="첫"/></Lemma>
- <Sense att="id" val="1"><feat att="definition" val="맨 처음의."/>
-  <Equivalent><feat att="language" val="영어"/><feat att="lemma" val="first"/><feat att="definition" val="Of the very first."/></Equivalent>
- </Sense>
-</LexicalEntry>
-<LexicalEntry att="id" val="77610">
- <feat att="lexicalUnit" val="관용구"/><Lemma><feat att="writtenForm" val="첫 단추를 끼우다"/></Lemma>
- <Sense att="id" val="1"><feat att="definition" val="일을 시작하다."/></Sense>
-</LexicalEntry>
-<LexicalEntry att="id" val="9">
- <feat att="lexicalUnit" val="단어"/><Lemma><feat att="writtenForm" val="가다"/></Lemma>
- <WordForm><feat att="type" val="활용"/><feat att="writtenForm" val="가요"/></WordForm>
- <Sense att="id" val="2"><feat att="definition" val="이동하다."/></Sense>
-</LexicalEntry>
-</Lexicon></LexicalResource>"""
+    xml = (
+        '<LexicalResource><Lexicon>\n<LexicalEntry att="id" val="77610">\n '
+        '<feat att="lexicalUnit" val="단어"/><feat att="homonym_number" '
+        'val="0"/>\n <feat att="vocabularyLevel" val="없음"/><Lemma><feat '
+        'att="writtenForm" val="첫"/></Lemma>\n <Sense att="id" val="1">'
+        '<feat att="definition" val="맨 처음의."/>\n  <Equivalent><feat '
+        'att="language" val="영어"/><feat att="lemma" val="first"/><feat '
+        'att="definition" val="Of the very first."/></Equivalent>\n </'
+        'Sense>\n</LexicalEntry>\n<LexicalEntry att="id" val="77610">\n '
+        '<feat att="lexicalUnit" val="관용구"/><Lemma><feat att="writtenForm" '
+        'val="첫 단추를 끼우다"/></Lemma>\n <Sense att="id" val="1"><feat '
+        'att="definition" val="일을 시작하다."/></Sense>\n</LexicalEntry>\n'
+        '<LexicalEntry att="id" val="9">\n <feat att="lexicalUnit" '
+        'val="단어"/><Lemma><feat att="writtenForm" val="가다"/></Lemma>\n '
+        '<WordForm><feat att="type" val="활용"/><feat att="writtenForm" '
+        'val="가요"/></WordForm>\n <Sense att="id" val="2"><feat '
+        'att="definition" val="이동하다."/></Sense>\n</LexicalEntry>\n</'
+        'Lexicon></LexicalResource>'
+    )
     with zipfile.ZipFile(source, "w") as archive:
         archive.writestr("fixture.xml", xml)
     database = tmp_path / "krdict.sqlite3"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
-from .hotkeys import HotkeyError, canonical_hotkey
+from .hotkeys import HotkeyError, canonical_hotkey, desktop_shortcut_defaults
 
 
 class OCRBackend(str, Enum):
@@ -91,11 +92,9 @@ class HoverActivation(str, Enum):
 #: The stored spelling a profile written before Push to Hover existed uses.
 LEGACY_HOVER_ACTIVATION = "hotkey"
 
-#: What the hover mute is bound to when nothing else is stored.
-DEFAULT_HOVER_HOTKEY = "ctrl+shift+f9"
-
-#: What Start/Stop Capture is bound to when nothing else is stored.
-DEFAULT_CAPTURE_HOTKEY = "ctrl+shift+f10"
+DEFAULT_HOLD_HOTKEY, DEFAULT_HOVER_HOTKEY, DEFAULT_CAPTURE_HOTKEY = (
+    desktop_shortcut_defaults(sys.platform)
+)
 
 #: An action can be deliberately unbound, which is what a profile with no free
 #: position gets instead of having every other preference reset.
@@ -331,10 +330,8 @@ class AppConfig:
     part of the desktop preferences file.
     """
 
-    #: The chord that is held for Push to Hover. This is the combination the
-    #: old one-shot lookup used, which is deliberate: it is the key users
-    #: already reach for when they want a word explained.
-    hotkey: str = "ctrl+shift+space"
+    #: The chord held for Push to Hover; Mac defaults avoid media/function keys.
+    hotkey: str = DEFAULT_HOLD_HOTKEY
     #: Mute and continue automatic hover, without touching capture.
     hover_hotkey: str = DEFAULT_HOVER_HOTKEY
     #: Start and stop the capture session. May be empty when no position was
@@ -455,6 +452,14 @@ class AppConfig:
 
         defaults = cls()
         notes: list[str] = []
+        fields = ("hotkey", "hover_hotkey", "capture_hotkey")
+        if sys.platform == "darwin" and tuple(values.get(key) for key in fields) == (
+            desktop_shortcut_defaults("win32")
+        ):
+            # Only the complete untouched legacy set is recognizable as defaults.
+            # Partial/custom profiles retain every stored key, including unbound actions.
+            values = {**values, **dict(zip(fields, desktop_shortcut_defaults("darwin")))}
+            notes.append("Updated the legacy shortcut set to macOS Control–Command defaults.")
         try:
             hotkey = cast(str, values.get("hotkey", defaults.hotkey))
             hover_hotkey = _migrated_binding(

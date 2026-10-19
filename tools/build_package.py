@@ -1,15 +1,14 @@
-"""Build the Hanly Desktop application with the repository's spec.
+"""Build the official Tauri application and its private Python service.
 
-Windows and Linux produce a onedir tree; macOS produces ``Hanly.app``, and
-every path below follows that difference so callers ask the layout rather than
-rebuilding the convention. The command intentionally builds only the
-application: the KRDICT database is a resource artifact, not package data, and
-the packaged process receives its path through ``--runtime-config``.
+The Python onedir is a bounded, console-capable child runtime. Tauri owns the
+user-facing executable and windows; release archives contain that native root,
+the service tree, and the existing update helper.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -40,7 +39,10 @@ from tools.update_artifacts import (
 )
 
 APPLICATION_STEM = "hanly-desktop"
-RESOURCE_ARCHIVE_STEM = "hanly-resources"
+SERVICE_STEM = "hanly-service"
+# The native root resolves a fixed, private resource tree next to the
+# executable on portable Windows/Linux products.
+RESOURCE_DIRECTORY = "resources"
 SUPPORTED_PLATFORMS = ("windows", "macos", "linux")
 
 #: The macOS product directory, and the executable inside it.
@@ -55,6 +57,9 @@ BUNDLE_VOLUME_NAME = "Hanly"
 #: the built application.
 DITTO = "/usr/bin/ditto"
 HDIUTIL = "/usr/bin/hdiutil"
+CODESIGN = "/usr/bin/codesign"
+
+BUNDLE_IDENTIFIER = "io.github.thiagoross1.hanly"
 
 #: The native updater, and how it is built. Warnings are errors: it runs when
 #: the application it is repairing cannot, so a compiler diagnostic in it is
@@ -131,12 +136,51 @@ class PackageLayout:
         return self.application_directory / f"{APPLICATION_STEM}{suffix}"
 
     @property
-    def application_archive(self) -> Path:
-        """The archive a release publishes, and the updater downloads.
+    def service_root(self) -> Path:
+        return self.repo_root / "dist" / SERVICE_STEM
 
-        macOS ships a ZIP for the same reason Windows does: it is the format
-        that survives a bundle's symlinks and is cheap to verify. The DMG
-        beside it is for people, never for the updater.
+    @property
+    def service_executable(self) -> Path:
+        suffix = ".exe" if self.platform_name == "windows" else ""
+        return self.service_root / f"{SERVICE_STEM}{suffix}"
+
+    @property
+    def native_helper_input(self) -> Path:
+        return self.repo_root / "dist" / NATIVE_HELPER_NAME
+
+    @property
+    def tauri_workspace(self) -> Path:
+        return self.repo_root / "apps" / "desktop"
+
+    @property
+    def tauri_release_executable(self) -> Path:
+        suffix = ".exe" if self.platform_name == "windows" else ""
+        return (
+            self.tauri_workspace
+            / "src-tauri"
+            / "target"
+            / "release"
+            / f"{APPLICATION_STEM}{suffix}"
+        )
+
+    @property
+    def tauri_macos_bundle(self) -> Path:
+        return (
+            self.tauri_workspace
+            / "src-tauri"
+            / "target"
+            / "release"
+            / "bundle"
+            / "macos"
+            / BUNDLE_NAME
+        )
+
+    @property
+    def application_archive(self) -> Path:
+        """The archive a release publishes for desktop and compatibility clients.
+
+        macOS keeps a ZIP for clients that predate update packages. HUP-aware
+        macOS clients use the disk image returned by :attr:`update_product`.
         """
 
         extension = ".tar.gz" if self.platform_name == "linux" else ".zip"
@@ -180,7 +224,7 @@ class PackageLayout:
     def native_helper(self) -> Path:
         """Where the POSIX update helper is compiled before the build runs."""
 
-        return self.repo_root / "dist" / ".native" / self.platform_name / NATIVE_HELPER_NAME
+        return self.native_helper_input
 
     @property
     def work_root(self) -> Path:
@@ -188,7 +232,13 @@ class PackageLayout:
 
     @property
     def spec_path(self) -> Path:
-        return self.repo_root / "packaging" / "hanly-desktop.spec"
+        return self.repo_root / "packaging" / "hanly-service.spec"
+
+    @property
+    def resource_directory(self) -> Path:
+        if self.platform_name == "macos":
+            return self.application_directory / "Contents" / "Resources"
+        return self.application_directory / RESOURCE_DIRECTORY
 
 
 def build_command(
@@ -198,7 +248,7 @@ def build_command(
     clean: bool = True,
     noconfirm: bool = True,
 ) -> list[str]:
-    """Build the deterministic PyInstaller command without executing it."""
+    """Build the deterministic Python-service freeze command."""
 
     interpreter = sys.executable if python_executable is None else str(python_executable)
     command = [interpreter, "-m", "PyInstaller"]
@@ -209,7 +259,7 @@ def build_command(
     command.extend(
         [
             "--distpath",
-            str(layout.dist_root),
+            str(layout.repo_root / "dist"),
             "--workpath",
             str(layout.work_root),
             str(layout.spec_path),
@@ -218,12 +268,184 @@ def build_command(
     return command
 
 
+def tauri_build_command(layout: PackageLayout, *, platform_name: str | None = None) -> list[str]:
+    """Build the native Tauri root for the requested release platform."""
+
+    target = layout.platform_name if platform_name is None else host_platform(platform_name)
+    command = ["npm", "run", "tauri", "--", "build"]
+    if target == "macos":
+        command.extend(["--bundles", "app"])
+    else:
+        command.append("--no-bundle")
+    return command
+
+
+def write_tauri_build_config(layout: PackageLayout) -> Path:
+    """Write release-only resource mappings after their inputs exist."""
+
+    resources = {str(layout.service_root.resolve()): SERVICE_STEM}
+    if layout.platform_name != "windows":
+        if not layout.native_helper_input.is_file():
+            raise FileNotFoundError(
+                f"POSIX update helper does not exist: {layout.native_helper_input}"
+            )
+        resources[str(layout.native_helper_input.resolve())] = NATIVE_HELPER_NAME
+    if not layout.service_executable.is_file():
+        raise FileNotFoundError(
+            f"frozen service does not exist: {layout.service_executable}"
+        )
+
+    config_path = layout.repo_root / "dist" / f"tauri-build-{layout.platform_name}.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps({"bundle": {"active": True, "resources": resources}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def stage_native_application(
+    layout: PackageLayout,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> Path:
+    """Place the just-built Tauri root in Hanly's updateable product tree."""
+
+    if layout.platform_name == "macos":
+        source = layout.tauri_macos_bundle
+        if not source.is_dir():
+            raise FileNotFoundError(f"Tauri app bundle does not exist: {source}")
+        if layout.application_directory.exists():
+            shutil.rmtree(layout.application_directory)
+        layout.application_directory.parent.mkdir(parents=True, exist_ok=True)
+        _run_native(
+            runner,
+            [DITTO, str(source), str(layout.application_directory)],
+            "could not stage the Tauri application bundle",
+        )
+        sign_macos_bundle(layout.application_directory, runner=runner)
+        return layout.application_directory
+
+    source = layout.tauri_release_executable
+    if not source.is_file():
+        raise FileNotFoundError(f"Tauri executable does not exist: {source}")
+    if layout.application_directory.exists():
+        shutil.rmtree(layout.application_directory)
+    layout.application_directory.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, layout.executable)
+    resources = layout.application_directory / RESOURCE_DIRECTORY
+    resources.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(layout.service_root, resources / SERVICE_STEM)
+    if layout.platform_name == "linux":
+        helper = layout.native_helper_input
+        if not helper.is_file():
+            raise FileNotFoundError(f"POSIX update helper does not exist: {helper}")
+        shutil.copy2(helper, resources / NATIVE_HELPER_NAME)
+    return layout.application_directory
+
+
+def sign_macos_bundle(
+    bundle: Path,
+    *,
+    runner: CommandRunner = subprocess.run,
+) -> None:
+    """Apply and verify the unsigned release's ad-hoc bundle signature."""
+
+    _run_native(
+        runner,
+        [CODESIGN, "--force", "--deep", "--sign", "-", "--timestamp=none", str(bundle)],
+        "could not sign the Tauri application bundle",
+    )
+    _run_native(
+        runner,
+        [CODESIGN, "--verify", "--deep", "--strict", str(bundle)],
+        "Tauri application bundle signature verification failed",
+    )
+
+
+def _service_tree_complete(service_root: Path, *, platform_name: str) -> bool:
+    """Check the frozen service's required runtime payload and exclusions."""
+
+    executable = service_root / f"{SERVICE_STEM}{'.exe' if platform_name == 'windows' else ''}"
+    internal = service_root / "_internal"
+    required = (
+        internal / "certifi" / "cacert.pem",
+        internal / "easyocr" / "character" / "ko_char.txt",
+        internal / "hanly_app" / "assets" / "easyocr_models" / "craft_mlt_25k.pth",
+        internal / "hanly_app" / "assets" / "easyocr_models" / "korean_g2.pth",
+        internal / "hanly_app" / "assets" / "hanly-build.json",
+        internal / "kiwipiepy_model" / "sj.morph",
+        internal / "kiwipiepy_model" / "default.dict",
+        internal / "kiwipiepy_model" / "combiningRule.txt",
+    )
+    if not executable.is_file() or not all(path.is_file() for path in required):
+        return False
+
+    extension_suffixes = {".pyd", ".so", ".dylib"}
+    if not any(
+        path.is_file()
+        and path.name.startswith("_kiwipiepy")
+        and path.suffix in extension_suffixes
+        for path in internal.rglob("_kiwipiepy*")
+    ):
+        return False
+
+    forbidden = ("pyqt", "pyside", "qtwebengine", "pywebview", "webview", "pystray")
+    return not any(
+        any(pattern in part.lower() for pattern in forbidden)
+        for path in service_root.rglob("*")
+        for part in path.relative_to(service_root).parts
+    )
+
+
+def _verify_product_runtime(layout: PackageLayout) -> None:
+    """Prove the Tauri root and its sidecar are in the expected product paths."""
+
+    if not layout.executable.is_file():
+        raise PackagingError(f"native desktop executable is missing: {layout.executable}")
+    if layout.platform_name == "macos":
+        resources = layout.application_directory / "Contents" / "Resources"
+        service = resources / SERVICE_STEM
+        helper = resources / NATIVE_HELPER_NAME
+        if not helper.is_file():
+            raise PackagingError(f"bundled updater helper is missing: {helper}")
+        info_path = layout.application_directory / "Contents" / "Info.plist"
+        try:
+            import plistlib
+
+            with info_path.open("rb") as stream:
+                info = plistlib.load(stream)
+        except (OSError, plistlib.InvalidFileException) as error:
+            raise PackagingError(f"could not read Tauri app identity: {error}") from error
+        expected = product_version()
+        if (
+            info.get("CFBundleIdentifier") != BUNDLE_IDENTIFIER
+            or info.get("CFBundleShortVersionString") != expected
+            or info.get("CFBundleVersion") != expected
+        ):
+            raise PackagingError("Tauri app bundle identity or version does not match hanly-app")
+    else:
+        service = layout.resource_directory / SERVICE_STEM
+        if layout.platform_name == "linux" and not (
+            layout.resource_directory / NATIVE_HELPER_NAME
+        ).is_file():
+            raise PackagingError("portable Linux product is missing its POSIX update helper")
+
+    service_name = f"{SERVICE_STEM}{'.exe' if layout.platform_name == 'windows' else ''}"
+    if not (service / service_name).is_file():
+        raise PackagingError(f"bundled Python service is missing: {service}")
+    if not _service_tree_complete(service, platform_name=layout.platform_name):
+        raise PackagingError(
+            f"bundled Python service inventory is incomplete or includes Qt: {service}"
+        )
+
+
 def archive_application(
     layout: PackageLayout,
     *,
     runner: CommandRunner = subprocess.run,
 ) -> Path:
-    """Archive a successful build using the platform handoff format.
+    """Archive a successful build using the platform compatibility format.
 
     The macOS application is archived with ``ditto`` rather than ``zipfile``:
     a Python-written ZIP loses the bundle's symlinks and permission bits, and
@@ -253,7 +475,7 @@ def archive_application(
 
 
 def _archive_bundle(layout: PackageLayout, runner: CommandRunner) -> Path:
-    """Write the ZIP the updater consumes, from the application as built."""
+    """Write the macOS ZIP retained for pre-HUP clients."""
 
     archive = layout.application_archive
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -281,10 +503,11 @@ def create_disk_image(
     *,
     runner: CommandRunner = subprocess.run,
 ) -> Path:
-    """Build the disk image a person downloads, from the same application.
+    """Build the disk image for people and HUP-aware macOS clients.
 
-    The DMG is never an update input: it is a container a human mounts and
-    drags out of. The signed application is read, not modified.
+    The update package references the disk image as its full-tree payload. It
+    also remains the human-facing download. The signed application is read,
+    not modified.
     """
 
     if not layout.application_directory.is_dir():
@@ -389,31 +612,24 @@ def run_build(
     base_package: Path | None = None,
     base_checksums: Path | None = None,
 ) -> int:
-    """Freeze the application and produce everything its release publishes.
+    """Freeze the Python service, build Tauri, and produce release artifacts.
 
-    The order matters and is the same everywhere: the build's identity goes in
-    before it is frozen, the compatibility inventory goes in before the archive
-    that carries it, and the manifest a release publishes is read from the
-    finished, signed tree afterwards. The one update package is assembled from
-    every platform's products by a later job, never here.
+    The order matters: write identity before freezing, prepare resources before
+    Tauri bundles them, then read the manifest from the completed product.
+    The update package is assembled from all platforms by a later job.
     """
 
     stamp = _stamp_build(layout, source_commit, architecture)
     environment = dict(os.environ)
-    windows = layout.platform_name == "windows"
-    if windows:
-        environment.pop("HANLY_UPDATE_HELPER", None)
-    else:
-        # Before PyInstaller, not after: macOS signs the bundle as it builds
-        # it, and a binary added to a sealed bundle is one that no longer
-        # verifies. Windows has its own helper and needs none of this.
+    environment.pop("HANLY_UPDATE_HELPER", None)
+    if layout.platform_name != "windows":
         try:
-            environment["HANLY_UPDATE_HELPER"] = str(
-                build_native_helper(layout.repo_root, layout.native_helper)
-            )
+            build_native_helper(layout.repo_root, layout.native_helper_input)
         except (OSError, PackagingError) as error:
             print(f"Hanly packaging: {error}", file=sys.stderr)
             return 1
+
+    shutil.rmtree(layout.service_root, ignore_errors=True)
 
     command = build_command(
         layout, python_executable=python_executable, clean=clean, noconfirm=noconfirm
@@ -421,6 +637,30 @@ def run_build(
     completed = subprocess.run(command, cwd=layout.repo_root, check=False, env=environment)
     if completed.returncode != 0:
         return completed.returncode
+
+    if not _service_tree_complete(layout.service_root, platform_name=layout.platform_name):
+        print(
+            "Hanly packaging: frozen service is missing required runtime inputs",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        tauri_config = write_tauri_build_config(layout)
+        tauri_command = [*tauri_build_command(layout), "--config", str(tauri_config)]
+        native = subprocess.run(
+            tauri_command,
+            cwd=layout.tauri_workspace,
+            check=False,
+            env=environment,
+        )
+        if native.returncode != 0:
+            return native.returncode
+        stage_native_application(layout)
+        _verify_product_runtime(layout)
+    except (FileNotFoundError, OSError, PackagingError) as error:
+        print(f"Hanly packaging: could not build the native product: {error}", file=sys.stderr)
+        return 1
 
     try:
         products = _release_products(layout, stamp, base_package, base_checksums)
@@ -550,7 +790,7 @@ def _tree_layout(layout: PackageLayout) -> TreeLayout:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build the Hanly Desktop onedir application with PyInstaller"
+        description="Build the native Hanly Desktop and its private Python service"
     )
     parser.add_argument(
         "--platform",

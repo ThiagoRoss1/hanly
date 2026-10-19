@@ -338,18 +338,6 @@ def test_ui_shutdown_uses_non_waiting_lookup_stop_against_queued_dispatch() -> N
     assert pending_callbacks
 
 
-def test_qt_import_and_dispatch_are_optional() -> None:
-    qt = pytest.importorskip("PyQt6.QtCore")
-    from hanly_app.popup.qt import QtResultDispatcher
-
-    app = qt.QCoreApplication.instance() or qt.QCoreApplication([])
-    dispatcher = QtResultDispatcher()
-    events: list[str] = []
-
-    dispatcher(lambda: events.append("delivered"))
-    assert events == []
-    app.processEvents()
-    assert events == ["delivered"]
 
 
 def test_clear_hides_the_popup_and_drops_the_result_it_was_showing() -> None:
@@ -371,15 +359,6 @@ def test_clear_hides_the_popup_and_drops_the_result_it_was_showing() -> None:
     assert [name for name, _, _ in events][-1] == "hide"
 
 
-def test_a_widget_with_no_native_window_is_reported_rather_than_crashing() -> None:
-    """The adapter answers for a pointer of zero without loading a runtime, so
-    a caller that ran before the native window existed gets a value, not an
-    Objective-C message to nothing."""
-
-    from hanly_app.popup.macos import hides_when_inactive, keep_visible_when_inactive
-
-    assert keep_visible_when_inactive(0) is False
-    assert hides_when_inactive(0) is None
 
 
 def test_presentation_carries_short_glosses_without_inventing_them() -> None:
@@ -586,3 +565,34 @@ def test_a_word_near_the_bottom_puts_the_popup_above_it() -> None:
     )
 
     assert position == PopupPosition(1260, 674)
+
+
+def test_a_listed_construction_reaches_the_popup_with_its_gloss() -> None:
+    from hanly import (
+        Construction,
+        DictionaryEntry,
+        DictionarySense,
+        LookupContext,
+        LookupResult,
+        LookupStatus,
+    )
+    from hanly_app.popup.presentation import format_lookup_result
+
+    pattern = DictionaryEntry(
+        headword="-고 있다", definitions=("an action in progress",),
+        senses=(DictionarySense(definition="an action in progress", gloss="be doing"),),
+    )
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(DictionaryEntry(headword="먹다", definitions=("eat",)),),
+        context=LookupContext(text="먹고", construction=Construction("-고 있다", (pattern,))),
+    )
+
+    content = format_lookup_result(result)
+
+    assert content.construction is not None
+    assert (content.construction.headword, content.construction.gloss) == ("-고 있다", "be doing")
+    assert format_lookup_result(
+        LookupResult(status=LookupStatus.SUCCESS, entries=result.entries,
+                     context=LookupContext(text="먹고"))
+    ).construction is None

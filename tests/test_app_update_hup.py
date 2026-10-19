@@ -178,6 +178,7 @@ def _unreachable_tag(code: int | None) -> Callable[[str], Mapping[str, Any]]:
     """A tagged release source that fails the way urllib reports it."""
 
     import urllib.error
+    from email.message import Message
 
     from hanly_app.updates.resource_service import RemoteManifestError
 
@@ -185,7 +186,9 @@ def _unreachable_tag(code: int | None) -> Callable[[str], Mapping[str, Any]]:
         cause: OSError = (
             urllib.error.URLError("connection refused")
             if code is None
-            else urllib.error.HTTPError("https://example.invalid", code, "status", {}, None)  # type: ignore[arg-type]
+            else urllib.error.HTTPError(
+                "https://example.invalid", code, "status", Message(), None
+            )
         )
         raise RemoteManifestError(f"could not read remote metadata: {cause}") from cause
 
@@ -231,6 +234,56 @@ def test_extra_files_a_person_added_do_not_stop_a_bootstrap(tmp_path: Path) -> N
     prepared = _installer(tmp_path, base, channel, install=install, store=store).prepare("0.5.3")
 
     assert prepared.plan.ownership == OWNERSHIP_BOOTSTRAP
+    assert prepared.plan.preserved == ("notes.txt",)
+
+
+def test_owned_qt_install_transitions_to_the_native_root_and_python_service(
+    tmp_path: Path,
+) -> None:
+    """A verified predecessor permits deleting only its old desktop payload."""
+
+    base = PublishedRelease(
+        tmp_path / "release-qt",
+        WINDOWS,
+        version="0.5.2",
+        build_id="qt-build",
+    )
+    native_product = Product(
+        platform="windows",
+        architecture="x86_64",
+        root="hanly-desktop",
+        executable="hanly-desktop.exe",
+        files={
+            "hanly-desktop.exe": program_bytes("windows", "x86_64", b"tauri"),
+            "resources": None,
+            "resources/hanly-service": None,
+            "resources/hanly-service/hanly-service.exe": b"private Python service",
+            "resources/hanly-service/_internal": None,
+            "resources/hanly-service/_internal/hanly_app": None,
+            "resources/hanly-service/_internal/hanly_app/assets": None,
+            "resources/hanly-service/_internal/hanly_app/assets/hanly-build.json": b"{}\n",
+        },
+    )
+    target = PublishedRelease(
+        tmp_path / "release-tauri",
+        native_product,
+        version="0.5.3",
+        build_id="tauri-build",
+        previous=base,
+    )
+    channel = ReleaseChannel(base, target)
+    install = base.install(tmp_path / "install")
+    (install / "notes.txt").write_bytes(b"kept user data")
+    store = ReceiptStore(tmp_path / "state")
+    _with_receipt(store, install, base)
+
+    prepared = _installer(tmp_path, base, channel, install=install, store=store).prepare("0.5.3")
+
+    assert prepared.plan.ownership == OWNERSHIP_RECEIPT
+    assert "_internal/PyQt6/QtCore.pyd" in {
+        operation.path for operation in prepared.plan.deletions
+    }
+    assert "resources/hanly-service/hanly-service.exe" in prepared.plan.required_paths
     assert prepared.plan.preserved == ("notes.txt",)
 
 
@@ -615,6 +668,7 @@ def _posix_installer(
     store: ReceiptStore,
     *,
     platform: str = "linux",
+    owner_pid: int | None = None,
 ) -> TreeUpdateInstaller:
     return TreeUpdateInstaller(
         channel,
@@ -628,6 +682,7 @@ def _posix_installer(
             store=store,
             source_commit=SOURCE_COMMIT,
             runner=_accepting_runner,
+            owner_pid=owner_pid,
         ),
         tagged_release_source=channel.tagged_release_source,
     )
@@ -654,6 +709,18 @@ def test_a_posix_update_leaves_a_proved_candidate_and_a_descriptor(tmp_path: Pat
     assert descriptor.candidate_path == transaction.candidate.root
     assert descriptor.expected == transaction.challenge.expected()
     assert descriptor.launch == "exec"
+
+
+def test_posix_handoff_waits_for_the_native_root_when_one_is_supplied(
+    tmp_path: Path,
+) -> None:
+    base, _target, channel, install, store = _posix(tmp_path)
+    installer = _posix_installer(base, channel, install, store, owner_pid=4321)
+
+    staged = installer.stage(installer.prepare("0.5.3"))
+
+    descriptor = read_descriptor(staged.transaction.descriptor_path)
+    assert descriptor.parent_pid == 4321
 
 
 def test_the_installation_is_untouched_until_the_helper_owns_the_transaction(

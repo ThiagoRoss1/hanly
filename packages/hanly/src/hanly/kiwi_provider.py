@@ -133,7 +133,9 @@ class KiwiProvider:
             if tag in _PUNCTUATION_TAGS:
                 continue
 
-            if grouped and tag.startswith(_ATTACHED_PREFIXES):
+            # The positive copula (이다) completes the word before it, as a
+            # particle does: 학생입니다 is about 학생 wherever the pointer rests.
+            if grouped and (tag.startswith(_ATTACHED_PREFIXES) or tag == "VCP"):
                 grouped[-1].extend(index, start + length)
                 continue
 

@@ -307,7 +307,30 @@ class UpdateCoordinator:
         return None
 
     def shutdown(self, *, wait: bool = False) -> None:
-        """Release the coordinator-owned worker when the desktop shuts down."""
+        """Cancel cancellable work and release the coordinator-owned worker."""
+
+        future: Future[Any] | None
+        abandon_prepared = False
+        with self._lock:
+            if self._state.get("cancellable"):
+                self._cancel.set()
+            if self._state.get("awaiting_confirmation") and not self._handed_off:
+                abandon_prepared = True
+                self._prepared = None
+                self._state.update(
+                    status="cancelled",
+                    message="The update was not installed. Nothing was changed.",
+                    awaiting_confirmation=False,
+                    cancellable=False,
+                    plan=None,
+                    progress=None,
+                )
+            future = self._future
+
+        if future is not None and not future.running():
+            future.cancel()
+        if abandon_prepared and self._application_installer is not None:
+            self._application_installer.abandon()
 
         if self._owns_executor:
             self._executor.shutdown(wait=wait, cancel_futures=True)

@@ -106,7 +106,8 @@ def test_the_portable_suite_imports_none_of_the_desktop_runtime(tmp_path: Path) 
     assert report["loaded"] == []
     assert report["collected"]
     assert not any(
-        node.startswith(("tests/native/", "tests/packaged/")) for node in report["collected"]
+        node.startswith(("tests/native/", "tests/packaged/", "lab/tests/native/"))
+        for node in report["collected"]
     )
 
 
@@ -114,9 +115,13 @@ def test_the_native_suite_is_the_shared_cases_plus_this_host_s_own(
     tmp_path: Path,
 ) -> None:
     report = _collect(tmp_path, "native")
-    directories = {node.split("/")[2] for node in report["collected"]}
+    product = [node for node in report["collected"] if node.startswith("tests/native/")]
+    directories = {node.split("/")[2] for node in product}
 
-    assert all(node.startswith("tests/native/") for node in report["collected"])
+    assert all(
+        node.startswith(("tests/native/", "lab/tests/native/")) for node in report["collected"]
+    )
+    assert any(node.startswith("lab/tests/native/") for node in report["collected"])
     assert "shared" in directories
     assert directories <= {"shared", _host_directory()}
 

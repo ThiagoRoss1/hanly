@@ -65,7 +65,7 @@ def test_relocated_process_modules_are_discoverable_for_packaging() -> None:
     }
 
     assert {
-        "hanly_app.control_center.process",
+        "hanly_app.service.server",
         "hanly_app.lookup.preload",
         "hanly_app.lookup.process",
         "hanly_app.lookup.transport",
