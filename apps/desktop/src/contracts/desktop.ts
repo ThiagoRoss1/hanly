@@ -35,6 +35,9 @@ export interface StateRevision {
   number: number;
 }
 
+export type PopupFont = "pixel" | "normal";
+export type SidebarLayout = "normal" | "compact";
+
 export interface HanlyState {
   revision?: StateRevision;
   app: {
@@ -60,6 +63,8 @@ export interface HanlyState {
     ocr_backend: string;
     popup_enabled: boolean;
     popup_default_size: string;
+    popup_font?: PopupFont;
+    sidebar_layout?: SidebarLayout;
     technical_details: string;
     theme: string;
     update_checks_enabled: boolean;
@@ -187,10 +192,12 @@ export interface PopupPayload extends PopupContent {
   replacement?: boolean;
   technical_details?: string;
   theme?: string;
+  popup_font?: PopupFont;
   config?: {
     technical_details?: string;
     theme?: string;
     popup_default_size?: string;
+    popup_font?: PopupFont;
   };
 }
 

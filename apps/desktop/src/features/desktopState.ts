@@ -137,6 +137,18 @@ export function isHanlyState(value: unknown): value is HanlyState {
     typeof config.update_checks_enabled !== "boolean"
   )
     return false;
+  if (
+    config.popup_font !== undefined &&
+    config.popup_font !== "pixel" &&
+    config.popup_font !== "normal"
+  )
+    return false;
+  if (
+    config.sidebar_layout !== undefined &&
+    config.sidebar_layout !== "normal" &&
+    config.sidebar_layout !== "compact"
+  )
+    return false;
   if (config.capture_region !== null && !isCaptureRegion(config.capture_region))
     return false;
 

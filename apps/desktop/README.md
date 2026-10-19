@@ -62,6 +62,20 @@ Safari for WebKit-faithful metrics. It checks layout and content only: native
 frames, clipping, focus, shortcuts and permissions need the real desktop app.
 Vite builds only `index.html`, so the preview never ships.
 
+The pixel interface uses the supplied artwork under `public/design/`. Appearance
+preferences are stored by the Python settings service: `popup_font` is `pixel`
+or `normal` (default `pixel`), and `sidebar_layout` is `normal` or `compact`
+(default `normal`). Older settings files receive those defaults. Windows at
+760 logical pixels or narrower also use the compact rail. System theme follows
+the desktop; scene and mascot animation pause when hidden or reduced motion is
+requested.
+
+The development preview additionally accepts `font=normal`,
+`navigation=compact`, `activity=stopped|armed|running|preparing|error`,
+`permissions=missing`, and `update=downloading|failed`. These are fixture states,
+not native acceptance evidence. The popup preview implements the same
+measure-before-presentation exchange as the host, with fixture layout bounds.
+
 The `dev` and `runtime` dependency sets install no Python UI framework.
 
 ## Build and validate the product

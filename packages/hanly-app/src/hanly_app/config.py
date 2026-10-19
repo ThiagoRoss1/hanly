@@ -52,6 +52,20 @@ class PopupDefaultSize(str, Enum):
     EXPANDED = "expanded"
 
 
+class PopupFont(str, Enum):
+    """Typeface style used for popup text."""
+
+    PIXEL = "pixel"
+    NORMAL = "normal"
+
+
+class SidebarLayout(str, Enum):
+    """Preferred Control Center navigation width."""
+
+    NORMAL = "normal"
+    COMPACT = "compact"
+
+
 class TechnicalDetailLevel(str, Enum):
     """Developer-oriented detail shown beneath the reading content."""
 
@@ -141,6 +155,8 @@ SETTABLE_FIELDS = frozenset(
         "theme",
         "popup_enabled",
         "popup_default_size",
+        "popup_font",
+        "sidebar_layout",
         "technical_details",
         "update_checks_enabled",
     }
@@ -246,6 +262,24 @@ def _coerce_popup_size(value: object) -> PopupDefaultSize:
         return PopupDefaultSize(value)
     except (TypeError, ValueError) as error:
         raise ValueError("popup_default_size must be compact or expanded") from error
+
+
+def _coerce_popup_font(value: object) -> PopupFont:
+    if isinstance(value, PopupFont):
+        return value
+    try:
+        return PopupFont(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("popup_font must be pixel or normal") from error
+
+
+def _coerce_sidebar_layout(value: object) -> SidebarLayout:
+    if isinstance(value, SidebarLayout):
+        return value
+    try:
+        return SidebarLayout(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("sidebar_layout must be normal or compact") from error
 
 
 def _coerce_technical_details(value: object) -> TechnicalDetailLevel:
@@ -356,6 +390,8 @@ class AppConfig:
     theme: Theme = Theme.SYSTEM
     popup_enabled: bool = True
     popup_default_size: PopupDefaultSize = PopupDefaultSize.COMPACT
+    popup_font: PopupFont = PopupFont.PIXEL
+    sidebar_layout: SidebarLayout = SidebarLayout.NORMAL
     technical_details: TechnicalDetailLevel = TechnicalDetailLevel.OFF
     update_checks_enabled: bool = True
 
@@ -394,6 +430,12 @@ class AppConfig:
             object.__setattr__(
                 self, "popup_default_size", _coerce_popup_size(self.popup_default_size)
             )
+        if not isinstance(self.popup_font, PopupFont):
+            object.__setattr__(self, "popup_font", _coerce_popup_font(self.popup_font))
+        if not isinstance(self.sidebar_layout, SidebarLayout):
+            object.__setattr__(
+                self, "sidebar_layout", _coerce_sidebar_layout(self.sidebar_layout)
+            )
         if not isinstance(self.technical_details, TechnicalDetailLevel):
             object.__setattr__(
                 self,
@@ -421,6 +463,8 @@ class AppConfig:
             "ocr_backend": self.ocr_backend.value,
             "popup_enabled": self.popup_enabled,
             "popup_default_size": self.popup_default_size.value,
+            "popup_font": self.popup_font.value,
+            "sidebar_layout": self.sidebar_layout.value,
             "technical_details": self.technical_details.value,
             "theme": self.theme.value,
             "update_checks_enabled": self.update_checks_enabled,
@@ -503,6 +547,10 @@ class AppConfig:
                 popup_enabled=cast(bool, values.get("popup_enabled", defaults.popup_enabled)),
                 popup_default_size=_coerce_popup_size(
                     values.get("popup_default_size", defaults.popup_default_size)
+                ),
+                popup_font=_coerce_popup_font(values.get("popup_font", defaults.popup_font)),
+                sidebar_layout=_coerce_sidebar_layout(
+                    values.get("sidebar_layout", defaults.sidebar_layout)
                 ),
                 technical_details=_coerce_technical_details(
                     values.get("technical_details", defaults.technical_details)
@@ -675,6 +723,12 @@ class ConfigManager:
             popup_default_size=_coerce_popup_size(
                 changes.get("popup_default_size", self._config.popup_default_size)
             ),
+            popup_font=_coerce_popup_font(
+                changes.get("popup_font", self._config.popup_font)
+            ),
+            sidebar_layout=_coerce_sidebar_layout(
+                changes.get("sidebar_layout", self._config.sidebar_layout)
+            ),
             technical_details=_coerce_technical_details(
                 changes.get("technical_details", self._config.technical_details)
             ),
@@ -703,6 +757,8 @@ __all__ = [
     "HoverActivation",
     "LookupPreload",
     "PopupDefaultSize",
+    "PopupFont",
+    "SidebarLayout",
     "TechnicalDetailLevel",
     "Theme",
 ]

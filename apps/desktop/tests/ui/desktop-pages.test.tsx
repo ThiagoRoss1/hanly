@@ -238,6 +238,21 @@ describe("desktop React routes", () => {
     }));
   });
 
+  it("persists navigation and popup typeface through the service and reflects both choices", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Appearance" }));
+    await user.click(within(screen.getByRole("group", { name: "Navigation" })).getByRole("button", { name: "Compact" }));
+    await waitFor(() => expect(document.querySelector(".sidebar")?.classList.contains("is-compact")).toBe(true));
+    await user.click(within(screen.getByRole("group", { name: "Popup typeface" })).getByRole("button", { name: "Normal" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "update_settings", params: { changes: { popup_font: "normal" } },
+    }));
+    expect(within(screen.getByRole("group", { name: "Popup typeface" })).getByRole("button", { name: "Normal" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Quit Hanly" })).toBeTruthy();
+  });
+
   it("requires an explicit quit confirmation and uses the semantic exit action", async () => {
     const user = userEvent.setup();
     renderRoute("/");
@@ -276,7 +291,7 @@ describe("desktop React routes", () => {
 
     expect(await screen.findByText("Preparing capture")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start capture" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText("Loading the lookup runtime.")).toBeTruthy();
+    expect(screen.getAllByText("Loading the lookup runtime.").length).toBeGreaterThan(0);
   });
 
   it("polls through readiness and continues polling while update work remains active", async () => {
@@ -581,6 +596,7 @@ describe("desktop React routes", () => {
     renderRoute("/");
     await screen.findByRole("button", { name: "Start capture" });
 
+    await user.click(screen.getByText("Capture settings"));
     const delay = screen.getByRole("textbox", { name: "Hover delay value in milliseconds" });
     await user.clear(delay);
     await user.type(delay, "250");
@@ -598,6 +614,7 @@ describe("desktop React routes", () => {
     renderRoute("/");
     await screen.findByRole("button", { name: "Start capture" });
 
+    await user.click(screen.getByText("Capture settings"));
     await user.selectOptions(screen.getByRole("combobox", { name: "Lookup engine" }), "on_demand");
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "update_settings",
@@ -615,6 +632,7 @@ describe("desktop React routes", () => {
     renderRoute("/");
     await screen.findByRole("button", { name: "Start capture" });
 
+    await user.click(screen.getByText("Capture settings"));
     const delay = screen.getByRole("textbox", { name: "Hover delay value in milliseconds" });
     await user.clear(delay);
     await user.type(delay, "19");
@@ -634,6 +652,7 @@ describe("desktop React routes", () => {
     };
     renderRoute("/");
     await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByText("Capture settings"));
     const delay = screen.getByRole("textbox", { name: "Hover delay value in milliseconds" });
     await user.clear(delay);
     await user.type(delay, "480");
@@ -651,14 +670,14 @@ describe("desktop React routes", () => {
     await user.click(screen.getByRole("button", { name: "Shortcuts" }));
     const shortcut = screen.getByText("Push to Hover").closest("section");
     expect(shortcut).toBeTruthy();
-    await user.click(within(shortcut as HTMLElement).getByRole("button", { name: "Assign" }));
+    await user.click(within(shortcut as HTMLElement).getByRole("button", { name: /^Assign .* shortcut$/ }));
 
     fireEvent.keyDown(window, { key: "Shift", shiftKey: true });
     expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "set_hotkey" }));
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByText(/Press keys/)).toBeNull();
 
-    await user.click(within(shortcut as HTMLElement).getByRole("button", { name: "Assign" }));
+    await user.click(within(shortcut as HTMLElement).getByRole("button", { name: /^Assign .* shortcut$/ }));
     fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "set_hotkey",
@@ -693,7 +712,7 @@ describe("desktop React routes", () => {
     await user.click(screen.getByRole("button", { name: "Shortcuts" }));
 
     const pause = screen.getByText("Pause automatic hover").closest("section") as HTMLElement;
-    await user.click(within(pause).getByRole("button", { name: "Assign" }));
+    await user.click(within(pause).getByRole("button", { name: /^Assign .* shortcut$/ }));
     fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true });
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "update_settings",
@@ -701,7 +720,7 @@ describe("desktop React routes", () => {
     }));
 
     const capture = screen.getByText("Start / stop capture").closest("section") as HTMLElement;
-    await user.click(within(capture).getByRole("button", { name: "Assign" }));
+    await user.click(within(capture).getByRole("button", { name: /^Assign .* shortcut$/ }));
     fireEvent.keyDown(window, { key: "f", ctrlKey: true, shiftKey: true });
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "update_settings",
@@ -973,7 +992,7 @@ describe("desktop React routes", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Logs" }));
 
     expect(await screen.findByText(unsafeMessage)).toBeTruthy();
-    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector(".log-message img")).toBeNull();
   });
 
   it("names a dictionary-listed grammar pattern beside the word", async () => {
@@ -991,6 +1010,8 @@ describe("desktop React routes", () => {
       },
     });
 
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Details" }));
+    eventHandlers.get("desktop-popup")?.({ payload: { type: "popup", sequence: 10, payload: { status: "success", expanded: true, entry: { headword: "먹다", senses: [{ gloss: "eat" }] }, construction: { headword: "-고 있다", gloss: "be doing" } } } });
     expect(await screen.findByText("Grammar pattern")).toBeTruthy();
     expect(screen.getByText("-고 있다")).toBeTruthy();
     expect(screen.getByText("be doing")).toBeTruthy();
@@ -1117,7 +1138,7 @@ describe("desktop React routes", () => {
     expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "popup_geometry", params: { sequence: 5, width: 341, height: 219 },
     });
-    await userEvent.setup().click(screen.getByRole("button", { name: "Expand" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Details" }));
     expect(invokeMock).toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "popup_expand", params: { sequence: 5, expanded: true } }));
     expect(screen.queryByText("institution")).toBeNull();
     emit(6, "학교", true);

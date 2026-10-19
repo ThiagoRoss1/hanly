@@ -140,6 +140,7 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         service.set_event_sink(lambda name, payload: published.append((name, dict(payload))))
         service._show_popup(result, 9)
         assert published[-1][1]["replacement"] is True
+        assert published[-1][1]["popup_font"] == "pixel"
         original_position = published[-1][1]["position"]
         # The word spans y 30-50; the native host places measured cards beside it.
         assert published[-1][1]["band"] == {"top": 24, "bottom": 56}
@@ -163,7 +164,9 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         assert len(events) == 1
 
         controller.current_request_id = 10
+        service.config_manager.update(popup_font="normal")
         service._show_popup(result, 10)
+        assert published[-1][1]["popup_font"] == "normal"
         controller.current_request_id = 11
         geometry(3)
         assert len(events) == 1
@@ -367,7 +370,13 @@ def test_settings_prepare_is_not_persisted_until_commit(tmp_path: Path) -> None:
         _frame(
             _message(
                 method="settings.prepare",
-                params={"changes": {"theme": "dark"}},
+                params={
+                    "changes": {
+                        "theme": "dark",
+                        "popup_font": "normal",
+                        "sidebar_layout": "compact",
+                    }
+                },
                 window="control-center",
             )
         )
@@ -375,6 +384,8 @@ def test_settings_prepare_is_not_persisted_until_commit(tmp_path: Path) -> None:
 
     candidate = service.dispatch(prepare)
     assert candidate["settings"]["theme"] == "dark"
+    assert candidate["settings"]["popup_font"] == "normal"
+    assert candidate["settings"]["sidebar_layout"] == "compact"
     assert service.config_manager.config.theme.value != "dark"
     assert not config_path.exists()
 
@@ -390,7 +401,12 @@ def test_settings_prepare_is_not_persisted_until_commit(tmp_path: Path) -> None:
         )
     )
     assert committed["config"]["theme"] == "dark"
-    assert json.loads(config_path.read_text(encoding="utf-8"))["theme"] == "dark"
+    assert committed["config"]["popup_font"] == "normal"
+    assert committed["config"]["sidebar_layout"] == "compact"
+    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+    assert persisted["theme"] == "dark"
+    assert persisted["popup_font"] == "normal"
+    assert persisted["sidebar_layout"] == "compact"
     service.close()
 
 

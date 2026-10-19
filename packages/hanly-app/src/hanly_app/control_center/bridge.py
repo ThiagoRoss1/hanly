@@ -32,6 +32,8 @@ from hanly_app.config import (
     LookupPreload,
     OCRBackend,
     PopupDefaultSize,
+    PopupFont,
+    SidebarLayout,
     TechnicalDetailLevel,
 )
 from hanly_app.desktop_controller import DesktopState
@@ -374,6 +376,8 @@ class ControlCenterBridge:
             "theme",
             "popup_enabled",
             "popup_default_size",
+            "popup_font",
+            "sidebar_layout",
             "technical_details",
             "update_checks_enabled",
         }
@@ -402,6 +406,14 @@ class ControlCenterBridge:
         if "popup_default_size" in values:
             values["popup_default_size"] = _validated_choice(
                 values["popup_default_size"], PopupDefaultSize, "default popup size"
+            )
+        if "popup_font" in values:
+            values["popup_font"] = _validated_choice(
+                values["popup_font"], PopupFont, "popup font"
+            )
+        if "sidebar_layout" in values:
+            values["sidebar_layout"] = _validated_choice(
+                values["sidebar_layout"], SidebarLayout, "sidebar layout"
             )
         if "technical_details" in values:
             values["technical_details"] = _validated_choice(

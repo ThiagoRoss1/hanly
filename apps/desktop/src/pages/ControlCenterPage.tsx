@@ -20,6 +20,10 @@ import {
   sharesAppShortcut,
   validateHoverDelay,
 } from "../features/settings.ts";
+import { PixelProgress } from "../components/PixelProgress.tsx";
+import { PixelButton } from "../components/PixelButton.tsx";
+import { VillageScene } from "../components/village/VillageScene.tsx";
+import { Mascot } from "../components/village/Mascot.tsx";
 import { useDesktopState } from "../hooks/useDesktopState.ts";
 
 type Section =
@@ -34,38 +38,37 @@ const SECTIONS: Array<{ id: Section; label: string }> = [
   { id: "logs", label: "Logs" },
 ];
 
+function sectionIcon(section: Section): string {
+  const name = section === "capture" ? "capture-plant" : `icon-${section}`;
+  return `/design/media/assets/icons/v2/${name}.png`;
+}
+
 const PAGE_COPY: Record<
   Section,
-  { kicker: string; title: string; description: string }
+  { kicker: string; description: string }
 > = {
   capture: {
     kicker: "Capture",
-    title: "읽을 준비",
     description: "Choose where Hanly reads.",
   },
   permissions: {
     kicker: "Permissions",
-    title: "접근 권한",
     description: "The grants Hanly needs before it can read.",
   },
   shortcuts: {
     kicker: "Shortcuts",
-    title: "단축키",
     description: "What your keyboard does, and what the system accepted.",
   },
   appearance: {
     kicker: "Appearance",
-    title: "겉모습",
     description: "How the Control Center and popup look.",
   },
   updates: {
     kicker: "Updates",
-    title: "업데이트",
     description: "The app and its resources update separately.",
   },
   logs: {
     kicker: "Logs",
-    title: "기록",
     description: "Runtime state and recent activity.",
   },
 };
@@ -174,12 +177,15 @@ export function ControlCenterPage() {
   const engine = state?.runtime.engine?.state ?? "unknown";
   const runtime = state?.runtime.status?.phase ?? "unavailable";
 
+  const [dark, setDark] = useState(false);
+
   useEffect(() => {
     const theme = state?.config.theme ?? "system";
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      document.documentElement.dataset.mode =
-        theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      const mode = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.mode = mode;
+      setDark(mode === "dark");
     };
     apply();
     media.addEventListener("change", apply);
@@ -188,8 +194,9 @@ export function ControlCenterPage() {
 
   if (!state) {
     return (
-      <div className="app">
+      <div className="app skin-village">
         <aside className="sidebar">
+          <VillageScene dark={dark} disabled={!state || Boolean(busy)} onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })} />
           <Brand />
           <div className="sidebar-foot">
             <LiveCard activity={activity} engine={engine} runtime={runtime} />
@@ -211,7 +218,7 @@ export function ControlCenterPage() {
                     serviceStatus?.message ||
                     "The Hanly desktop service is unavailable."}
                 </span>
-                <button
+                <PixelButton
                   className="btn btn-sm btn-quiet"
                   disabled={refreshing}
                   onClick={() =>
@@ -220,7 +227,7 @@ export function ControlCenterPage() {
                   type="button"
                 >
                   Try again
-                </button>
+                </PixelButton>
               </div>
             )}
             <LoadingPanel
@@ -274,8 +281,9 @@ export function ControlCenterPage() {
   }
 
   return (
-    <div className="app">
-      <aside className="sidebar">
+    <div className="app skin-village">
+      <aside className={`sidebar${state?.config.sidebar_layout === "compact" ? " is-compact" : ""}`}>
+          <VillageScene dark={dark} disabled={!state || Boolean(busy)} onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })} />
         <Brand />
         <nav aria-label="Sections" className="nav">
           <div
@@ -286,9 +294,11 @@ export function ControlCenterPage() {
             }}
           />
           {SECTIONS.map((item) => (
-            <button
+            <PixelButton
               aria-current={section === item.id ? "page" : undefined}
               className="nav-item"
+              aria-label={item.label}
+              title={item.label}
               key={item.id}
               onClick={() => {
                 setActionError("");
@@ -296,9 +306,11 @@ export function ControlCenterPage() {
               }}
               type="button"
             >
-              <span aria-hidden="true" className="nav-dot" />
-              {item.label}
-            </button>
+              <span className="nav-content">
+                <span aria-hidden="true" className="nav-dot"><img src={sectionIcon(item.id)} alt="" /></span>
+                <span className="nav-label">{item.label}</span>
+              </span>
+            </PixelButton>
           ))}
         </nav>
         <div className="sidebar-foot">
@@ -307,6 +319,7 @@ export function ControlCenterPage() {
             engine={engine}
             runtime={runtime}
             version={state.runtime.app_version}
+            detail={state.app.detail}
           />
           {quitAsking ? (
             <div className="quit-confirm">
@@ -314,31 +327,33 @@ export function ControlCenterPage() {
                 Capture stops and the tray icon goes away.
               </span>
               <div className="quit-row">
-                <button
+                <PixelButton
                   className="btn btn-sm btn-exit"
                   disabled={Boolean(busy)}
                   onClick={() => void run("quit")}
                   type="button"
                 >
                   Quit
-                </button>
-                <button
+                </PixelButton>
+                <PixelButton
                   className="btn btn-sm btn-quiet"
                   onClick={() => setQuitAsking(false)}
                   type="button"
                 >
                   Cancel
-                </button>
+                </PixelButton>
               </div>
             </div>
           ) : (
-            <button
+            <PixelButton
               className="btn btn-sm btn-exit-quiet"
+              aria-label="Quit Hanly"
+              title="Quit Hanly"
               onClick={() => setQuitAsking(true)}
               type="button"
             >
               Quit Hanly
-            </button>
+            </PixelButton>
           )}
         </div>
       </aside>
@@ -347,21 +362,25 @@ export function ControlCenterPage() {
         <header className="page-head">
           <div data-anim="a">
             <div className="page-kicker">{page.kicker}</div>
-            <h1 className="page-title">{page.title}</h1>
+            <img className="page-icon" src={sectionIcon(section)} alt="" />
+            <h1 className="page-title">{page.kicker}</h1>
             <p className="page-desc">{page.description}</p>
           </div>
           {target && (
             <div className="head-actions">
-              <button
+              <PixelButton
                 className="btn"
+                icon="/design/media/assets/icons/v2/capture-frame.png"
                 disabled={Boolean(busy)}
                 onClick={selectArea}
                 type="button"
               >
                 Select area
-              </button>
-              <button
+              </PixelButton>
+              <PixelButton
                 className="btn btn-primary btn-capture"
+                icon={sectionIcon("capture")}
+                data-art-role={state.app.capture_running ? "danger" : "primary"}
                 disabled={
                   Boolean(busy) ||
                   (!state.app.capture_running &&
@@ -383,7 +402,7 @@ export function ControlCenterPage() {
                 type="button"
               >
                 {state.app.capture_running ? "Stop capture" : "Start capture"}
-              </button>
+              </PixelButton>
             </div>
           )}
         </header>
@@ -391,14 +410,14 @@ export function ControlCenterPage() {
           {connectionError && (
             <div className="banner" data-tone="warn" role="status">
               <span className="banner-text">{connectionError}</span>
-              <button
+              <PixelButton
                 className="btn btn-sm btn-quiet"
                 disabled={refreshing}
                 onClick={() => void refresh()}
                 type="button"
               >
                 Reconnect
-              </button>
+              </PixelButton>
             </div>
           )}
           {actionError && (
@@ -430,9 +449,7 @@ export function ControlCenterPage() {
 function Brand() {
   return (
     <div className="brand">
-      <div aria-hidden="true" className="brand-mark">
-        한
-      </div>
+      <img aria-hidden="true" className="brand-mark" src="/design/media/assets/icons/custom/hanly-app.png" alt="" />
       <div className="brand-words">
         <div className="brand-name">Hanly</div>
         <div className="brand-sub">Control Center</div>
@@ -446,11 +463,13 @@ function LiveCard({
   engine,
   runtime,
   version,
+  detail,
 }: {
   activity: string;
   engine: string;
   runtime: string;
   version?: string | null;
+  detail?: string;
 }) {
   const tone =
     activity === "running" ? "ok" : activity === "error" ? "bad" : "";
@@ -459,7 +478,8 @@ function LiveCard({
   const engineTone =
     engine === "ready" ? "ok" : engine === "error" ? "bad" : "";
   return (
-    <div className="live-card">
+    <div className="live-card" title={`${activity} · Runtime ${runtime} · Engine ${engine}`} aria-label={`${activity} · Runtime ${runtime} · Engine ${engine}`}>
+      <Mascot activity={activity} />
       <div className="live-head">
         <span
           aria-hidden="true"
@@ -468,6 +488,7 @@ function LiveCard({
         />
         <span className="live-label">{titleCase(activity, "Preparing")}</span>
       </div>
+      <div className="live-detail">{detail}</div>
       <div aria-live="polite" className="live-facts" role="status">
         <div className="live-fact" data-tone={runtimeTone}>
           <span>runtime</span>
@@ -542,30 +563,30 @@ function CaptureChoiceDialog({
           Choose the area Hanly should watch. This is saved as a setting.
         </p>
         <div className="choice-actions">
-          <button
+          <PixelButton
             className="btn"
             disabled={busy}
             onClick={onChooseMonitor}
             type="button"
           >
             Whole monitor
-          </button>
-          <button
+          </PixelButton>
+          <PixelButton
             className="btn btn-primary"
             disabled={busy}
             onClick={onChooseRegion}
             type="button"
           >
             Select an area
-          </button>
-          <button
+          </PixelButton>
+          <PixelButton
             className="btn btn-quiet"
             disabled={busy}
             onClick={onCancel}
             type="button"
           >
             Cancel
-          </button>
+          </PixelButton>
         </div>
       </section>
     </div>
@@ -709,7 +730,7 @@ function CapturePage({
       <div className="capture-stage">
         <section
           aria-labelledby="target-heading"
-          className="panel"
+          className="panel capture-target-panel"
           data-rise="2"
         >
           <div className="panel-head">
@@ -719,13 +740,14 @@ function CapturePage({
           </div>
           <div
             aria-label="Capture target"
-            className="panel-rows"
+            className="panel-rows target-choices"
             role="radiogroup"
           >
             <TargetOption
               selected={mode !== "region"}
               disabled={busy}
               label="Current monitor"
+              art="/design/media/assets/icons/custom/icon-monitor.svg"
               detail="Follows the display the cursor is on."
               onSelect={() =>
                 void run("set_capture_mode", { mode: "full_monitor" })
@@ -735,9 +757,14 @@ function CapturePage({
               selected={mode === "region"}
               disabled={busy}
               label="Selected region"
+              art="/design/media/assets/icons/v2/capture-frame.png"
               detail="A fixed rectangle you draw once."
               onSelect={() => void run("set_capture_mode", { mode: "region" })}
             />
+          </div>
+          <div className="capture-guidance">
+            <img src="/design/media/assets/icons/v2/icon-info.png" alt="" />
+            <p>Hover over a Korean word to see its meaning.</p>
           </div>
         </section>
 
@@ -758,14 +785,14 @@ function CapturePage({
                   Region
                 </h2>
                 <span className="region-coords">{regionLabel(region)}</span>
-                <button
+                <PixelButton
                   className="btn btn-sm btn-quiet"
                   disabled={busy}
                   onClick={onSelectArea}
                   type="button"
                 >
                   Select area
-                </button>
+                </PixelButton>
               </div>
               <div className="region-body">
                 <div className="region-fields">
@@ -789,39 +816,39 @@ function CapturePage({
                   ))}
                 </div>
                 <div className="region-actions">
-                  <button
+                  <PixelButton
                     className="btn btn-sm btn-text"
                     disabled={busy || mode !== "region"}
                     onClick={() => void run("set_region", { region: null })}
                     type="button"
                   >
                     Clear
-                  </button>
-                  <button
+                  </PixelButton>
+                  <PixelButton
                     className="btn btn-sm btn-primary"
                     disabled={busy || mode !== "region"}
                     onClick={() => void applyRegion()}
                     type="button"
                   >
                     Apply
-                  </button>
+                  </PixelButton>
                 </div>
               </div>
             </section>
           </div>
         </div>
 
-        <section
+        <details
           aria-labelledby="capture-settings-heading"
-          className="settings-card"
+          className="settings-card capture-settings"
           data-rise="4"
         >
-          <div className="settings-head">
-            <h2 className="panel-title" id="capture-settings-heading">
-              Capture settings
-            </h2>
-            <span className="settings-aside">Applies to both targets.</span>
-          </div>
+          <summary className="capture-settings-summary" id="capture-settings-heading">
+            <span className="settings-summary-title">Capture settings</span>
+            <span className="settings-summary-note">Monitor · hover delay · engine</span>
+            <span aria-hidden="true" className="settings-chevron">⌄</span>
+          </summary>
+          <div className="capture-settings-body">
           <CaptureSetting
             label="Monitor"
             controlId="capture-target"
@@ -946,7 +973,8 @@ function CapturePage({
               {formError}
             </div>
           )}
-        </section>
+          </div>
+        </details>
       </div>
     </section>
   );
@@ -981,16 +1009,18 @@ function TargetOption({
   disabled,
   label,
   detail,
+  art,
   onSelect,
 }: {
   selected: boolean;
   disabled: boolean;
   label: string;
   detail: string;
+  art?: string;
   onSelect: () => void;
 }) {
   return (
-    <button
+    <PixelButton
       aria-checked={selected}
       className="option"
       disabled={disabled}
@@ -999,11 +1029,12 @@ function TargetOption({
       type="button"
     >
       <span aria-hidden="true" className="option-radio" />
+      {art && <img className="target-art" alt="" src={art} />}
       <span className="option-text">
         <span className="option-label">{label}</span>
         <span className="option-desc">{detail}</span>
       </span>
-    </button>
+    </PixelButton>
   );
 }
 
@@ -1039,14 +1070,14 @@ function PermissionsPage({
               Permission grants are checked by Hanly before capture begins.
             </p>
           </div>
-          <button
+          <PixelButton
             className="btn btn-sm"
             disabled={busy || !permissions.supported}
             onClick={() => void run("refresh_permissions")}
             type="button"
           >
             Recheck
-          </button>
+          </PixelButton>
         </div>
         {!permissions.supported ? (
           <div className="panel-rows">
@@ -1134,14 +1165,15 @@ function PermissionCard({
         </div>
       </div>
       {!item.granted && (
-        <button
+        <PixelButton
           className="btn btn-sm btn-primary"
+          data-art-role="mint"
           disabled={busy}
           onClick={onGrant}
           type="button"
         >
           Grant access
-        </button>
+        </PixelButton>
       )}
     </div>
   );
@@ -1253,14 +1285,17 @@ function ShortcutsPage({
                   ))
                 )}
               </div>
-              <button
-                className={`btn btn-sm btn-fixed${!stored && !isRecording ? " btn-primary" : ""}`}
+              <PixelButton
+                aria-label={`${isRecording ? "Cancel" : stored ? "Change" : "Assign"} ${item.name} shortcut`}
+                icon={!isRecording ? "/design/media/assets/icons/v2/icon-edit.png" : undefined}
+                className={`btn btn-sm btn-fixed shortcut-edit${!stored && !isRecording ? " btn-primary" : ""}`}
                 disabled={busy}
                 onClick={() => setRecording(isRecording ? null : item.id)}
                 type="button"
               >
+
                 {isRecording ? "Cancel" : stored ? "Change" : "Assign"}
-              </button>
+              </PixelButton>
             </div>
             {note && (
               <div className="shortcut-note" data-tone={note.tone}>
@@ -1330,6 +1365,15 @@ function AppearancePage({
   const config = state.config;
   const groups = [
     {
+      key: "sidebar_layout",
+      label: "Navigation",
+      note: "Use a compact rail without resizing the window.",
+      options: [
+        ["normal", "Normal"],
+        ["compact", "Compact"],
+      ],
+    },
+    {
       key: "theme",
       label: "Theme",
       note: "System follows the desktop setting.",
@@ -1337,6 +1381,15 @@ function AppearancePage({
         ["system", "System"],
         ["light", "Light"],
         ["dark", "Dark"],
+      ],
+    },
+    {
+      key: "popup_font",
+      label: "Popup typeface",
+      note: "Choose crisp standard text or the original pixel lettering.",
+      options: [
+        ["pixel", "Pixel"],
+        ["normal", "Normal"],
       ],
     },
     {
@@ -1378,8 +1431,8 @@ function AppearancePage({
             </div>
             <div aria-label={group.label} className="segmented" role="group">
               {group.options.map(([value, label]) => (
-                <button
-                  aria-pressed={config[group.key] === value}
+                <PixelButton
+                  aria-pressed={(config[group.key] ?? (group.key === "popup_font" ? "pixel" : "normal")) === value}
                   className="segment"
                   disabled={busy}
                   key={value}
@@ -1387,7 +1440,7 @@ function AppearancePage({
                   type="button"
                 >
                   {label}
-                </button>
+                </PixelButton>
               ))}
             </div>
           </div>
@@ -1476,34 +1529,17 @@ function UpdatesPage({
                 {fraction === null ? "" : `${Math.round(fraction * 100)}%`}
               </span>
             </div>
-            <div
-              aria-label="Update progress"
-              aria-valuemax={100}
-              aria-valuemin={0}
-              aria-valuenow={
-                fraction === null ? undefined : Math.round(fraction * 100)
-              }
-              className="track"
-              data-indeterminate={fraction === null}
-              role="progressbar"
-            >
-              <div
-                className="track-fill"
-                style={{
-                  width: fraction === null ? undefined : `${fraction * 100}%`,
-                }}
-              />
-            </div>
+            <PixelProgress fraction={fraction} />
             {updates.cancellable && (
               <div className="update-actions">
-                <button
+                <PixelButton
                   className="btn btn-sm btn-quiet"
                   disabled={busy}
                   onClick={() => void run("cancel_update")}
                   type="button"
                 >
                   Cancel
-                </button>
+                </PixelButton>
               </div>
             )}
           </div>
@@ -1518,13 +1554,13 @@ function UpdatesPage({
             </div>
           </div>
         ) : updates.awaiting_confirmation ? (
-          <div className="update-block">
+          <div className="update-block update-confirmation">
             <div className="update-strong">
               This installation needs the full download
             </div>
             <div className="update-sub">{updates.message}</div>
             <div className="update-actions">
-              <button
+              <PixelButton
                 className="btn btn-primary"
                 disabled={busy}
                 onClick={() =>
@@ -1533,15 +1569,15 @@ function UpdatesPage({
                 type="button"
               >
                 Download full update
-              </button>
-              <button
+              </PixelButton>
+              <PixelButton
                 className="btn btn-quiet"
                 disabled={busy}
                 onClick={() => void run("cancel_update")}
                 type="button"
               >
                 Not now
-              </button>
+              </PixelButton>
             </div>
           </div>
         ) : application?.installable ? (
@@ -1562,7 +1598,7 @@ function UpdatesPage({
               <p className="update-sub">{application.message}</p>
             )}
             <div className="update-actions">
-              <button
+              <PixelButton
                 className="btn btn-primary"
                 disabled={busy}
                 onClick={() =>
@@ -1573,16 +1609,16 @@ function UpdatesPage({
                 type="button"
               >
                 Install update
-              </button>
+              </PixelButton>
               {application.release_url && (
-                <button
+                <PixelButton
                   className="btn btn-quiet"
                   disabled={busy}
                   onClick={() => void run("open_release_notes")}
                   type="button"
                 >
                   View release notes
-                </button>
+                </PixelButton>
               )}
             </div>
           </div>
@@ -1596,14 +1632,14 @@ function UpdatesPage({
                   "Hanly could not check for updates."}
               </div>
             </div>
-            <button
+            <PixelButton
               className="btn"
               disabled={busy}
               onClick={() => void run("check_for_updates")}
               type="button"
             >
               Try again
-            </button>
+            </PixelButton>
           </div>
         ) : (
           <div className="update-line">
@@ -1617,20 +1653,20 @@ function UpdatesPage({
                   "No update check has been run."}
               </div>
             </div>
-            <button
+            <PixelButton
               className="btn"
               disabled={busy}
               onClick={() => void run("check_for_updates")}
               type="button"
             >
               Check now
-            </button>
+            </PixelButton>
           </div>
         )}
       </section>
 
       <section className="panel" data-rise="2">
-        <button
+        <PixelButton
           aria-controls="resource-collapse"
           aria-expanded={resourcesOpen}
           className="disclosure"
@@ -1642,7 +1678,7 @@ function UpdatesPage({
           </span>
           Dictionary and resources
           <span className="disclosure-summary">{resources.length}</span>
-        </button>
+        </PixelButton>
         <div
           aria-hidden={!resourcesOpen}
           inert={!resourcesOpen}
@@ -1678,7 +1714,7 @@ function UpdatesPage({
         </div>
       </section>
       <section className="panel panel-quiet" data-rise="3">
-        <button
+        <PixelButton
           aria-controls="activity-collapse"
           aria-expanded={activityOpen}
           className="disclosure"
@@ -1690,7 +1726,7 @@ function UpdatesPage({
           </span>
           Update activity
           <span className="disclosure-summary">{activity.length}</span>
-        </button>
+        </PixelButton>
         <div
           aria-hidden={!activityOpen}
           inert={!activityOpen}
@@ -1762,14 +1798,14 @@ function ResourceRow({
         {offered?.available ? "update available" : valueText(resource.status)}
       </span>
       {offered?.available && (
-        <button
+        <PixelButton
           className="btn btn-sm"
           disabled={busy}
           onClick={install}
           type="button"
         >
           Install
-        </button>
+        </PixelButton>
       )}
     </div>
   );
@@ -1875,14 +1911,14 @@ function LogsPage({
               Readiness and provider residency are separate states.
             </p>
           </div>
-          <button
+          <PixelButton
             className="btn btn-sm"
             disabled={busy}
             onClick={() => void run("retry_runtime")}
             type="button"
           >
             Retry runtime
-          </button>
+          </PixelButton>
         </div>
         <div className="readiness-stage">
           <div className="readiness-rows">
@@ -1911,7 +1947,7 @@ function LogsPage({
           <h2 className="panel-title">Recent records</h2>
           <div aria-label="Filter by log level" className="logs-filters">
             {levels.map((level) => (
-              <button
+              <PixelButton
                 aria-pressed={filter === level}
                 className="chip"
                 key={level}
@@ -1919,7 +1955,7 @@ function LogsPage({
                 type="button"
               >
                 {titleCase(level)}
-              </button>
+              </PixelButton>
             ))}
           </div>
           <select
@@ -1959,38 +1995,38 @@ function LogsPage({
               : "Logs are loading."}
           </span>
           <div className="logs-actions">
-            <button
+            <PixelButton
               className="btn btn-sm"
               disabled={busy || !snapshot}
               onClick={() => void refreshLogs()}
               type="button"
             >
               Refresh
-            </button>
-            <button
+            </PixelButton>
+            <PixelButton
               className="btn btn-sm"
               disabled={busy || records.length === 0}
               onClick={() => void copyLogs()}
               type="button"
             >
               Copy visible
-            </button>
-            <button
+            </PixelButton>
+            <PixelButton
               className="btn btn-sm btn-quiet"
               disabled={busy || !snapshot}
               onClick={() => void emptyLogs()}
               type="button"
             >
               Clear
-            </button>
-            <button
+            </PixelButton>
+            <PixelButton
               className="btn btn-sm btn-quiet"
               disabled={busy}
               onClick={() => void saveDiagnostics()}
               type="button"
             >
               Export diagnostics
-            </button>
+            </PixelButton>
           </div>
         </div>
       </section>

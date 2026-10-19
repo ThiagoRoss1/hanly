@@ -445,6 +445,8 @@ def _validate_param_values(
             "theme",
             "popup_enabled",
             "popup_default_size",
+            "popup_font",
+            "sidebar_layout",
             "technical_details",
             "update_checks_enabled",
         }
@@ -462,6 +464,8 @@ def _validate_param_values(
             "capture_mode",
             "theme",
             "popup_default_size",
+            "popup_font",
+            "sidebar_layout",
             "technical_details",
         }
         for key in string_fields.intersection(changes):
@@ -595,6 +599,8 @@ def _validate_settings_changes(changes: dict[str, Any], fail: Any) -> None:
         "theme",
         "popup_enabled",
         "popup_default_size",
+        "popup_font",
+        "sidebar_layout",
         "technical_details",
         "update_checks_enabled",
     }
@@ -610,6 +616,8 @@ def _validate_settings_changes(changes: dict[str, Any], fail: Any) -> None:
         "capture_mode",
         "theme",
         "popup_default_size",
+        "popup_font",
+        "sidebar_layout",
         "technical_details",
     }
     for key in string_fields.intersection(changes):

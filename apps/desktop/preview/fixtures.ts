@@ -29,6 +29,8 @@ export function previewState(): HanlyState {
       lookup_preload: "when_capture_starts",
       ocr_backend: "auto",
       theme: "system",
+      popup_font: "pixel",
+      sidebar_layout: "normal",
       popup_default_size: "compact",
       technical_details: "off",
       capture_mode: "full_monitor",

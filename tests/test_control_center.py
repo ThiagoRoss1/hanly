@@ -870,13 +870,38 @@ def test_popup_preferences_are_persisted_and_applied_live(tmp_path: Path) -> Non
     bridge, manager = _rebinding_bridge(tmp_path, controller)
 
     state = bridge.update_settings(
-        {"popup_default_size": "expanded", "technical_details": "full"}
+        {
+            "popup_default_size": "expanded",
+            "popup_font": "normal",
+            "sidebar_layout": "compact",
+            "technical_details": "full",
+        }
     )
 
     assert manager.config.popup_default_size.value == "expanded"
+    assert manager.config.popup_font.value == "normal"
+    assert manager.config.sidebar_layout.value == "compact"
     assert manager.config.technical_details.value == "full"
     assert controller.applied[-1] == manager.config
     assert state["config"]["popup_default_size"] == "expanded"
+    assert state["config"]["popup_font"] == "normal"
+    assert state["config"]["sidebar_layout"] == "compact"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "choice"),
+    [
+        ("popup_font", "serif", "pixel"),
+        ("sidebar_layout", "wide", "normal"),
+    ],
+)
+def test_appearance_preferences_reject_unsupported_choices(
+    tmp_path: Path, field: str, value: str, choice: str
+) -> None:
+    bridge, _manager = _rebinding_bridge(tmp_path, _Bindings())
+
+    with pytest.raises(ValueError, match=choice):
+        bridge.update_settings({field: value})
 
 
 def test_the_snapshot_reports_the_engine_apart_from_shell_readiness(

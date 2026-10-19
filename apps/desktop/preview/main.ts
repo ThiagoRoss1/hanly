@@ -21,6 +21,20 @@ const sample: PopupSample = requested in popupSamples ? (requested as PopupSampl
 
 let state: HanlyState = previewState();
 state.config.theme = theme;
+state.config.popup_font = query.get("font") === "normal" ? "normal" : "pixel";
+state.config.sidebar_layout = query.get("navigation") === "compact" ? "compact" : "normal";
+const activity = query.get("activity");
+if (activity && ["stopped", "armed", "running", "preparing", "error"].includes(activity)) {
+  state.app.activity = activity;
+  state.app.detail = activity === "error" ? "The lookup engine could not start. Retry to continue." : `Capture is ${activity}.`;
+  state.app.capture_running = activity === "running" || activity === "armed";
+}
+if (query.get("permissions") === "missing") {
+  state.permissions.items = state.permissions.items.map(item => ({ ...item, granted: false, state: "required" }));
+}
+const update = query.get("update");
+if (update === "downloading") state.updates = { ...state.updates, status: "downloading", message: "Downloading Hanly…", cancellable: true, progress: { fraction: 0.42, completed: 4200000, total: 10000000 } };
+if (update === "failed") state.updates = { ...state.updates, status: "failed", message: "The download could not finish. Try again." };
 let popupSequence = 0;
 
 type Params = Record<string, unknown>;
@@ -30,7 +44,7 @@ function showPopup(expanded: boolean, replacement: boolean) {
   void emit("desktop-popup", {
     type: "popup",
     sequence: popupSequence,
-    payload: popupPayload(sample, expanded, replacement, theme),
+    payload: { ...popupPayload(sample, expanded, replacement, theme), popup_font: state.config.popup_font, technical_details: query.get("details") ?? "off" },
   });
 }
 
@@ -72,6 +86,7 @@ function controlCenter(method: string, params: Params): unknown {
 }
 
 function popup(method: string, params: Params): unknown {
+  if (method === "popup_measure") return { sequence: popupSequence, room: Math.min(560, window.innerHeight) };
   if (method === "popup_geometry") {
     // The measured card is what the native host would present.
     const size = `${String(params.width)}×${String(params.height)}`;

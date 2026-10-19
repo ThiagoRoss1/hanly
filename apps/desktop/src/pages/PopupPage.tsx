@@ -39,6 +39,25 @@ function numberValue(value: unknown, fallback: number): number {
     : fallback;
 }
 
+function maximumPopupWidth(): number {
+  const available = window.screen.availWidth;
+  return available > 0 ? Math.max(280, available - 16) : EXPANDED_POPUP_WIDTH;
+}
+
+type PopupFont = "pixel" | "normal";
+
+function popupFont(payload: PopupPayload | undefined): PopupFont {
+  if (!payload) return "pixel";
+
+  const withFont = payload as PopupPayload & {
+    popup_font?: unknown;
+    config?: PopupPayload["config"] & { popup_font?: unknown };
+  };
+  const configured = withFont.config?.popup_font ?? withFont.popup_font;
+
+  return configured === "normal" ? "normal" : "pixel";
+}
+
 function entryGloss(entry: PopupEntry): string {
   const sense = entry.senses?.find((item) => item.gloss || item.definition);
   return text(sense?.gloss || sense?.definition || entry.definitions?.[0]);
@@ -46,6 +65,30 @@ function entryGloss(entry: PopupEntry): string {
 
 /** The card's own ceiling, as `.popup-frame` declares it. */
 const POPUP_MAX_HEIGHT = 560;
+const COMPACT_POPUP_WIDTH = 380;
+const EXPANDED_POPUP_WIDTH = 460;
+
+function wordTypes(raw?: string | null): [string, string] {
+  const pairs: Array<[string, string]> = [
+    ["명사", "Noun"],
+    ["대명사", "Pronoun"],
+    ["동사", "Verb"],
+    ["형용사", "Adjective"],
+    ["부사", "Adverb"],
+    ["관형사", "Determiner"],
+    ["수사", "Numeral"],
+    ["조사", "Particle"],
+    ["감탄사", "Interjection"],
+    ["의존 명사", "Bound noun"],
+  ];
+  const normalized = (raw ?? "").replaceAll(" ", "").toLowerCase();
+
+  return (
+    pairs.find((pair) =>
+      pair.some((name) => name.replaceAll(" ", "").toLowerCase() === normalized),
+    ) ?? [raw ?? "", ""]
+  );
+}
 
 export function PopupPage() {
   const [current, setCurrent] = useState<Extract<
@@ -160,20 +203,37 @@ export function PopupPage() {
   const detailLevel =
     payload?.technical_details ?? payload?.config?.technical_details ?? "off";
   const theme = payload?.theme ?? payload?.config?.theme ?? "system";
+  const font = popupFont(payload);
   const width = Math.min(
-    460,
-    Math.max(300, numberValue(payload?.size?.width, 340)),
+    EXPANDED_POPUP_WIDTH,
+    maximumPopupWidth(),
+    Math.max(
+      expanded ? EXPANDED_POPUP_WIDTH : COMPACT_POPUP_WIDTH,
+      numberValue(
+        payload?.size?.width,
+        expanded ? EXPANDED_POPUP_WIDTH : COMPACT_POPUP_WIDTH,
+      ),
+    ),
   );
   const success = text(content?.status).toLowerCase() === "success";
+  const hasAnalysis = Boolean(
+    content?.analysis?.length ||
+      content?.components?.length ||
+      content?.construction ||
+      content?.source ||
+      (content?.surface && content.lemma && content.surface !== content.lemma),
+  );
   const canExpand =
     success &&
     (expanded ||
       senses.length > 2 ||
       otherEntries.length > 0 ||
-      (content?.analysis?.length ?? 0) > 0);
+      hasAnalysis ||
+      Boolean(entry?.vocabulary_level));
 
   useLayoutEffect(() => {
     document.documentElement.dataset.popup = "true";
+    document.documentElement.dataset.popupFont = font;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.dataset.mode =
@@ -182,7 +242,7 @@ export function PopupPage() {
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [theme]);
+  }, [font, theme]);
 
   useLayoutEffect(() => {
     if (sequence === undefined || !content) return;
@@ -200,6 +260,29 @@ export function PopupPage() {
     };
   }, [content, expanded, reportGeometry, room, sequence]);
 
+  useLayoutEffect(() => {
+    if (sequence === undefined || !content) return;
+    let active = true;
+    const fontsReady = document.fonts?.ready;
+
+    void fontsReady?.then(() => {
+      if (
+        !active ||
+        currentSequence.current !== sequence ||
+        roomRef.current?.sequence !== sequence
+      ) {
+        return;
+      }
+
+      geometrySent.current = "";
+      reportGeometry(sequence);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [content, font, reportGeometry, sequence]);
+
   async function closePopup() {
     if (sequence === undefined) return;
     await desktopRequest("popup_close", { sequence }).catch((reason: unknown) =>
@@ -212,7 +295,8 @@ export function PopupPage() {
     const next = !expanded;
     await desktopRequest("popup_expand", { sequence, expanded: next }).catch(
       (reason: unknown) => {
-        setBridgeError(normalizeDesktopError(reason).message);
+        if (currentSequence.current === sequence)
+          setBridgeError(normalizeDesktopError(reason).message);
       },
     );
   }
@@ -233,6 +317,8 @@ export function PopupPage() {
     <main
       aria-label="Hanly dictionary result"
       className="popup-frame"
+      data-expanded={expanded}
+      data-success={success}
       ref={cardRef}
       style={{
         width: `${width}px`,
@@ -244,41 +330,65 @@ export function PopupPage() {
     >
       <div className="popup-scroll">
         {success && entry ? (
-          <SuccessContent content={content} entry={entry} expanded={expanded} />
+          <>
+            <SuccessContent
+              content={content}
+              entry={entry}
+              expanded={expanded}
+            />
+            {detailLevel === "full" && technical.length > 0 && (
+              <section className="popup-details">
+                <h2 className="popup-section">Dictionary details</h2>
+                <p className="popup-muted">{technical.join(" · ")}</p>
+              </section>
+            )}
+          </>
         ) : (
           <NonSuccessContent content={content} />
         )}
       </div>
-      {detailLevel === "full" && technical.length > 0 && (
-        <section className="popup-details">
-          <div className="popup-section">Details</div>
-          <p className="popup-muted">{technical.join(" · ")}</p>
-        </section>
-      )}
-      <footer className="popup-footer">
-        {detailLevel === "basic" && technical.length > 0 && (
-          <span className="popup-muted popup-footer-detail">
-            {technical.join(" · ")}
+      {(canExpand || (detailLevel === "basic" && technical.length > 0)) && (
+        <footer className="popup-footer">
+          {detailLevel === "basic" && technical.length > 0 && (
+            <span className="popup-muted popup-footer-detail">
+              {technical.join(" · ")}
+            </span>
+          )}
+          <span className="popup-more">
+            {!expanded && senses.length > 2
+              ? "+" + String(senses.length - 2) + " more meanings"
+              : ""}
           </span>
-        )}
-        <span className="popup-footer-spacer" />
-        {canExpand && (
-          <button
-            className="popup-button popup-size"
-            onClick={() => void toggleExpanded()}
-            type="button"
-          >
-            {expanded ? "Collapse" : "Expand"}
-          </button>
-        )}
-        <button
-          className="popup-button"
-          onClick={() => void closePopup()}
-          type="button"
-        >
-          Close
-        </button>
-      </footer>
+          <span className="popup-footer-spacer" />
+          {canExpand && (
+            <button
+              aria-expanded={expanded}
+              className="popup-button popup-details-button"
+              onClick={() => void toggleExpanded()}
+              type="button"
+            >
+              <span>{expanded ? "Less detail" : "Details"}</span>
+              <img
+                alt=""
+                className="popup-details-icon"
+                src={
+                  expanded
+                    ? "/design/media/assets/icons/custom/icon-details-minus.svg"
+                    : "/design/media/assets/icons/custom/icon-details-plus.svg"
+                }
+              />
+            </button>
+          )}
+        </footer>
+      )}
+      <button
+        aria-label="Close dictionary"
+        className="popup-close"
+        onClick={() => void closePopup()}
+        type="button"
+      >
+        <img alt="" src="/design/media/assets/panels/controls/close.png" />
+      </button>
     </main>
   );
 }
@@ -296,43 +406,43 @@ function SuccessContent({
   const visibleSenses = expanded ? senses : senses.slice(0, 2);
   const primarySense = visibleSenses[0];
   const analysis = content.analysis ?? [];
+  const source = content.source?.toUpperCase();
   const changed = Boolean(
     content.surface && content.lemma && content.surface !== content.lemma,
   );
-  const metadata = [content.source?.toUpperCase(), entry.vocabulary_level]
-    .filter(Boolean)
-    .join(" · ");
+  const [koreanType, englishType] = wordTypes(entry.part_of_speech);
+
   return (
     <div className="popup-content">
       <header className="popup-entry-head">
-        <h1 className="popup-title">{entry.headword}</h1>
+        <h1 className="popup-title" lang="ko">{entry.headword}</h1>
         {entry.hanja && <span className="popup-hanja">{entry.hanja}</span>}
       </header>
-      {(entry.part_of_speech || metadata) && (
-        <div className="popup-meta-row">
-          {entry.part_of_speech && (
-            <span className="popup-chip">{entry.part_of_speech}</span>
-          )}
-          {metadata && <span className="popup-meta">{metadata}</span>}
+      {koreanType && (
+        <div className="popup-type-row">
+          <span className="popup-chip" lang="ko">{koreanType}</span>
+          {englishType && <span className="popup-chip" lang="en">{englishType}</span>}
         </div>
       )}
       {primarySense && (
         <div className="popup-senses">
-          <PrimarySense sense={primarySense} />
+          <PrimarySense sense={primarySense} numbered={senses.length > 1} />
           {visibleSenses.slice(1).map((sense, index) => (
             <div
               className="popup-numbered-sense"
               key={`${sense.definition ?? sense.gloss ?? "sense"}-${index}`}
             >
-              <span className="popup-number">{index + 2}</span>
-              <div>
-                {sense.gloss && (
-                  <div className="popup-secondary">{sense.gloss}</div>
-                )}
-                {sense.definition && (
-                  <div className="popup-muted">{sense.definition}</div>
-                )}
+              <div className="popup-meaning-line">
+                <span className="popup-number">{index + 2}.</span>
+                <div className="popup-secondary-gloss">
+                  {sense.gloss || sense.definition}
+                </div>
               </div>
+              {sense.gloss && sense.definition && (
+                <p className="popup-muted popup-sense-description">
+                  {sense.definition}
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -340,14 +450,17 @@ function SuccessContent({
       {visibleSenses.length === 0 && entry.definitions?.[0] && (
         <div className="popup-primary">{entry.definitions[0]}</div>
       )}
-      {(analysis.length > 0 || changed) && (
-        <PopupSection title={expanded ? "Word analysis" : "Read as"}>
+      {expanded && (analysis.length > 0 || changed || source) && (
+        <PopupSection title="Read as">
+          <div className="popup-read-as">
           {changed && (
             <p className="popup-part">
               {content.surface} <span aria-hidden="true">→</span>{" "}
               {content.lemma}
             </p>
           )}
+          {source && <span className="popup-analysis-source">{source}</span>}
+          </div>
           {analysis.length > 0 && (
             <p className="popup-secondary">
               {analysis.map((piece) => piece.text).join("  +  ")}
@@ -363,7 +476,7 @@ function SuccessContent({
           )}
         </PopupSection>
       )}
-      {(content.components ?? []).length > 0 && (
+      {expanded && (content.components ?? []).length > 0 && (
         <PopupSection title="How this form is built">
           {(content.components ?? []).map((component, index) => (
             <div
@@ -393,7 +506,7 @@ function SuccessContent({
           ))}
         </PopupSection>
       )}
-      {content.construction && (
+      {expanded && content.construction && (
         <PopupSection title="Grammar pattern">
           <div className="popup-component">
             <span className="popup-part">{content.construction.headword}</span>
@@ -416,17 +529,34 @@ function SuccessContent({
           ))}
         </PopupSection>
       )}
+      {expanded && entry.vocabulary_level && (
+        <p className="popup-entry-metadata">
+          Vocabulary level: {entry.vocabulary_level}
+        </p>
+      )}
     </div>
   );
 }
 
-function PrimarySense({ sense }: { sense: PopupSense }) {
+function PrimarySense({
+  sense,
+  numbered,
+}: {
+  sense: PopupSense;
+  numbered: boolean;
+}) {
   const lead = sense.gloss || sense.definition || "";
+
   return (
-    <div className="popup-primary-sense">
-      <div className="popup-primary">{lead}</div>
+    <div className="popup-primary-sense" data-numbered={numbered}>
+      <div className="popup-meaning-line">
+        {numbered && <span className="popup-number popup-number-primary">1.</span>}
+        <div className="popup-primary">{lead}</div>
+      </div>
       {sense.gloss && sense.definition && (
-        <div className="popup-primary-note">{sense.definition}</div>
+        <p className="popup-primary-note popup-sense-description">
+          {sense.definition}
+        </p>
       )}
     </div>
   );
