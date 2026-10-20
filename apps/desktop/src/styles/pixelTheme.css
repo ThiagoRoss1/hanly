@@ -53,15 +53,15 @@
     url("/design/media/assets/frames/frame-default/nine-slice/bottom.png"),
     url("/design/media/assets/frames/frame-default/nine-slice/bottom-right.png");
   --skin-cloud-slices:
-    url("/design/media/assets/panels/panel-cloud/nine-slice/top-left.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/top.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/top-right.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/left.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/center.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/right.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/bottom-left.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/bottom.png"),
-    url("/design/media/assets/panels/panel-cloud/nine-slice/bottom-right.png");
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/top-left.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/top.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/top-right.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/left.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/center.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/right.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/bottom-left.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/bottom.svg"),
+    url("/design/media/assets/panels/panel-cloud-clean-v2/nine-slice/bottom-right.svg");
 
   position: relative;
   isolation: isolate;
@@ -163,9 +163,9 @@ html[data-mode="dark"] .app.skin-village::after {
 
 .app.skin-village .brand-mark {
   display: block;
-  flex: 0 0 48px;
-  width: 48px;
-  height: 48px;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
   background: transparent;
   border-radius: 0;
@@ -216,6 +216,8 @@ html[data-mode="dark"] .app.skin-village .brand-sub { color: #e0d6ee; }
   object-fit: contain;
   image-rendering: pixelated;
 }
+/* The camera body sits below the leaves; center its visual mass, not its canvas. */
+.app.skin-village .nav-dot > img[src$="/capture-plant.png"] { transform: translateY(-2px); }
 .app.skin-village .nav-label {
   display: block;
   width: auto;

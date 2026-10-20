@@ -1,0 +1,20 @@
+{
+  "reference": "Hanly Design Lab V2.4.1 panel-cloud-v2.svg",
+  "method": "Integer-grid redraw; mirrored contours; three one-pixel rim bands; flat interior; no cast shadow",
+  "palette": [
+    "#493263",
+    "#c1a7e9",
+    "#f0e6ff",
+    "#fffaf4"
+  ],
+  "columns": [
+    31,
+    62,
+    31
+  ],
+  "rows": [
+    24,
+    48,
+    24
+  ]
+}

@@ -1,97 +1,22 @@
 {
-  "source": "panel-popup-v1.svg",
-  "sha256": "caed7205453cf058d94725530c9a23b652545ab171d0b36d96314e17d35d2828",
-  "changes": [
-    "Uniform content paper and title fill",
-    "Removed offset shadow and raster fringe"
+  "reference": "Hanly Design Lab V2.4.1 panel-popup-v1.svg",
+  "method": "Integer-grid redraw; mirrored contours; three one-pixel rim bands; flat interior; no cast shadow",
+  "palette": [
+    "#493263",
+    "#c1a7e9",
+    "#f0e6ff",
+    "#b5a9fb",
+    "#9474cc",
+    "#fffaf4"
   ],
-  "canvas": [
-    1516,
-    608
+  "columns": [
+    16,
+    32,
+    16
   ],
-  "fills": [
-    {
-      "box": [
-        32,
-        44,
-        1454,
-        156
-      ],
-      "color": "#b5a9fb"
-    },
-    {
-      "box": [
-        32,
-        182,
-        1454,
-        551
-      ],
-      "color": "#fffaf4"
-    }
-  ],
-  "parts": [
-    [
-      "top-left",
-      0,
-      0,
-      106,
-      182
-    ],
-    [
-      "top",
-      106,
-      0,
-      1304,
-      182
-    ],
-    [
-      "top-right",
-      1410,
-      0,
-      106,
-      182
-    ],
-    [
-      "left",
-      0,
-      182,
-      106,
-      353
-    ],
-    [
-      "center",
-      106,
-      182,
-      1304,
-      353
-    ],
-    [
-      "right",
-      1410,
-      182,
-      106,
-      353
-    ],
-    [
-      "bottom-left",
-      0,
-      535,
-      106,
-      73
-    ],
-    [
-      "bottom",
-      106,
-      535,
-      1304,
-      73
-    ],
-    [
-      "bottom-right",
-      1410,
-      535,
-      106,
-      73
-    ]
+  "rows": [
+    34,
+    30,
+    16
   ]
 }

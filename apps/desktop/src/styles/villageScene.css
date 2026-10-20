@@ -22,9 +22,12 @@
 .mascot-stage {
   position: relative;
   flex: none;
-  width: 82px;
-  height: 106px;
-  margin-inline: auto;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  width: 80px;
+  height: 72px;
+  margin: 0;
   overflow: visible;
   pointer-events: none;
 }
@@ -34,8 +37,8 @@
   left: 50%;
   bottom: 0;
   display: block;
-  width: 128px;
-  height: 128px;
+  width: 80px;
+  height: 80px;
   max-width: none;
   transform: translateX(-50%);
   image-rendering: pixelated;
@@ -44,10 +47,10 @@
 .mascot-stage .mascot-balloon {
   position: absolute;
   top: 0;
-  right: 1px;
+  right: 0;
   display: block;
-  width: 31px;
-  height: 25px;
+  width: 24px;
+  height: 20px;
   object-fit: contain;
   image-rendering: pixelated;
   pointer-events: none;
@@ -56,27 +59,27 @@
 
 /* Match the gallery's compact plaque while keeping every pose inside its frame. */
 .app.skin-village .sidebar.is-compact .mascot-stage .sprite-canvas {
-  width: 58px;
-  height: 58px;
+  width: 48px;
+  height: 48px;
   bottom: 0;
 }
 
 .app.skin-village .sidebar.is-compact .mascot-stage[data-pose="sleep"] .sprite-canvas {
   width: 46px;
   height: 46px;
-  bottom: -5px;
+  bottom: 0;
 }
 
 @media (max-width: 760px) {
   .app.skin-village .sidebar .mascot-stage .sprite-canvas {
-    width: 58px;
-    height: 58px;
+    width: 48px;
+    height: 48px;
     bottom: 0;
   }
 
   .app.skin-village .sidebar .mascot-stage[data-pose="sleep"] .sprite-canvas {
     width: 46px;
     height: 46px;
-    bottom: -5px;
+    bottom: 0;
   }
 }

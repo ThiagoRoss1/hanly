@@ -20,7 +20,7 @@ export function Brand() {
 export function BrandMark() {
   return (
     <span
-      className="brand-mark relative isolate grid h-12 w-12 shrink-0 place-items-center"
+      className="brand-mark relative block h-16 w-16 shrink-0"
     >
       <img
         aria-hidden="true"
@@ -28,17 +28,6 @@ export function BrandMark() {
         className="absolute inset-0 h-full w-full object-contain [image-rendering:pixelated]"
         src="/design/media/assets/icons/custom/hanly-app.png"
       />
-      <span
-        lang="ko"
-        className="relative z-[1] grid h-[22px] w-[22px] place-items-center overflow-visible text-[28px] leading-[28px]"
-        style={{
-          backgroundColor: "#fffaf4",
-          color: "#6f59a7",
-          fontFamily: "system-ui, sans-serif",
-        }}
-      >
-        한
-      </span>
     </span>
   );
 }
@@ -63,9 +52,9 @@ export function LiveCard({
   const engineTone =
     engine === "ready" ? "ok" : engine === "error" ? "bad" : "";
   return (
-    <div className="live-card relative isolate grid min-h-[184px] grid-cols-[74px_minmax(0,1fr)] grid-rows-[18px_minmax(68px,auto)_52px] content-center gap-x-[5px] gap-y-0 px-4 pt-[17px] pb-4" title={`${activity} · Runtime ${runtime} · Engine ${engine}`} aria-label={`${activity} · Runtime ${runtime} · Engine ${engine}`}>
+    <div className="live-card relative isolate grid min-h-[164px] grid-cols-[80px_minmax(0,1fr)] grid-rows-[72px_auto_auto] content-center gap-x-2 gap-y-2 p-5" title={[activity, `Runtime ${runtime}`, `Engine ${engine}`, detail].filter(Boolean).join(" · ")} aria-label={`${activity} · Runtime ${runtime} · Engine ${engine}`}>
       <Mascot activity={activity} />
-      <div className="live-head col-start-2 row-start-1 flex min-w-0 items-center gap-[7px]">
+      <div className="live-head col-start-2 row-start-1 flex min-w-0 items-center self-center gap-[7px]">
         <span
           aria-hidden="true"
           className="dot h-2 w-2 shrink-0"
@@ -73,8 +62,10 @@ export function LiveCard({
         />
         <span className="live-label text-xs leading-[18px]">{titleCase(activity, "Preparing")}</span>
       </div>
-      <div className="live-detail col-start-2 row-start-2 min-w-0 self-start text-[11px] leading-4 [overflow-wrap:anywhere]">{detail}</div>
-      <div aria-live="polite" className="live-facts col-span-full row-start-3 grid min-w-0 grid-cols-3 gap-1 pt-2 text-[10px]" role="status">
+      {activity !== "stopped" && detail && (
+        <div className="live-detail col-span-full row-start-2 min-w-0 text-[10px] leading-[14px] [overflow-wrap:anywhere]">{detail}</div>
+      )}
+      <div aria-live="polite" className="live-facts col-span-full row-start-3 grid min-w-0 grid-cols-3 gap-1 text-[10px]" role="status">
         <div className="live-fact flex min-w-0 flex-col gap-0.5" data-tone={runtimeTone}>
           <span className="text-[10px] leading-[14px] text-[var(--skin-ink-muted)]">runtime</span>
           <span className="truncate text-[10px] leading-[14px] font-bold text-[var(--skin-ink)]">{valueText(runtime)}</span>

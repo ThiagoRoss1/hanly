@@ -9,6 +9,7 @@
   margin: 44px 0 16px;
   padding: 0;
 }
+.app.skin-village .sidebar.is-compact .brand-mark { flex-basis: 32px; width: 32px; height: 32px; }
 .app.skin-village .sidebar.is-compact .brand-words,
 .app.skin-village .sidebar.is-compact .nav-label,
 .app.skin-village .sidebar.is-compact .live-detail,
@@ -90,7 +91,7 @@
   .app.skin-village .nav { gap: 4px; }
   .app.skin-village .nav-item.sprite-button { min-height: 46px; height: 46px; }
   .app.skin-village .sidebar-foot { gap: 7px; padding-top: 7px; }
-  .app.skin-village .live-card { min-height: 174px; padding-top: 14px; padding-bottom: 14px; }
+  .app.skin-village .live-card { min-height: 164px; }
   .app.skin-village .sidebar.is-compact { padding: 14px 14px; }
   .app.skin-village .sidebar.is-compact .brand { margin-top: 28px; margin-bottom: 12px; }
   .app.skin-village .sidebar.is-compact .nav-item.sprite-button { min-height: 48px; height: 48px; }
@@ -104,8 +105,6 @@
   .app.skin-village .page-head > div:first-child { min-width: 100%; }
   .app.skin-village .head-actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; gap: 10px; }
   .app.skin-village .page-body { padding-inline: 24px; }
-  .app.skin-village .live-card { grid-template-columns: 74px minmax(0, 1fr); padding-inline: 16px; }
-  .app.skin-village .mascot-stage { width: 74px; }
   .app.skin-village .settings-row { grid-template-columns: 114px minmax(150px, 1fr) minmax(0, 1fr); gap: 8px 12px; }
   .app.skin-village .shortcut-row { flex-wrap: wrap; }
   .app.skin-village .shortcut-text { min-width: 160px; }
@@ -124,6 +123,7 @@
     padding: 0;
   }
   .app.skin-village .sidebar .brand-words { display: none; }
+  .app.skin-village .sidebar .brand-mark { flex-basis: 32px; width: 32px; height: 32px; }
   .app.skin-village .sidebar .nav-label { display: none; }
   .app.skin-village .sidebar .nav-item.sprite-button,
   .app.skin-village .sidebar.is-compact .nav-item.sprite-button { width: 60px; min-width: 60px; height: 52px; min-height: 52px; }

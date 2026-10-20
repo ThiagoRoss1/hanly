@@ -8,11 +8,11 @@ export function NativeChrome({ children }: { children: ReactNode }) {
   if (!macOverlay) return children;
 
   return (
-    <div className="native-mac-chrome relative h-full [&>.app]:pt-8!">
+    <div className="native-mac-chrome relative flex h-full flex-col bg-[#f6f0f8] pt-10 [html[data-mode=dark]_&]:bg-[#211d2b] [&>.app]:h-auto! [&>.app]:min-h-0 [&>.app]:flex-1">
       <div
         aria-hidden="true"
         data-tauri-drag-region
-        className="absolute inset-x-2 top-1 z-40 h-7 select-none"
+        className="absolute top-0 right-0 left-24 z-40 h-10 select-none"
       />
       {children}
     </div>
