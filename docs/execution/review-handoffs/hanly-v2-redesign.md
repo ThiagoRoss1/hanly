@@ -13,6 +13,7 @@
 - Sun/moon use the gallery's 1.5-second entrance/exit and rotation. Each day/night layer blends on an isolated transparent canvas before composition in scene order, preventing night textures from adding into the house/tree beneath them. Original assets and uniform village scaling remain in use.
 - Compact mascot poses fit inside the plaque, including the automatic <=760px fallback. The cloud and plaque retain their transparent outer edges with an inset paper fill only where the frame needs one.
 - Removed legacy logo/slider backgrounds, rectangular pseudo-element fills, selected-row shadows and obsolete interface styles. Panel rows have side and bottom insets; runtime Permissions is fully inside the frame. Titles, capture icons and disclosure copy are centered. Content scrolls and resets to the top when changing sections.
+- `panel-popup-clean-v2` replaces the stained panel slices with nine editable SVG derivatives of the supplied native vector. Content and title fills are uniform; the original pixel outline/bevel is retained, with offset shadow and exterior fringe removed. Original files remain untouched. `tools/design/build_clean_panel.mjs` regenerates the variant; its source hash and slice geometry are recorded beside the assets.
 - Preference saves track pending state per setting/command. Appearance choices retain artwork while saving and guard duplicate clicks; unrelated controls and the scene stay mounted.
 - The supplied book artwork now includes visible, readable `한` text. The preceding integration replaced the old large glyph with a small decorative raster; accessibility labels alone would not fix OCR legibility. No special-case lookup or fake product result was introduced.
 - Popup title is 38px/46px and primary translation 21px/28px (previously 40px/48px and 22px/29px). Details, sequence currency, native measurement and expansion contracts are preserved.
@@ -49,6 +50,8 @@ The approved delivery, editable preview and gallery were consulted. This correct
 All six native Control Center sections were inspected on macOS, along with saved Compact/Dark/Normal preferences, frame insets, the slider and native titlebar controls. Browser validation at 720x560 reported document width 720 with an 88px compact fallback rail. The scene transition was inspected in the app/browser; no exhaustive frame-by-frame acceptance is claimed.
 
 An ignored, opt-in Lab fixture supplied authored dictionary results to the real debug service solely for popup presentation. The native popup measured **380x232**, expanded through Details to **460x362**, and collapsed back to 380x232. Both measured states retained `(616,246)`, with `presented=true`. Close worked. This is presentation evidence, not acquisition evidence.
+
+The focused panel-asset follow-up passed TypeScript, 52 React tests, 36 contrast tests and frontend/debug app builds. Both themes were inspected in the browser and the final native app; evidence is under `artifacts/lab/runs/20261019-panel-cleanup/`.
 
 Current correction evidence: `artifacts/lab/runs/20261019-v2-corrections/` (summary, provenance, native screenshots, measurements and check logs). Source was dirty on `15b87a8`; the final executable hash is recorded. Earlier integration evidence remains under `20261019-hanly-v2/`.
 

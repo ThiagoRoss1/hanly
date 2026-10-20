@@ -33,15 +33,15 @@
   --slider-track: url("/design/media/assets/sliders/chunky/track.png");
   --slider-thumb: url("/design/media/assets/sliders/chunky/thumb.png");
   --skin-panel-slices:
-    url("/design/media/assets/panels/panel-popup/nine-slice/top-left.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/top.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/top-right.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/left.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/center.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/right.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/bottom-left.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/bottom.png"),
-    url("/design/media/assets/panels/panel-popup/nine-slice/bottom-right.png");
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/top-left.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/top.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/top-right.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/left.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/center.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/right.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/bottom-left.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/bottom.svg"),
+    url("/design/media/assets/panels/panel-popup-clean-v2/nine-slice/bottom-right.svg");
   --skin-window-slices:
     url("/design/media/assets/frames/frame-default/nine-slice/top-left.png"),
     url("/design/media/assets/frames/frame-default/nine-slice/top.png"),
