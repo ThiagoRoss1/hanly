@@ -79,11 +79,18 @@ The focused pixel styles own palette variables, nine-slice artwork, native
 range parts and responsive artwork fitting; the legacy interface cascade is
 removed. Saving one preference keeps unrelated controls and the scene mounted.
 
-On macOS the Control Center uses an overlay titlebar inside the pixel frame,
-retaining the native close, minimize and fullscreen controls. Its blank top
-strip drags only the Control Center window. Windows and Linux retain their
+On macOS the Control Center reserves a 40px overlay titlebar above the pixel
+frame, retaining the native close, minimize and fullscreen controls with clear
+space around them. Its blank top strip after the controls drags only the
+Control Center window. Windows and Linux retain their
 native titlebars. Popup focus, native placement and measurement are independent
 of this Control Center decoration.
+
+Panels, the runtime cloud and the compact plaque use the editable clean SVG
+variants under `public/design/media/assets/panels/`. Their shared generator is
+`tools/design/build_clean_frames.mjs` at the repository root. Source changes
+require rebuilding the embedded frontend/native executable and restarting the
+app; an already-open debug app keeps displaying its previous frontend build.
 
 The development preview additionally accepts `font=normal`,
 `navigation=compact`, `activity=stopped|armed|running|preparing|error`,

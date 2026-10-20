@@ -16,7 +16,7 @@ slice is 16px tall; both corner contours have identical eight-pixel steps.
 There are no embedded raster images, fractional coordinates, filters or external
 SVG dependencies. The application applies its existing night palette filter.
 
-To regenerate both clean frames from their editable integer-grid definitions:
+To regenerate all clean frames from their editable integer-grid definitions:
 
 ```sh
 node tools/design/build_clean_frames.mjs

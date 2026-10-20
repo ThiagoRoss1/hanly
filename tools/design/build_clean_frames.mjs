@@ -65,18 +65,20 @@ async function writeSlices(name, pixels, columns, rows, reference) {
   }, null, 2) + "\n");
 }
 
-const panel = borderLayers(64, 80, [
-  [8, 0], [56, 0], [56, 2], [60, 2], [60, 4], [62, 4], [62, 8], [64, 8],
-  [64, 72], [62, 72], [62, 76], [60, 76], [60, 78], [56, 78], [56, 80],
-  [8, 80], [8, 78], [4, 78], [4, 76], [2, 76], [2, 72], [0, 72],
-  [0, 8], [2, 8], [2, 4], [4, 4], [4, 2], [8, 2],
-]);
+function steppedBox(width, height) {
+  const quarter = [[0, 8], [2, 8], [2, 4], [4, 4], [4, 2], [8, 2], [8, 0]];
+  const top = [...quarter, ...quarter.slice().reverse().map(([x, y]) => [width - x, y])];
+  return [...top, ...top.slice().reverse().map(([x, y]) => [x, height - y])];
+}
+
+const panel = borderLayers(64, 80, steppedBox(64, 80));
 for (let y = 0; y < 34; y++) {
   for (let x = 0; x < 64; x++) {
     if (panel[y][x] === colors[3]) panel[y][x] = y < 32 ? "#b5a9fb" : "#9474cc";
   }
 }
 await writeSlices("panel-popup-clean-v2", panel, [16, 32, 16], [34, 30, 16], "Hanly Design Lab V2.4.1 panel-popup-v1.svg");
+await writeSlices("panel-plaque-clean-v2", borderLayers(64, 64, steppedBox(64, 64)), [16, 32, 16], [16, 32, 16], "Clean panel v2 stepped outline, without a title strip");
 
 const cloudQuarter = [
   [0, 24], [2, 24], [2, 18], [4, 18], [4, 14], [8, 14], [8, 10],

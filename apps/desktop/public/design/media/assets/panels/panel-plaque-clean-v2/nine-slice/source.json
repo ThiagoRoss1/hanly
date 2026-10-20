@@ -1,0 +1,20 @@
+{
+  "reference": "Clean panel v2 stepped outline, without a title strip",
+  "method": "Integer-grid redraw; mirrored contours; three one-pixel rim bands; flat interior; no cast shadow",
+  "palette": [
+    "#493263",
+    "#c1a7e9",
+    "#f0e6ff",
+    "#fffaf4"
+  ],
+  "columns": [
+    16,
+    32,
+    16
+  ],
+  "rows": [
+    16,
+    32,
+    16
+  ]
+}

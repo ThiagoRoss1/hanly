@@ -140,7 +140,7 @@ export function LogsPage({
             {levels.map((level) => (
               <PixelButton
                 aria-pressed={filter === level}
-                className="chip"
+                className="btn chip"
                 key={level}
                 onClick={() => setFilter(level)}
                 type="button"

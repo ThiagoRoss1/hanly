@@ -3,7 +3,7 @@
 ## Bundle
 
 - Human-authorized workstream: `design/hanlyV2`; no new Linear issue or lifecycle transition was inferred from completed V1 work.
-- Date: 2026-10-19. Phase A implementation is complete; Phase B deep review has not started.
+- Updated: 2026-10-20. Phase A implementation is complete; Phase B deep review has not started.
 - Original baseline: `43ba8d6`, identical to local `main` and the migration branch's tree. Correction baseline: `15b87a8`.
 - GPT implementation with bounded Luna xhigh workers for scene rendering, presentation components and preferences. Commit authorized by the human; no push or merge.
 
@@ -11,7 +11,7 @@
 
 - Six real Control Center sections use the supplied frames, button states, icons, slider, progress artwork and cursor. Normal/Compact navigation and Pixel/Normal popup font persist through the existing validated Python settings bridge.
 - Sun/moon use the gallery's 1.5-second entrance/exit and rotation. Each day/night layer blends on an isolated transparent canvas before composition in scene order, preventing night textures from adding into the house/tree beneath them. Original assets and uniform village scaling remain in use.
-- Compact mascot poses fit inside the plaque, including the automatic <=760px fallback. The cloud and plaque retain their transparent outer edges with an inset paper fill only where the frame needs one.
+- Compact mascot poses fit inside the plaque, including the automatic <=760px fallback. The cloud and clean compact plaque carry their own interior fills and transparent outer edges; the older rectangular paper overlay is removed.
 - Removed legacy logo/slider backgrounds, rectangular pseudo-element fills, selected-row shadows and obsolete interface styles. Panel rows have side and bottom insets; runtime Permissions is fully inside the frame. Titles, capture icons and disclosure copy are centered. Content scrolls and resets to the top when changing sections.
 - `panel-popup-clean-v2` and `panel-cloud-clean-v2` now use integer-grid SVG redraws of the supplied stepped/scalloped artwork. Contours are mirrored horizontally and vertically, with three uniform one-pixel rim bands, flat interiors and no cast shadow or texture noise. The panel's bottom corners now use the same 16px geometry as the top. `tools/design/build_clean_frames.mjs` regenerates both variants; references, palettes and slice geometry are recorded beside the assets. Original files remain untouched.
 - Preference saves track pending state per setting/command. Appearance choices retain artwork while saving and guard duplicate clicks; unrelated controls and the scene stay mounted.
@@ -21,10 +21,10 @@
 
 ## Latest artwork follow-up — 2026-10-20
 
-Baseline `10ef95b`. The human explicitly deferred automated tests and manual app
-testing until the next step. The checks and native screenshots below describe
-earlier revisions; they have **not** been rerun for this follow-up. The native
-bundle has not been rebuilt or relaunched for these latest changes.
+Baseline `10ef95b`. At commit `7b46915`, the human had explicitly deferred
+automated tests and manual app testing; only isolated artwork was inspected.
+That revision had not rebuilt or relaunched the native app. The completion
+below supersedes that validation status.
 
 The two revised frames were rendered and inspected as isolated assets in light
 and dark palettes. Evidence: `artifacts/lab/runs/20261020-artwork-polish/`.
@@ -36,7 +36,41 @@ detail row for active/error states. Stopped shows the short status plus runtime,
 engine and version facts; its longer detail remains in the card tooltip. Compact
 poses remain inside the plaque, including the sleeping pose's baseline. Camera
 icons receive integer optical offsets for the lower visual mass of their body.
-Native titlebar spacing and the updated card still need real-app validation.
+Native titlebar spacing and the updated card were subsequently inspected in the
+completion run below.
+
+## Native integration completion — 2026-10-20
+
+Baseline `7b46915`. The human requested completion in the actual application.
+Rebuilt the embedded frontend, unbundled source executable and local debug
+`Hanly.app`, then retired the older running debug instance and opened the final
+bundle through the normal Python launcher with the real service. Evidence:
+`artifacts/lab/runs/20261020-app-integration/`.
+
+Native inspection covered all six sections, both themes, Normal/Compact
+navigation, expanded capture settings, the slider, hover activation selection,
+runtime Permissions spacing, restored logo, camera alignment, contained mascot
+and the 40px native titlebar clearance. Two integration gaps were corrected:
+compact navigation now uses `panel-plaque-clean-v2` without a separate paper
+rectangle, and Logs filters use button artwork with a visible selected state.
+Logs All/Error filtering was exercised. Theme/navigation saves persisted across
+the final restart. Original Dark/Normal/Normal-font/always-active preferences
+were restored; capture remained stopped. No blank remount was observed during
+these setting changes; this is not exhaustive frame-by-frame acceptance.
+
+Current revision passed TypeScript, 12 Node bridge tests, 52 React tests, 36
+contrast tests and production frontend/Tauri debug bundle builds. The React
+suite includes the Lab's focused Control Center and popup DOM probes; it does
+not establish native acquisition or OCR acceptance. Historical full Python and
+Rust results below were not rerun for these presentation-only changes.
+
+The final open build is
+`apps/desktop/src-tauri/target/debug/bundle/macos/Hanly.app`; source `hanly` also
+resolves the rebuilt unbundled debug executable. Existing open apps do not
+reload an embedded frontend automatically. `/Applications/Hanly.app` and official
+release packages were not replaced. Existing popup/acquisition limitations
+below remain in effect. No capture backend, signing, permission or domain
+contract was changed.
 
 ## Source organization and boundaries
 

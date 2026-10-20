@@ -34,21 +34,17 @@
   padding: 8px 3px 9px;
 }
 .app.skin-village .sidebar.is-compact .live-card::after {
-  background-image: var(--skin-window-slices);
+  background-image: var(--skin-plaque-slices);
   background-size:
-    10px 8px, calc(100% - 20px) 8px, 10px 8px,
-    10px calc(100% - 16px), calc(100% - 20px) calc(100% - 16px),
-    10px calc(100% - 16px), 10px 8px, calc(100% - 20px) 8px, 10px 8px;
+    16px 16px, calc(100% - 32px) 16px, 16px 16px,
+    16px calc(100% - 32px), calc(100% - 32px) calc(100% - 32px),
+    16px calc(100% - 32px), 16px 16px, calc(100% - 32px) 16px, 16px 16px;
   background-position:
-    left top, center top, right top, left 8px, center 8px, right 8px,
+    left top, center top, right top, left 16px, center 16px, right 16px,
     left bottom, center bottom, right bottom;
 }
 .app.skin-village .sidebar.is-compact .live-card::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 4px;
-  background: var(--skin-paper);
+  content: none;
 }
 .app.skin-village .sidebar.is-compact .mascot-stage { order: 0; width: 52px; height: 57px; }
 .app.skin-village .sidebar.is-compact .sprite-canvas { bottom: 0; }
@@ -134,21 +130,17 @@
   .app.skin-village .sidebar.is-compact .live-card { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 60px; min-height: 94px; padding: 8px 3px 9px; }
   .app.skin-village .sidebar .live-card::after {
     display: block;
-    background-image: var(--skin-window-slices);
+    background-image: var(--skin-plaque-slices);
     background-size:
-      10px 8px, calc(100% - 20px) 8px, 10px 8px,
-      10px calc(100% - 16px), calc(100% - 20px) calc(100% - 16px),
-      10px calc(100% - 16px), 10px 8px, calc(100% - 20px) 8px, 10px 8px;
+      16px 16px, calc(100% - 32px) 16px, 16px 16px,
+      16px calc(100% - 32px), calc(100% - 32px) calc(100% - 32px),
+      16px calc(100% - 32px), 16px 16px, calc(100% - 32px) 16px, 16px 16px;
     background-position:
-      left top, center top, right top, left 8px, center 8px, right 8px,
+      left top, center top, right top, left 16px, center 16px, right 16px,
       left bottom, center bottom, right bottom;
   }
   .app.skin-village .sidebar .live-card::before {
-    content: "";
-    position: absolute;
-    z-index: -1;
-    inset: 4px;
-    background: var(--skin-paper);
+    content: none;
   }
   .app.skin-village .sidebar .live-detail,
   .app.skin-village .sidebar .live-facts { display: none; }
