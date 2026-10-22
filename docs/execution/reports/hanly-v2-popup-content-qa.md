@@ -208,3 +208,33 @@ were unchanged. Process cleanup was checked, the pre-existing source app was
 left untouched, and real configuration still matches the initial snapshot.
 Both human questions remain unanswered at this checkpoint. The final new-batch
 handoff is pending; no automatic continuation is scheduled.
+
+## Permission diagnosis superseding earlier hypotheses — 2026-10-22
+
+The human explicitly deferred alternative analyses/UI and asked to investigate
+the enabled-but-required permission discrepancy. Native inspection confirmed
+Hanly and Codex Computer Use enabled in both System Settings panes. Both Hanly
+rows' **Show in Finder** action reveals `/Applications/Hanly.app`, an older
+installed copy. Normal launch of the final test package outside Lab still
+reports 0/2. The installed app also reports 0/2 in an isolated 90-second comparison;
+therefore different app paths alone do not explain the issue.
+
+A read-only, three-minute unified security-log query filtered to Hanly then
+provided decisive OS evidence: **Failed to match existing code requirement** for
+both ScreenCapture and Accessibility. The stored requirement is cdhash
+`06dee689bca860d986f10a4444d563793f67c29b`; installed code presents
+`ea2fb29e085f8998ab3412003191e1902bbb3964`, and the final package presents
+`3e2849c04a57b4b77f323e66d9c65e26d3325111`. The same entries attribute service
+requests to the responsible Hanly app and use it as the authorization subject.
+The separate-helper hypothesis is not the denial observed here: **stale signing
+identity is confirmed**, and the app is reporting a genuine OS refusal.
+
+No TCC database, grant, signature, entitlement, installed file or product code
+was changed. The installed comparison exited normally with no acquisition.
+Detailed scoped evidence is in ignored `permission-copy-check/summary.md` and
+`tcc-own-app.log`. A normal, user-approved refresh of only Hanly's permission
+entries for the exact final package is the next step; any OS authentication is
+for the human to complete. Do not rebuild that package after granting access.
+The ad-hoc identity lifecycle and unclear running-copy information are product
+workflow limitations; the evidence does not justify bypassing the probes,
+weakening the signing requirement or granting broad Python/Terminal access.
