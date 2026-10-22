@@ -38,6 +38,7 @@ _ROI_HALF = (100, 50)
 _PROBES = tuple((fx, fy) for fx in (-1.0, -0.5, 0.0, 0.5, 1.0) for fy in (-1.0, 0.0, 1.0))
 #: Hover events that carry an ID before it fires; they are not foreign work.
 _PRE_FIRE = frozenset({"hover_mouse_opportunity", "hover_invalidation", "hover_cancellation"})
+SMOKE_RULE = "native-lifecycle-v1"
 
 
 @dataclass
@@ -107,6 +108,8 @@ class TourDriver:
         settle_timeout: float = 4.0,
         first_timeout: float = 90.0,
         retain_fixture_text: bool = False,
+        trace_only: bool = False,
+        inspect_last: bool = False,
         owned_pids: set[int] | None = None,
     ) -> None:
         self._recorder = recorder
@@ -115,6 +118,8 @@ class TourDriver:
         self._settle_timeout = settle_timeout
         self._first_timeout = first_timeout
         self._retain_fixture_text = retain_fixture_text
+        self._trace_only = trace_only
+        self._inspect_last = inspect_last
         self._owned_pids = set(owned_pids or ())
         self._lock = threading.Lock()
         self._active: _Observation | None = None
@@ -169,6 +174,12 @@ class TourDriver:
                     self._recorder.lab("tour_stopped_by_user", completed=self.completed)
                     return
                 first = False
+                if (
+                    self._inspect_last
+                    and index == len(self._page.pages) - 1
+                    and placed is page.placed[-1]
+                ):
+                    continue
                 self._move_to(self._page.to_global(page.rest))
                 self._popup_hidden.clear()
                 self._popup_hidden.wait(0.8)
@@ -250,6 +261,12 @@ class TourDriver:
         timed_out: bool = False,
     ) -> None:
         self.completed += 1
+        if self._trace_only:
+            record = smoke_record(placed, seen, timed_out=timed_out, unscored=unscored)
+            self._recorder.lab("tour_smoke_result", **record)
+            if not record["passed"]:
+                self._recorder.lab("tour_smoke_failed", target=placed.target.id)
+            return
         record = outcome_record(
             placed,
             seen,
@@ -591,6 +608,48 @@ def _stage(lookup: _Lookup, fields: Mapping[str, Any]) -> None:
         outcome = fields.get("outcome")
         lookup.status = str(outcome) if outcome else None
         lookup.result = _decode(fields.get("result_evidence"))
+
+
+def smoke_record(
+    placed: Placed,
+    seen: _Observation,
+    *,
+    timed_out: bool,
+    unscored: str | None,
+) -> dict[str, Any]:
+    """Report a native presentation decision without asserting what was read."""
+
+    lookup = seen.latest
+    error = None if lookup is None else lookup.error
+    expected_statuses = (
+        {"NOT_KOREAN", "UNUSABLE", "EMPTY"} if placed.target.refuse else {"SUCCESS"}
+    )
+    passed = (
+        unscored is None
+        and not timed_out
+        and error is None
+        and bool(seen.hover_ids)
+        and seen.late_popups == 0
+        and seen.foreign_popups == 0
+        and seen.popup_status in expected_statuses
+        and (placed.target.refuse or (lookup is not None and lookup.status == "SUCCESS"))
+    )
+    return {
+        "target": placed.target.id,
+        "rule": SMOKE_RULE,
+        "passed": passed,
+        "status": seen.popup_status,
+        "expects_answer": not placed.target.refuse,
+        "timed_out": timed_out,
+        "unscored": unscored,
+        "error": error,
+        "hover_ids": sorted(seen.hover_ids),
+        "lookup_ids": sorted(seen.lookups),
+        "late_popups": seen.late_popups,
+        "foreign_popups": seen.foreign_popups,
+        "font_px": placed.font_px,
+        "theme": placed.theme,
+    }
 
 
 def outcome_record(

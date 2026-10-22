@@ -29,6 +29,10 @@ def build_report(run_dir: Path, *, baseline: Path | str | None = None) -> Path:
     model = build_model(run_dir)
     identity = run_identity(run_dir)
     model["provenance"] = provenance_model(identity, model["metadata"])
+    if model.get("smoke") is not None:
+        from ..session.driver import SMOKE_RULE
+
+        model["provenance"]["current_rule"] = SMOKE_RULE
     chosen, note = resolve_baseline(identity, baseline)
     model["comparison"] = None if chosen is None else compare_tours(chosen, model, run_dir)
     model["comparison_note"] = note
@@ -284,6 +288,14 @@ def summary_markdown(model: dict[str, Any]) -> str:
         where = f" - `{finding['where']}`" if finding["where"] else ""
         lines.append(f"- **{finding['level']}** {finding['title']}{where}")
         lines.append(f"  {finding['detail']}")
+    smoke = model.get("smoke")
+    if smoke is not None:
+        lines += [
+            "", "## Native trace-only smoke", "",
+            f"- {smoke['completed']}/{smoke['planned']} targets completed; "
+            f"{smoke['passed']} presentation decisions passed; {smoke['failed']} failed.",
+            "- No recognized content was requested or retained; semantic accuracy is unmeasured.",
+        ]
     lines += ["", "## Funnel", ""]
     lines += [
         f"- {row['step']}: {row['count']}" + (f" ({row['note']})" if row.get("note") else "")

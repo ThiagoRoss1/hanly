@@ -71,6 +71,7 @@ _SESSION_OPTIONS = (
     "per_family",
     "corpus",
     "repeats",
+    "trace_only",
 )
 #: Lines of ``events.jsonl`` worth decoding; the rest are skipped unparsed.
 _EVENT_MARKERS = (
@@ -81,6 +82,7 @@ _EVENT_MARKERS = (
     '"tour_aborted"',
     '"session_ended"',
     '"tour_result"',
+    '"tour_smoke_result"',
     '"stress_result"',
 )
 
@@ -287,6 +289,11 @@ def reproduction(identity: RunIdentity, metadata: Mapping[str, Any]) -> dict[str
         words += ["--words", str(options.get("words"))]
         words += ["--story-sizes", _sizes(options.get("story_sizes"))]
         words += ["--word-sizes", _sizes(options.get("word_sizes"))]
+        if options.get("trace_only"):
+            words.append("--trace-only")
+            missing.append("the exact selected desktop build and --desktop path must be supplied")
+            if options.get("inspect_last"):
+                words.append("--inspect-last")
     if options.get("per_family") is not None:
         words += ["--per-family", str(options["per_family"])]
     prerequisites = [
@@ -361,6 +368,8 @@ def _session(run_dir: Path, metadata: dict[str, Any], notes: list[str]) -> RunId
         for key in _SESSION_OPTIONS
         if mode != "run"
     }
+    if mode != "run":
+        options["trace_only"] = bool((metadata.get("options") or {}).get("trace_only", False))
     if mode == "stress":
         options["plan"] = metadata.get("plan") or UNKNOWN
     conflicts = _backend_conflicts(configured, observed)
@@ -425,7 +434,7 @@ def _session_events(path: Path) -> dict[str, Any]:
             backend = event.get("ocr_backend")
             if isinstance(backend, str) and backend:
                 found["backends"].add(backend)
-            if name in {"tour_result", "stress_result"}:
+            if name in {"tour_result", "stress_result", "tour_smoke_result"}:
                 found["results"] += 1
                 rule = event.get("rule")
                 # The first tours stored no rule; which one judged them is not on record.

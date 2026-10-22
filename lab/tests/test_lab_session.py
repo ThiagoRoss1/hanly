@@ -1205,6 +1205,7 @@ def test_a_hover_that_fires_as_the_pointer_lands_is_this_targets(tmp_path: Path)
     driver._settle_timeout = 0.2
     driver._first_timeout = 0.2
     driver._retain_fixture_text = False
+    driver._trace_only = False
     driver._scale = 1.0
     driver._expected = None
     driver.completed = 0

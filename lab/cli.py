@@ -1190,6 +1190,19 @@ def _session_parsers(subcommands: Any) -> None:
         help="KRDICT headwords to hover (default: 300, the standard comparable tour)",
     )
     tour.add_argument("--quick", action="store_true", help="a short smoke tour: 24 words, no story")
+    tour.add_argument(
+        "--trace-only",
+        action="store_true",
+        help=(
+            "test native completion and popup decisions, including packaged apps; "
+            "no text or accuracy score"
+        ),
+    )
+    tour.add_argument(
+        "--inspect-last",
+        action="store_true",
+        help="with --trace-only, leave the final fixture and app open until normal Quit",
+    )
     _baseline_option(tour, "tour")
     tour.add_argument(
         "--retain-fixture-text",
@@ -1460,6 +1473,8 @@ def run_lab_session(args: argparse.Namespace) -> int:
             mode=args.mode,
             baseline=_baseline_argument(getattr(args, "baseline", None)),
             retain_fixture_text=getattr(args, "retain_fixture_text", False),
+            trace_only=getattr(args, "trace_only", False),
+            inspect_last=getattr(args, "inspect_last", False),
             runtime_config=args.config,
             desktop=getattr(args, "desktop", None),
             duration=getattr(args, "duration", None),

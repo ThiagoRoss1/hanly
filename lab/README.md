@@ -74,6 +74,20 @@ yourself to stop the tour.** It checks that the capture shortcut is bound.
 Hanly reports required screen-capture or accessibility access in its native
 Permissions pane; the Lab does not grant or change OS permissions.
 
+The scored tour requires this checkout's debug build for its private, in-memory
+fixture evidence. To exercise an unchanged packaged app without that evidence,
+use `python -m lab tour --quick --trace-only --desktop /path/to/Hanly.app`.
+This checks bound hover completion and popup/refusal decisions only, using
+normal text-free production traces. It requests no recognized text or OCR
+geometry, enables no developer service module, and reports **no linguistic
+accuracy score**. A passing presentation decision can still contain a wrong
+word or sense. Text retention and baseline comparison are rejected in this mode.
+The driver's existing non-prompting input preflight still applies; it never
+grants permissions. Moving the physical mouse stops the driver as usual.
+For native popup inspection, add `--inspect-last` to leave the last fixture and
+app open after the driver finishes. Normal Quit ends observation and closes the
+Lab fixture. This option requires `--trace-only` and adds no semantic score.
+
 On macOS, the Lab sends an F1–F20 primary key through Quartz with the public
 SecondaryFn flag, because pynput's function-key event can be interpreted as a
 hardware alternate action before reaching Hanly's shortcut listener. Other

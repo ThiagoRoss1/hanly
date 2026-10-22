@@ -446,6 +446,15 @@ function selectEpisode(e) {
 // tour ---------------------------------------------------------------------------------------------------
 (function () {
   const body = $("#tourbody"); const T = M.tour;
+  if (M.smoke) {
+    $("#tour h2").textContent = "Native trace-only smoke";
+    body.append(el("p", { class: "lede" }, `${M.smoke.completed}/${M.smoke.planned} targets completed; ${M.smoke.passed} presentation decisions passed, ${M.smoke.failed} failed. No recognized content was requested or retained. Semantic accuracy is unmeasured; a successful popup may still show the wrong word or sense.`));
+    const table = el("table");
+    table.innerHTML = "<tr><th>fixture target</th><th>decision</th><th>status</th><th>timeout</th></tr>";
+    for (const r of M.smoke.results) table.append(Object.assign(el("tr"), { innerHTML: `<td>${esc(r.target)}</td><td>${r.passed ? "passed" : "failed"}</td><td>${esc(r.status ?? "none")}</td><td>${r.timed_out ? "yes" : "no"}</td>` }));
+    body.append(table);
+    return;
+  }
   if (!T) { body.append(el("p", { class: "lede" }, "This was a person-driven session; there is no ground truth to score. Run `python -m lab tour` to have the lab hover lab-authored Korean and score every answer.")); return; }
   body.append(el("p", { class: "lede" }, `The lab hovered ${T.total} targets whose answers are known in advance: ${T.scored} scored, ${T.unscored} not scored because ownership of the page could not be shown. Score ${pct(T.accuracy)} under rule ${T.rule}: the popup's dictionary form equals the hand-set expected form, or a must-refuse target was deliberately not answered. This is a score on the lab's controlled corpus, not general OCR or translation accuracy, and not a judgment of every definition. Pointer arriving to popup: median ${ms(T.popup_ms.p50)}, p90 ${ms(T.popup_ms.p90)}.`));
   if (T.rescored_changes.length) body.append(el("p", { class: "lede" }, `${T.rescored_changes.length} verdicts were recorded under ${T.recorded_rules.join(", ")} and differ under ${T.rule}: ${T.rescored_changes.map((c) => `${c.expected ?? c.target} ${c.recorded_verdict}→${c.verdict}`).join(", ")}.`));
