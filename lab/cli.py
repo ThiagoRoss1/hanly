@@ -600,6 +600,25 @@ def run_corpus_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_popup_content(args: argparse.Namespace) -> int:
+    """Score the authored popup-content corpus through real language providers."""
+
+    from .popup_content import run_campaign
+
+    try:
+        run_dir, summary = run_campaign(args.dictionary, args.output_root)
+    except FileNotFoundError as error:
+        raise SystemExit(f"lab: {error}; provision it as described in data/README.md") from error
+
+    print(
+        f"popup content: {summary['score']} source-gold cases passed; "
+        f"{summary['failed_cases']} failed"
+    )
+    print(f"summary: {run_dir / 'summary.md'}")
+    print(f"evidence: {run_dir}")
+    return 0 if summary["status"] == "passed" else 1
+
+
 def _font_inventory() -> int:
     """Installed faces and the scripts each proves it can draw; nothing is installed."""
 
@@ -1073,6 +1092,26 @@ def _parser() -> argparse.ArgumentParser:
         help="validate the manifest without requiring its images to be present",
     )
     corpus.set_defaults(handler=run_corpus_inventory)
+
+    popup_content = subcommands.add_parser(
+        "popup-content",
+        help="score real Korean popup content without OCR, capture or native UI",
+        description=(
+            "Run the authored Korean corpus through Kiwi, local KRDICT and the "
+            "Qt-independent popup presentation model. Scores use source-gold "
+            "entry, POS, sense-hash and popup-field assertions; failures remain "
+            "visible. No OCR, capture, native window or desktop process is used."
+        ),
+    )
+    popup_content.add_argument(
+        "--dictionary", type=Path, default=Path("data/generated/krdict.sqlite3"),
+        help="local generated KRDICT database (default: data/generated/krdict.sqlite3)",
+    )
+    popup_content.add_argument(
+        "--output-root", type=Path, default=Path("artifacts/lab/runs"),
+        help="ignored evidence directory (default: artifacts/lab/runs)",
+    )
+    popup_content.set_defaults(handler=run_popup_content)
 
     generate = subcommands.add_parser(
         "ocr-corpus-generate",

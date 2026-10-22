@@ -442,6 +442,20 @@ tunes a production setting.
 
 ## `grammar` and `word-selection` — what the reader is shown, and why it misses
 
+`python -m lab popup-content` runs the authored popup-content cases through the
+real Kiwi → KRDICT → Qt-independent presentation-model path. This is a bounded
+language-to-presentation check: it does not run OCR, screen capture, native UI
+or a desktop process. It writes provenance, a source-gold score summary, and
+full normalized results under `artifacts/lab/runs/<run-id>/`; dictionary
+definitions stay only in that ignored run artifact. The tracked fixture lists
+official KRDICT entry sources and pins expected sense text by hash to the
+recorded resource build. A known case miss is scored as a failure and makes the
+command return nonzero.
+
+```bash
+python -m lab popup-content
+```
+
 `python -m lab grammar-pages --output artifacts/lab/grammar-pages` generates
 paired `text.html` and `ocr.html` pages without opening windows. The first
 contains selectable Korean; the second contains images with empty alt text

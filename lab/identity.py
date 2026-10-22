@@ -42,6 +42,7 @@ KINDS = (
     "check",
     "ocr_campaign",
     "ocr_differential",
+    "popup_content",
     "real_lookup",
     "real_hover",
     "live_hover",
@@ -56,6 +57,7 @@ _EVIDENCE = {
     "stress": ("campaign.json", "campaign.md", "replay", "replay.json"),
     "check": ("metadata.json", "measurements.jsonl", "summary.json", "report.html"),
     "ocr_campaign": ("metadata.json", "corpus-inventory.json", "samples.jsonl", "summary.json"),
+    "popup_content": ("metadata.json", "results.json", "summary.json", "summary.md"),
     "measurement": ("metadata.json", "summary.json"),
     "update_check": ("summary.json",),
 }
@@ -481,7 +483,9 @@ def _campaign(
     unstated = UNKNOWN if kind == "ocr_campaign" else NOT_APPLICABLE
     configured = str(config.get("backend") or unstated)
     observed = _campaign_backends(run_dir) if kind == "ocr_campaign" else ()
-    evidence_key = kind if kind in {"check", "ocr_campaign"} else "measurement"
+    evidence_key = (
+        kind if kind in {"check", "ocr_campaign", "popup_content"} else "measurement"
+    )
     return RunIdentity(
         name=run_dir.name,
         path=run_dir,
@@ -522,6 +526,14 @@ def _campaign_kind(
             )
         }
         return "resource_attribution", str(config.get("ocr_backend") or UNKNOWN), options
+    if name == "popup_content_language_to_presentation":
+        options = {
+            "case_count": _normalized(scenario.get("case_count")),
+            "case_ids": _normalized(scenario.get("case_ids")),
+            "corpus_sha256": scenario.get("corpus_sha256"),
+            "endpoint": scenario.get("endpoint"),
+        }
+        return "popup_content", "language_to_presentation_model", options
     if name == "ocr_differential":
         options = {key: _normalized(config.get(key)) for key in ("backends", "warmup", "samples")}
         return "ocr_differential", "ocr-only", options

@@ -180,6 +180,34 @@ def test_presenter_allows_surface_and_lemma_to_match_without_fake_analysis() -> 
     assert content.analysis == ()
 
 
+def test_presenter_expands_auxiliary_and_derivational_part_of_speech_tags() -> None:
+    result = LookupResult(
+        status=LookupStatus.SUCCESS,
+        entries=(DictionaryEntry("도와주다", ("help",), "동사"),),
+        context=LookupContext(
+            text="도와줘요",
+            lemma="도와주다",
+            analyses=(
+                TokenAnalysis("주", "주다", "VX"),
+                TokenAnalysis("하", "하다", "XSV"),
+                TokenAnalysis("싶", "싶다", "VX"),
+                TokenAnalysis("듯하", "듯하다", "VX"),
+                TokenAnalysis("않", "않다", "VX"),
+            ),
+        ),
+    )
+
+    content = format_lookup_result(result)
+
+    assert [piece.role for piece in content.analysis] == [
+        "auxiliary verb",
+        "verb-forming suffix",
+        "auxiliary adjective",
+        "auxiliary adjective",
+        "auxiliary",
+    ]
+
+
 def test_popup_position_flips_and_clamps_at_screen_edges() -> None:
     screen = ScreenGeometry(0, 0, 800, 600)
     controller = PopupController(_RecordingView([]), popup_size=PopupSize(200, 120), offset=12)
