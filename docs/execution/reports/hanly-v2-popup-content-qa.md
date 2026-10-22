@@ -1,6 +1,6 @@
 # Hanly V2 UI and popup-content follow-up
 
-Status: bounded implementation/QA work closed on 2026-10-22; native capture acceptance remains blocked. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately.
+Status: earlier bounded QA batch closed; newly authorized language-contract polish is in progress on 2026-10-22, awaiting native grants and the alternatives decision. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately.
 
 ## UI implementation — Luna worker and native consolidation
 
@@ -99,3 +99,112 @@ The real user configuration was rechecked after the final packaged session and m
 Native reader focus, word-to-popup hover retention, live captured-text accuracy, full frozen-provider execution and Windows/Linux/DPI remain unverified. Normal macOS grants must be established for the **exact built app/service identity** before live hover acceptance. The user must handle any OS authentication directly. No broad Python/Terminal grants, TCC resets, signing changes, installed-app replacement or security bypass were used. OCR comparisons/tuning remain deferred to the user's later branch.
 
 Implementation-side closure uses the existing [redesign Review Handoff](../review-handoffs/hanly-v2-redesign.md); a human-selected Phase B review has not started. Local batch commits only; no push or merge.
+
+## Authorized language-contract polish — 2026-10-22 (in progress)
+
+The human approved a further bounded implementation batch after `ac692ec`.
+Local commits `1bc29e7` and `509729b` contain the product fixes and Lab evidence
+respectively. No dictionary entries, OCR models/backends or signing policy were
+changed. This section supersedes the earlier context diagnosis and grammar score.
+
+### Corrected information seams
+
+- Direct acquisition now preserves a whitespace surface made entirely of Hangul
+  and punctuation, including particles after a closing bracket/quote. It still
+  requires the pointer to rest on Hangul, refuses secure/nearest/unproven reads,
+  and requests precise native bounds for the complete returned span. Mixed
+  scripts continue to narrow to the pointed Korean run. Lab direct cases now
+  invoke this production coordinator over authored text and synthetic geometry,
+  rather than maintaining an independent selection implementation.
+- Existing context fields now carry at most two whole neighboring words and
+  32 characters on each side, stopping at line/sentence boundaries. This makes
+  `한국어를 할 수 있어요` available as a bounded analysis window and produces
+  the dictionary-listed `-ㄹ 수 있다` construction. Over-budget words are omitted
+  whole; target offsets remain relative to the original selected surface.
+- A confirmed Kiwi adapter mismatch was corrected: candidates were built from
+  the joined-suffix stream, but their token indices addressed that stream rather
+  than the raw normalized tokens exposed in `MorphologyAnalysis`. Span mapping
+  now makes these indices reference the actual returned token list. Real-Kiwi
+  regressions cover `사과했어요 오늘 학교` and `공부했어요 오늘 학교`. This fixes
+  contract consistency; it is not evidence that the two ambiguous lemmas changed.
+
+### Current evidence
+
+The final [grammar run](../../../artifacts/lab/runs/20261022-language-polish/grammar-final/summary.md)
+now matches **702/706 headwords** (351/353 in each form), **76/76 construction
+checks**, 238/238 required-parts checks and 30/30 auxiliary checks. All four
+remaining headword misses are g094. The existing gold was not relaxed. Grammar
+now writes source metadata and corpus/dictionary hashes beside the summary;
+source was dirty `ac692ec` during this pre-commit gate.
+
+The [popup-content run](../../../artifacts/lab/runs/20261022-language-polish/popup/b44decd7-00fb-48b0-ae3a-5bbc2baee8e6/summary.md)
+remains **11/12 source-gold cases**, with six additional diagnostic contrasts
+explicitly excluded from that denominator. Exact morphology call inputs and
+normalized outputs, selected candidate, dictionary probes, stable entry IDs and
+sense hashes distinguish an absent source entry from one that was returned or
+available but not selected. Same-headword/POS homographs are distinguished by
+entry identity. Dictionary definitions and full popup models remain in ignored
+evidence, not product tracing or tracked fixtures.
+
+Convergence checks passed: **2,727 portable tests, 2 skips, 1 strict known xfail**;
+Ruff; mypy across **368 files**. Six actual popup models also passed the existing
+React integration check (one targeted test, three unrelated tests skipped by
+name filter). No frontend code changed in this batch.
+
+### Remaining ambiguity and proposed next boundary
+
+The earlier explanation for g094 was incomplete: actual recorded morphology
+input already contains `하늘을 나는 새`. Raw and JOIN_V_SUFFIX best tokenizations
+both select 나다; they do not disagree at this seam. Similarly, both streams
+select the verb reading of `먹지를` in the carbon-paper case. The correct 날다
+and 먹지 analyses occur at rank 3 in a bounded diagnostic request. This is
+ranking evidence, not a probability or a safe automatic replacement rule.
+
+A production alternative-analysis policy is **not implemented or approved**.
+The smallest candidate proposal is an additive ordered set of normalized
+analyses retaining the primary tokens/candidates unchanged, bounded to three
+analyses and containing no Kiwi objects or purported confidence percentage.
+A separate decision is still required on whether and how to select an alternate
+or expose ambiguity to the reader. A dictionary-presence override is unsafe:
+valid negative-verb contexts also admit noun alternatives. Existing evidence is
+insufficient to derive a universal threshold. The ignored
+`20261022-language-polish/kiwi-stream-comparison.{md,json}` records the contrast.
+
+The new diagnostic branch case also illustrates a separate sense-selection
+limit: 가지 (branch) exists and is returned by the dictionary, while the popup
+leads with another 가지 noun entry (eggplant). This is not missing KRDICT data.
+It remains visible in diagnostic observations rather than being silently counted
+as a source-gold pass or addressed by a phrase-specific rule.
+
+The official package rebuild at `509729b` succeeded (build UUID
+`1ca07330-1018-4ee0-a0f1-b6591cf0c438`, version 1.1.0) and passed the frozen
+inventory, native window/React bridge and version checks. It remains uninstalled
+in the isolated packaging worktree. An additional test-only commit `f2aeefd`
+adds two passing paired acquisition-to-language cases: authored normalized OCR
+geometry goes through the real LookupPipeline/WordResolver, while the direct
+path uses its production coordinator; both pass identical bounded text into
+real Kiwi/local KRDICT and produce equal popup entries/construction. The direct
+path makes zero OCR calls. Geometry and OCR text are authored, not recognized;
+this is no native acquisition or recognizer acceptance. Final mypy includes 369
+files. The two tests passed separately after the 2,727-test portable gate.
+
+Native validation is waiting for the human to establish grants for the exact
+package/service identity. A 600-second disposable-profile observation started
+at 09:26 UTC (`20261022-062613-run`); before-grant native AX still shows both
+permissions missing, capture stopped, runtime ready. The human was asked to
+complete the normal macOS settings/authentication flow. No password, TCC reset,
+broader Python/Terminal grant or signing workaround is used. The alternatives
+proposal is also awaiting the human's explicit decision; it is not approved by
+silence. No live capture, OCR or hover acceptance is claimed yet, and the final
+Review Handoff update has not been written.
+
+
+The 600-second native observation ended after **600.7s**, exit 0, zero dropped
+events and zero surviving/forced children. There were no captures, OCR calls or
+lookups. Host/family RSS peaks were 108.4/525.1 MiB and sampled family mean CPU
+11.7%; this permission-wait session is not a lookup benchmark. The test-only
+`f2aeefd` commit occurred during it; runtime code and the launched sealed build
+were unchanged. Process cleanup was checked, the pre-existing source app was
+left untouched, and real configuration still matches the initial snapshot.
+Both human questions remain unanswered at this checkpoint. The final new-batch
+handoff is pending; no automatic continuation is scheduled.
