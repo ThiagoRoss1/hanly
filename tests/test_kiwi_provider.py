@@ -218,3 +218,22 @@ def test_real_kiwi_keeps_raw_derivational_morphemes_beside_the_candidate(
         "EF",
     ]
     assert [token.token for token in analysis.tokens] == ["사과", "하", "었", "어요"]
+
+
+@pytest.mark.parametrize("predicate", ["사과했어요", "공부했어요"])
+def test_real_kiwi_candidate_indices_address_the_exposed_raw_token_stream(
+    real_kiwi: KiwiProvider, predicate: str
+) -> None:
+    analysis = real_kiwi.analyze(f"{predicate} 오늘 학교")
+    by_lemma = {candidate.lemma: candidate for candidate in analysis.candidates}
+    predicate_lemma = "사과하다" if predicate.startswith("사과") else "공부하다"
+    predicate_tokens = tuple(
+        analysis.tokens[index].token
+        for index in by_lemma[predicate_lemma].token_indices
+    )
+
+    assert predicate_tokens == (predicate[:2], "하", "었", "어요")
+    assert by_lemma["오늘"].token_indices == (4,)
+    assert analysis.tokens[by_lemma["오늘"].token_indices[0]].token == "오늘"
+    assert by_lemma["학교"].token_indices == (5,)
+    assert analysis.tokens[by_lemma["학교"].token_indices[0]].token == "학교"

@@ -232,8 +232,8 @@ class LanguagePipeline:
         the word alone.
         """
 
-        before = _one_word(selection.context_before, last=True)
-        after = _one_word(selection.context_after, last=False)
+        before = _bounded_context(selection.context_before, nearest_first=True)
+        after = _bounded_context(selection.context_after, nearest_first=False)
         if not before and not after:
             return _as_morphology_analysis(self._morphology_provider.analyze(text)), None
         offset = len(before) + 1 if before else 0
@@ -783,27 +783,101 @@ class _Window:
 
 
 def neighbouring_words(line: str, start: int, end: int) -> tuple[str, str]:
-    """The whitespace-delimited words just before and after ``line[start:end]``.
+    """Return at most two bounded neighboring words on each side.
 
-    What acquisition hands a selection as context: one word each side, cut to
-    the contract's bound so a run of unspaced noise cannot exceed it.
+    Context stays on the same line and stops at sentence punctuation. A word
+    that would exceed the character budget is omitted whole, never truncated.
     """
 
-    from .contracts import MAX_CONTEXT_WORD
+    from .contracts import MAX_CONTEXT_CHARS, MAX_CONTEXT_WORDS
 
-    before = line[:start].split()
-    after = line[end:].split()
+    line_start = max(line.rfind(marker, 0, start) for marker in _LINE_BREAKS) + 1
+    line_end_candidates = [
+        position for marker in _LINE_BREAKS
+        if (position := line.find(marker, end)) >= 0
+    ]
+    line_end = min(line_end_candidates, default=len(line))
+    before_words = line[line_start:start].split()
+    after_words = line[end:line_end].split()
+    target = line[start:end]
     return (
-        before[-1][-MAX_CONTEXT_WORD:] if before else "",
-        after[0][:MAX_CONTEXT_WORD] if after else "",
+        "" if _starts_sentence_ending(target) else _take_context(
+            before_words, nearest_first=True, limit=MAX_CONTEXT_WORDS,
+            character_limit=MAX_CONTEXT_CHARS,
+        ),
+        "" if _ends_sentence_ending(target) else _take_context(
+            after_words, nearest_first=False, limit=MAX_CONTEXT_WORDS,
+            character_limit=MAX_CONTEXT_CHARS,
+        ),
     )
 
 
-def _one_word(text: str, *, last: bool) -> str:
-    words = text.split()
-    if not words:
+_SENTENCE_ENDINGS = frozenset(".!?。？！…")
+_LINE_BREAKS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+_SENTENCE_CLOSERS = frozenset("\"'’”»)]}）】」』〉》")
+
+
+def _bounded_context(text: str, *, nearest_first: bool) -> str:
+    """Normalize supplied context to the same word, character, and sentence bounds."""
+
+    from .contracts import MAX_CONTEXT_CHARS, MAX_CONTEXT_WORDS
+
+    words = _adjacent_line(text, before=nearest_first).split()
+    return _take_context(
+        words,
+        nearest_first=nearest_first,
+        limit=MAX_CONTEXT_WORDS,
+        character_limit=MAX_CONTEXT_CHARS,
+    )
+
+
+def _take_context(
+    words: Sequence[str], *, nearest_first: bool, limit: int, character_limit: int
+) -> str:
+    ordered = list(reversed(words)) if nearest_first else list(words)
+    selected: list[str] = []
+    used = 0
+    for word in ordered:
+        if nearest_first and _has_sentence_ending(word):
+            break
+        cost = len(word) + (1 if selected else 0)
+        if len(selected) >= limit or used + cost > character_limit:
+            break
+        selected.append(word)
+        used += cost
+        if _has_sentence_ending(word):
+            break
+    if nearest_first:
+        selected.reverse()
+    return " ".join(selected)
+
+
+def _has_sentence_ending(word: str) -> bool:
+    return any(character in _SENTENCE_ENDINGS for character in word)
+
+
+def _adjacent_line(text: str, *, before: bool) -> str:
+    if not text:
         return ""
-    return words[-1] if last else words[0]
+    if before:
+        if text[-1] in _LINE_BREAKS:
+            return ""
+        return next((line for line in reversed(text.splitlines()) if line), "")
+    if text[0] in _LINE_BREAKS:
+        return ""
+    return next(iter(text.splitlines()), "")
+
+
+def _starts_sentence_ending(text: str) -> bool:
+    stripped = text.lstrip()
+    return bool(stripped and stripped[0] in _SENTENCE_ENDINGS)
+
+
+def _ends_sentence_ending(text: str) -> bool:
+    index = len(text.rstrip()) - 1
+    while index >= 0 and text[index] in _SENTENCE_CLOSERS:
+        index -= 1
+    return index >= 0 and text[index] in _SENTENCE_ENDINGS
 
 
 def _narrowed(

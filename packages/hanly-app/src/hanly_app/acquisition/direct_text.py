@@ -201,9 +201,9 @@ class DirectTextCoordinator:
             return Acquisition(Outcome.NOT_CONTAINING, duration_ns=duration)
         if reading.cursor_index >= len(text):
             return Acquisition(Outcome.AMBIGUOUS, duration_ns=duration)
-    # Controls return lines; select the Korean run under the pointer so
-    # mixed-script text follows the same word boundary as OCR.
-        narrowed = _korean_run(text, reading.cursor_index)
+        # Keep punctuation and attached grammar within a Korean word, as OCR
+        # does; mixed-script words still narrow to the Hangul under the pointer.
+        narrowed = _korean_word(text, reading.cursor_index)
         if narrowed is None:
             if _stands_in_for_content(text[reading.cursor_index]):
                 # An embedded object -- Chromium's U+FFFC for a canvas or an
@@ -282,8 +282,8 @@ def _contains(bounds: BoundingBox, point: Point) -> bool:
     )
 
 
-def _korean_run(text: str, cursor_index: int) -> tuple[str, int, int] | None:
-    """The unbroken Korean the pointer is inside, where it sits, and where it starts.
+def _korean_word(text: str, cursor_index: int) -> tuple[str, int, int] | None:
+    """Return the Korean surface, local cursor and original start under the pointer.
 
     ``None`` when the pointer rests on anything that is not Korean, so a reader
     pointing at an emoji or a Latin word is not answered with the nearest
@@ -293,6 +293,16 @@ def _korean_run(text: str, cursor_index: int) -> tuple[str, int, int] | None:
 
     if not 0 <= cursor_index < len(text) or not _is_hangul(text[cursor_index]):
         return None
+
+    word_start = cursor_index
+    while word_start > 0 and not text[word_start - 1].isspace():
+        word_start -= 1
+    word_end = cursor_index + 1
+    while word_end < len(text) and not text[word_end].isspace():
+        word_end += 1
+    word = text[word_start:word_end]
+    if all(_is_hangul(char) or unicodedata.category(char).startswith("P") for char in word):
+        return word, cursor_index - word_start, word_start
 
     start = cursor_index
     while start > 0 and _is_hangul(text[start - 1]):
