@@ -1,7 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { PopupPage } from "../../src/pages/PopupPage.tsx";
+import type { PopupContent, PopupPayload } from "../../src/contracts/desktop.ts";
 
 const { invokeMock, eventHandlers } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -10,6 +13,8 @@ const { invokeMock, eventHandlers } = vi.hoisted(() => ({
     (event: { payload: unknown }) => void
   >(),
 }));
+
+const campaignResultsPath = process.env.HANLY_LAB_POPUP_CONTENT_RESULTS;
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -74,7 +79,7 @@ function popupPayload() {
 
 function emitPopup(
   sequence: number,
-  payload: ReturnType<typeof popupPayload> & Record<string, unknown>,
+  payload: PopupPayload,
 ) {
   const handler = eventHandlers.get("desktop-popup");
   if (!handler) throw new Error("The popup event listener is not ready.");
@@ -247,5 +252,75 @@ describe("PopupPage", () => {
         }),
       ),
     );
+  });
+});
+
+describe.skipIf(!campaignResultsPath)("real popup-content campaign payloads", () => {
+  it("renders observed presentation data from the language campaign", async () => {
+    if (!campaignResultsPath || !isAbsolute(campaignResultsPath)) {
+      throw new Error("HANLY_LAB_POPUP_CONTENT_RESULTS must be an absolute path.");
+    }
+
+    const rows = JSON.parse(readFileSync(campaignResultsPath, "utf8")) as Array<{
+      id: string;
+      popup_content: PopupContent;
+    }>;
+    const selectedIds = ["PC-001", "PC-102", "PC-104", "PC-107", "PC-002", "PC-003b"];
+    const selectedRows = selectedIds.map((id) => {
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row?.popup_content) throw new Error(`Missing serialized popup content for ${id}.`);
+      return row;
+    });
+
+    for (const [index, row] of selectedRows.entries()) {
+      const content = row.popup_content;
+      render(<PopupPage />);
+      await waitFor(() => expect(eventHandlers.has("desktop-popup")).toBe(true));
+      emitPopup(index + 10, { ...content, expanded: true });
+
+      await screen.findByRole("heading", { name: content.entry?.headword ?? "" });
+      const partOfSpeech = content.entry?.part_of_speech;
+      const englishPartOfSpeech: Record<string, string> = {
+        "명사": "Noun",
+        "동사": "Verb",
+      };
+      expect(partOfSpeech).toBeTruthy();
+      expect(screen.getByText(partOfSpeech!)).toBeTruthy();
+      expect(screen.getByText(englishPartOfSpeech[partOfSpeech!] ?? "")).toBeTruthy();
+
+      expect(screen.getByText("Read as")).toBeTruthy();
+      const analysisText = (content.analysis ?? [])
+        .map((piece) => piece.text)
+        .join("  +  ");
+      const analysisRoles = (content.analysis ?? [])
+        .map((piece) => piece.role)
+        .filter(Boolean);
+      expect(screen.getByText(analysisText.replaceAll(/\s+/g, " "))).toBeTruthy();
+      expect(analysisRoles.join(" · ")).toBeTruthy();
+      expect(screen.getByText(analysisRoles.join(" · "))).toBeTruthy();
+      expect(analysisRoles).not.toContain("XSV");
+      expect(analysisRoles).not.toContain("VX");
+
+      if ((content.components ?? []).length > 0) {
+        expect(screen.getByText("How this form is built")).toBeTruthy();
+        for (const component of content.components ?? []) {
+          expect(screen.getAllByText(component.surface).length).toBeGreaterThan(0);
+          const label = component.gloss ?? (
+            component.grammatical ? "grammatical" : "no dictionary entry"
+          );
+          expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+        }
+      }
+
+      if (content.construction) {
+        expect(screen.getByText("Grammar pattern")).toBeTruthy();
+        expect(screen.getByText(content.construction.headword)).toBeTruthy();
+        const gloss = content.construction.gloss ?? content.construction.definition;
+        if (gloss) expect(screen.getByText(gloss)).toBeTruthy();
+      }
+
+      cleanup();
+      eventHandlers.clear();
+    }
   });
 });

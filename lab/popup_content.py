@@ -107,6 +107,7 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
     from hanly.language_pipeline import LanguagePipeline
     from hanly_app.config import TechnicalDetailLevel
     from hanly_app.popup.presentation import format_lookup_result
+    from hanly_app.service.application import _plain
 
     dictionary = KRDICTProvider(dictionary_path)
     try:
@@ -133,6 +134,7 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
                 "category": case.category,
                 "note": case.note,
                 "status": content.status.value,
+                "popup_content": _plain(content),
                 "surface": content.surface,
                 "lemma": content.lemma,
                 "headword": entry.headword if entry else None,

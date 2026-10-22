@@ -456,6 +456,21 @@ command return nonzero.
 python -m lab popup-content
 ```
 
+The run's ignored `results.json` also contains the exact plain popup model
+serialized for the desktop event contract. To pass real language-campaign data
+through the React popup test without a desktop or captured pixels, provide that
+file's absolute path:
+
+```bash
+HANLY_LAB_POPUP_CONTENT_RESULTS=/absolute/path/to/results.json \
+  npm --prefix apps/desktop run test:ui -- --reporter=dot tests/ui/popup-page.test.tsx \
+  -t 'real popup-content campaign payloads'
+```
+
+Without the variable, the campaign integration test is skipped; ordinary
+`test:ui` remains self-contained. The campaign file contains full dictionary
+text and stays under ignored `artifacts/lab/runs/`.
+
 `python -m lab grammar-pages --output artifacts/lab/grammar-pages` generates
 paired `text.html` and `ocr.html` pages without opening windows. The first
 contains selectable Korean; the second contains images with empty alt text
