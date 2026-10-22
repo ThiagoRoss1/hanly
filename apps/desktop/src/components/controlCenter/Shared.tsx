@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { PixelButton } from "../PixelButton.tsx";
 import { Mascot } from "../village/Mascot.tsx";
 import { titleCase, valueText } from "../../pages/controlCenter/helpers.ts";
@@ -112,7 +112,16 @@ export function CaptureChoiceDialog({
   onChooseRegion: () => void;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => dialogRef.current?.focus(), []);
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    dialogRef.current?.focus();
+
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, []);
 
   return (
     <div
@@ -124,9 +133,10 @@ export function CaptureChoiceDialog({
       <section
         aria-labelledby="capture-choice-title"
         aria-modal="true"
-        className="choice-dialog panel max-h-[calc(100vh-28px)] w-[min(440px,100%)] max-w-full overflow-y-auto p-6"
+        className="choice-dialog panel max-h-[calc(100vh-28px)] w-[min(440px,100%)] max-w-full overflow-y-auto px-[26px] pt-[50px] pb-[26px]"
         onKeyDown={(event) => {
           if (event.key === "Escape") onCancel();
+          if (event.key === "Tab") retainDialogFocus(event);
         }}
         ref={dialogRef}
         role="dialog"
@@ -167,4 +177,25 @@ export function CaptureChoiceDialog({
       </section>
     </div>
   );
+}
+
+function retainDialogFocus(event: KeyboardEvent<HTMLElement>) {
+  const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>(
+    "button:not(:disabled)",
+  );
+  const first = buttons[0];
+  const last = buttons[buttons.length - 1];
+  const active = document.activeElement;
+  if (!first || !last) {
+    event.preventDefault();
+    return;
+  }
+
+  if (event.shiftKey && (active === first || active === event.currentTarget)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import type { ReactNode } from "react";
 import { PixelButton } from "../components/PixelButton.tsx";
 import { VillageScene } from "../components/village/VillageScene.tsx";
@@ -79,7 +79,9 @@ export function ControlCenterPage() {
     [run],
   );
 
-  const selectArea = useCallback(() => {
+  const selectArea = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    // Safari does not focus buttons on pointer activation.
+    event.currentTarget.focus();
     setActionError("");
     setChoosingArea(true);
   }, []);

@@ -598,6 +598,28 @@ describe("desktop React routes", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", { method: "set_capture_mode", params: { mode: "full_monitor" } });
   });
 
+  it("keeps keyboard focus inside the capture dialog and restores its trigger", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    const trigger = screen.getAllByRole("button", { name: "Select area" })[0]!;
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog");
+    const first = within(dialog).getByRole("button", { name: "Whole monitor" });
+    const last = within(dialog).getByRole("button", { name: "Cancel" });
+    expect(document.activeElement).toBe(dialog);
+
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(last);
+    await user.tab();
+    expect(document.activeElement).toBe(first);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(last);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("submits logical selector coordinates with the overlay scale metadata", async () => {
     renderRoute("/region-selector");
     await waitFor(() => expect(eventHandlers.has("desktop-region")).toBe(true));

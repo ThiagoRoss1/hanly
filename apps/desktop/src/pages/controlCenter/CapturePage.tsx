@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEventHandler } from "react";
 import type { HanlyState } from "../../contracts/desktop.ts";
 import type { DesktopMethod } from "../../services/desktopBridgeCore.ts";
 import { PixelButton } from "../../components/PixelButton.tsx";
@@ -25,7 +25,7 @@ export function CapturePage({
     params?: Record<string, unknown>,
   ) => Promise<unknown>;
   saveSettings: (changes: Record<string, unknown>) => Promise<unknown>;
-  onSelectArea: () => void;
+  onSelectArea: MouseEventHandler<HTMLButtonElement>;
 }) {
   const config = state.config;
   const app = state.app;
