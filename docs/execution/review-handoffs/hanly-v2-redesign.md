@@ -3,7 +3,7 @@
 ## Bundle
 
 - Human-authorized workstream: `design/hanlyV2`; no new Linear issue or lifecycle transition was inferred from completed V1 work.
-- Updated: 2026-10-22. Phase A implementation and bounded follow-up are closed; native acceptance is still blocked. Phase B deep review has not started.
+- Updated: 2026-10-22. Phase A implementation and bounded follow-up are closed. Exact-package grants and real capture/OCR/popup activity are now established; linguistic and full native acceptance remain limited as recorded in the final section. Phase B deep review has not started.
 - Original baseline: `43ba8d6`, identical to local `main` and the migration branch's tree. Correction baseline: `15b87a8`.
 - GPT implementation with bounded Luna xhigh workers for scene rendering, presentation components and preferences. Commit authorized by the human; no push or merge.
 
@@ -181,3 +181,77 @@ modal focus, learner-facing role mappings, source-gold assertions and the exact
 popup event model. The report records unresolved language/selection cases for a
 future scoped decision. This handoff is the last implementation edit; no deep
 review or automatic acceptance is implied.
+
+## Language-contract polish and packaged smoke closure — 2026-10-22
+
+This section supersedes earlier permission blockers and grammar/gate counts.
+Human-authorized baseline `ac692ec`; product correction `1bc29e7`, diagnostics
+`509729b`, paired acquisition-language tests `f2aeefd`, Lab packaged smoke
+`1be34fd`. Alternative analyses/UI was explicitly deferred by the human. No
+Phase B, push or merge; review remains human-selected.
+
+Direct selection retains Korean whitespace tokens containing punctuation and
+attached particles while preserving pointer, bounds, secure-field and deadline
+checks. The existing context fields now carry at most two whole neighboring
+words within their original character budget and sentence/line boundaries.
+Kiwi candidate indices map joined-suffix spans back onto the raw normalized
+tokens actually returned. Lab diagnostics record morphology inputs/candidates
+and stable KRDICT probe identities; two real-provider parity tests connect
+authored OCR geometry and production direct selection to equal language inputs.
+They run no native recognizer. No provider, model, dictionary spelling correction
+or alternative-analysis contract was added.
+
+The sealed package at source `509729b`, build UUID
+`1ca07330-1018-4ee0-a0f1-b6591cf0c438`, remains unchanged and uninstalled at
+`/Users/thiago/.codex/worktrees/hanly-v2-packaged-qa/hanly/dist/macos/Hanly.app`.
+Public macOS security logs confirmed both enabled Hanly entries retained an
+obsolete ad-hoc code requirement. With explicit human approval and human OS
+authentication, only Hanly's two entries were removed/re-added normally for
+this exact package. Hanly now reports both grants granted after Recheck.
+No TCC reset/database edit, broader grant, signing change, rebuild after the
+refresh or replacement of `/Applications/Hanly.app` occurred. These grants do
+not establish acceptance of that older installed copy or future ad-hoc builds.
+
+`lab tour --trace-only` exercises the real input/capture/lookup/popup lifecycle
+on the sealed app using owned fixtures and content-free production events.
+Private debug evidence is disabled; scored tours keep their debug-only guard.
+Text retention and baseline comparison are rejected; successful presentation
+is explicitly not semantic accuracy. `--inspect-last` permits a human native
+inspection until normal Quit without changing popup policy.
+
+Final validation:
+
+- Full portable gate: **2,748 passed, 2 skipped, 1 known strict xfail**. Lab:
+  **658 passed, 1 known strict xfail**, plus the final focused smoke/privacy
+  **19 passed**. Ruff passed; full-root mypy **370 files** passed.
+- Source-gold popup corpus **11/12**; grammar **702/706 headwords** and **76/76
+  construction checks**. Six actual serialized popup models passed the earlier
+  React integration. That frontend and sealed-package build evidence is
+  unchanged; no frontend/product source was changed by the Lab extension.
+- Native sealed-package runs: 19/24 word decisions, 144/153 story decisions and
+  1/1 held-target decision passed. Each completed its target set with observed
+  Vision, zero drops and zero surviving/forced children. Failure runs exit 2;
+  they are not passing accuracy tours. Normal app exit succeeded.
+- All fourteen failed word/story fixture surfaces return expected headwords
+  with correct authored inputs through local Kiwi/KRDICT. They are not absent
+  from the database; actual recognized/selected text was not retained, so the
+  native divergence is not conclusively localized. No OCR tuning was done.
+- Actual settings match the initial parsed JSON. Final inventory found no
+  running Hanly root/service/lookup; the temporary Preview fixture was closed.
+  The prior untracked QA report is preserved. The heartbeat remains paused.
+
+Known boundaries: 먹지/먹다 and 날다/나다 primary-analysis ranking, 가지 noun
+sense ordering, fourteen native presentation misses, new direct-text native
+acceptance, Windows/Linux/DPI, explicit focus/crossing tests and newly inspected
+popup expansion/content. CUA exposed the Control Center but did not expose the
+nonactivating dictionary panel separately; no focus/geometry policy was changed
+for automation. Historical presentation evidence remains distinct. Four hours
+of active QA are not established; blocked control calls and unattended sampling
+are excluded. See the single [English report](../reports/hanly-v2-popup-content-qa.md)
+for run IDs, evidence and measurement limitations.
+
+Suggested review targets: direct token/bounds preservation, bounded context,
+candidate/raw-token alignment, diagnostic entry identity and the Lab's strict
+separation between presentation decisions and semantic scoring. This handoff
+is the last implementation edit of this batch; it does not start deep review
+or imply complete native/linguistic acceptance.

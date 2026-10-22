@@ -1,6 +1,15 @@
 # Hanly V2 UI and popup-content follow-up
 
-Status: earlier bounded QA batch closed; newly authorized language-contract polish is in progress on 2026-10-22, awaiting native grants and the alternatives decision. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately.
+Status: language-contract corrections and the Lab packaged smoke path are implemented. Both native grants were restored for the unchanged final package, and real hover → capture → Vision → Kiwi/KRDICT → popup has now run. Remaining recognition/selection and ambiguity failures are retained below; this is not full native or linguistic acceptance. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately. Earlier blocked statuses below are historical and superseded by the final native section.
+
+## Current outcome — 2026-10-22
+
+- Product changes: bounded two-word context, punctuation-preserving direct selection and corrected raw-token candidate indices (`1bc29e7`). Lab diagnostics and parity tests: `509729b`, `f2aeefd`. The human deferred alternative analyses/UI; no OCR tuning, backend/model change, spelling correction or dictionary additions.
+- Source-gold popup corpus remains **11/12**; grammar **702/706 headwords**, with all **76/76 constructions** passing. Known ambiguity and sense-order limitations remain, independently of dictionary coverage.
+- Native packaged smoke: **19/24** word presentation decisions, **144/153** story decisions, and **1/1** held-target decision passed. These are three distinct runs, not a semantic accuracy score. Fourteen failed word/story decisions remain visible; no timeout or processing exception occurred in them.
+- All fourteen failed fixture surfaces return their expected headwords when supplied correctly to local Kiwi/KRDICT. They are not absent from this database. The content-free native recording does not reveal the actual recognized/selected text, so acquisition, recognition and selection cannot yet be separated conclusively.
+- Native popup expansion/content could not be newly inspected through CUA: the tool exposes the Control Center, not the nonactivating dictionary panel separately. Historical native presentation and six-real-model React checks remain distinct evidence. Windows/Linux native acceptance remains outstanding.
+- Final portable closure gate: **2,748 passed, 2 skipped, 1 known strict xfail**, 125.82s. Lab suite: **658 passed, 1 known strict xfail**; final focused smoke/privacy gate: **19 passed**. Ruff passed across all requested roots; mypy passed in **370 files**. Frontend/model and sealed-package build checks below remain separate earlier checks; this final addition changed only Lab code.
 
 ## UI implementation — Luna worker and native consolidation
 
@@ -238,3 +247,99 @@ for the human to complete. Do not rebuild that package after granting access.
 The ad-hoc identity lifecycle and unclear running-copy information are product
 workflow limitations; the evidence does not justify bypassing the probes,
 weakening the signing requirement or granting broad Python/Terminal access.
+
+### Authorized refresh result and current acceptance boundary
+
+After explicit human approval and direct human authentication, only Hanly's
+entries were removed and re-added through the normal macOS privacy UI, using
+the exact final package. Both grants now read **granted inside Hanly**, including
+after Recheck. The package was neither rebuilt nor re-signed. Evidence is in
+ignored `permission-copy-check/final-build-granted.{txt,png}` and the two refreshed
+Settings screenshots. This confirms the old authorization requirement was the
+permission blocker; it does not by itself prove capture or hover correctness.
+
+Native Start capture reached Running and engine ready. A 1,201.2-second packaged
+Lab observation (`20261022-143258-run`) finished with exit 0 and zero drops, but
+no hover/capture/OCR/lookup. The CUA call opening the owned Preview fixture blocked
+for approximately 91.6 minutes despite a requested 15-second timeout; that gap
+is not active QA. The Lab's automated tour independently rejected the production
+package before launch because driven evidence is restricted to the checkout's
+debug build. No privacy boundary was bypassed.
+
+A second bounded observation (`20261022-160542-run`) has capture active on the
+same package and a disposable profile. Targeted CUA clicks, drag and shortcut
+did not produce global hover/native-input traces. A physical mouse check on the
+owned g092 image was requested to distinguish automation delivery limitations
+from a native observation defect. Popup, actual recognizer and acquisition
+acceptance remain unclaimed pending that result. The final handoff is pending.
+
+### Final native Lab coverage after the grant refresh
+
+The human authorized continued unattended testing. An existing, non-prompting
+Lab input preflight reported post-event access, listen-event access and AX trust
+available; no additional grant was requested or changed. A subsequent normal
+142.2-second observation (`20261022-165320-run`) recorded 178 pointer
+opportunities, six small captures and two Vision calls. Neither call contained
+Hangul; the current unusable result was suppressed and stale work was cancelled.
+The short human reply cannot be correlated with a successful Korean popup in
+that recording, so it is not counted as such.
+
+Commit `1be34fd` adds **`lab tour --trace-only`**. It uses the existing Lab-owned
+raster fixtures, ownership probes, real input driver and request-bound events,
+while disabling recognized-content/geometry evidence and the private debug
+observer. It emits separate lifecycle records rather than scored tour records.
+Scored tours still require debug; trace-only rejects text retention and baseline
+comparison. `--inspect-last` keeps the final fixture/app open until normal Quit.
+This is a Lab-only extension; the sealed package, signature, production trace
+contract and OCR behavior did not change.
+
+| Run | Coverage | Observed result |
+|---|---|---|
+| `20261022-165956-tour` | 24 seeded words, 16/22/30/40 px, two page themes | 19 popup decisions passed; 5 `NOT_FOUND`; 29.0s, exit 2 |
+| `20261022-170357-tour` | One 22px word, held for native inspection | 1 popup decision passed; 202.5s including inspection, exit 0 |
+| `20261022-170917-tour` | 153 story targets, including particles, inflections and Latin refusals | 144 decisions passed; 7 `NOT_FOUND`, 2 `UNUSABLE`; 76.8s, exit 2 |
+
+All three completed their planned target sets, observed Vision, recorded zero
+drops and exited with no surviving or forcibly terminated children. Exit 2 is
+the smoke failure status, not a desktop crash. No linguistic accuracy percentage
+is derived from successful presentation. The word failures are w00004, w00008,
+w00012, w00013 and w00024; four used 40px, one 16px. The story failures are k030,
+k037, k041, k066, k080, k130, k131, k138 and k142. Correct authored selections
+through local Kiwi/KRDICT returned the expected headwords in all fourteen cases;
+ignored `smoke-missing-word-diagnostic.json` and
+`story-missing-word-diagnostic.json` distinguish this from native recognition.
+
+Word/story median pointer-to-answer times were 109.6/123.9ms; cold maxima were
+3197.3/3070.6ms. These are bounded observations, not a controlled performance
+improvement. Registered baselines use the scored tour/stress mode; no baseline
+comparison was made. The 527 story pointer movements retained inside shown
+answers are incidental coverage, not an explicit expansion/crossing test.
+CUA only exposed the Control Center for the held-target app; its native Window
+menu also omitted the nonactivating panel. No popup policy was changed to make
+automation easier. New visual expansion and direct-text acquisition acceptance
+therefore remain unverified.
+
+Lab regression: **658 passed, one known strict xfail**, plus the final focused
+smoke/privacy tests **19 passed** after adding the inspection guard. Ruff across
+all requested roots passed; mypy **370 files** passed. An initial Lab-only mypy
+invocation found import-untyped errors because it omitted the source package
+roots; the authoritative full-root command passed without relaxing typing.
+No OCR comparisons or recognition/model tuning were performed. The five word
+and nine story misses remain investigation inputs for that deferred workstream.
+
+### Closure state
+
+The final full portable gate passed **2,748 tests, 2 skips and 1 known strict
+xfail** in 125.82 seconds after the Lab extension. Real user settings still
+match the initial parsed JSON. Final process inventory found no running Hanly
+root, frozen service or lookup worker; Lab cleanup reports zero survivors and
+zero forced children. The final package remains at source `509729b`, build UUID
+`1ca07330-1018-4ee0-a0f1-b6591cf0c438`; only the test harness/docs were changed
+after its grants were refreshed. No rebuild/re-sign, installed-app replacement,
+push, merge or Phase B review occurred. The continuation heartbeat stays paused.
+
+Four hours of active QA have not been established. Automated sampling, account
+limit gaps and the two blocked native-control calls are not active testing.
+The latest human-authorized continuation covered the meaningful remaining
+checks above and stops at the scoped acceptance limits, with current ambiguity,
+native misses and panel-inspection limitations explicitly retained.
