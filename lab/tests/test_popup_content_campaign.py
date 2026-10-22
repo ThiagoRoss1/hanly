@@ -79,6 +79,20 @@ def test_source_gold_pass_does_not_hide_a_wrong_popup_entry() -> None:
     assert "fixture definition" not in json.dumps(score, ensure_ascii=False)
 
 
+def test_diagnostic_only_cases_are_reported_without_scoring_observed_differences() -> None:
+    case = replace(_case(), diagnostic_only=True)
+    score = popup_content.score_rows([_row(case, actual_headword="different")], [case])
+
+    assert score["status"] == "passed"
+    assert score["score"] == "0/0"
+    assert score["total_cases"] == 0
+    assert score["diagnostic_cases"] == 1
+    record = score["cases"][0]
+    assert record["outcome"] == "diagnostic"
+    assert record["failure_reasons"] == []
+    assert "popup_headword" in record["diagnostic_differences"]
+
+
 def test_compact_report_states_scope_and_keeps_definitions_in_full_results_only(
     tmp_path: Path,
 ) -> None:

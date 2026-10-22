@@ -34,6 +34,7 @@ class Case:
     construction_definition_sha256: str | None
     additional_construction_definition_sha256: str | None
     required_sense_definition_sha256: str | None
+    diagnostic_only: bool
     note: str | None
 
 
@@ -77,6 +78,7 @@ def load_corpus(path: Path = CORPUS) -> list[Case]:
                 if "construction" in item else None
             ),
             required_sense_definition_sha256=item.get("required_sense_definition_sha256"),
+            diagnostic_only=bool(item.get("diagnostic_only", False)),
             note=item.get("note"),
         ))
     return cases
@@ -86,16 +88,16 @@ def selection_for(case: Case) -> Any:
     """Build the sentence selection and cursor used by the language stage."""
 
     from hanly import TextSelection
+    from hanly.language_pipeline import neighbouring_words
 
     start = case.text.index(case.target)
     end = start + len(case.target)
-    before = case.text[:start].split()
-    after = case.text[end:].split()
+    before, after = neighbouring_words(case.text, start, end)
     return TextSelection(
         case.target,
         case.cursor,
-        context_before=before[-1] if before else "",
-        context_after=after[0] if after else "",
+        context_before=before,
+        context_after=after,
     )
 
 
@@ -112,14 +114,18 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
     dictionary = KRDICTProvider(dictionary_path)
     try:
         recorded_dictionary = _RecordingDictionary(dictionary)
-        pipeline = LanguagePipeline(KiwiProvider(), recorded_dictionary)
+        recorded_morphology = _RecordingMorphology(KiwiProvider())
+        pipeline = LanguagePipeline(recorded_morphology, recorded_dictionary)
         rows: list[dict[str, Any]] = []
         for case in load_corpus():
             selection = selection_for(case)
             recorded_dictionary.queries.clear()
+            recorded_dictionary.probes.clear()
+            recorded_morphology.calls.clear()
             result = pipeline.lookup(selection)
             content = format_lookup_result(result, TechnicalDetailLevel.OFF)
             entry = content.entry
+            resolved_entry = result.entries[0] if result.entries else None
             context = result.context
             gold_entries = dictionary.lookup(case.headword)
             gold_entry = next((
@@ -129,9 +135,19 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
                 and hashlib.sha256(candidate.senses[0].definition.encode("utf-8")).hexdigest()
                 == case.definition_sha256
             ), None)
+            candidate = context.candidate if context is not None else None
+            gold_query = next((
+                probe for probe in recorded_dictionary.probes
+                if probe["query"] == case.headword
+            ), None)
+            gold_probe_match = bool(gold_query and any(
+                _probe_entry_matches(candidate_entry, gold_entry)
+                for candidate_entry in gold_query["entries"]
+            )) if gold_entry is not None else False
             rows.append({
                 "id": case.id,
                 "category": case.category,
+                "diagnostic_only": case.diagnostic_only,
                 "note": case.note,
                 "status": content.status.value,
                 "popup_content": _plain(content),
@@ -150,10 +166,22 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
                 ],
                 "expected_headword": case.headword,
                 "expected_entry_available": gold_entry is not None,
+                "expected_entry_probe": {
+                    "queried": gold_query is not None,
+                    "matching_entry_returned": gold_probe_match,
+                    "query": gold_query["query"] if gold_query else None,
+                },
+                "expected_entry_present_but_not_selected": _expected_entry_unselected(
+                    resolved_entry, gold_entry
+                ),
                 "expected_entry": (
                     {
                         "headword": gold_entry.headword,
                         "part_of_speech": gold_entry.part_of_speech,
+                        "entry_id": gold_entry.entry_id,
+                        "first_sense_sha256": _digest(
+                            gold_entry.senses[0].definition
+                        ),
                         "hanja": gold_entry.hanja,
                         "vocabulary_level": gold_entry.vocabulary_level,
                         "gloss": gold_entry.senses[0].gloss,
@@ -161,7 +189,9 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
                     }
                     if gold_entry is not None else None
                 ),
-                "entry_matches_expected": bool(entry and entry.headword == case.headword),
+                "entry_matches_expected": _same_entry_identity(
+                    resolved_entry, gold_entry
+                ),
                 "selection": {
                     "text": selection.text,
                     "cursor_index": selection.cursor_index,
@@ -179,6 +209,9 @@ def run(dictionary_path: Path) -> list[dict[str, Any]]:
                     }
                     for token in (context.analyses if context is not None else ())
                 ],
+                "morphology_calls": list(recorded_morphology.calls),
+                "selected_candidate": _candidate_record(candidate),
+                "dictionary_probes": list(recorded_dictionary.probes),
                 "components": [
                     [component.surface, component.lemma, component.grammatical]
                     for component in content.components
@@ -294,26 +327,35 @@ def score_rows(rows: Sequence[dict[str, Any]], cases: Sequence[Case]) -> dict[st
                 ),
             ))
 
-        failures = [check["name"] for check in checks if not check["passed"]]
+        differences = [check["name"] for check in checks if not check["passed"]]
+        failures = [] if case.diagnostic_only else differences
         scored.append({
             "id": case.id,
             "category": case.category,
             "target": case.target,
-            "outcome": "passed" if not failures else "failed",
+            "outcome": (
+                "diagnostic" if case.diagnostic_only
+                else "passed" if not failures else "failed"
+            ),
             "expected": expected,
             "actual": actual,
             "checks": checks,
             "failure_reasons": failures,
+            "diagnostic_differences": differences if case.diagnostic_only else [],
         })
 
-    passed = sum(item["outcome"] == "passed" for item in scored)
+    scored_cases = [item for item in scored if item["outcome"] != "diagnostic"]
+    passed = sum(item["outcome"] == "passed" for item in scored_cases)
+    failed = sum(item["outcome"] == "failed" for item in scored_cases)
+    diagnostic = len(scored) - len(scored_cases)
     return {
         "scope": "language_to_presentation_model",
-        "status": "passed" if passed == len(scored) else "failed",
-        "total_cases": len(scored),
+        "status": "passed" if failed == 0 else "failed",
+        "total_cases": len(scored_cases),
         "passed_cases": passed,
-        "failed_cases": len(scored) - passed,
-        "score": f"{passed}/{len(scored)}",
+        "failed_cases": failed,
+        "diagnostic_cases": diagnostic,
+        "score": f"{passed}/{len(scored_cases)}",
         "cases": scored,
     }
 
@@ -412,7 +454,8 @@ def campaign_markdown(metadata: dict[str, Any], summary: dict[str, Any]) -> str:
         "- Reproduction: `python -m lab popup-content`.",
         "- Authored case sources and sense hashes: `lab/fixtures/korean/popup_content.json`.",
         f"- Score: **{summary['score']}** ({summary['passed_cases']} passed, "
-        f"{summary['failed_cases']} failed).",
+        f"{summary['failed_cases']} failed; "
+        f"{summary.get('diagnostic_cases', 0)} diagnostic cases excluded from score).",
         "",
         "| Case | target | expected entry | actual popup | score |",
         "|---|---|---|---|---|",
@@ -433,6 +476,24 @@ def campaign_markdown(metadata: dict[str, Any], summary: dict[str, Any]) -> str:
                 f"{case['expected']['part_of_speech']}; observed "
                 f"{case['actual']['headword']}/{case['actual']['part_of_speech']}. "
                 f"Failed checks: {', '.join(case['failure_reasons'])}."
+            )
+    diagnostics = [
+        case for case in summary["cases"] if case["outcome"] == "diagnostic"
+    ]
+    if diagnostics:
+        rows.extend((
+            "",
+            "## Diagnostic observations (not source-gold verdicts)",
+            "",
+        ))
+        for case in diagnostics:
+            differences = ", ".join(case["diagnostic_differences"]) or "none"
+            rows.append(
+                f"- **{case['id']}**: expected source target "
+                f"{case['expected']['headword']}/{case['expected']['part_of_speech']}; "
+                f"observed popup {case['actual']['headword']}/"
+                f"{case['actual']['part_of_speech']}; observed differences: {differences}. "
+                "See results.json for exact selection, provider calls, candidates and probes."
             )
     rows.extend((
         "",
@@ -470,7 +531,108 @@ class _RecordingDictionary:
     def __init__(self, dictionary: Any) -> None:
         self.dictionary = dictionary
         self.queries: list[str] = []
+        self.probes: list[dict[str, Any]] = []
 
     def lookup(self, lemma: str) -> Any:
         self.queries.append(lemma)
-        return self.dictionary.lookup(lemma)
+        entries = tuple(self.dictionary.lookup(lemma))
+        self.probes.append({
+            "query": lemma,
+            "entries": [
+                {
+                    "headword": entry.headword,
+                    "part_of_speech": entry.part_of_speech,
+                    "hanja": entry.hanja,
+                    "vocabulary_level": entry.vocabulary_level,
+                    "entry_id": entry.entry_id,
+                    "first_sense_sha256": _digest(
+                        entry.senses[0].definition if entry.senses else None
+                    ),
+                }
+                for entry in entries
+            ],
+        })
+        return entries
+
+
+class _RecordingMorphology:
+    """Forward exact provider calls while recording normalized output."""
+
+    def __init__(self, provider: Any) -> None:
+        self.provider = provider
+        self.calls: list[dict[str, Any]] = []
+
+    def analyze(self, text: str) -> Any:
+        analysis = self.provider.analyze(text)
+        tokens = getattr(analysis, "tokens", analysis)
+        candidates = getattr(analysis, "candidates", ())
+        self.calls.append({
+            "input": text,
+            "tokens": [
+                {
+                    "token": token.token,
+                    "lemma": token.lemma,
+                    "part_of_speech": token.part_of_speech,
+                    "morphology": token.morphology,
+                    "start": token.start,
+                    "length": token.length,
+                }
+                for token in tokens
+            ],
+            "candidates": [
+                _candidate_record(candidate) for candidate in candidates
+            ],
+        })
+        return analysis
+
+
+def _candidate_record(candidate: Any) -> dict[str, Any] | None:
+    if candidate is None:
+        return None
+    return {
+        "lemma": candidate.lemma,
+        "part_of_speech": candidate.part_of_speech,
+        "start": candidate.start,
+        "end": candidate.end,
+        "token_indices": list(candidate.token_indices),
+    }
+
+
+def _same_entry_identity(actual: Any, expected: Any) -> bool:
+    """Compare one source entry by stable ID, falling back to its first sense."""
+
+    if actual is None or expected is None:
+        return False
+    if actual.entry_id is not None and expected.entry_id is not None:
+        return actual.entry_id == expected.entry_id
+    return (
+        actual.headword == expected.headword
+        and actual.part_of_speech == expected.part_of_speech
+        and actual.hanja == expected.hanja
+        and actual.vocabulary_level == expected.vocabulary_level
+        and bool(actual.senses)
+        and bool(expected.senses)
+        and _digest(actual.senses[0].definition)
+        == _digest(expected.senses[0].definition)
+    )
+
+
+def _expected_entry_unselected(actual: Any, expected: Any) -> bool:
+    """Report source-gold presence even when lookup yielded no popup entry."""
+
+    return expected is not None and not _same_entry_identity(actual, expected)
+
+
+def _probe_entry_matches(probe_entry: dict[str, Any], expected: Any) -> bool:
+    if expected is None:
+        return False
+    if probe_entry.get("entry_id") is not None and expected.entry_id is not None:
+        return probe_entry["entry_id"] == expected.entry_id
+    return (
+        probe_entry.get("headword") == expected.headword
+        and probe_entry.get("part_of_speech") == expected.part_of_speech
+        and probe_entry.get("hanja") == expected.hanja
+        and probe_entry.get("vocabulary_level") == expected.vocabulary_level
+        and probe_entry.get("first_sense_sha256")
+        == _digest(expected.senses[0].definition if expected.senses else None)
+    )

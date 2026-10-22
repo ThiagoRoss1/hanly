@@ -330,6 +330,102 @@
         "definition_sha256": "8ad4312c7496febea845b084a3f58dccdb3aad40312b345352d810cdcbe0ec1a"
       },
       "note": "The surface 먹지 also exists as a carbon-paper noun; the surrounding prohibitive 말다 resolves this case to the verb."
+    },
+    {
+      "id": "PC-201",
+      "category": "diagnostic contrast: 가지 noun",
+      "text": "나무에 가지가 많아요.",
+      "target": "가지가",
+      "cursor": 0,
+      "lemma": "가지",
+      "headword": "가지",
+      "part_of_speech": "명사",
+      "hanja": null,
+      "vocabulary_level": "중급",
+      "gloss_sha256": "7a1d05d98723487acdd3edecb2aea085ed3c6dda9620ac5190c0865eee74d002",
+      "definition_sha256": "79fd47ed7b74e9dd16950b933d4e933a557e8f020cf0f853a5b20d44bab5ebc4",
+      "diagnostic_only": true,
+      "note": "Counterpoint to PC-202: the noun is the branch of a tree. KRDICT's official examples include 가지 with particles in this sense; retain all pipeline probes to see whether noun evidence is queried and selected."
+    },
+    {
+      "id": "PC-202",
+      "category": "diagnostic contrast: 가지 prohibition",
+      "text": "오늘은 가지 마세요.",
+      "target": "가지",
+      "cursor": 0,
+      "lemma": "가다",
+      "headword": "가다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "084957d8634a1b1cc051bb1f1b6f6dbc4708c5bc65d677632600370a51249696",
+      "definition_sha256": "c715bac3ad683bb4c35dc847bb3997b5d6b1d004ef4355def61c08919b515be9",
+      "diagnostic_only": true,
+      "note": "Counterpoint to PC-201: 가지 is 가다 plus prohibitive -지 before 마세요. Do not expect a noun result merely because 가지 is also a dictionary headword."
+    },
+    {
+      "id": "PC-203",
+      "category": "diagnostic contrast: 나는 pronoun",
+      "text": "나는 학생이에요.",
+      "target": "나는",
+      "cursor": 0,
+      "lemma": "나",
+      "headword": "나",
+      "part_of_speech": "대명사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "a83dd0ccbffe39d071cc317ddf6e97f5c6b1c87af91919271f9fa140b0508c6c",
+      "definition_sha256": "7c657fb6f34027469cec511ea6b93eb4716d973531e33f5e4559c11aa6cbd884",
+      "diagnostic_only": true,
+      "note": "Context favors first-person pronoun 나 + topic particle 는; contrast with PC-204's modifier 나는. Surface-only alternatives are intentionally recorded, not presumed rejected."
+    },
+    {
+      "id": "PC-204",
+      "category": "diagnostic contrast: 나는 modifier",
+      "text": "하늘을 나는 새예요.",
+      "target": "나는",
+      "cursor": 0,
+      "lemma": "날다",
+      "headword": "날다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "f4debdb7ab7dd958e95cea076c7668310a131f9bf9c972fa934c5e55c5a97c0e",
+      "definition_sha256": "f992950dc680bc131b32d6a662c496e656cfabd36d5765bb3b22a485cb676eca",
+      "diagnostic_only": true,
+      "note": "Context favors 날다 'fly' as a modifier of 새; contrast with PC-203. KRDICT lists 나는 among 날다's forms."
+    },
+    {
+      "id": "PC-205",
+      "category": "diagnostic punctuation cursor: parenthetical noun plus particle",
+      "text": "(학교)에 가요.",
+      "target": "(학교)에",
+      "cursor": 4,
+      "lemma": "학교",
+      "headword": "학교",
+      "part_of_speech": "명사",
+      "hanja": "學校",
+      "vocabulary_level": "초급",
+      "gloss_sha256": "d64debd942d7dc26a851231583b1721f43ea936fa41932b6dad7556e5f8cd24a",
+      "definition_sha256": "0bb4011009af4d36aeb4e9da78ae8b6179f388a230deed9e9569e33bdf6ceaad",
+      "diagnostic_only": true,
+      "note": "Direct punctuation-selection probe retained at cursor 4, on particle 에; OCR-whitespace token gold remains 학교 under the current fixture policy. No policy claim is encoded by this diagnostic-only case."
+    },
+    {
+      "id": "PC-206",
+      "category": "diagnostic punctuation cursor: quoted noun plus modifier construction",
+      "text": "'사랑'이라는 말",
+      "target": "'사랑'이라는",
+      "cursor": 4,
+      "lemma": "사랑",
+      "headword": "사랑",
+      "part_of_speech": "명사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "686f746a95b6f836d7d70567c302c3f9ebb5ee0def3d1220ee9d4e9f34f5e131",
+      "definition_sha256": "6d06306f8322d70a61b1ba3ef4cec469f08bd0dfc18d7ae18cceabac7f4dc616",
+      "diagnostic_only": true,
+      "note": "Direct punctuation-selection probe on 이 after quoted noun 사랑. Keep the existing whole-token gold for observation; policy is not settled by the case."
     }
   ],
   "source_references": {
@@ -381,6 +477,24 @@
       "PC-003b": [
         "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=78636",
         "https://krdict.korean.go.kr/m/eng/searchResultView?ParaWordNo=72580&currentPage=1&exaType=&font_size=12&mainSearchWord=%EB%A7%90%EB%8B%A4&nation=eng&nationCode=6&proverbType=&searchType=W&sort=&viewType=A&wordMatchFlag=N"
+      ],
+      "PC-201": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=59919"
+      ],
+      "PC-202": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=27500&nation=eng"
+      ],
+      "PC-203": [
+        "https://krdict.korean.go.kr/eng/dicMarinerSearch/search?mainSearchWord=%EB%82%98&nation=eng"
+      ],
+      "PC-204": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=61530"
+      ],
+      "PC-205": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=73276&nation=eng"
+      ],
+      "PC-206": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=66649&nation=eng"
       ]
     }
   }

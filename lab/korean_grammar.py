@@ -3,13 +3,14 @@
 ``python -m lab grammar`` runs Kiwi and KRDICT -- no OCR, no pixels -- on every
 case of ``lab/fixtures/korean/grammar.json`` at every syllable of its target,
 in the two forms acquisition hands over: the whitespace-delimited word OCR
-resolves, and the unbroken Korean run accessibility text yields. Expected
+resolves, and the selection the production direct-text coordinator yields. Expected
 headwords and constructions are checked against the dictionary before
 anything is scored, so a typo in the corpus cannot pass as a model error.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
@@ -105,22 +106,39 @@ def selection_for(case: Case, form: str, cursor: int) -> Any:
     """The selection acquisition would hand the language stage for this hover."""
 
     from hanly import TextSelection
+    from hanly.language_pipeline import neighbouring_words
 
     offset = case.text.index(case.target)
     if form == "ocr":
         text, index = case.target, cursor
     else:
-        run = _korean_run(case.text, offset + cursor)
-        if run is None:
-            return None
-        text, index = run
-    before, after = _neighbours(case.text, offset, len(case.target))
-    fields = TextSelection.__dataclass_fields__
-    extra = (
-        {"context_before": before, "context_after": after}
-        if "context_before" in fields else {}
+        return _direct_selection(case.text, offset + cursor)
+    before, after = neighbouring_words(case.text, offset, offset + len(case.target))
+    return TextSelection(
+        text=text, cursor_index=index, source=form,
+        context_before=before, context_after=after,
     )
-    return TextSelection(text=text, cursor_index=index, source=form, **extra)
+
+
+def _direct_selection(text: str, cursor: int) -> Any:
+    """Exercise production selection policy with authored text and synthetic bounds."""
+
+    from hanly import BoundingBox, Point
+    from hanly_app.acquisition.direct_text import DirectText, DirectTextCoordinator
+
+    bounds = BoundingBox(left=0, top=0, right=100, bottom=20)
+    point = Point(50, 10)
+
+    class Reader:
+        def read_at(self, point: Point, *, timeout_ms: int) -> DirectText:
+            return DirectText(text=text, cursor_index=cursor, bounds=bounds)
+
+        def refine_bounds(
+            self, point: Point, start: int, end: int, *, line: str, timeout_ms: int
+        ) -> BoundingBox:
+            return bounds
+
+    return DirectTextCoordinator(Reader()).acquire(point).selection
 
 
 def evaluate(cases: Sequence[Case], pipeline: Any) -> list[Outcome]:
@@ -231,6 +249,15 @@ def run(dictionary_path: Path, output: Path | None = None) -> tuple[dict[str, An
     from hanly.krdict_provider import KRDICTProvider
     from hanly.language_pipeline import LanguagePipeline
 
+    from .metadata import build_metadata, source_identity, write_metadata
+
+    metadata = build_metadata(
+        repo_root=REPO_ROOT, kind="grammar",
+        config={"scope": "language_stage_only", "ocr": "not_run", "capture": "not_run"},
+        scenario={"corpus_sha256": _file_digest(CORPUS),
+                  "dictionary_sha256": _file_digest(dictionary_path)},
+    )
+
     dictionary = KRDICTProvider(dictionary_path)
     try:
         cases = load_corpus()
@@ -240,11 +267,21 @@ def run(dictionary_path: Path, output: Path | None = None) -> tuple[dict[str, An
         summary = summarize(evaluate(cases, LanguagePipeline(KiwiProvider(), dictionary)))
     finally:
         dictionary.close()
+    metadata["lab_provenance"]["source_at_end"] = source_identity(REPO_ROOT)
     path = write_report(summary, output or LAB_ROOT / "grammar" / "summary.md")
+    write_metadata(path.parent / "metadata.json", metadata)
     path.with_suffix(".json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     return summary, path
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _ratio(counts: Mapping[str, int], name: str) -> str:
@@ -264,26 +301,6 @@ def _variants(construction: str) -> set[str]:
 
 def _surface(text: str, component: Any) -> str:
     return text[component.start: component.end]
-
-
-def _neighbours(text: str, offset: int, length: int) -> tuple[str, str]:
-    """The eojeol immediately before and after the target, or empty strings."""
-
-    before_words = text[:offset].split()
-    after_words = text[offset + length:].split()
-    return (before_words[-1] if before_words else "", after_words[0] if after_words else "")
-
-
-def _korean_run(text: str, index: int) -> tuple[str, int] | None:
-    if not 0 <= index < len(text) or not _is_hangul(text[index]):
-        return None
-    start = index
-    while start > 0 and _is_hangul(text[start - 1]):
-        start -= 1
-    end = index + 1
-    while end < len(text) and _is_hangul(text[end]):
-        end += 1
-    return text[start:end], index - start
 
 
 def _is_hangul(character: str) -> bool:

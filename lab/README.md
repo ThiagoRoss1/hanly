@@ -456,6 +456,13 @@ command return nonzero.
 python -m lab popup-content
 ```
 
+The run's ignored `results.json` also records the exact morphology call inputs,
+normalized tokens/candidates, and dictionary query signatures. Source-entry
+availability is checked separately from what the pipeline queried and selected.
+Six additional diagnostic contrasts stay separate from the original twelve
+source-gold cases and do not inflate the pass score. These are authored Lab
+inputs; normal product logs retain no recognized text.
+
 The run's ignored `results.json` also contains the exact plain popup model
 serialized for the desktop event contract. To pass real language-campaign data
 through the React popup test without a desktop or captured pixels, provide that
@@ -518,8 +525,14 @@ python -m lab word-selection --ocr-backend vision       # or easyocr; --stride N
 - Korean fused to digits, emoji or punctuation.
 
 Every target is hovered at every syllable, in both forms acquisition produces:
-the whitespace-delimited word OCR resolves (with its neighbouring words), and
-the Korean run accessibility text yields. Every expected headword and
+the whitespace-delimited word OCR resolves, and the production direct-text
+coordinator's selection over authored accessibility text with synthetic bounds.
+Korean surfaces retain punctuation and attached grammar in both paths; mixed
+scripts still narrow to the Hangul under the cursor. Context is bounded to two
+whole neighboring words and 32 characters per side, stopping at line/sentence
+boundaries. No native range or OCR recognition is exercised here. Each run writes
+source provenance and corpus/dictionary hashes in `metadata.json` beside its
+summary. Every expected headword and
 construction is checked against KRDICT before scoring, so a corpus typo fails
 loudly instead of passing as a model error. Ambiguous cases list what is
 acceptable and say why.
