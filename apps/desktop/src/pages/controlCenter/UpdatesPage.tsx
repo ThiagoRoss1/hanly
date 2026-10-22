@@ -240,7 +240,7 @@ export function UpdatesPage({
         <div
           aria-hidden={!resourcesOpen}
           inert={!resourcesOpen}
-          className="region-collapse grid grid-rows-[0fr] transition-[grid-template-rows] duration-[250ms] ease-out"
+          className="region-collapse"
           data-open={resourcesOpen}
           id="resource-collapse"
         >
@@ -268,7 +268,7 @@ export function UpdatesPage({
                 ))
               )}
             </div>
-            <p className="resource-foot m-0 px-0 py-3 text-[12px] leading-[19px]">
+            <p className="resource-foot m-0 px-4 pt-3 pb-6 text-[12px] leading-[19px]">
               Resources swap without restarting. Lookups pause for a moment
               during the swap.
             </p>
@@ -292,14 +292,13 @@ export function UpdatesPage({
         <div
           aria-hidden={!activityOpen}
           inert={!activityOpen}
-          className="region-collapse grid grid-rows-[0fr] transition-[grid-template-rows] duration-[250ms] ease-out"
+          className="region-collapse"
           data-open={activityOpen}
           id="activity-collapse"
         >
           <div className="collapse-inner">
             <div
-              className="panel-rows flex flex-col border-t border-[var(--skin-line)] px-4 pb-4"
-              style={{ borderTop: "1px solid var(--border)" }}
+              className="panel-rows flex flex-col px-4 pb-6"
             >
               {activity.length ? (
                 activity.map((item, index) => (

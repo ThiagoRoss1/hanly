@@ -39,6 +39,7 @@ export function CapturePage({
     height: "",
   });
   const [formError, setFormError] = useState("");
+  const [regionError, setRegionError] = useState("");
   const region = app.region ?? config.capture_region ?? null;
   const mode = config.capture_mode ?? app.capture_mode ?? "full_monitor";
   const selectedTarget =
@@ -85,7 +86,7 @@ export function CapturePage({
       Object.entries(regionDraft).map(([key, value]) => [key, Number(value)]),
     );
     if (Object.values(values).some((value) => !Number.isInteger(value))) {
-      setFormError("Enter whole numbers for each region coordinate.");
+      setRegionError("Enter whole numbers for each region coordinate.");
       return;
     }
     const next = values as {
@@ -95,10 +96,10 @@ export function CapturePage({
       height: number;
     };
     if (next.width < 2 || next.height < 2) {
-      setFormError("The region must be at least 2 × 2 pixels.");
+      setRegionError("The region must be at least 2 × 2 pixels.");
       return;
     }
-    setFormError("");
+    setRegionError("");
     await run("set_region", { region: next });
   }
 
@@ -168,9 +169,10 @@ export function CapturePage({
               art="/design/media/assets/icons/custom/icon-monitor.svg"
               detail="Follows the display the cursor is on."
               layout="target"
-              onSelect={() =>
-                void run("set_capture_mode", { mode: "full_monitor" })
-              }
+              onSelect={() => {
+                setRegionError("");
+                void run("set_capture_mode", { mode: "full_monitor" });
+              }}
             />
             <TargetOption
               selected={mode === "region"}
@@ -179,7 +181,10 @@ export function CapturePage({
               art="/design/media/assets/icons/v2/capture-frame.png"
               detail="A fixed rectangle you draw once."
               layout="target"
-              onSelect={() => void run("set_capture_mode", { mode: "region" })}
+              onSelect={() => {
+                setRegionError("");
+                void run("set_capture_mode", { mode: "region" });
+              }}
             />
           </div>
           <div className="capture-guidance mx-6 flex items-center gap-2.5 border-t border-[var(--skin-line)] py-3 pb-6">
@@ -191,7 +196,7 @@ export function CapturePage({
         <div
           aria-hidden={mode !== "region"}
           inert={mode !== "region"}
-          className="region-collapse grid grid-rows-[0fr] transition-[grid-template-rows] duration-[250ms] ease-out"
+          className="region-collapse"
           data-open={mode === "region"}
         >
           <div className="collapse-inner">
@@ -200,7 +205,7 @@ export function CapturePage({
               className="panel collapse-gap mt-4 relative min-w-0"
               data-rise="3"
             >
-              <div className="region-head flex items-center gap-2.5 px-5 pt-[25px] pb-2.5">
+              <div className="region-head flex flex-wrap items-center gap-2.5 px-5 pt-[50px] pb-2.5">
                 <h2 className="panel-title" id="region-heading">
                   Region
                 </h2>
@@ -224,12 +229,13 @@ export function CapturePage({
                         className="input h-10 w-full min-w-0 px-3 py-[7px] text-xs leading-[18px]"
                         disabled={isPending("set_region") || mode !== "region"}
                         inputMode="numeric"
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          setRegionError("");
                           setRegionDraft((current) => ({
                             ...current,
                             [key]: event.target.value,
-                          }))
-                        }
+                          }));
+                        }}
                         value={regionDraft[key]}
                       />
                     </label>
@@ -253,6 +259,11 @@ export function CapturePage({
                     Apply
                   </PixelButton>
                 </div>
+                {regionError && (
+                  <div className="banner mb-0" data-tone="bad" role="alert">
+                    {regionError}
+                  </div>
+                )}
               </div>
             </section>
           </div>

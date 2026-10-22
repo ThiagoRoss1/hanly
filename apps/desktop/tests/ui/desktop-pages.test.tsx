@@ -637,7 +637,12 @@ describe("desktop React routes", () => {
       method: "set_capture_mode",
       params: { mode: "region" },
     }));
-    expect(screen.getByRole("heading", { name: "Region" })).toBeTruthy();
+    const regionHeading = screen.getByRole("heading", { name: "Region" });
+    const regionPanel = regionHeading.closest(".region-collapse") as HTMLElement;
+    expect(regionPanel.dataset.open).toBe("true");
+    expect(regionPanel.getAttribute("aria-hidden")).toBe("false");
+    expect(regionPanel.hasAttribute("inert")).toBe(false);
+    expect(regionPanel.className).not.toContain("grid-rows-[0fr]");
 
     await user.click(screen.getAllByRole("button", { name: "Select area" })[0]!);
     expect(screen.getByRole("dialog", { name: "Where should Hanly read?" })).toBeTruthy();
@@ -646,6 +651,33 @@ describe("desktop React routes", () => {
       method: "select_region",
       params: {},
     }));
+  });
+
+  it("shows region validation beside the region controls with settings collapsed", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("radio", { name: /Selected region/ }));
+    await screen.findByRole("heading", { name: "Region" });
+
+    const width = screen.getByRole("textbox", { name: "Region width" });
+    fireEvent.change(width, { target: { value: "1" } });
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("at least 2 × 2 pixels");
+    expect(alert.closest(".region-collapse")).toBeTruthy();
+    expect((screen.getByText("Capture settings").closest("details") as HTMLDetailsElement).open).toBe(false);
+    expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "set_region" }));
+
+    fireEvent.change(width, { target: { value: "120" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.change(width, { target: { value: "1" } });
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    await user.click(screen.getByRole("radio", { name: /Current monitor/ }));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("validates and persists the hover delay through its native service action", async () => {
@@ -881,8 +913,18 @@ describe("desktop React routes", () => {
 
     await user.click(screen.getByRole("button", { name: /Dictionary and resources/ }));
     expect(screen.getByText("krdict")).toBeTruthy();
+    const resourcesPanel = document.getElementById("resource-collapse") as HTMLElement;
+    expect(resourcesPanel.dataset.open).toBe("true");
+    expect(resourcesPanel.getAttribute("aria-hidden")).toBe("false");
+    expect(resourcesPanel.hasAttribute("inert")).toBe(false);
+    expect(resourcesPanel.className).not.toContain("grid-rows-[0fr]");
     await user.click(screen.getByRole("button", { name: /Update activity/ }));
     expect(screen.getByText("Full download requested.")).toBeTruthy();
+    const activityPanel = document.getElementById("activity-collapse") as HTMLElement;
+    expect(activityPanel.dataset.open).toBe("true");
+    expect(activityPanel.getAttribute("aria-hidden")).toBe("false");
+    expect(activityPanel.hasAttribute("inert")).toBe(false);
+    expect(activityPanel.className).not.toContain("grid-rows-[0fr]");
   });
 
   it("cancels a pending full-download confirmation without starting an install", async () => {
