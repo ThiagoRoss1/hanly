@@ -3,7 +3,7 @@
 ## Bundle
 
 - Human-authorized workstream: `design/hanlyV2`; no new Linear issue or lifecycle transition was inferred from completed V1 work.
-- Updated: 2026-10-20. Phase A implementation is complete; Phase B deep review has not started.
+- Updated: 2026-10-22. Phase A implementation and bounded follow-up are closed; native acceptance is still blocked. Phase B deep review has not started.
 - Original baseline: `43ba8d6`, identical to local `main` and the migration branch's tree. Correction baseline: `15b87a8`.
 - GPT implementation with bounded Luna xhigh workers for scene rendering, presentation components and preferences. Commit authorized by the human; no push or merge.
 
@@ -118,3 +118,66 @@ Current correction evidence: `artifacts/lab/runs/20261019-v2-corrections/` (summ
 - Floral/Ornamental alternatives remain experimental external references.
 
 Review assignment remains human-selected. The earlier native correction run used the normal service with capture stopped and an isolated temporary profile; fixture injection was absent. No push or merge was performed.
+
+
+## UI and popup-content follow-up — 2026-10-22
+
+This section supersedes earlier validation counts and completion assumptions for
+the follow-up batch. Baseline `0554d96`; local implementation commits
+`ea849c4`, `7cd1191`, `6363f6a` and `8a7d276`. Human authorized the QA/fix campaign
+and local batch commits; no push or merge. Coordinator plus Luna implementation,
+popup-content and primary-source workers; this was not Phase B review.
+
+The Region, Dictionary/resources and Update activity disclosures now expand
+visibly; a competing zero-row Tailwind utility had overridden the open state.
+Invalid region feedback lives in the open Region panel even when Capture
+settings is closed. Insets keep actions, validation and footer text inside the
+artwork. The capture target dialog has title clearance, forward/reverse Tab
+containment and Escape focus restoration, including Safari pointer activation.
+Native checks confirmed these behaviors on the rebuilt debug app.
+
+A new Lab `popup-content` command drives real Kiwi/KRDICT through production
+popup formatting and checks source-backed lemma/POS, senses, Hanja, level,
+Read as roles and constructions. Learner labels improve XSV and reviewed VX
+forms. Full dictionary text stays in ignored evidence; tracked gold uses hashes.
+Six exact serialized real-provider popup models also pass through React in an
+opt-in jsdom integration test with simulated event delivery. This proves neither
+native geometry nor text acquisition.
+
+Current gates: portable Python **2,709 passed, 2 skipped, 1 strict known xfail**;
+Ruff passed; mypy **368 files**; React **54 passed/1 opt-in skip**; six-model
+integration passed; Node **12 passed**; frontend/debug builds passed. Source was
+unchanged during final artifact consolidation, so green gates were not repeated.
+Real-provider content is **11/12**, with `먹지를 깔고 써요` still misresolved to
+먹다 instead of 먹지. No word-specific workaround was added. Existing grammar
+coverage matches **698/706 headwords** and **74/76 construction checks**; remaining
+rows expose bounded context, ambiguity and OCR/direct punctuation-selection
+policy differences. Expectations were preserved. Revisit triggers and evidence
+are in the single [follow-up report](../reports/hanly-v2-popup-content-qa.md).
+
+The official frozen-service package built at `f724fef` in the attached
+`hanly-v2-packaged-qa` worktree passed inventory, deep/strict signature verification
+and native window/React bridge smoke checks. A 180.6s disposable-profile Lab run
+reached Ready, compatible KRDICT and three shortcuts, then exited cleanly with
+no dropped events or surviving children. Both grants remained missing after
+Recheck; Start capture refused and stayed stopped. No installed app was replaced.
+The earlier requested 3h15m debug observation ended normally after 77.5 minutes,
+with zero captures/OCR/lookups. Its early exit is unexplained; background build
+load and dirty source preclude a controlled performance comparison.
+
+Normal grants must be established for the exact app/service identity before
+live hover, reader focus, cursor-to-popup retention and captured-text acceptance.
+The human must complete OS authentication directly. No broad Python/Terminal
+permission, TCC reset, signing-policy change, OCR backend/model tuning or capture
+substitution was used. Windows/Linux/DPI and full packaged-provider execution
+remain unverified. Four hours of active QA are not established: the blocked
+System Settings call, usage-limit gap, heartbeats and automated sampling are not
+counted as hands-on testing. User config matches its initial parsed JSON; Lab
+apps exited, the pre-existing source app was left untouched, and the continuation
+heartbeat remains paused.
+
+Suggested human-selected review targets: disclosure/validation ownership and
+modal focus, learner-facing role mappings, source-gold assertions and the exact
+popup event model. The report records unresolved language/selection cases for a
+future scoped decision. This handoff is the last implementation edit; no deep
+review or automatic acceptance is implied.

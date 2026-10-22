@@ -2,7 +2,7 @@
 
 Authorized scope: follow-up UI fixes, source-grounded popup content tests, Lab and native UI/hover validation on `design/hanlyV2`; local batch commits allowed, no push/merge, no Phase B review. OCR comparisons and backend/model changes are deferred. Preserve the pre-existing untracked `reports/hanly-v2-post-redesign-qa.md`.
 
-## Resume state — 2026-10-22 01:44 UTC
+## Resume state — 2026-10-22 02:04 UTC
 
 - Base: `0554d96`. Three Luna workers delivered UI fixes, real-provider popup corpus/tests and official KRDICT source adjudication. Their evidence is under ignored `artifacts/lab/runs/20261021-popup-campaign/`.
 - Popup: learner-facing XSV and reviewed VX labels improved. Twelve real Kiwi/KRDICT cases: eleven source-gold passes; carbon-paper noun `먹지를 깔고 써요` remains a strict expected failure, currently misresolved to 먹다. No heuristic dictionary correction added. Definitions are hash-pinned in tracked fixtures; readable results remain ignored.
@@ -14,7 +14,7 @@ Authorized scope: follow-up UI fixes, source-grounded popup content tests, Lab a
 - Current exact debug bundle `apps/desktop/src-tauri/target/debug/bundle/macos/Hanly.app` has the final native focus-restoration build; the regular-profile app was quit normally before extended observation. User's original settings are restored. Snapshots and screenshots are under campaign `native/`. OS permission preflight remains 0/2. A normal grant in System Settings did not establish source service trust; root/service and stale ad-hoc identity explanations remain inferences. No broad Python/Terminal grants, TCC reset or signing changes permitted as workarounds.
 - Background built-in browser follow-up also unavailable; no Papago/Naver output claimed. Official KRDICT remains primary adjudication.
 
-## Extended observation — running
+## Extended observation — finished early; see closure below
 
 - Started 2026-10-22 01:43:17 UTC; requested duration 11,700 seconds (3h15m), expected end around 04:58 UTC. Output: `artifacts/lab/runs/20261021-224317-run/`. Root command log: campaign `native/lab-extended.log`; exec session ID `58085`.
 - At 01:44 UTC sampling was advancing, shell PID 70275 with its own Python and WebKit family. App is open on Capture with capture stopped. Its settings/logs are in the run's `profile/`; the real user profile remains untouched. Do not launch a second instance or quit this app while the observation is intended to continue.
@@ -23,6 +23,36 @@ Authorized scope: follow-up UI fixes, source-grounded popup content tests, Lab a
 - Do not rerun green suites without a source change or failure. Do not rebuild/change signing during this observation. This is automated observation plus periodic hands-on checks, not a claim of four hours of continuous hands-on work. If a new user instruction stops the campaign, normal Quit of this Lab-owned app lets Lab finalize its report.
 - At end: read compact Lab summary/provenance first; verify process cleanup, restore native window state and original user settings, finalize the single report and existing redesign Review Handoff, commit those docs locally, disable heartbeat, and report native capture limitations honestly. Do not mark the active goal achieved while required native acceptance remains blocked; follow the goal tool's repeated-blocker rule if meaningful work is exhausted.
 
+### Checks and independent package preparation
+
+- 01:52 UTC: verified Logs points to the named Lab disposable profile before clearing its one session record. Clear → 0/0 with Copy disabled; export wrote valid JSON with zero records. Real user logs untouched. Native Minimize/Raise actions retained this UI state; no OS background-throttling claim.
+- Around 01:59 UTC: eight native transition screenshots sampled 728–1,239ms after day→night activation, plus a settled image. No blank panel or tree-over-house overlay was observed in these samples. This is sampled inspection, not frame-exhaustive acceptance. App currently has Dark/Normal in its disposable profile and remains on Logs, capture stopped.
+- A bounded six-case Kiwi experiment found noun alternatives also appear for valid verbal `가지를 않는다`; neighbor context already helps. No safe override or threshold is supported. No engine edits. Evidence: campaign `pc003a-resolution-experiment.{md,json}`.
+- Created attached managed worktree `/Users/thiago/.codex/worktrees/hanly-v2-packaged-qa/hanly` at `f724fef` for a proper frozen-service comparison; primary checkout and branch are unchanged. No existing suitable worktree was attached. Reused the two existing production model files without downloads. Locked npm install passed (offline cache was incomplete, so official npm registry was used); package-lock is unchanged.
+- Official package build completed successfully in that worktree. Product: `dist/macos/Hanly.app`, build UUID `818eb2c4-72e0-4118-80c5-31720d9e3815`, source `f724fef6736a95aab03b7a7907b484aea1a41f7a`, version 1.1.0 arm64. Inventory-only and `codesign --verify --deep --strict` passed. Root/service code identities are recorded under campaign `native/package-*.log`; default ad-hoc policy unchanged. ZIP/DMG/manifests were generated only in isolated ignored output. No install, launch, updater action or OCR run occurred.
+- The independent build ran approximately 01:53–02:00 UTC while Lab was sampling. It did not rebuild the running debug app or alter its source, but host load is a performance confound; do not call this a controlled benchmark.
+- After the current debug session finishes around 04:58 UTC, inspect/launch the isolated frozen-service app sequentially with a disposable profile and check normal in-app permissions. No second Hanly while this session is running. Do not change signing/TCC policy or grant broad Python/Terminal access. If OS authentication is required, the human must complete it directly; never enter or request their password. Only after in-app grants are actually recognized should a bounded, existing-backend Lab hover run be attempted. OCR comparisons/tuning remain deferred.
+- The worktree contains needed ignored build output; keep it attached until comparison/cleanup. Do not archive it without preserving the built product/evidence.
+
 Timing: campaign started 2026-10-21 19:57 UTC. A single System Settings computer-use call blocked about 4h48m until 00:47 UTC; this is not active QA time. Never claim four hours of hands-on testing from elapsed wall time.
 
 Continuation: goal is active; thread heartbeat `continue-hanly-qa-campaign` was created for bounded continuation. Disable it when this campaign finishes. Finish with one report and the existing redesign Review Handoff; handoff is the last implementation act.
+
+## Continuation stopped — 2026-10-22 05:53 UTC
+
+- First action on the 05:52 heartbeat was `get_goal`: returned `usageLimited`, not active. No goal status was changed or automatically resumed. The heartbeat was paused to prevent further automatic continuations against this limit.
+- No hands-on QA is claimed for the queued heartbeats after the last recorded work around 02:05 UTC. The extended Lab sampler and grammar command were launched earlier, but their final results and process cleanup have not yet been inspected. Do not assume success or keep calling them running from their expected end time.
+- Pending on a human-authorized goal resume: read the extended run's compact summary and grammar summary; verify process cleanup; perform the sequential frozen-service window/permission check with the already-built isolated package; consolidate results and write the existing redesign Review Handoff last. Native hover acceptance remains unverified. The campaign is not complete.
+- No source changes, commit, push, merge, signing change or new app launch were performed in this continuation. Existing local documentation changes and the user's untracked QA report are preserved.
+
+
+## Human-authorized resume and bounded closure — 2026-10-22
+
+- Human explicitly resumed after the account limit reset. The goal tool still returned its stored `usageLimited` status; no replacement goal, budget change or automatic resume was attempted. Work continued under the new human instruction. Heartbeat remains PAUSED.
+- Extended debug summary inspected: 4,648.8s, 12 events, zero drops, exit 0, no surviving/forced children. Requested 11,700s was not reached; the early normal app exit has no established cause. Capture-start refusal near end was `permission_required`; acquisition/OCR/lookup stayed zero. Host/family RSS peaks 109.4/474.4 MiB, mean sampled family CPU 11.2%. Background package build and source documentation change prevent a controlled comparison.
+- Grammar command finished: 706 targets, 698 expected headwords; two construction misses in addition to eight headword misses. g092 exceeds one-neighbor context, g094 needs sentence disambiguation, g099/g100 expose whole-token/direct-Hangul-run policy divergence. No scoring expectations changed. Workers traced real production behavior and primary sources; no bounded safe domain fix was supported. The report records revisit triggers, not a clean grammar verdict.
+- Frozen package window smoke passed, actual frozen service + React ready, isolated profile. Native 180.6s packaged Lab run `20261022-050223-run` reached Ready, compatible KRDICT, three shortcuts, configured Vision. Both grants remain missing after Recheck; Start capture refused and stayed stopped. Exit 0, zero drops/surviving/forced children. Process check confirmed frozen app/service cleanup. No new build/signing/grant/install/OCR run.
+- Early self-check OCR choices were read before native_context capability delivery; normal UI later showed Vision. Torch version metadata is absent in that report despite bundled payload; no OCR import/recognition acceptance claimed. Evidence under campaign `native/packaged-*`.
+- Existing terminal-launched source root PID 78537/service 79077 predated this resume and was left untouched. Real config still matches initial parsed JSON. User's untracked prior QA report is unchanged and will not be staged.
+- Four hours of active QA were not verified. The 4h48m blocked call, queued heartbeats, usage-limit gap, sampling and build time are not counted as active UI testing. Resume began around 07:59 UTC. Meaningful available checks have been exhausted; native acceptance needs exact-app grants and a human-authenticated OS flow, not repeated tests or a TCC workaround.
+- Final report: `reports/hanly-v2-popup-content-qa.md`. Final act: update existing `review-handoffs/hanly-v2-redesign.md`, then local documentation commit. No Phase B, push or merge. Stop automatic work with native acceptance explicitly blocked.

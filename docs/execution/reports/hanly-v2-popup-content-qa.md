@@ -1,6 +1,6 @@
 # Hanly V2 UI and popup-content follow-up
 
-Status: campaign in progress, 2026-10-22. Implementation and bounded QA only; no Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately.
+Status: bounded implementation/QA work closed on 2026-10-22; native capture acceptance remains blocked. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately.
 
 ## UI implementation — Luna worker and native consolidation
 
@@ -24,7 +24,7 @@ Follow-up commit `8a7d276` stores the exact production-serialized popup model in
 
 ### Open linguistic defect: carbon-paper noun
 
-In the authored sentence `먹지를 깔고 써요`, selected `먹지를` resolves to 먹다/동사 instead of the source-supported 먹지/명사. Observed analysis is 먹/VV + 지/EC + 를/JKO; lookup tries 먹지를, 먹지 and 먹다, then accepts the verb. The paired prohibition `밥을 먹지 마세요` correctly resolves the verb and construction. Replacing the morphology guard with an unconditional dictionary noun fallback would risk that paired case and other ambiguous forms. No word-specific correction, new backend or dictionary spelling correction was added. Revisit with a context-aware language-resolution design and a broader ambiguity corpus before claiming a safe fix.
+In the authored sentence `먹지를 깔고 써요`, selected `먹지를` resolves to 먹다/동사 instead of the source-supported 먹지/명사. Observed analysis is 먹/VV + 지/EC + 를/JKO; lookup tries 먹지를, 먹지 and 먹다, then accepts the verb. The paired prohibition `밥을 먹지 마세요` correctly resolves the verb and construction. A six-case follow-up confirmed neighbor context already reaches Kiwi, and that top-10 noun alternatives occur both for the desired carbon-paper reading and for a valid verbal `가지를 않는다` control. Alternative presence alone is therefore insufficient. The current morphology contract exposes a single analysis; a ranked selection policy would need broader contrast evidence and review. No word-specific correction, new backend or dictionary spelling correction was added. Revisit with a broader authored ambiguity corpus before claiming a safe fix. Evidence: ignored `pc003a-resolution-experiment.md` and `.json`.
 
 ## Linguistic adjudication — Luna source worker
 
@@ -44,6 +44,10 @@ The user completed the macOS Accessibility authentication. System Settings shows
 
 The service performs permission checks, and this debug app starts it through `.venv/bin/python -m hanly_app.service`. The debug root also has an ad-hoc, build-specific code identity. A root/service identity mismatch or stale build grant is consistent with the observations; exact live TCC attribution is unproven. See ignored `native/permission-identity-diagnosis.md`. No TCC database, signing identity, capture method, installed application or broad Python/Terminal grant was changed to bypass the blocker. A properly frozen-service package under normal OS grants remains a separate acceptance check.
 
+To prepare that comparison without replacing current output, the official macOS product was built in the attached isolated worktree `/Users/thiago/.codex/worktrees/hanly-v2-packaged-qa/hanly`, at `f724fef`. Its `dist/macos/Hanly.app` contains the frozen service, identifies build UUID `818eb2c4-72e0-4118-80c5-31720d9e3815`, version 1.1.0 and arm64, and passed inventory plus deep/strict signature verification. Existing production weights were copied locally; no model download or backend change occurred. Normal packaging used the existing ad-hoc policy. The package was subsequently exercised without installation. Its inventory, signature and native window/React bridge smoke check passed (`native/packaged-window.json`, exit 0, `frozen=true`, `frontend_ready=true`). The initial self-check snapshot precedes native capability delivery and lists only auto/EasyOCR; the normal runtime-ready app exposes Apple Vision and reports it configured. The diagnostic `torch: not installed` means missing distribution metadata in this frozen report, not proof that Torch payload is absent; no Torch/OCR import or recognition acceptance is claimed.
+
+A separate [180.6-second packaged Lab session](../../../artifacts/lab/runs/20261022-050223-run/summary.md) used a disposable profile. Runtime reached Ready, KRDICT was compatible, and three shortcuts registered. Permissions remained 0/2 after Recheck. Start capture displayed the required-access message and stayed stopped; capture, OCR and lookup counts stayed zero. Native screenshot and AX evidence are in `native/packaged-permissions.png` and `packaged-capture-refused.txt`. The session exited 0 with zero surviving or forcibly terminated children; a process check confirmed no frozen root/service remained. The pre-existing terminal-launched source instance was left untouched. The installed app and user profile were not replaced.
+
 ## Mechanical checks and process observation
 
 | Check | Result |
@@ -57,7 +61,9 @@ The service performs permission checks, and this debug app starts it through `.v
 | Lab command/classification/identity tests | 57 passed |
 | Frontend typecheck/build and debug app bundle | Passed |
 | New real-provider popup content campaign | 11/12; known noun/verb misresolution remains failed |
-| Native capture/hover/OCR | Blocked by in-app permission preflight |
+| Frozen package inventory / signature / native window bridge | Passed; exact isolated build, not installed-app or OCR acceptance |
+| Existing grammar corpus | 698/706 headwords match; 74/76 construction checks; remaining rows retained as failures |
+| Native capture/hover/OCR | Blocked by in-app permission preflight in debug and frozen app |
 
 The first portable run had two process-inventory failures caused by sandbox denial of `ps`; all five tests in that module passed outside the sandbox, then the complete stable portable gate passed with the required process access. The two skips are optional provider/resource environments, not converted failures. Existing native and packaged suites have not been relabeled as portable success.
 
@@ -65,10 +71,31 @@ The sandboxed Lab launch also failed before startup. Repeating the explicit `.ap
 
 A [300.5-second native UI session](../../../artifacts/lab/runs/20261021-222957-run/summary.md), dirty `7cd1191`, finished with no dropped events: host peak 115.4 MiB, family peak 542.6 MiB, sampled mean family CPU 12.7%. It included modal keyboard checks, hover-delay and monitor settings, fullscreen and an unconfigured-runtime update check. Capture/OCR/lookup remained zero. Source edits and a new build occurred during observation; the running process retained its launch build. This is a bounded observation, not a controlled regression benchmark.
 
-A longer process observation with periodic native UI checks started at 2026-10-22 01:43 UTC on `8a7d276` (documentation dirty), using the same exact debug bundle and a disposable profile. Run: `artifacts/lab/runs/20261021-224317-run/`, requested duration 3h15m. It is still running; no final duration, stability verdict or native capture acceptance is claimed yet.
+The [extended debug observation](../../../artifacts/lab/runs/20261021-224317-run/summary.md) started at 2026-10-22 01:43 UTC on `8a7d276` (documentation dirty), using the same debug bundle and a disposable profile. Requested duration was 3h15m, but the app exited normally after **4,648.8 seconds (77.5 minutes)**; this is not a completed 3h15m soak. The run recorded 12 events, zero drops, exit 0 and zero surviving/forced children. Host peak was 109.4 MiB, family peak 474.4 MiB and sampled mean family CPU 11.2%. A permission-required capture-start refusal occurred near its end; acquisition/OCR/lookup counts are zero. The reason the app exited before the requested duration is not established by the recording. Source changed to documentation commit `f724fef` during observation.
 
-## Timing and remaining coverage
+During it, a session-log clear and zero-record diagnostics export passed in the verified disposable profile. Native day→night samples at 728–1,239ms and after settling showed no blank panel or tree/house overlay in those frames. The isolated package build ran concurrently around 01:53–02:00 UTC, so those process samples have background host-load confounding. No controlled performance comparison is claimed.
 
-The campaign began at 2026-10-21 19:57 UTC. A System Settings computer-use call blocked for about 4h48m and returned around 00:47 UTC. That interval is not active QA. The requested four hours of active testing have not yet been completed; continued work must distinguish real testing from blocked or idle wall time.
+## Existing grammar corpus — follow-up workers and coordinator
 
-Remaining: continued distinct UI coverage/longer observation and final handoff. The real profile was restored byte-equivalently as parsed JSON and rechecked after the last restart; capture is stopped. Native reader focus, word-to-popup hover retention, captured-text accuracy, Windows/Linux/DPI and official packaged-app acceptance remain unverified on this host/session. OCR backend comparison/tuning stays deferred to the user's later branch.
+The existing `lab grammar` command completed over 114 authored cases and 706 syllable targets: OCR-shaped selections matched 351/353 headwords, direct-shaped selections 347/353. This command runs Kiwi/KRDICT only; its “ocr” column is an input-shape simulation, not OCR or screen capture. Parts were named in 119/119 checks per form, auxiliary senses in 15/15, and constructions in 37/38. Evidence: [grammar summary](../../../artifacts/lab/runs/20261021-popup-campaign/grammar/summary.md). The older grammar runner has no embedded source stamp; coordinator launch context was `f724fef`, documentation dirty, around 02:05 UTC, and is weaker provenance than the new popup-content campaign.
+
+Ten failed rows remain across four cases; no gold was relaxed or score converted to a pass:
+
+| Case | Observed gap | Disposition / revisit condition |
+|---|---|---|
+| g092, `한국어를 할 수 있어요` | Two construction misses; lemma 하다 is correct. `할 / 수 / 있어요` exceeds one following eojeol. | Known context bound. KRDICT [explicitly supports the gold construction](https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=86664&nation=eng&nationCode=6). Revisit with an approved bounded-context change and contrast tests; do not infer unseen 있다. |
+| g094, `하늘을 나는 새` | Four lemma misses: 나다 instead of intended 날다. | Existing fixture explicitly requires sentence disambiguation beyond current hover input. Revisit with a broader ambiguity corpus and trusted context policy. |
+| g099, `(학교)에` | One direct-only miss on 에; OCR-shaped whole token returns 학교. | Direct acquisition isolates a Hangul run; punctuation separates the particle. Revisit whole-token versus cursor-local selection policy and precise native range bounds. |
+| g100, `'사랑'이라는` | Three direct-only misses on the following 이/라/는; whole-token path returns 사랑. | Same acquisition divergence. Dictionary legitimacy of a standalone grammatical entry does not settle the app policy. Preserve the current gold until that policy is explicitly decided. |
+
+Luna workers traced these results to the production acquisition/context seams and checked official KRDICT sources. A proposed Lab-only whitespace-token change was rejected because it would hide actual direct-acquisition behavior. No sentence-context expansion, word-specific resolver override, OCR correction or backend tuning was made. Detailed ignored evidence: `grammar-adjudication.md` and `pc003a-resolution-experiment.md`.
+
+## Timing, final state and remaining acceptance
+
+The campaign began at 2026-10-21 19:57 UTC. A System Settings computer-use call blocked about 4h48m until 00:47 UTC; that was not active QA. Work was recorded again through approximately 02:05 UTC. Queued heartbeats and the subsequent usage-limit interval contain no additional hands-on evidence. The human resumed work around 07:59 UTC, when completed artifacts, package startup, actual native permissions, capture refusal, diagnostics and cleanup were checked. Four hours of active QA are **not established**. Automated sampling, builds, waits and blocked time are not relabeled as hands-on testing; finite available checks were exhausted without manufacturing repeated green runs.
+
+The real user configuration was rechecked after the final packaged session and matches the initial parsed JSON. Capture never started in this campaign's observed native sessions. Lab-owned apps exited cleanly; the independently running source app was not modified or terminated. The continuation heartbeat is paused. The built frozen product remains in its attached isolated worktree for a later permission/acceptance session; ignored build output must be preserved before archiving it.
+
+Native reader focus, word-to-popup hover retention, live captured-text accuracy, full frozen-provider execution and Windows/Linux/DPI remain unverified. Normal macOS grants must be established for the **exact built app/service identity** before live hover acceptance. The user must handle any OS authentication directly. No broad Python/Terminal grants, TCC resets, signing changes, installed-app replacement or security bypass were used. OCR comparisons/tuning remain deferred to the user's later branch.
+
+Implementation-side closure uses the existing [redesign Review Handoff](../review-handoffs/hanly-v2-redesign.md); a human-selected Phase B review has not started. Local batch commits only; no push or merge.
