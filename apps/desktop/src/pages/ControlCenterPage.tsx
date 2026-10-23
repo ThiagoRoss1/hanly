@@ -261,6 +261,7 @@ export function ControlCenterPage() {
                   Quit
                 </PixelButton>
                 <PixelButton
+                  autoFocus
                   className="btn btn-sm btn-quiet"
                   onClick={() => setQuitAsking(false)}
                   type="button"

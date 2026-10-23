@@ -318,6 +318,7 @@ describe("desktop React routes", () => {
 
     const confirm = screen.getByRole("button", { name: "Quit" });
     expect(confirm.classList.contains("btn-exit")).toBe(true);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", { method: "quit", params: {} });
 
