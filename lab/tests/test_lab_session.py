@@ -758,6 +758,42 @@ def test_a_hover_is_rebuilt_across_both_processes(tmp_path: Path) -> None:
     assert any("OCR" in finding["title"] for finding in model["findings"])
 
 
+def test_accessibility_worker_trace_preserves_the_direct_text_funnel(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    rows = [
+        {"event": "hover_mouse_opportunity", "t_ms": 0, "hover_request_id": 1},
+        {"event": "hover_stable_fire", "t_ms": 10, "hover_request_id": 1},
+        {
+            "event": "hover_direct_text",
+            "t_ms": 20,
+            "hover_request_id": 1,
+            "outcome": "direct",
+            "used_direct_text": True,
+            "duration_ns": 10_000_000,
+        },
+        {"event": "lookup_submit", "t_ms": 21, "hover_request_id": 1, "lookup_request_id": 7},
+        {
+            "event": "lookup_acquisition",
+            "t_ms": 22,
+            "hover_request_id": 1,
+            "lookup_request_id": 7,
+            "acquisition_source": "accessibility",
+            "ocr_stage_skipped": True,
+        },
+        {"event": "popup_visible", "t_ms": 30, "lookup_request_id": 7, "result_status": "SUCCESS"},
+    ]
+    (run / "events.jsonl").write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    model = build_model(run)
+
+    steps = {row["step"]: row["count"] for row in model["funnel"]}
+    assert steps["Read without pixels (direct text)"] == 1
+    assert steps["Screen region captured"] == 0
+    assert steps["OCR ran"] == 0
+    assert steps["Popup shown with an answer"] == 1
+
+
 def test_a_comparison_rescores_both_runs_and_leaves_the_baseline_untouched(
     tmp_path: Path,
 ) -> None:

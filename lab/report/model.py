@@ -194,7 +194,10 @@ def _interpret(episode: Episode) -> None:
             facts.setdefault("engine_at", t)
             facts["lookup_cache"] = "hit" if name == "lookup_cache_hit" else "miss"
         elif name == "lookup_acquisition":
-            facts["acquisition"] = fields.get("acquisition_source") or facts.get("acquisition")
+            source = fields.get("acquisition_source")
+            facts["acquisition"] = (
+                "direct_text" if source == "accessibility" else source or facts.get("acquisition")
+            )
         elif name == "ocr_sensitive_retry":
             facts["sensitive_retry"] = True
         elif name == "lookup_stage_completed" and duration is not None:
