@@ -190,6 +190,8 @@ def test_presenter_expands_auxiliary_and_derivational_part_of_speech_tags() -> N
             analyses=(
                 TokenAnalysis("주", "주다", "VX"),
                 TokenAnalysis("하", "하다", "XSV"),
+                TokenAnalysis("하", "하다", "XSA"),
+                TokenAnalysis(".", ".", "SF"),
                 TokenAnalysis("싶", "싶다", "VX"),
                 TokenAnalysis("듯하", "듯하다", "VX"),
                 TokenAnalysis("않", "않다", "VX"),
@@ -202,6 +204,8 @@ def test_presenter_expands_auxiliary_and_derivational_part_of_speech_tags() -> N
     assert [piece.role for piece in content.analysis] == [
         "auxiliary verb",
         "verb-forming suffix",
+        "adjective-forming suffix",
+        "sentence punctuation",
         "auxiliary adjective",
         "auxiliary adjective",
         "auxiliary",

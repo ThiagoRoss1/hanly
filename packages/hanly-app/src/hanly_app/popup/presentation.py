@@ -208,6 +208,8 @@ def _analysis_role(analysis: TokenAnalysis) -> str:
         "ETM": "modifier ending",
         "ETN": "nominalizing ending",
         "XSV": "verb-forming suffix",
+        "XSA": "adjective-forming suffix",
+        "SF": "sentence punctuation",
     }
     if tag == "VX":
         if analysis.lemma in {"싶다", "듯하다", "듯싶다", "성싶다"}:
