@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import type { ReactNode } from "react";
 import { PixelButton } from "../components/PixelButton.tsx";
-import { VillageScene } from "../components/village/VillageScene.tsx";
+import { SidebarShell } from "../components/controlCenter/SidebarShell.tsx";
 import { Brand, CaptureChoiceDialog, LiveCard, LoadingPanel } from "../components/controlCenter/Shared.tsx";
 import { AppearancePage } from "./controlCenter/AppearancePage.tsx";
 import { CapturePage } from "./controlCenter/CapturePage.tsx";
@@ -113,17 +113,16 @@ export function ControlCenterPage() {
   if (!state) {
     return (
       <div className="app skin-village flex h-full min-h-0">
-        <aside className="sidebar relative z-0 flex w-[268px] min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto px-4 pt-[18px] pb-4">
-          <VillageScene
-            dark={dark}
-            disabled
-            onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })}
-          />
+        <SidebarShell
+          dark={dark}
+          disabled
+          onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })}
+        >
           <Brand />
           <div className="sidebar-foot relative z-[1] mt-auto flex flex-none flex-col gap-2 px-0 pt-[9px]">
             <LiveCard activity={activity} engine={engine} runtime={runtime} />
           </div>
-        </aside>
+        </SidebarShell>
         <main className="main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 py-3">
           <header className="page-head mx-auto flex min-h-[140px] w-full max-w-[1024px] flex-none items-center justify-between gap-6 border-0 px-8 py-6">
             <div className="flex min-w-0 flex-1 items-center gap-4">
@@ -209,12 +208,12 @@ export function ControlCenterPage() {
 
   return (
     <div className="app skin-village flex h-full min-h-0">
-      <aside className={`sidebar relative z-0 flex w-[268px] min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto px-4 pt-[18px] pb-4${state.config.sidebar_layout === "compact" ? " is-compact" : ""}`}>
-          <VillageScene
-            dark={dark}
-            disabled={isPending(settingPendingKey("theme"))}
-            onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })}
-          />
+      <SidebarShell
+        compact={state.config.sidebar_layout === "compact"}
+        dark={dark}
+        disabled={isPending(settingPendingKey("theme"))}
+        onToggleTheme={() => void saveSettings({ theme: dark ? "light" : "dark" })}
+      >
         <Brand />
         <nav aria-label="Sections" className="nav relative z-[1] mt-0 flex flex-none flex-col gap-2">
           {SECTIONS.map((item) => (
@@ -282,7 +281,7 @@ export function ControlCenterPage() {
             </PixelButton>
           )}
         </div>
-      </aside>
+      </SidebarShell>
 
       <main className="main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 py-3">
         <header className="page-head mx-auto flex min-h-[140px] w-full max-w-[1024px] flex-none items-center justify-between gap-6 border-0 px-8 py-6">

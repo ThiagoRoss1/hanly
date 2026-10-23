@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import {
   ASSET_ROOT,
   STAR_BRIGHTNESS,
@@ -83,6 +83,7 @@ function createScene(
   sun: HTMLImageElement,
   moon: HTMLImageElement,
   initialDark: boolean,
+  content: HTMLElement | null,
 ): SceneEngine {
   const renderingContext = canvas.getContext("2d", { alpha: false });
   if (!renderingContext) return { setTheme: () => undefined, destroy: () => undefined };
@@ -116,6 +117,14 @@ function createScene(
   }
 
   function resize(): void {
+    const sidebar = viewport.parentElement;
+    if (sidebar && content) {
+      const style = window.getComputedStyle(sidebar);
+      const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+      // Measure controls, not scrollHeight: the scene itself contributes to overflow.
+      viewport.style.height = `${Math.max(sidebar.clientHeight, content.offsetHeight + padding)}px`;
+    }
+
     const width = viewport.clientWidth;
     const height = viewport.clientHeight;
     if (!width || !height) return;
@@ -247,6 +256,7 @@ function createScene(
   const resizeObserver =
     typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
   resizeObserver?.observe(viewport);
+  if (content) resizeObserver?.observe(content);
   if (!resizeObserver) window.addEventListener("resize", resize);
 
   const intersectionObserver =
@@ -299,12 +309,14 @@ export interface VillageSceneProps {
   dark: boolean;
   onToggleTheme: () => void;
   disabled?: boolean;
+  contentRef?: RefObject<HTMLElement | null>;
 }
 
 export function VillageScene({
   dark,
   onToggleTheme,
   disabled = false,
+  contentRef,
 }: VillageSceneProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -319,7 +331,7 @@ export function VillageScene({
     const moon = moonRef.current;
     if (!viewport || !canvas || !sun || !moon) return;
 
-    const engine = createScene(viewport, canvas, sun, moon, dark);
+    const engine = createScene(viewport, canvas, sun, moon, dark, contentRef?.current ?? null);
     engineRef.current = engine;
     return () => {
       engine.destroy();
