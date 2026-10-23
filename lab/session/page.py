@@ -83,7 +83,8 @@ class TourPage:
         self._height = int(round(ui.geometry.bounds.height))
         if self._width <= 0 or self._height <= 0:
             raise RuntimeError("the Lab fixture has no usable desktop bounds")
-        self._window: ImageWindow = ui.create_window(ui.geometry.bounds, ignore_mouse=True)
+        # Click-through fixtures inherit cursors from the covered app, occluding OCR input.
+        self._window: ImageWindow = ui.create_window(ui.geometry.bounds, ignore_mouse=False)
         self._fonts = available_fonts(_FACES)
         self.pages: list[Page] = []
         self.status = ""

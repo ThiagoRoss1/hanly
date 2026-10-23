@@ -135,11 +135,13 @@ class _UIHost:
     def __init__(self, geometry: DesktopGeometry) -> None:
         self.geometry = geometry
         self.windows: list[_ImageWindow] = []
+        self.mouse_transparency: list[bool] = []
 
     def create_window(
         self, bounds: Rect, *, topmost: bool = True, ignore_mouse: bool = True
     ) -> _ImageWindow:
-        del topmost, ignore_mouse
+        del topmost
+        self.mouse_transparency.append(ignore_mouse)
         window = _ImageWindow(bounds)
         self.windows.append(window)
         return window
@@ -190,6 +192,7 @@ def test_tour_page_renders_target_text_into_a_scaled_rgb_surface() -> None:
         page.lay_out([target], [], [22], [16])
 
         assert len(page.pages) == 1
+        assert host.mouse_transparency == [False]
         placed = page.pages[0].placed[0]
         assert placed.target is target
         assert placed.word.contains(placed.point)

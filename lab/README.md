@@ -62,7 +62,13 @@ how that hover ended. Every target has a known answer:
   installed Korean typefaces.
 
 The fixture page and HUD are opaque raster windows owned by Lab; the app being
-measured is the launched Tauri desktop. The plain command is the **standard tour**: the whole story and 300 words, about
+measured is the launched Tauri desktop. The fixture receives pointer events so
+its native cursor does not inherit a covered application's custom cursor. A
+click-through fixture can leave that cursor composited over the sampled text
+on macOS and produce false recognition failures. The HUD remains click-through.
+This changes the session measurement protocol to `v4`; earlier `v3` latency and
+memory samples are not a performance baseline for this fixture behavior.
+The plain command is the **standard tour**: the whole story and 300 words, about
 three and a half minutes. Tours with the same settings are comparable;
 `--baseline <earlier-run>` adds a before/after table to the new report.
 `--quick` is a 40-second smoke run (24 words, no story); `--words`,

@@ -19,8 +19,8 @@ SCHEMA_VERSION = 1
 #: Version of the ``lab_provenance`` block every current writer adds beside its
 #: own payload. Records without the block were written before it existed.
 PROVENANCE_VERSION = 1
-#: Public LaunchServices startup and Qt-free raster fixtures change the workload.
-SESSION_MEASUREMENT_PROTOCOL = "session-tauri-family-sampler-250ms-v3"
+#: Fixtures now receive pointer events instead of inheriting a covered app's cursor.
+SESSION_MEASUREMENT_PROTOCOL = "session-tauri-family-sampler-250ms-v4"
 _SECRET_KEY = re.compile(r"(?:pass(?:word)?|secret|token|api[_-]?key|auth(?:orization)?)", re.I)
 _WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _REQUIRED_FIELDS = ("schema_version", "run_id", "timestamp", "commit", "config", "scenario")
