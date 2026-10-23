@@ -1,15 +1,15 @@
 # Hanly V2 UI and popup-content follow-up
 
-Status: language-contract corrections and the Lab packaged smoke path are implemented. Both native grants were restored for the unchanged final package, and real hover → capture → Vision → Kiwi/KRDICT → popup has now run. Remaining recognition/selection and ambiguity failures are retained below; this is not full native or linguistic acceptance. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately. Earlier blocked statuses below are historical and superseded by the final native section.
+Status: language-contract corrections and the Lab packaged smoke path are implemented. Both native grants were restored for the unchanged final package. A follow-up reproduced cursor-contaminated Lab captures and corrected fixture pointer ownership; the same packaged app now completes the 24-word and 153-target story sets without presentation failures. This is not full native or linguistic acceptance. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately. Earlier blocked statuses and native failure counts below are historical; see the reproduction section at the end.
 
 ## Current outcome — 2026-10-22
 
 - Product changes: bounded two-word context, punctuation-preserving direct selection and corrected raw-token candidate indices (`1bc29e7`). Lab diagnostics and parity tests: `509729b`, `f2aeefd`. The human deferred alternative analyses/UI; no OCR tuning, backend/model change, spelling correction or dictionary additions.
 - Source-gold popup corpus remains **11/12**; grammar **702/706 headwords**, with all **76/76 constructions** passing. Known ambiguity and sense-order limitations remain, independently of dictionary coverage.
-- Native packaged smoke: **19/24** word presentation decisions, **144/153** story decisions, and **1/1** held-target decision passed. These are three distinct runs, not a semantic accuracy score. Fourteen failed word/story decisions remain visible; no timeout or processing exception occurred in them.
-- All fourteen failed fixture surfaces return their expected headwords when supplied correctly to local Kiwi/KRDICT. They are not absent from this database. The content-free native recording does not reveal the actual recognized/selected text, so acquisition, recognition and selection cannot yet be separated conclusively.
+- Native packaged smoke after the fixture correction: **24/24** word and **153/153** story presentation decisions passed. The earlier **1/1** held-target result remains separate. These are finite lifecycle checks, not a general semantic accuracy score.
+- All fourteen originally failed targets return expected KRDICT headwords through real Vision → selection → Kiwi → KRDICT on corrected, owned fixture recaptures. The reproduction section distinguishes byte-matched native inputs from other recaptures and the failures that did not recur. The correction changes Lab only; no product recognizer, capture adapter, language contract or sealed package changed.
 - Native popup expansion/content could not be newly inspected through CUA: the tool exposes the Control Center, not the nonactivating dictionary panel separately. Historical native presentation and six-real-model React checks remain distinct evidence. Windows/Linux native acceptance remains outstanding.
-- Final portable closure gate: **2,748 passed, 2 skipped, 1 known strict xfail**, 125.82s. Lab suite: **658 passed, 1 known strict xfail**; final focused smoke/privacy gate: **19 passed**. Ruff passed across all requested roots; mypy passed in **370 files**. Frontend/model and sealed-package build checks below remain separate earlier checks; this final addition changed only Lab code.
+- Latest portable gate: **2,748 passed, 2 skipped, 1 known strict xfail**, 125.20s. Focused raster/stress/trace-only checks: **26 passed**. Ruff passed across all requested roots; mypy passed in **370 files**. Earlier Lab, frontend/model and sealed-package build evidence below remains separate; this continuation changes Lab only.
 
 ## UI implementation — Luna worker and native consolidation
 
@@ -343,3 +343,126 @@ limit gaps and the two blocked native-control calls are not active testing.
 The latest human-authorized continuation covered the meaningful remaining
 checks above and stops at the scoped acceptance limits, with current ambiguity,
 native misses and panel-inspection limitations explicitly retained.
+
+
+## Fourteen-target reproduction and fixture correction — 2026-10-22
+
+Human authorized this separate Phase A continuation from `6260f6f` to reproduce
+and correct the native misses. Implementation commit: `3f6e24d`. The final sealed app, its signature, settings,
+permissions and production source were unchanged throughout this investigation.
+Only the Lab fixture's pointer ownership, its regression assertion and measurement
+protocol changed. No recognizer tuning, dictionary correction, provider/contract
+extension or popup policy change was needed for these targets.
+
+### Evidenced cause and correction
+
+The full-desktop raster fixture used `ignore_mouse=True`. On this Mac it inherited
+the covered Hanly Control Center's custom 32×32 cursor (hotspot 7×1), instead of
+owning a normal native cursor. The cursor was composited into the small captured
+ROI and covered Korean strokes. In the inspected 서해안 pair, only 322 pixels in
+a 20×30 cursor rectangle differed from the cursor-free recapture. Vision then
+recognized 서했안. The downstream stages received that incorrect text; this was
+not a missing KRDICT entry or evidence of text being lost between providers.
+
+Fresh unchanged-fixture runs reproduced ten of the fourteen misses: four words
+and six story targets. Nine of their re-captured inputs matched the live OCR
+input's BLAKE2b fingerprint exactly and reproduced the same outcome through the
+production worker. The 카운터 failure recapture did not match the live fingerprint,
+so its replay is illustrative rather than proof of the original bytes. 키스,
+창밖으로, 선반에서 and 끊임없이 did not fail again before the correction; no exact
+original frame was retained and their historical cause cannot be proved.
+
+`TourPage` now creates its opaque fixture with `ignore_mouse=False`; the HUD
+remains click-through. No cursor is hidden, painted over, moved by the product
+or removed from an image. The same authored text, typography, target positions
+and ROI geometry remain in place. The inherited `StressPage` receives the same
+fix. The portable raster test now guards pointer ownership. Measurement protocol
+`session-tauri-family-sampler-250ms-v4` prevents older `v3` timing/memory samples
+from becoming a performance baseline for the changed fixture behavior.
+
+### Native and semantic results
+
+| Evidence | Words | Story |
+|---|---:|---:|
+| Original native decisions | 19/24 | 144/153 |
+| Fresh reproduction, unchanged fixture | 20/24 | 147/153 |
+| Counterfactual: fixture receives pointer events | 24/24 | 153/153 |
+| Tracked correction with explicit target-image export | 24/24 | 153/153 |
+
+These are presentation/refusal decisions. All nine Latin story targets still
+refuse correctly. Both full-plan fingerprints match their original recordings:
+words `sha256:0223191848ae1a9b`, story `sha256:69edcd1bcde887d3`. This establishes
+matched layout, not a valid performance comparison. All listed runs completed
+with observed Vision; the final full-plan runs had zero dropped events, zero
+surviving/forced children and normal app exit.
+
+For semantic verification, only owned Lab ROIs were explicitly re-captured;
+ownership was checked before and after capture and foreign occlusion refused.
+Thirteen corrected recaptures matched the live OCR fingerprint. 카운터 initially
+differed after the popup closed, so an isolated run captured it immediately after
+the capture event, before presentation; that image matched too. Real local
+Vision → production word selection → Kiwi → KRDICT replay of these fourteen
+byte-matched native inputs returned every expected headword:
+
+| Target | Expected headword | Reproduced contaminated output | Corrected replay |
+|---|---|---|---|
+| w00004 서해안 | 서해안 | 서했안 | Passed |
+| w00008 광견병 | 광견병 | 광겼병 | Passed |
+| w00012 체육복 | 체육복 | 체융복 | Passed |
+| w00013 키스 | 키스 | Did not recur | Passed |
+| w00024 속옷 | 속옷 | 속옻 | Passed |
+| k030 창밖으로 | 창밖 | Did not recur | Passed |
+| k037 선반에서 | 선반 | Did not recur | Passed |
+| k041 골랐습니다. | 고르다 | 곯랐습니다. | Passed |
+| k066 끊임없이 | 끊임없이 | Did not recur | Passed |
+| k080 역사책을 | 역사책 | 염사책을 | Passed |
+| k130 살아남을 | 살아남다 | 삻아남을 | Passed |
+| k131 수 | 수 | No OCR candidate contains pointer | Passed |
+| k138 카운터 | 카운터 | 칸운터; nonidentical failure recapture | Passed |
+| k142 이름은 | 이름 | 9.듬는; Hangul gate refuses mixed selection | Passed |
+
+The replay records exact morphology calls, normalized candidates and dictionary
+probes. It is a separate production-worker execution with local real providers,
+not recognized-text instrumentation inside the sealed app and not inspection of
+the rendered popup. Context outside the target still contains recognition errors
+in some small ROIs; these finite successes establish neither perfect OCR nor
+correct contextual sense ordering.
+
+Evidence root: `artifacts/lab/runs/20261022-native-miss-reproduction/` (ignored).
+Original-byte word replay: `native-hover/`; story replay: `story-hover/`.
+Corrected-byte replay: `verified-words/`, `verified-story/` (eight matching story
+images), and `early-k138/`. Exploratory scripts and exported pixels/text remain
+ignored; they do not enable production evidence retention.
+
+Native run IDs:
+
+- Reproduction: `20261022-231017-tour` and `20261022-231510-tour`.
+- Counterfactual: `20261022-231959-tour` and `20261022-232046-tour`.
+- Final full-plan verification: `20261022-232427-tour` and `20261022-232520-tour`.
+- Matching isolated 카운터 input: `20261022-233152-tour` (1/1 decision).
+
+Source provenance for these recordings is dirty `6260f6f`; the native package
+remains the sealed `509729b` build described above. Exploratory recapture/replay
+runs are not canonical benchmark baselines. No latency or memory improvement is
+claimed. No additional OS grant, signing change, rebuild or installation occurred.
+
+Final checks: full portable gate **2,748 passed, 2 skipped, 1 known strict xfail**
+in 125.20s; focused raster/stress/trace-only checks **26 passed**; full-root Ruff
+and mypy (**370 files**) passed; diff whitespace check passed. An initial
+sandboxed gate had two failures because `ps` execution was forbidden. The five
+process-probe tests then passed with normal host access, followed by the complete
+passing host gate. No test expectation, typing rule or permission setting was
+weakened. The final full-plan tours used the corrected fixture before its
+measurement tag advanced to `v4`; the isolated matching-input run records `v4`.
+No performance comparison is made across that boundary.
+
+Final process inventory found no Hanly root/service/lookup. Real user settings
+still match the initial parsed JSON. The prior untracked QA report is preserved;
+the continuation heartbeat stays paused. The existing redesign Review Handoff
+is updated last; local batch commits only, no push or merge.
+
+Remaining acceptance is unchanged outside these finite targets: primary-analysis
+ambiguities, contextual sense ordering, general cursor-occlusion robustness in
+other applications, native direct-text behavior, full visual popup expansion and
+focus/crossing inspection, Windows/Linux and DPI coverage. Four hours of active
+QA are not claimed. This investigation does not start Phase B.

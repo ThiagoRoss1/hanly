@@ -255,3 +255,61 @@ candidate/raw-token alignment, diagnostic entry identity and the Lab's strict
 separation between presentation decisions and semantic scoring. This handoff
 is the last implementation edit of this batch; it does not start deep review
 or imply complete native/linguistic acceptance.
+
+## Native-miss reproduction and Lab cursor correction — 2026-10-22 local
+
+Human authorized this Phase A follow-up from `6260f6f`; implementation commit
+`3f6e24d`. This section supersedes the fourteen outstanding native misses as
+current failures on these fixtures. No Phase B, push or merge is authorized.
+
+The opaque Lab tour page was click-through and inherited the covered Control
+Center's custom cursor. The cursor was composited over Korean glyphs in the
+small capture; for example, 서해안 became 서했안 before morphology/dictionary
+lookup. Fresh unchanged-fixture runs reproduced ten misses; nine re-captured
+failure inputs matched the app's OCR fingerprint exactly and replayed the same
+outcome. The 카운터 failure recapture was not byte-identical, and four historical
+misses did not recur; their exact original frames/causes remain unproved.
+
+`TourPage` now receives pointer events, including its `StressPage` subclass;
+the HUD stays click-through. The raster test guards that ownership and the
+README explains the captured-cursor artifact. Session measurement protocol v4
+separates future timing/memory evidence from v3. No cursor hiding, image repair,
+product capture substitution, recognizer tuning, dictionary correction, provider
+contract, popup policy, signing or permission change was introduced. The sealed
+`509729b` app and its refreshed grants remain unchanged; no rebuild or install
+was needed for this Lab correction.
+
+Validation:
+
+- Same-layout sealed-app decisions: **24/24 words and 153/153 story targets**,
+  including all nine Latin refusals. Counterfactual runs and tracked-correction
+  verification both passed. Final full-plan runs `20261022-232427-tour` and
+  `20261022-232520-tour` have zero drops/surviving/forced children and normal
+  exits; original plan fingerprints match. No performance improvement is claimed.
+- **14/14 expected headwords** through real local Vision → production word
+  selection → Kiwi → KRDICT replay, using owned images matching the native OCR
+  input hashes. Thirteen were matched after popup closure; isolated 카운터
+  required capture before presentation (`20261022-233152-tour`). This is separate
+  worker replay, not recognized-content instrumentation or rendered-popup
+  inspection inside the frozen app. Readable diagnostic data stays ignored.
+- Full portable gate: **2,748 passed, 2 skipped, 1 known strict xfail** in
+  125.20s. Focused raster/stress/trace-only checks: **26 passed**. Full-root Ruff,
+  mypy (**370 files**) and diff whitespace passed. Two initial sandbox process
+  tests failed because `ps` was forbidden; focused and complete host runs passed
+  without weakening tests or changing grants.
+- Final host inventory found no Hanly root/service/lookup. Real settings match
+  the initial parsed JSON. The prior untracked QA report is preserved and the
+  heartbeat stays paused. Four hours of active QA are not claimed.
+
+Remaining limits: ambiguity/sense ordering, general cursor-occlusion robustness
+in other applications, native direct-text acceptance, full visual popup
+expansion/content and focus/crossing inspection, Windows/Linux/DPI. OCR errors
+in context outside the fourteen target selections remain possible. The finite
+passes establish neither perfect OCR nor complete product acceptance.
+
+The single [English report](../reports/hanly-v2-popup-content-qa.md) records all
+fourteen cases, byte-equivalence limits, run IDs and ignored evidence paths.
+Suggested human-selected review targets are fixture pointer ownership and
+measurement provenance; this implementation does not initiate that review.
+This handoff is the last implementation edit of the batch. Local documentation
+commit and stop; no push, merge or automatic continuation.
