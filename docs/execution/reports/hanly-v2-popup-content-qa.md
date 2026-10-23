@@ -1,15 +1,16 @@
 # Hanly V2 UI and popup-content follow-up
 
-Status: language-contract corrections and the Lab packaged smoke path are implemented. Both native grants were restored for the unchanged final package. A follow-up reproduced cursor-contaminated Lab captures and corrected fixture pointer ownership; the same packaged app now completes the 24-word and 153-target story sets without presentation failures. This is not full native or linguistic acceptance. No Phase B deep review, push or merge. Branch `design/hanlyV2`, initial commit `0554d96`. The previous uncommitted `hanly-v2-post-redesign-qa.md` is preserved separately. Earlier blocked statuses and native failure counts below are historical; see the reproduction section at the end.
+Status: the authorized non-Windows redesign acceptance batch is complete and ready for human-selected review. Actual macOS popup, accessible-text acquisition, capture/OCR, focus/hover retention and the final packaged UI were checked. Final acceptance found and fixed morphology labels, scrollable sidebar coverage, compact Quit confirmation visibility and a Lab direct-read counter. Known linguistic ambiguities remain explicitly deferred. No Phase B deep review, push or merge. Branch `design/hanlyV2`; original campaign baseline `0554d96`, final acceptance baseline `edad421`. The separate untracked `hanly-v2-post-redesign-qa.md` is unchanged.
 
-## Current outcome — 2026-10-22
+## Current outcome — 2026-10-23
 
-- Product changes: bounded two-word context, punctuation-preserving direct selection and corrected raw-token candidate indices (`1bc29e7`). Lab diagnostics and parity tests: `509729b`, `f2aeefd`. The human deferred alternative analyses/UI; no OCR tuning, backend/model change, spelling correction or dictionary additions.
-- Source-gold popup corpus remains **11/12**; grammar **702/706 headwords**, with all **76/76 constructions** passing. Known ambiguity and sense-order limitations remain, independently of dictionary coverage.
-- Native packaged smoke after the fixture correction: **24/24** word and **153/153** story presentation decisions passed. The earlier **1/1** held-target result remains separate. These are finite lifecycle checks, not a general semantic accuracy score.
-- All fourteen originally failed targets return expected KRDICT headwords through real Vision → selection → Kiwi → KRDICT on corrected, owned fixture recaptures. The reproduction section distinguishes byte-matched native inputs from other recaptures and the failures that did not recur. The correction changes Lab only; no product recognizer, capture adapter, language contract or sealed package changed.
-- Native popup expansion/content could not be newly inspected through CUA: the tool exposes the Control Center, not the nonactivating dictionary panel separately. Historical native presentation and six-real-model React checks remain distinct evidence. Windows/Linux native acceptance remains outstanding.
-- Latest portable gate: **2,748 passed, 2 skipped, 1 known strict xfail**, 125.20s. Focused raster/stress/trace-only checks: **26 passed**. Ruff passed across all requested roots; mypy passed in **370 files**. Earlier Lab, frontend/model and sealed-package build evidence below remains separate; this continuation changes Lab only.
+- Product fixes in this final batch: readable XSA/SF morphology roles (`c3805ea`), complete village coverage behind a scrollable sidebar (`0e06bb5`), and visible/focused compact Quit confirmation (`e2d2705`). Lab-only `7e2bbb1` corrects the report counter for the production `accessibility` acquisition label; it changes no product behavior or package identity.
+- Actual native checks cover all six Control Center routes, light/dark and Normal/Compact layout, a minimum-size window, actual popup content/expansion/scrolling/controls, reader focus, word-to-popup retention and screen-edge placement. The earlier inability to inspect the popup was a controller-selection limitation resolved by hiding the Control Center normally. No native popup policy changed.
+- Final official macOS package: `/Users/thiago/Projects/hanly/dist/macos/Hanly.app`, product source `e2d2705a7b181ad3e5fbac28b33a70f2fff3f03d`, UUID `4d4eea5b-fd50-442f-b491-ff38eb3b24b7`, 1.1.0 arm64. Inventory, deep/strict signature verification, frozen-service/window/React bridge smoke and final native UI passed. Normal Settings renewed only Hanly's existing grants for this build; both real Vision capture and native accessible-text lookup then succeeded. The app was not installed or rebuilt after the refresh.
+- Native full-plan coverage from the earlier sealed package remains **24/24 word and 153/153 story presentation decisions**. The exact new final package separately passed an adjective capture/popup check and a repeated native-reader check, including the new labels, collapse, real wheel scrolling and retained reader focus. These are finite scenarios, not a general semantic accuracy score.
+- Automated checks: full portable gate **2,748 passed, 2 skipped, 1 known strict xfail**; final Python popup **27**, Node **12**, UI **55** with one opt-in skip, real-model UI **4 tests** covering six actual serialized models, TypeScript/frontend build, Ruff and mypy (**370 files**). After the Lab counter change: **658 portable Lab tests passed, 1 known xfail**, report/session module **96 passed**, and the native WebKit cursor fixture **1 passed** with normal host access.
+- Source-gold popup corpus remains **11/12**; grammar **702/706 headwords**, all **76/76 constructions**. The human deferred alternative-analysis contract/UI, primary-analysis ranking and contextual sense ranking. No OCR/backend/model tuning, spelling correction or dictionary additions were introduced. General cross-app/DPI/recognition perfection is not established by these finite checks.
+- Windows is explicitly excluded from this batch and is not a remaining task here. The final section records the macOS evidence and closure. Earlier sections below preserve chronological evidence; their permission blockers, failure counts and pending-inspection statements are historical, superseded where indicated by this outcome.
 
 ## UI implementation — Luna worker and native consolidation
 
@@ -57,7 +58,7 @@ To prepare that comparison without replacing current output, the official macOS 
 
 A separate [180.6-second packaged Lab session](../../../artifacts/lab/runs/20261022-050223-run/summary.md) used a disposable profile. Runtime reached Ready, KRDICT was compatible, and three shortcuts registered. Permissions remained 0/2 after Recheck. Start capture displayed the required-access message and stayed stopped; capture, OCR and lookup counts stayed zero. Native screenshot and AX evidence are in `native/packaged-permissions.png` and `packaged-capture-refused.txt`. The session exited 0 with zero surviving or forcibly terminated children; a process check confirmed no frozen root/service remained. The pre-existing terminal-launched source instance was left untouched. The installed app and user profile were not replaced.
 
-## Mechanical checks and process observation
+## Mechanical checks and process observation — initial campaign
 
 | Check | Result |
 |---|---|
@@ -99,7 +100,7 @@ Ten failed rows remain across four cases; no gold was relaxed or score converted
 
 Luna workers traced these results to the production acquisition/context seams and checked official KRDICT sources. A proposed Lab-only whitespace-token change was rejected because it would hide actual direct-acquisition behavior. No sentence-context expansion, word-specific resolver override, OCR correction or backend tuning was made. Detailed ignored evidence: `grammar-adjudication.md` and `pc003a-resolution-experiment.md`.
 
-## Timing, final state and remaining acceptance
+## Timing, state and remaining acceptance — initial campaign (historical)
 
 The campaign began at 2026-10-21 19:57 UTC. A System Settings computer-use call blocked about 4h48m until 00:47 UTC; that was not active QA. Work was recorded again through approximately 02:05 UTC. Queued heartbeats and the subsequent usage-limit interval contain no additional hands-on evidence. The human resumed work around 07:59 UTC, when completed artifacts, package startup, actual native permissions, capture refusal, diagnostics and cleanup were checked. Four hours of active QA are **not established**. Automated sampling, builds, waits and blocked time are not relabeled as hands-on testing; finite available checks were exhausted without manufacturing repeated green runs.
 
@@ -109,7 +110,7 @@ Native reader focus, word-to-popup hover retention, live captured-text accuracy,
 
 Implementation-side closure uses the existing [redesign Review Handoff](../review-handoffs/hanly-v2-redesign.md); a human-selected Phase B review has not started. Local batch commits only; no push or merge.
 
-## Authorized language-contract polish — 2026-10-22 (in progress)
+## Authorized language-contract polish — 2026-10-22 (historical checkpoint)
 
 The human approved a further bounded implementation batch after `ac692ec`.
 Local commits `1bc29e7` and `509729b` contain the product fixes and Lab evidence
@@ -466,3 +467,175 @@ ambiguities, contextual sense ordering, general cursor-occlusion robustness in
 other applications, native direct-text behavior, full visual popup expansion and
 focus/crossing inspection, Windows/Linux and DPI coverage. Four hours of active
 QA are not claimed. This investigation does not start Phase B.
+
+
+## Final non-Windows acceptance — 2026-10-23
+
+The human explicitly requested closing the remaining redesign checks and excluded
+Windows until after push. Alternative-analysis contracts/UI, sense ranking and
+future OCR work remain deferred. This is implementation acceptance, not Phase B.
+The original untracked QA report is preserved.
+
+Native popup inspection is now possible: hiding the Control Center normally
+lets CUA select the nonactivating dictionary panel. No native focus, geometry or
+presentation policy was changed to accommodate the tool. Compact light/Normal
+and expanded dark/Pixel popups were inspected with actual captured/accessible
+Korean, not preview payloads. Details, Less detail and Close worked. Expanded
+content scrolls while its footer remains reachable; Hanja, bilingual POS, Read
+as, component glosses, grammar patterns and other entries were inspected.
+
+The CUA wheel/coordinate path sometimes cannot locate this nonactivating panel
+(`noWindowsAvailable`); accessibility-button actions and paired AX/screenshot
+reads do work. For the long-content wheel check, the existing Lab input scenario
+supplied a bounded wheel gesture only while the real pointer remained inside
+the exact owned popup. The probe refused a foreign process/window. This is a
+controller limitation, not a hidden Hanly exception. Screenshots and scripts
+remain ignored under `artifacts/lab/runs/20261023-final-acceptance/`.
+
+| Native run | New evidence |
+|---|---|
+| `20261023-042510-tour` | Actual 안녕하다 popup, Hanja/POS/senses, expansion, scrolling, collapse and Close |
+| `20261023-043141-tour` | Real selectable NSTextView 학교에서; OCR fallback, noun/particle presentation and reader foreground before/after popup button |
+| `20261023-043604-tour` | 읽었습니다.; first-hover fallback, second-hover native AX acquisition, word-to-popup crossing |
+| `20261023-043946-tour` | 할 수 있어요; second-hover native AX, retained popup, grammar/component/other-entry sections and long scroll |
+| `20261023-044554-tour` | Compact/expanded popup at bottom-right screen edge |
+| `20261023-045035-run` | Unobscured native Control Center: all six routes, day/night, compact navigation and minimum-size layout |
+
+All six sessions ended normally with exit 0, zero dropped events and zero
+surviving/forced children. They use the unchanged sealed `509729b` app. First
+AX queries on fresh native text controls can return unsupported/timed-out; Hanly
+correctly fell back to OCR. The second settled verb/construction hovers used
+real accessible text (recorded `used_direct_text=true`). A scoped source-provider
+probe also read the verified owned NSTextView through the actual AX bridge with
+existing trust. No broad Python/Terminal grant was requested or added.
+
+Two real pointer crossings held the popup for 1.2 seconds with **zero additional
+captures and zero additional popups**; the owned reader remained foreground.
+Foreground identity also remained the reader before/after a CUA popup-control
+activation. Edge geometry stayed within the monitor work area: compact
+(1028,404)–(1408,720), expanded (948,160)–(1408,720); bottom/right anchor preserved.
+These are one Retina monitor's measurements, not Windows/DPI acceptance.
+
+The unobscured Control Center completed the live night transition; the earlier
+day image during covered-fixture inspection was an intentionally paused scene,
+not a new theme defect. Native checks covered granted permissions, all three
+shortcuts, runtime/readiness versus provider residency, resource disclosure
+expansion, log error filtering/empty state/search/refresh, and compact rail
+scrolling. Manual update check correctly reported the development runtime's
+unconfigured update channel; no download/install or remote-update acceptance
+is claimed.
+
+### Corrections discovered during acceptance
+
+- `c3805ea`: replace raw XSA/SF learner-facing roles with “adjective-forming
+  suffix” and “sentence punctuation.” Existing normalized analyses remain intact.
+- `0e06bb5`: separate a reusable SidebarShell and measure the village background
+  from its controls plus padding. It now covers the whole scrollable rail.
+  Measuring controls instead of its own scrollHeight prevents feedback growth;
+  a canvas/ResizeObserver regression checks tall controls and dynamic growth/
+  shrink. No asset or village aspect ratio changed.
+- `e2d2705`: focus Cancel when the inline Quit confirmation opens, revealing
+  both actions at short window heights. The existing confirmation regression
+  now verifies focus.
+
+Browser verification at 720×560 after scroll measured scene/scrollHeight 648px,
+controls 612px, scene bottom 550px beyond Quit bottom 532px. Confirmation growth
+also kept the backdrop and actions visible. This is controlled browser evidence;
+final-package confirmation follows below. The browser viewport was reset, its
+temporary tab closed and the Vite server stopped.
+
+Checks passed: **2,748 portable tests**, 2 skips and 1 known strict xfail in
+202.90s; Python popup **27**; Node **12**; final UI **55** with one opt-in skip;
+real-model popup integration **4 tests**, including the six production-serialized
+models; TypeScript, frontend build, full-root Ruff and mypy (**370 files**).
+The Python gate preceded the frontend-only overflow/focus corrections; those
+then passed the final UI/type/build gates. Native runtime/build load prevents
+performance comparisons. Source-gold remains **11/12** with the known carbon-
+paper ambiguity; expectations were not relaxed.
+
+Final candidate source: `e2d2705a7b181ad3e5fbac28b33a70f2fff3f03d`, build UUID
+`4d4eea5b-fd50-442f-b491-ff38eb3b24b7`, 1.1.0 arm64. Official packaging initially
+failed because cargo was absent from PATH; adding the existing Rust toolchain
+resolved that environment issue. Earlier label-only/sidebar candidates are
+retained separately as intermediate evidence, not delivery. Final inventory,
+signature, window and native UI confirmation passed as recorded below. No signing-
+policy change, installed-app replacement, push or merge has occurred.
+
+### Exact final package acceptance and closure
+
+The final inventory-only check passed; `codesign --verify --deep --strict`
+reported valid on disk and satisfied the designated requirement. Window-only
+smoke passed with `frozen=true`, `frontend_ready=true`, `service=true` and both
+package versions 1.1.0. Code identifier is `io.github.thiagoross1.hanly`, CDHash
+`a4d75d7138a462578942b2a9adaa1930f7a0fbd2`. Official ZIP/DMG and release manifest
+were generated. The unchanged earlier granted worktree package and installed
+`/Applications/Hanly.app` were preserved.
+
+Final native session `20261023-051957-run` lasted 364.0s and checked the exact
+new package at approximately 723×563 logical pixels. After scrolling the
+compact rail, the village continued behind its footer; the girl remained
+contained. Opening Quit automatically scrolled both actions into view and
+focused Cancel. Cancel kept the app running; later normal Quit ended the run.
+Capture stayed stopped while the new signature lacked valid grants. Native
+proof: `sidebar-final-native.png` and `quit-final-native.png` in the ignored
+final-acceptance evidence directory. This closes the browser-only caveat above.
+
+Normal System Settings removed/re-added **only Hanly** in Accessibility and
+Screen Recording, selecting the exact final package path. Both toggles were
+ON. No new authentication was requested during this refresh; no broad Python/
+Terminal grant, TCC reset/database access or signing workaround was used.
+
+- `20261023-052916-tour`: **1/1** authored adjective presentation passed, real
+  Vision observed, 88.2s. Actual light/Normal popup showed 안녕하다, Hanja/POS/
+  senses and the new **adjective-forming suffix** role in expanded details.
+- `20261023-053121-tour`: **two successful presentations of one authored verb
+  target**, 99.0s. The summary intentionally reports **2/1** because this
+  diagnostic repeats the target after settling; it is not a canonical corpus
+  score. First fresh-control AX queries timed out/returned unsupported and
+  correctly fell back to capture; the settled hover recorded `outcome=direct`,
+  `used_direct_text=true` and `acquisition_source=accessibility` with OCR skipped.
+  Dark/Pixel popup showed 읽다 and the new **sentence punctuation** role. Real
+  wheel input exposed the long details, then Less detail collapsed correctly.
+  The pointer crossing held it for 1.2s with zero extra captures/popups and the
+  owned reader still foreground.
+
+Both final tours and the preceding UI run exited 0 with zero drops, zero
+surviving children and zero forced children. Root/service/lookup inventory was
+empty afterwards. The real user configuration still matches the initial parsed
+JSON, and the original untracked QA report retains SHA256
+`2be67403462d512732563e3e7d979390de7586e9f0acff321f9ed39d2088883e`.
+
+The final reader trace exposed a **Lab-only accounting defect**: the worker's
+`accessibility` label overwrote `direct_text`, so the report funnel incorrectly
+showed zero direct reads. `7e2bbb1` normalizes that existing source label in the
+report, with a complete-event-sequence regression. Rebuilding that recorded
+report now counts the direct read; immutable events and the sealed app are
+unchanged. No new production trace fields or privacy exception were added.
+The first diagnostic script launch lacked PYTHONPATH and failed before starting
+the app; the correctly configured launch above passed. The inventory CLI also
+rejected an unsupported argument combination before its supported invocation
+passed. These are harness invocations, not hidden product failures.
+
+The broader Lab test command initially included its native WebKit cursor case
+inside the restricted sandbox and failed on blocked WebKit/cache services. The
+portable Lab suite then passed **658/1 known xfail**, and that exact native
+cursor fixture passed separately with normal host access (**1 test**). No
+assertions or permissions were weakened. Full-root Ruff, mypy and whitespace
+checks passed after the report fix. The packaged product source is still
+`e2d2705`; the later commit modifies Lab only, so it was not rebuilt/re-signed.
+
+The final native runs are short functional observations, not controlled
+performance benchmarks. The first cold answer included provider startup and
+about 3.1s hover-to-popup; the settled native direct answer was about 126ms.
+Sampled process-family peaks were about 963/1,005 MiB in the two tours, including
+providers and OS webviews. No before/after speed, memory improvement, long-soak
+or universal latency claim follows from these samples.
+
+No known actionable regression from this scoped redesign acceptance remains.
+Deferred ambiguity/sense-ranking and future OCR work are unchanged; they do not
+become silently passing tests. Windows is deliberately outside this batch.
+No new Linux acceptance was claimed. Four hours of continuous active QA are
+not established; builds, sampling, blocked calls and account-limit gaps are not
+counted as hands-on work. The old heartbeat stays paused. Final implementation
+act: update the existing redesign Review Handoff, make the authorized local
+documentation commit, then stop without Phase B, push or merge.

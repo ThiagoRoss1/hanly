@@ -3,7 +3,7 @@
 ## Bundle
 
 - Human-authorized workstream: `design/hanlyV2`; no new Linear issue or lifecycle transition was inferred from completed V1 work.
-- Updated: 2026-10-22. Phase A implementation and bounded follow-up are closed. Exact-package grants and real capture/OCR/popup activity are now established; linguistic and full native acceptance remain limited as recorded in the final section. Phase B deep review has not started.
+- Updated: 2026-10-23. Phase A and the authorized non-Windows acceptance follow-up are closed and ready for human-selected review. Exact final macOS package, native popup/direct acquisition/focus/hover retention and final layout were verified; finite linguistic limitations remain explicitly deferred. Windows is excluded from this batch. Phase B deep review has not started.
 - Original baseline: `43ba8d6`, identical to local `main` and the migration branch's tree. Correction baseline: `15b87a8`.
 - GPT implementation with bounded Luna xhigh workers for scene rendering, presentation components and preferences. Commit authorized by the human; no push or merge.
 
@@ -313,3 +313,70 @@ Suggested human-selected review targets are fixture pointer ownership and
 measurement provenance; this implementation does not initiate that review.
 This handoff is the last implementation edit of the batch. Local documentation
 commit and stop; no push, merge or automatic continuation.
+
+## Final non-Windows acceptance — 2026-10-23
+
+Human authorized closing remaining redesign acceptance from `edad421`, explicitly
+excluding Windows until after push. This section supersedes earlier unresolved
+native panel/direct-text/focus/crossing gates for the tested macOS scenarios.
+No Phase B review was performed.
+
+Final corrections, each locally committed:
+
+- `c3805ea`: learner-facing XSA/SF roles now read “adjective-forming suffix” and
+  “sentence punctuation”; normalized analyses and ranking are unchanged.
+- `0e06bb5`: shared SidebarShell keeps the village behind the entire scrollable
+  rail, sizing from controls plus padding without feedback from its own overflow.
+- `e2d2705`: opening compact Quit confirmation focuses Cancel and reveals both
+  actions at short window heights.
+- `7e2bbb1`: Lab report normalizes the worker's accessibility source as a direct
+  read, rather than erasing that funnel count. Immutable recordings and the
+  product/privacy contract are unchanged.
+
+Native inspection covered actual light/Normal and dark/Pixel popups, long
+content, Hanja/POS/Read as/components/constructions/other entries, expansion,
+collapse and Close. Hiding the Control Center normally exposed the nonactivating
+panel to CUA; no product policy workaround was introduced. Owned native readers
+verified settled AX acquisition, fallback to Vision on unsupported fresh AX,
+reader foreground and word-to-popup retention without extra captures/popups.
+Compact/expanded edge geometry stayed inside the Retina monitor work area.
+All six Control Center routes and minimum-size scrolling were checked.
+
+The exact final official product is primary `dist/macos/Hanly.app`, source
+`e2d2705a7b181ad3e5fbac28b33a70f2fff3f03d`, UUID
+`4d4eea5b-fd50-442f-b491-ff38eb3b24b7`, version1.1.0 arm64. Inventory,
+deep/strict codesign and frozen-service/window/frontend/version smoke passed.
+Normal Settings refreshed only Hanly's existing grants for its new ad-hoc
+identity. Exact-final runs `20261023-051957-run`, `20261023-052916-tour` and
+`20261023-053121-tour` verified both sidebar fixes, real Vision popup/new XSA
+label, native AX verb popup/new SF label, scrolling/collapse and retained reader
+focus. They ended normally with zero drops/surviving/forced children. The reader
+scenario deliberately repeated one target (2/1 diagnostic decisions, not a
+canonical corpus score). No rebuild followed the grant refresh; the later Lab
+commit does not change this package. No installation or signing-policy change.
+
+Validation: portable gate **2,748 passed/2 skipped/1 known strict xfail**;
+Python popup27; Node12; UI55/one opt-in skip; real-model UI4 tests covering six
+production models; TypeScript/frontend build, Ruff and mypy370 passed. After
+the Lab-only fix, portable Lab **658 passed/1 known xfail**, report/session96
+passed, native WebKit cursor fixture1 passed with normal host access. Its first
+sandbox invocation failed on denied WebKit/cache services; no assertions were
+relaxed. The recorded reader report now correctly counts one native direct read.
+Earlier complete native fixture plans remain24/24 words and153/153 story
+presentation decisions; their finite/semantic limits remain in the report.
+
+Known deferred scope: source-gold11/12 and grammar702/706 headwords with76/76
+constructions; alternative-analysis contract/UI, ambiguity and contextual sense
+ranking remain human-deferred. No OCR/model/backend/dictionary tuning was added.
+These checks establish neither perfect recognition nor controlled performance,
+long-soak or universal DPI/cross-platform acceptance. Windows is not a pending
+task here; no new Linux acceptance is claimed. No four-hour active-QA claim.
+
+Real settings match the original parsed JSON; no Hanly root/service/lookup
+remains. The separate untracked prior QA report is unchanged. Final package,
+ignored evidence and attached worktree are preserved, heartbeat PAUSED. See the
+single [English report](../reports/hanly-v2-popup-content-qa.md) for provenance,
+scenarios and screenshots. Suggested human-selected review targets: sidebar
+measurement/lifecycle, compact confirmation focus, role labels and Lab source
+normalization. This handoff is the last implementation edit; local docs commit
+and stop. No automatic review, push or merge.
