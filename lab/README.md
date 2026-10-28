@@ -62,7 +62,13 @@ how that hover ended. Every target has a known answer:
   installed Korean typefaces.
 
 The fixture page and HUD are opaque raster windows owned by Lab; the app being
-measured is the launched Tauri desktop. The plain command is the **standard tour**: the whole story and 300 words, about
+measured is the launched Tauri desktop. The fixture receives pointer events so
+its native cursor does not inherit a covered application's custom cursor. A
+click-through fixture can leave that cursor composited over the sampled text
+on macOS and produce false recognition failures. The HUD remains click-through.
+This changes the session measurement protocol to `v4`; earlier `v3` latency and
+memory samples are not a performance baseline for this fixture behavior.
+The plain command is the **standard tour**: the whole story and 300 words, about
 three and a half minutes. Tours with the same settings are comparable;
 `--baseline <earlier-run>` adds a before/after table to the new report.
 `--quick` is a 40-second smoke run (24 words, no story); `--words`,
@@ -73,6 +79,20 @@ Text is painted, so each hover exercises capture and OCR. **Move the mouse
 yourself to stop the tour.** It checks that the capture shortcut is bound.
 Hanly reports required screen-capture or accessibility access in its native
 Permissions pane; the Lab does not grant or change OS permissions.
+
+The scored tour requires this checkout's debug build for its private, in-memory
+fixture evidence. To exercise an unchanged packaged app without that evidence,
+use `python -m lab tour --quick --trace-only --desktop /path/to/Hanly.app`.
+This checks bound hover completion and popup/refusal decisions only, using
+normal text-free production traces. It requests no recognized text or OCR
+geometry, enables no developer service module, and reports **no linguistic
+accuracy score**. A passing presentation decision can still contain a wrong
+word or sense. Text retention and baseline comparison are rejected in this mode.
+The driver's existing non-prompting input preflight still applies; it never
+grants permissions. Moving the physical mouse stops the driver as usual.
+For native popup inspection, add `--inspect-last` to leave the last fixture and
+app open after the driver finishes. Normal Quit ends observation and closes the
+Lab fixture. This option requires `--trace-only` and adds no semantic score.
 
 On macOS, the Lab sends an F1–F20 primary key through Quartz with the public
 SecondaryFn flag, because pynput's function-key event can be interpreted as a
@@ -442,6 +462,42 @@ tunes a production setting.
 
 ## `grammar` and `word-selection` — what the reader is shown, and why it misses
 
+`python -m lab popup-content` runs the authored popup-content cases through the
+real Kiwi → KRDICT → Qt-independent presentation-model path. This is a bounded
+language-to-presentation check: it does not run OCR, screen capture, native UI
+or a desktop process. It writes provenance, a source-gold score summary, and
+full normalized results under `artifacts/lab/runs/<run-id>/`; dictionary
+definitions stay only in that ignored run artifact. The tracked fixture lists
+official KRDICT entry sources and pins expected sense text by hash to the
+recorded resource build. A known case miss is scored as a failure and makes the
+command return nonzero.
+
+```bash
+python -m lab popup-content
+```
+
+The run's ignored `results.json` also records the exact morphology call inputs,
+normalized tokens/candidates, and dictionary query signatures. Source-entry
+availability is checked separately from what the pipeline queried and selected.
+Six additional diagnostic contrasts stay separate from the original twelve
+source-gold cases and do not inflate the pass score. These are authored Lab
+inputs; normal product logs retain no recognized text.
+
+The run's ignored `results.json` also contains the exact plain popup model
+serialized for the desktop event contract. To pass real language-campaign data
+through the React popup test without a desktop or captured pixels, provide that
+file's absolute path:
+
+```bash
+HANLY_LAB_POPUP_CONTENT_RESULTS=/absolute/path/to/results.json \
+  npm --prefix apps/desktop run test:ui -- --reporter=dot tests/ui/popup-page.test.tsx \
+  -t 'real popup-content campaign payloads'
+```
+
+Without the variable, the campaign integration test is skipped; ordinary
+`test:ui` remains self-contained. The campaign file contains full dictionary
+text and stays under ignored `artifacts/lab/runs/`.
+
 `python -m lab grammar-pages --output artifacts/lab/grammar-pages` generates
 paired `text.html` and `ocr.html` pages without opening windows. The first
 contains selectable Korean; the second contains images with empty alt text
@@ -489,8 +545,14 @@ python -m lab word-selection --ocr-backend vision       # or easyocr; --stride N
 - Korean fused to digits, emoji or punctuation.
 
 Every target is hovered at every syllable, in both forms acquisition produces:
-the whitespace-delimited word OCR resolves (with its neighbouring words), and
-the Korean run accessibility text yields. Every expected headword and
+the whitespace-delimited word OCR resolves, and the production direct-text
+coordinator's selection over authored accessibility text with synthetic bounds.
+Korean surfaces retain punctuation and attached grammar in both paths; mixed
+scripts still narrow to the Hangul under the cursor. Context is bounded to two
+whole neighboring words and 32 characters per side, stopping at line/sentence
+boundaries. No native range or OCR recognition is exercised here. Each run writes
+source provenance and corpus/dictionary hashes in `metadata.json` beside its
+summary. Every expected headword and
 construction is checked against KRDICT before scoring, so a corpus typo fails
 loudly instead of passing as a model error. Ambiguous cases list what is
 acceptable and say why.

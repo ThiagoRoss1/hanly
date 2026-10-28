@@ -67,9 +67,26 @@ def test_both_acquisition_forms_hand_over_the_right_word() -> None:
     direct = korean_grammar.selection_for(case, "direct", 1)
 
     assert (ocr.text, ocr.cursor_index) == ("(먹고)", 1)
-    assert (direct.text, direct.cursor_index) == ("먹고", 0)
+    assert (direct.text, direct.cursor_index) == ("(먹고)", 1)
     assert (ocr.context_before, ocr.context_after) == ("지금", "있어요.")
     assert korean_grammar._variants("-아 있다") == {"-아 있다", "-어 있다"}
+
+
+def test_attached_grammar_and_bounded_context_agree_across_acquisition_forms() -> None:
+    case = korean_grammar.Case(
+        id="quoted", category="punctuation", text="지금 '사랑'이라는 말 하나",
+        target="'사랑'이라는", accept={4: ("사랑",)},
+    )
+
+    ocr = korean_grammar.selection_for(case, "ocr", 4)
+    direct = korean_grammar.selection_for(case, "direct", 4)
+
+    assert (ocr.text, ocr.cursor_index, ocr.context_before, ocr.context_after) == (
+        "'사랑'이라는", 4, "지금", "말 하나",
+    )
+    assert (direct.text, direct.cursor_index, direct.context_before, direct.context_after) == (
+        ocr.text, ocr.cursor_index, ocr.context_before, ocr.context_after,
+    )
 
 
 def test_a_case_without_required_parts_does_not_count_as_a_parts_pass() -> None:

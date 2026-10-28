@@ -163,6 +163,42 @@ def test_a_check_set_an_ocr_campaign_and_a_measurement_are_told_apart(tmp_path: 
     assert identities["m"].provenance_version is None
 
 
+def test_popup_content_campaign_has_its_own_identity_and_evidence_set(tmp_path: Path) -> None:
+    run = tmp_path / "popup"
+    _json(
+        run / "metadata.json",
+        build_metadata(
+            config={"scope": "language_to_presentation_model"},
+            scenario={
+                "name": "popup_content_language_to_presentation",
+                "case_count": 12,
+                "case_ids": ["PC-001", "PC-003a"],
+                "endpoint": "source_gold_dictionary_entry_and_popup_model",
+            },
+            kind="popup_content",
+            source=CLEAN,
+        ),
+    )
+    _json(run / "summary.json", {"status": "failed", "score": "11/12"})
+    (run / "summary.md").write_text("compact summary", encoding="utf-8")
+    (run / "results.json").write_text("[]", encoding="utf-8")
+
+    identity = run_identity(run)
+
+    assert (identity.kind, identity.mode, identity.completion) == (
+        "popup_content",
+        "language_to_presentation_model",
+        "finished",
+    )
+    assert identity.options["case_count"] == 12
+    assert identity.evidence == {
+        "metadata.json": True,
+        "results.json": True,
+        "summary.json": True,
+        "summary.md": True,
+    }
+
+
 def test_an_update_check_is_recognized_from_its_summary(tmp_path: Path) -> None:
     run = tmp_path / "u"
     _json(

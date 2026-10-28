@@ -27,7 +27,7 @@ pub async fn desktop_request(
         return crate::windows::local_action(&window, &state.presentation, &method, &params);
     }
     if method == "quit" {
-        app.exit(0);
+        crate::request_exit(&app, 0);
         return Ok(json!({}));
     }
     if method == "retry_runtime" {

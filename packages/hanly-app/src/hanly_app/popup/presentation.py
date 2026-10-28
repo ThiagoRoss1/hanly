@@ -207,7 +207,16 @@ def _analysis_role(analysis: TokenAnalysis) -> str:
         "EC": "connecting ending",
         "ETM": "modifier ending",
         "ETN": "nominalizing ending",
+        "XSV": "verb-forming suffix",
+        "XSA": "adjective-forming suffix",
+        "SF": "sentence punctuation",
     }
+    if tag == "VX":
+        if analysis.lemma in {"싶다", "듯하다", "듯싶다", "성싶다"}:
+            return "auxiliary adjective"
+        if analysis.lemma == "주다":
+            return "auxiliary verb"
+        return "auxiliary"
     if tag == "JX" and analysis.token in {"은", "는"}:
         return "topic particle"
     if tag == "JX":

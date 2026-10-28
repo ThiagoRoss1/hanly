@@ -1,0 +1,17 @@
+@font-face {
+  font-family: HanlyUI;
+  src: url('/design/fonts/Galmuri11.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: HanlyUIBold;
+  src: url('/design/fonts/Galmuri11-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: HanlyGloss;
+  src: url('/design/fonts/Galmuri14.woff2') format('woff2');
+  font-display: swap;
+}

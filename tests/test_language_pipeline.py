@@ -476,12 +476,111 @@ def test_the_selection_carries_no_screen_geometry() -> None:
 
     fields = set(TextSelection.__dataclass_fields__)
 
-    # Neighbouring words are text, not geometry: one word each side, bounded.
+    # Bounded neighbouring context is text, not geometry.
     assert fields == {"text", "cursor_index", "source", "context_before", "context_after"}
-    with pytest.raises(ValueError, match="neighbouring word"):
+    with pytest.raises(ValueError, match="character limit"):
         TextSelection(text="책", context_after="가" * 33)
+    with pytest.raises(ValueError, match="at most two"):
+        TextSelection(text="책", context_after="하나 둘 셋")
+    assert TextSelection(text="책", context_after="하나 둘").context_after == "하나 둘"
     with pytest.raises(TypeError):
         invoke_with_runtime_values(TextSelection, text="책", context_before=None)
+
+
+def test_neighbouring_context_stays_bounded_and_stops_at_lines_and_sentences() -> None:
+    line = "이전 문장. 한국어를 할 수 있어요. 다음 문장"
+    start = line.index("할")
+
+    before, after = neighbouring_words(line, start, start + 1)
+
+    assert before == "한국어를"
+    assert after == "수 있어요."
+
+    multiline = "첫 문장 앞\n둘 target 뒤 다음"
+    target_start = multiline.index("target")
+    assert neighbouring_words(
+        multiline, target_start, target_start + len("target")
+    ) == (
+        "둘",
+        "뒤 다음",
+    )
+
+    sentence_ending_target = "책. 다음 문장"
+    assert neighbouring_words(
+        sentence_ending_target, 0, len("책.")
+    ) == ("", "")
+
+    leading_punctuation_target = "이전 문장. 다음 문장"
+    punctuation = leading_punctuation_target.index(".")
+    assert neighbouring_words(
+        leading_punctuation_target, punctuation, punctuation + 1
+    )[0] == ""
+
+
+def test_supplied_context_cannot_cross_a_line_boundary() -> None:
+    language, morphology, _dictionary = _language()
+
+    language.lookup(TextSelection(
+        _SURFACE,
+        2,
+        context_before="unrelated\n나는",
+        context_after="가요\nunrelated",
+    ))
+
+    assert morphology.analyzed[0] == f"나는 {_SURFACE} 가요"
+
+
+def test_neighbour_context_words_are_never_truncated_to_fit() -> None:
+    oversized = "긴" * 33
+    line = f"먼저 {oversized} target 뒤"
+    target = line.index("target")
+
+    assert neighbouring_words(line, target, target + len("target")) == ("", "뒤")
+
+
+def test_two_following_words_can_complete_a_listed_bound_noun_construction() -> None:
+    class BoundNounMorphology:
+        def __init__(self) -> None:
+            self.analyzed: list[str] = []
+
+        def analyze(self, text: str) -> MorphologyAnalysis:
+            self.analyzed.append(text)
+            if text != "한국어를 할 수 있어요.":
+                return MorphologyAnalysis()
+            tokens = (
+                TokenAnalysis("한국어", "한국어", "NNP", start=0, length=3),
+                TokenAnalysis("를", "를", "JKO", start=3, length=1),
+                TokenAnalysis("하", "하다", "VV", start=5, length=1),
+                TokenAnalysis("ᆯ", "ᆯ", "ETM", start=5, length=1),
+                TokenAnalysis("수", "수", "NNB", start=7, length=1),
+                TokenAnalysis("있", "있다", "VA", start=9, length=1),
+                TokenAnalysis("어요", "어요", "EF", start=10, length=2),
+                TokenAnalysis(".", ".", "SF", start=12, length=1),
+            )
+            return MorphologyAnalysis(
+                tokens=tokens,
+                candidates=(LexicalCandidate("하다", 5, 6, "VV"),),
+            )
+
+    class BoundNounDictionary:
+        def lookup(self, lemma: str) -> tuple[DictionaryEntry, ...]:
+            if lemma == "하다":
+                return (DictionaryEntry("하다", definitions=("to do",), part_of_speech="동사"),)
+            if lemma == "-ㄹ 수 있다":
+                return (DictionaryEntry(lemma, definitions=("be able to",)),)
+            return ()
+
+    morphology = BoundNounMorphology()
+    language = LanguagePipeline(morphology, BoundNounDictionary())
+    selection = TextSelection(
+        "할", context_before="한국어를", context_after="수 있어요."
+    )
+
+    result = language.lookup(selection)
+
+    assert morphology.analyzed == ["한국어를 할 수 있어요."]
+    assert result.context is not None and result.context.construction is not None
+    assert result.context.construction.headword == "-ㄹ 수 있다"
 
 
 def test_the_source_label_is_inert() -> None:

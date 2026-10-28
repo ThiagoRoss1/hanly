@@ -870,13 +870,42 @@ def test_popup_preferences_are_persisted_and_applied_live(tmp_path: Path) -> Non
     bridge, manager = _rebinding_bridge(tmp_path, controller)
 
     state = bridge.update_settings(
-        {"popup_default_size": "expanded", "technical_details": "full"}
+        {
+            "popup_default_size": "expanded",
+            "popup_font": "normal",
+            "app_font": "normal",
+            "sidebar_layout": "compact",
+            "technical_details": "full",
+        }
     )
 
     assert manager.config.popup_default_size.value == "expanded"
+    assert manager.config.popup_font.value == "normal"
+    assert manager.config.app_font.value == "normal"
+    assert manager.config.sidebar_layout.value == "compact"
     assert manager.config.technical_details.value == "full"
     assert controller.applied[-1] == manager.config
     assert state["config"]["popup_default_size"] == "expanded"
+    assert state["config"]["popup_font"] == "normal"
+    assert state["config"]["app_font"] == "normal"
+    assert state["config"]["sidebar_layout"] == "compact"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "choice"),
+    [
+        ("popup_font", "serif", "pixel"),
+        ("app_font", "serif", "pixel"),
+        ("sidebar_layout", "wide", "normal"),
+    ],
+)
+def test_appearance_preferences_reject_unsupported_choices(
+    tmp_path: Path, field: str, value: str, choice: str
+) -> None:
+    bridge, _manager = _rebinding_bridge(tmp_path, _Bindings())
+
+    with pytest.raises(ValueError, match=choice):
+        bridge.update_settings({field: value})
 
 
 def test_the_snapshot_reports_the_engine_apart_from_shell_readiness(
@@ -943,6 +972,33 @@ def test_clearing_empties_both_the_panel_and_the_file(tmp_path: Path) -> None:
 
     assert logs["records"] == []
     assert not log_path.exists()
+
+
+def test_capture_lifecycle_reaches_log_panel_and_file(tmp_path: Path) -> None:
+    from hanly_app.diagnostics import RotatingLogFile
+
+    log_path = tmp_path / "capture.log"
+    log = DiagnosticLog(RotatingLogFile(log_path))
+    bridge = ControlCenterBridge(
+        desktop_controller=_Controller(_Runtime()),
+        permission_service=_permission_service(
+            screen_recording=PermissionState.GRANTED,
+            accessibility=PermissionState.GRANTED,
+        ),
+        diagnostics=log.snapshot,
+        diagnostic_log=log,
+    )
+    bridge.start_capture()
+    bridge.stop_capture()
+    bridge.stop_capture()
+
+    records = cast(list[dict[str, str]], bridge.get_logs()["records"])
+    assert [record["message"] for record in records] == [
+        "Capture session started.", "Capture session stopped.",
+    ]
+    assert all(record["subsystem"] == "Capture" for record in records)
+    assert "Capture session started." in log_path.read_text(encoding="utf-8")
+    assert "Capture session stopped." in log_path.read_text(encoding="utf-8")
 
 
 def test_a_file_that_cannot_be_emptied_is_reported_rather_than_skipped(

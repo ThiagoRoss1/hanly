@@ -123,6 +123,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     multiprocessing.freeze_support()
     try:
         return run_hanly(argv)
+    except KeyboardInterrupt:
+        return 130
     except OSError as error:
         print(f"Hanly: {error}", file=sys.stderr)
         return 2

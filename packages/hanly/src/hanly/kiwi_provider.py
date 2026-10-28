@@ -6,7 +6,7 @@ install the concrete provider, while still reporting a provider-owned error
 when the adapter is used without Kiwi available.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, cast
@@ -46,21 +46,27 @@ class _CandidateBuilder:
     start: int
     end: int
     part_of_speech: str | None
-    token_indices: list[int]
 
-    def extend(self, index: int, end: int) -> None:
+    def extend(self, end: int) -> None:
         # Contracted syllables make Kiwi spans overlap, so the unit's extent is
         # the furthest edge reached rather than the last token's edge.
         self.end = max(self.end, end)
-        self.token_indices.append(index)
 
-    def build(self) -> LexicalCandidate:
+    def build(self, raw_tokens: Sequence[TokenAnalysis]) -> LexicalCandidate:
+        token_indices = tuple(
+            index
+            for index, token in enumerate(raw_tokens)
+            if token.start is not None
+            and token.length is not None
+            and token.start < self.end
+            and token.start + token.length > self.start
+        )
         return LexicalCandidate(
             lemma=self.lemma,
             start=self.start,
             end=self.end,
             part_of_speech=self.part_of_speech,
-            token_indices=tuple(self.token_indices),
+            token_indices=token_indices,
         )
 
 
@@ -102,7 +108,7 @@ class KiwiProvider:
             tokens = tuple(
                 self._normalize_token(token) for token in self._tokenize(text)
             )
-            candidates = self._candidates(text)
+            candidates = self._candidates(text, tokens)
         except ProviderError:
             raise
         except Exception as exc:
@@ -110,13 +116,16 @@ class KiwiProvider:
 
         return MorphologyAnalysis(tokens=tokens, candidates=candidates)
 
-    def _candidates(self, text: str) -> tuple[LexicalCandidate, ...]:
+    def _candidates(
+        self, text: str, raw_tokens: Sequence[TokenAnalysis]
+    ) -> tuple[LexicalCandidate, ...]:
         """Group the affix-joined token stream into addressable lexical units.
 
         Kiwi's ``JOIN_V_SUFFIX`` option is what turns ``사과 + 하`` into the
         single predicate ``사과하다``. Deriving the lemma any other way would
         mean appending ``다`` to a stem, which produces wrong forms for
-        irregulars and is rejected by the plan.
+        irregulars. Candidate spans are then mapped back to the raw normalized
+        stream because that is the token sequence the result exposes.
         """
 
         joined = self._tokenize_joined(text)
@@ -124,7 +133,7 @@ class KiwiProvider:
             return ()
 
         grouped: list[_CandidateBuilder] = []
-        for index, token in enumerate(joined):
+        for token in joined:
             tag = _tag_family(self._optional_string(token, ("tag", "part_of_speech", "pos")))
             start, length = self._span(token)
             if start is None or length is None or length <= 0:
@@ -136,7 +145,7 @@ class KiwiProvider:
             # The positive copula (이다) completes the word before it, as a
             # particle does: 학생입니다 is about 학생 wherever the pointer rests.
             if grouped and (tag.startswith(_ATTACHED_PREFIXES) or tag == "VCP"):
-                grouped[-1].extend(index, start + length)
+                grouped[-1].extend(start + length)
                 continue
 
             if tag.startswith(_ATTACHED_PREFIXES):
@@ -151,11 +160,10 @@ class KiwiProvider:
                     start=start,
                     end=start + length,
                     part_of_speech=tag or None,
-                    token_indices=[index],
                 )
             )
 
-        return tuple(builder.build() for builder in grouped if builder.lemma)
+        return tuple(builder.build(raw_tokens) for builder in grouped if builder.lemma)
 
     def _tokenize_joined(self, text: str) -> Iterable[object] | None:
         """Tokenize with verb suffixes joined, or ``None`` when unsupported.

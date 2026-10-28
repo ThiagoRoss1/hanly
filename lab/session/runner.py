@@ -61,6 +61,10 @@ class SessionOptions:
     baseline: Path | str | None = None
     #: Persist what verified tour hovers read (lab-authored text only).
     retain_fixture_text: bool = False
+    #: Exercise production traces without requesting or scoring recognized content.
+    trace_only: bool = False
+    #: Leave the final trace-only target visible for a native UI inspection.
+    inspect_last: bool = False
     #: Keep the region a failing verified stress hover captured, for an offline replay.
     retain_fixture_images: bool = False
     #: At most this many hovers per stress family; ``None`` runs the whole plan.
@@ -98,6 +102,14 @@ def resolve_run(name: str | Path) -> Path:
 
 
 def run_session(options: SessionOptions) -> int:
+    if options.inspect_last and not options.trace_only:
+        raise SystemExit("lab: --inspect-last requires --trace-only")
+    if options.trace_only and (
+        options.mode != "tour" or options.retain_fixture_text or options.baseline is not None
+    ):
+        raise SystemExit(
+            "lab: --trace-only is a tour smoke check without text retention or baseline"
+        )
     if options.mode == "tour" and options.words <= 0 and not options.story_sizes:
         raise SystemExit("lab: a tour needs at least one story target or dictionary word")
 
@@ -107,7 +119,7 @@ def run_session(options: SessionOptions) -> int:
         _require_tour_prerequisites(user_settings)
     plan = _stress_plan(options, runtime_config) if options.mode == "stress" else None
     executable = desktop_executable(options.desktop, REPO_ROOT)
-    if options.drives and not is_debug_executable(executable, REPO_ROOT):
+    if options.drives and not options.trace_only and not is_debug_executable(executable, REPO_ROOT):
         raise SystemExit(
             "lab: driven tours require this checkout's debug Hanly binary so verified "
             "fixture evidence can stay in memory"
@@ -126,8 +138,8 @@ def run_session(options: SessionOptions) -> int:
     recorder = LabRecorder(
         run_dir / "events.jsonl",
         # The service provides evidence only to the verified Lab driver in memory.
-        retain_evidence=options.drives,
-        retain_geometry=options.drives,
+        retain_evidence=options.drives and not options.trace_only,
+        retain_geometry=options.drives and not options.trace_only,
     )
     started = datetime.now().isoformat(timespec="seconds")
     source = source_identity(REPO_ROOT)
@@ -308,6 +320,8 @@ def _driven_exit_code(mode: str, process_exit_code: int, counts: dict[str, int])
         return process_exit_code
     if counts.get("tour_aborted", 0):
         return 2
+    if counts.get("tour_smoke_failed", 0):
+        return 2
     if not (counts.get("tour_finished", 0) or counts.get("tour_stopped_by_user", 0)):
         return 2
     return process_exit_code
@@ -399,7 +413,11 @@ def _desktop_environment(
     environment.pop("HANLY_DESKTOP_SERVICE_MODULE", None)
     environment.pop("HANLY_LAB_RETAIN_EVIDENCE", None)
     environment.pop("HANLY_LAB_RETAIN_GEOMETRY", None)
-    if is_debug_executable(executable, REPO_ROOT) and (options.drives or options.hud):
+    if (
+        not options.trace_only
+        and is_debug_executable(executable, REPO_ROOT)
+        and (options.drives or options.hud)
+    ):
         environment["HANLY_DESKTOP_SERVICE_MODULE"] = "lab.service_observer"
         if options.drives:
             environment["HANLY_LAB_RETAIN_EVIDENCE"] = "1"
@@ -460,6 +478,8 @@ def _start_tour(
             page,
             capture_hotkey=settings.capture_hotkey,
             retain_fixture_text=options.retain_fixture_text,
+            trace_only=options.trace_only,
+            inspect_last=options.inspect_last,
             owned_pids=set() if desktop_pid is None else {desktop_pid},
             settle_timeout=options.hover_timeout or 4.0,
             first_timeout=options.hover_timeout or 90.0,
@@ -475,7 +495,10 @@ def _start_tour(
                 recorder.lab("tour_aborted", reason=type(error).__name__)
             finally:
                 recorder.lab("tour_driver_finished", completed=driver.completed)
-                desktop.request_stop()
+                if options.inspect_last and recorder.counts.get("tour_finished", 0):
+                    recorder.lab("tour_inspection_ready")
+                else:
+                    desktop.request_stop()
 
         threading.Thread(target=drive, name="lab-tour", daemon=True).start()
 
@@ -703,6 +726,8 @@ def _metadata(
             "corpus": _corpus_identity(options.corpus),
             "corpus_manifest": None if options.corpus is None else _display(options.corpus),
             "repeats": options.repeats if options.corpus is not None else None,
+            "trace_only": options.trace_only,
+            "inspect_last": options.inspect_last,
         },
         "lab_provenance": provenance(
             options.mode,

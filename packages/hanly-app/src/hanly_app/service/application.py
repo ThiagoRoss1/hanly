@@ -1215,6 +1215,7 @@ class DesktopService:
                 "expanded": expanded,
                 "technical_details": config.technical_details.value,
                 "theme": config.theme.value,
+                "popup_font": config.popup_font.value,
             },
         )
         sequence = self._popup_sequence

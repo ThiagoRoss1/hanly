@@ -1,0 +1,501 @@
+{
+  "schema_version": 1,
+  "title": "Popup content and context cases from real Korean lookup data",
+  "description": "Lab-authored surfaces checked through Kiwi, KRDICT, and the Qt-independent popup presentation builder. Expected KRDICT senses are pinned by SHA-256 so dictionary text is not redistributed in tracked fixtures; readable sampled evidence stays in the gitignored Lab run artifact.",
+  "cases": [
+    {
+      "id": "PC-101",
+      "category": "noun with object particle",
+      "text": "책을 읽었어요.",
+      "target": "책을",
+      "cursor": 0,
+      "lemma": "책",
+      "headword": "책",
+      "part_of_speech": "명사",
+      "hanja": "冊",
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "책",
+          "noun"
+        ],
+        [
+          "을",
+          "object particle"
+        ]
+      ],
+      "gloss_sha256": "4da6990f283a8883841de4884dc13a21d60554a5c2da617027f3eb2a533a1dba",
+      "definition_sha256": "586e1c851196660cc031aef57313041c0adf0157d9be65828589a24c6b12e2e5"
+    },
+    {
+      "id": "PC-102",
+      "category": "read aloud, past polite",
+      "text": "선생님이 문장을 소리 내어 읽었어요.",
+      "target": "읽었어요",
+      "cursor": 0,
+      "lemma": "읽다",
+      "headword": "읽다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "읽-",
+          "verb stem"
+        ],
+        [
+          "-었-",
+          "past"
+        ],
+        [
+          "-어요",
+          "ending"
+        ]
+      ],
+      "gloss_sha256": "cf62085672feb2e3db7bea58952738da72188fc67e6a0cd7293af9e412c4fbd1",
+      "definition_sha256": "ae11e6565f68441a7c2cb5e1b0363c4c2d62fd76facb2c0a4851350c64b69a09"
+    },
+    {
+      "id": "PC-103",
+      "category": "regular verb past polite",
+      "text": "밥을 먹었어요.",
+      "target": "먹었어요",
+      "cursor": 0,
+      "lemma": "먹다",
+      "headword": "먹다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "먹-",
+          "verb stem"
+        ],
+        [
+          "-었-",
+          "past"
+        ],
+        [
+          "-어요",
+          "ending"
+        ]
+      ],
+      "gloss_sha256": "ca1279fd189ae6bb3688d0b524be5df8bef5fb78a01a2d96955654d9ae10706f",
+      "definition_sha256": "c5483592344903fe8d30a3e60c118570aeb161035be5880fc0147dc04da379aa"
+    },
+    {
+      "id": "PC-104",
+      "category": "contraction and auxiliary verb",
+      "text": "친구를 도와줘요.",
+      "target": "도와줘요",
+      "cursor": 0,
+      "lemma": "도와주다",
+      "headword": "도와주다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "돕-",
+          "verb stem"
+        ],
+        [
+          "-어",
+          "connecting ending"
+        ],
+        [
+          "주",
+          "auxiliary verb"
+        ],
+        [
+          "-어요",
+          "ending"
+        ]
+      ],
+      "gloss_sha256": "fa7687b2d0204c3e06929d4d1c9e4c1cfe079770f4541894f0bad57c723d31c1",
+      "definition_sha256": "9f95119036950feb2165fc2218d1f366a74f4abf552775033d52b81006d9d709"
+    },
+    {
+      "id": "PC-105",
+      "category": "르 irregular past",
+      "text": "그때는 몰랐어요.",
+      "target": "몰랐어요",
+      "cursor": 0,
+      "lemma": "모르다",
+      "headword": "모르다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "모르-",
+          "verb stem"
+        ],
+        [
+          "-었-",
+          "past"
+        ],
+        [
+          "-어요",
+          "ending"
+        ]
+      ],
+      "gloss_sha256": "9dbd1928e3280df0e6badb086a6d51ba835abe29096575b9fa39ff8cfc9b74a2",
+      "definition_sha256": "9cc4500a958c71dfef560f97dc64404ae02cab587089b24829655a33ac66e9cd"
+    },
+    {
+      "id": "PC-106",
+      "category": "hear a sound, ㄷ irregular past",
+      "text": "밖에서 큰 소리를 들었어요.",
+      "target": "들었어요",
+      "cursor": 0,
+      "lemma": "듣다",
+      "headword": "듣다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "듣-",
+          "verb stem"
+        ],
+        [
+          "-었-",
+          "past"
+        ],
+        [
+          "-어요",
+          "ending"
+        ]
+      ],
+      "gloss_sha256": "49000c4444d51233fa10ad2015daccdef4ca48f3e5d1c99b98b295ea22071532",
+      "definition_sha256": "cadf38c7e6843dfe8332ba429e6dfef675719117270b9523d174c1c0d98ac755"
+    },
+    {
+      "id": "PC-107",
+      "category": "하다-derived verb past",
+      "text": "친구에게 사과했어요.",
+      "target": "사과했어요",
+      "cursor": 0,
+      "lemma": "사과하다",
+      "headword": "사과하다",
+      "part_of_speech": "동사",
+      "hanja": "謝過",
+      "vocabulary_level": "중급",
+      "analysis": [
+        [
+          "사과",
+          "noun"
+        ],
+        [
+          "하",
+          "verb-forming suffix"
+        ],
+        [
+          "-었-",
+          "past"
+        ],
+        [
+          "-어요",
+          "ending"
+        ]
+      ],
+      "gloss_sha256": "0d7925903f3e8bfc03007ff16c25ed10714ee787e405b653f797b4e53148ac15",
+      "definition_sha256": "39a7c401641ebdd703328eeb629889d78134cce5df19d035570bae42fb6f819c"
+    },
+    {
+      "id": "PC-108",
+      "category": "noun with subject particle",
+      "text": "학생이 왔어요.",
+      "target": "학생이",
+      "cursor": 0,
+      "lemma": "학생",
+      "headword": "학생",
+      "part_of_speech": "명사",
+      "hanja": "學生",
+      "vocabulary_level": "초급",
+      "analysis": [
+        [
+          "학생",
+          "noun"
+        ],
+        [
+          "이",
+          "subject particle"
+        ]
+      ],
+      "gloss_sha256": "cf106c81abd0470454208601d385e532198a1a3c7f6578021db624a5f75450b8",
+      "definition_sha256": "32dd080425cf8fa92009612f2c23b128b3fc193e56ac010cdc522702cd1c555c"
+    },
+    {
+      "id": "PC-001",
+      "category": "restaurant customer with subject particle",
+      "text": "식당에 손님이 많아요.",
+      "target": "손님이",
+      "cursor": 0,
+      "lemma": "손님",
+      "headword": "손님",
+      "part_of_speech": "명사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "ca9b58059ab239256c1d4df44ead43141bd6dcbc7361ef03598d1096f0cde5cc",
+      "definition_sha256": "cdcdb8896a871845db5b4460c0173627a51acc23e859d5709113c01363f10c32",
+      "note": "The context favors the dictionary customer sense, while the popup keeps KRDICT sense order. The case checks entry and particle evidence, not contextual sense ranking.",
+      "required_sense_definition_sha256": "b824eeb9c49eea0c404b2d2b32601d33bc511024192b9f9e4a73ec0fa43711de"
+    },
+    {
+      "id": "PC-002",
+      "category": "progressive construction with auxiliary",
+      "text": "빵을 먹고 있어요.",
+      "target": "먹고",
+      "cursor": 1,
+      "lemma": "먹다",
+      "headword": "먹다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "ca1279fd189ae6bb3688d0b524be5df8bef5fb78a01a2d96955654d9ae10706f",
+      "definition_sha256": "c5483592344903fe8d30a3e60c118570aeb161035be5880fc0147dc04da379aa",
+      "analysis": [
+        [
+          "먹-",
+          "verb stem"
+        ],
+        [
+          "-고",
+          "connecting ending"
+        ]
+      ],
+      "construction": {
+        "headword": "-고 있다",
+        "definition_sha256": "32dcaf316a1ee2109ec7fcc91579a71173e4487b4c1b2999971202e25cf0abec",
+        "additional_definition_sha256": "8ffb2ceb73570d1cf77c9398e3bf12936c87c0fe928d60d64c14c1c274e1c3c6"
+      },
+      "note": "KRDICT lists progressive and result-continuation readings for -고 있다; this context favors the progressive. The test checks the listed construction and first dictionary sense order, not a sense-ranking claim."
+    },
+    {
+      "id": "PC-003a",
+      "category": "carbon-paper noun versus conjugated homograph",
+      "text": "먹지를 깔고 써요.",
+      "target": "먹지를",
+      "cursor": 0,
+      "lemma": "먹지",
+      "headword": "먹지",
+      "part_of_speech": "명사",
+      "hanja": "紙",
+      "vocabulary_level": "고급",
+      "gloss_sha256": "8b9e1b8543541cfedc1a132b3bbb641713d2100386eedaa5e8452a78d855433f",
+      "definition_sha256": "f44a4e217d4e96364a9978159ac61e433399e67c44530eb34cba4059307e3664",
+      "analysis": [
+        [
+          "먹-",
+          "verb stem"
+        ],
+        [
+          "-지",
+          "connecting ending"
+        ],
+        [
+          "를",
+          "object particle"
+        ]
+      ],
+      "note": "KRDICT entry 먹지 means carbon paper and its source examples include 먹지를 깔고 쓰다. This clear context is currently misanalyzed; retain expected noun gold and report the actual pipeline mismatch explicitly."
+    },
+    {
+      "id": "PC-003b",
+      "category": "prohibitive ending with auxiliary",
+      "text": "밥을 먹지 마세요.",
+      "target": "먹지",
+      "cursor": 1,
+      "lemma": "먹다",
+      "headword": "먹다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "ca1279fd189ae6bb3688d0b524be5df8bef5fb78a01a2d96955654d9ae10706f",
+      "definition_sha256": "c5483592344903fe8d30a3e60c118570aeb161035be5880fc0147dc04da379aa",
+      "analysis": [
+        [
+          "먹-",
+          "verb stem"
+        ],
+        [
+          "-지",
+          "connecting ending"
+        ]
+      ],
+      "construction": {
+        "headword": "-지 말다",
+        "definition_sha256": "8ad4312c7496febea845b084a3f58dccdb3aad40312b345352d810cdcbe0ec1a"
+      },
+      "note": "The surface 먹지 also exists as a carbon-paper noun; the surrounding prohibitive 말다 resolves this case to the verb."
+    },
+    {
+      "id": "PC-201",
+      "category": "diagnostic contrast: 가지 noun",
+      "text": "나무에 가지가 많아요.",
+      "target": "가지가",
+      "cursor": 0,
+      "lemma": "가지",
+      "headword": "가지",
+      "part_of_speech": "명사",
+      "hanja": null,
+      "vocabulary_level": "중급",
+      "gloss_sha256": "7a1d05d98723487acdd3edecb2aea085ed3c6dda9620ac5190c0865eee74d002",
+      "definition_sha256": "79fd47ed7b74e9dd16950b933d4e933a557e8f020cf0f853a5b20d44bab5ebc4",
+      "diagnostic_only": true,
+      "note": "Counterpoint to PC-202: the noun is the branch of a tree. KRDICT's official examples include 가지 with particles in this sense; retain all pipeline probes to see whether noun evidence is queried and selected."
+    },
+    {
+      "id": "PC-202",
+      "category": "diagnostic contrast: 가지 prohibition",
+      "text": "오늘은 가지 마세요.",
+      "target": "가지",
+      "cursor": 0,
+      "lemma": "가다",
+      "headword": "가다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "084957d8634a1b1cc051bb1f1b6f6dbc4708c5bc65d677632600370a51249696",
+      "definition_sha256": "c715bac3ad683bb4c35dc847bb3997b5d6b1d004ef4355def61c08919b515be9",
+      "diagnostic_only": true,
+      "note": "Counterpoint to PC-201: 가지 is 가다 plus prohibitive -지 before 마세요. Do not expect a noun result merely because 가지 is also a dictionary headword."
+    },
+    {
+      "id": "PC-203",
+      "category": "diagnostic contrast: 나는 pronoun",
+      "text": "나는 학생이에요.",
+      "target": "나는",
+      "cursor": 0,
+      "lemma": "나",
+      "headword": "나",
+      "part_of_speech": "대명사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "a83dd0ccbffe39d071cc317ddf6e97f5c6b1c87af91919271f9fa140b0508c6c",
+      "definition_sha256": "7c657fb6f34027469cec511ea6b93eb4716d973531e33f5e4559c11aa6cbd884",
+      "diagnostic_only": true,
+      "note": "Context favors first-person pronoun 나 + topic particle 는; contrast with PC-204's modifier 나는. Surface-only alternatives are intentionally recorded, not presumed rejected."
+    },
+    {
+      "id": "PC-204",
+      "category": "diagnostic contrast: 나는 modifier",
+      "text": "하늘을 나는 새예요.",
+      "target": "나는",
+      "cursor": 0,
+      "lemma": "날다",
+      "headword": "날다",
+      "part_of_speech": "동사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "f4debdb7ab7dd958e95cea076c7668310a131f9bf9c972fa934c5e55c5a97c0e",
+      "definition_sha256": "f992950dc680bc131b32d6a662c496e656cfabd36d5765bb3b22a485cb676eca",
+      "diagnostic_only": true,
+      "note": "Context favors 날다 'fly' as a modifier of 새; contrast with PC-203. KRDICT lists 나는 among 날다's forms."
+    },
+    {
+      "id": "PC-205",
+      "category": "diagnostic punctuation cursor: parenthetical noun plus particle",
+      "text": "(학교)에 가요.",
+      "target": "(학교)에",
+      "cursor": 4,
+      "lemma": "학교",
+      "headword": "학교",
+      "part_of_speech": "명사",
+      "hanja": "學校",
+      "vocabulary_level": "초급",
+      "gloss_sha256": "d64debd942d7dc26a851231583b1721f43ea936fa41932b6dad7556e5f8cd24a",
+      "definition_sha256": "0bb4011009af4d36aeb4e9da78ae8b6179f388a230deed9e9569e33bdf6ceaad",
+      "diagnostic_only": true,
+      "note": "Direct punctuation-selection probe retained at cursor 4, on particle 에; OCR-whitespace token gold remains 학교 under the current fixture policy. No policy claim is encoded by this diagnostic-only case."
+    },
+    {
+      "id": "PC-206",
+      "category": "diagnostic punctuation cursor: quoted noun plus modifier construction",
+      "text": "'사랑'이라는 말",
+      "target": "'사랑'이라는",
+      "cursor": 4,
+      "lemma": "사랑",
+      "headword": "사랑",
+      "part_of_speech": "명사",
+      "hanja": null,
+      "vocabulary_level": "초급",
+      "gloss_sha256": "686f746a95b6f836d7d70567c302c3f9ebb5ee0def3d1220ee9d4e9f34f5e131",
+      "definition_sha256": "6d06306f8322d70a61b1ba3ef4cec469f08bd0dfc18d7ae18cceabac7f4dc616",
+      "diagnostic_only": true,
+      "note": "Direct punctuation-selection probe on 이 after quoted noun 사랑. Keep the existing whole-token gold for observation; policy is not settled by the case."
+    }
+  ],
+  "source_references": {
+    "dictionary": "National Institute of Korean Language Korean-English Learners’ Dictionary (KRDICT)",
+    "resource_version": "20260819-v1",
+    "retrieval_note": "Official entry pages support headword/POS and authored contextual readings. Tracked fixture contains only entry metadata and sense hashes, not dictionary definitions.",
+    "case_urls": {
+      "PC-101": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=71468",
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=86355&nation=eng"
+      ],
+      "PC-102": [
+        "https://krdict.korean.go.kr/m/eng/searchResultView?ParaWordNo=68752&currentPage=1&exaType=&font_size=12&mainSearchWord=%EC%9D%BD%EB%8B%A4&nation=eng&nationCode=6&proverbType=&searchType=W&sort=W&viewType=A&wordMatchFlag=N"
+      ],
+      "PC-103": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=58272"
+      ],
+      "PC-104": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=70744",
+        "https://krdict.korean.go.kr/kor/dicSearch/SearchView?ParaWordNo=17203",
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=76439"
+      ],
+      "PC-105": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=29712"
+      ],
+      "PC-106": [
+        "https://krdict.korean.go.kr/eng/dicMarinerSearch/search?mainSearchWord=%EB%93%A3%EB%8B%A4"
+      ],
+      "PC-107": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=62377",
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=88475"
+      ],
+      "PC-108": [
+        "https://krdict.korean.go.kr/eng/dicMarinerSearch/search?mainSearchWord=%ED%95%99%EC%83%9D",
+        "https://krdict.korean.go.kr/eng/dicMarinerSearch/search?mainSearchWord=%EC%9D%B4"
+      ],
+      "PC-001": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=71279",
+        "https://krdict.korean.go.kr/eng/dicMarinerSearch/search?mainSearchWord=%EC%9D%B4"
+      ],
+      "PC-002": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=58272",
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=72238"
+      ],
+      "PC-003a": [
+        "https://krdict.korean.go.kr/kor/dicSearch/SearchView?ParaWordNo=54828",
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=85764&nation=eng"
+      ],
+      "PC-003b": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=78636",
+        "https://krdict.korean.go.kr/m/eng/searchResultView?ParaWordNo=72580&currentPage=1&exaType=&font_size=12&mainSearchWord=%EB%A7%90%EB%8B%A4&nation=eng&nationCode=6&proverbType=&searchType=W&sort=&viewType=A&wordMatchFlag=N"
+      ],
+      "PC-201": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=59919"
+      ],
+      "PC-202": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=27500&nation=eng"
+      ],
+      "PC-203": [
+        "https://krdict.korean.go.kr/eng/dicMarinerSearch/search?mainSearchWord=%EB%82%98&nation=eng"
+      ],
+      "PC-204": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=61530"
+      ],
+      "PC-205": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=73276&nation=eng"
+      ],
+      "PC-206": [
+        "https://krdict.korean.go.kr/eng/dicSearch/SearchView?ParaWordNo=66649&nation=eng"
+      ]
+    }
+  }
+}

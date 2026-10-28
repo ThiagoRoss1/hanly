@@ -25,6 +25,7 @@ from hanly_app.config import (
     HOVER_DELAY_MAX_MS,
     HOVER_DELAY_MIN_MS,
     AppConfig,
+    AppFont,
     CaptureMode,
     CaptureRegion,
     ConfigManager,
@@ -32,6 +33,8 @@ from hanly_app.config import (
     LookupPreload,
     OCRBackend,
     PopupDefaultSize,
+    PopupFont,
+    SidebarLayout,
     TechnicalDetailLevel,
 )
 from hanly_app.desktop_controller import DesktopState
@@ -266,6 +269,8 @@ class ControlCenterBridge:
                 controller.resume()
             else:
                 controller.start()
+        if not self._capture_running and self._diagnostic_log is not None:
+            self._diagnostic_log.record("Capture", "Capture session started.")
         self._capture_running = True
         self._notify_lifecycle_changed()
         return self.get_state()
@@ -275,6 +280,8 @@ class ControlCenterBridge:
 
         if self._desktop_controller is not None:
             self._desktop_controller.stop()
+        if self._capture_running and self._diagnostic_log is not None:
+            self._diagnostic_log.record("Capture", "Capture session stopped.")
         self._capture_running = False
         self._notify_lifecycle_changed()
         return self.get_state()
@@ -374,6 +381,9 @@ class ControlCenterBridge:
             "theme",
             "popup_enabled",
             "popup_default_size",
+            "popup_font",
+            "app_font",
+            "sidebar_layout",
             "technical_details",
             "update_checks_enabled",
         }
@@ -402,6 +412,18 @@ class ControlCenterBridge:
         if "popup_default_size" in values:
             values["popup_default_size"] = _validated_choice(
                 values["popup_default_size"], PopupDefaultSize, "default popup size"
+            )
+        if "popup_font" in values:
+            values["popup_font"] = _validated_choice(
+                values["popup_font"], PopupFont, "popup font"
+            )
+        if "app_font" in values:
+            values["app_font"] = _validated_choice(
+                values["app_font"], AppFont, "app font"
+            )
+        if "sidebar_layout" in values:
+            values["sidebar_layout"] = _validated_choice(
+                values["sidebar_layout"], SidebarLayout, "sidebar layout"
             )
         if "technical_details" in values:
             values["technical_details"] = _validated_choice(

@@ -1,0 +1,225 @@
+/* Compact is both a saved preference and the narrow-window fallback. */
+.app.skin-village .sidebar.is-compact {
+  width: 88px;
+  padding: 18px 14px;
+}
+.app.skin-village .sidebar.is-compact .brand {
+  justify-content: center;
+  min-height: 64px;
+  margin: 44px 0 16px;
+  padding: 0;
+}
+.app.skin-village .sidebar.is-compact .brand-mark { flex-basis: 32px; width: 32px; height: 32px; }
+.app.skin-village .sidebar.is-compact .brand-words,
+.app.skin-village .sidebar.is-compact .nav-label,
+.app.skin-village .sidebar.is-compact .live-detail,
+.app.skin-village .sidebar.is-compact .live-facts { display: none; }
+.app.skin-village .sidebar.is-compact .nav-item.sprite-button {
+  width: 60px;
+  min-width: 60px;
+  min-height: 52px;
+  height: 52px;
+  padding: 4px;
+}
+.app.skin-village .sidebar.is-compact .nav-content { width: 100%; gap: 0; }
+.app.skin-village .sidebar.is-compact .nav-dot { width: 40px; height: 40px; }
+.app.skin-village .sidebar.is-compact .nav-dot > img { width: 32px; height: 32px; }
+.app.skin-village .sidebar.is-compact .live-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 60px;
+  height: auto;
+  min-height: 94px;
+  max-height: none;
+  padding: 8px 3px 9px;
+}
+.app.skin-village .sidebar.is-compact .live-card::after {
+  background-image: var(--skin-plaque-slices);
+  background-size:
+    16px 16px, calc(100% - 32px) 16px, 16px 16px,
+    16px calc(100% - 32px), calc(100% - 32px) calc(100% - 32px),
+    16px calc(100% - 32px), 16px 16px, calc(100% - 32px) 16px, 16px 16px;
+  background-position:
+    left top, center top, right top, left 16px, center 16px, right 16px,
+    left bottom, center bottom, right bottom;
+}
+.app.skin-village .sidebar.is-compact .live-card::before {
+  content: none;
+}
+.app.skin-village .sidebar.is-compact .mascot-stage { order: 0; width: 52px; height: 57px; }
+.app.skin-village .sidebar.is-compact .sprite-canvas { bottom: 0; }
+.app.skin-village .sidebar.is-compact .mascot-balloon { top: -2px; right: 0; width: 20px; height: 16px; }
+.app.skin-village .sidebar.is-compact .live-head {
+  display: flex;
+  order: 1;
+  justify-content: center;
+  margin: 0;
+  padding: 3px 1px 0;
+  background: transparent;
+  text-align: center;
+}
+.app.skin-village .sidebar.is-compact .live-head .dot { display: none; }
+.app.skin-village .sidebar.is-compact .live-label {
+  display: block;
+  color: var(--skin-ink);
+  font: 700 9px/13px HanlyUIBold, HanlyUI, monospace;
+  overflow-wrap: anywhere;
+}
+.app.skin-village .sidebar.is-compact .btn-exit-quiet.sprite-button {
+  width: 60px;
+  min-width: 60px;
+  height: auto;
+  min-height: 34px;
+  padding: 4px;
+  font-size: 9px;
+}
+.app.skin-village .sidebar.is-compact .btn-exit-quiet .button-content { flex-direction: column; gap: 0; }
+.app.skin-village .sidebar.is-compact .btn-exit-quiet .action-icon { width: 14px; height: 14px; }
+.app.skin-village .sidebar.is-compact .btn-exit-quiet .button-label { white-space: normal; }
+.app.skin-village .sidebar.is-compact .quit-confirm { width: 60px; padding: 4px; gap: 5px; }
+.app.skin-village .sidebar.is-compact .quit-note { font-size: 9px; line-height: 13px; }
+.app.skin-village .sidebar.is-compact .quit-row { flex-direction: column; gap: 4px; }
+.app.skin-village .sidebar.is-compact .quit-row .sprite-button { width: 52px; min-width: 52px; min-height: 28px; padding: 4px; font-size: 8px; }
+
+@media (max-height: 820px) {
+  .app.skin-village .sidebar { padding-top: 14px; padding-bottom: 12px; }
+  .app.skin-village .brand { margin-top: 22px; margin-bottom: 10px; }
+  .app.skin-village .nav { gap: 4px; }
+  .app.skin-village .nav-item.sprite-button { min-height: 46px; height: 46px; padding-block: 3px; }
+  .app.skin-village .sidebar-foot { gap: 7px; padding-top: 7px; }
+  .app.skin-village .live-card { height: 210px; min-height: 210px; max-height: 210px; }
+  .app.skin-village .sidebar.is-compact { padding: 14px 14px; }
+  .app.skin-village .sidebar.is-compact .brand { margin-top: 28px; margin-bottom: 12px; }
+  .app.skin-village .sidebar.is-compact .nav-item.sprite-button { min-height: 48px; height: 48px; }
+  .app.skin-village .sidebar.is-compact .live-card { height: auto; min-height: 94px; max-height: none; padding: 8px 3px 9px; }
+}
+
+@media (max-width: 1100px) {
+  .app.skin-village .sidebar { width: 244px; padding-inline: 16px; }
+  .app.skin-village .main { padding-right: 10px; }
+  .app.skin-village .page-head { flex-wrap: wrap; min-height: 130px; padding: 20px 24px; gap: 18px; }
+  .app.skin-village .page-head > div:first-child { min-width: 100%; }
+  .app.skin-village .head-actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; gap: 10px; }
+  .app.skin-village .page-body { padding-inline: 24px; }
+  .app.skin-village .settings-row { grid-template-columns: 114px minmax(150px, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+  .app.skin-village .shortcut-row { flex-wrap: wrap; }
+  .app.skin-village .shortcut-text { min-width: 160px; }
+  .app.skin-village .panel:has(.segmented) .panel-head { flex-wrap: wrap; gap: 18px; }
+}
+
+@media (max-width: 760px) {
+  .app.skin-village { padding: 10px; }
+  .app.skin-village .sidebar,
+  .app.skin-village .sidebar.is-compact { width: 88px; padding: 18px 14px; }
+  .app.skin-village .sidebar .brand,
+  .app.skin-village .sidebar.is-compact .brand {
+    justify-content: center;
+    min-height: 64px;
+    margin: 34px 0 16px;
+    padding: 0;
+  }
+  .app.skin-village .sidebar .brand-words { display: none; }
+  .app.skin-village .sidebar .brand-mark { flex-basis: 32px; width: 32px; height: 32px; }
+  .app.skin-village .sidebar .nav-label { display: none; }
+  .app.skin-village .sidebar .nav-item.sprite-button,
+  .app.skin-village .sidebar.is-compact .nav-item.sprite-button { width: 60px; min-width: 60px; height: 52px; min-height: 52px; padding: 4px; }
+  .app.skin-village .sidebar .nav-content { width: 100%; gap: 0; }
+  .app.skin-village .sidebar .nav-dot { width: 40px; height: 40px; }
+  .app.skin-village .sidebar .nav-dot > img { width: 32px; height: 32px; }
+  .app.skin-village .sidebar .live-card,
+  .app.skin-village .sidebar.is-compact .live-card { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 60px; height: auto; min-height: 94px; max-height: none; padding: 8px 3px 9px; }
+  .app.skin-village .sidebar .live-card::after {
+    display: block;
+    background-image: var(--skin-plaque-slices);
+    background-size:
+      16px 16px, calc(100% - 32px) 16px, 16px 16px,
+      16px calc(100% - 32px), calc(100% - 32px) calc(100% - 32px),
+      16px calc(100% - 32px), 16px 16px, calc(100% - 32px) 16px, 16px 16px;
+    background-position:
+      left top, center top, right top, left 16px, center 16px, right 16px,
+      left bottom, center bottom, right bottom;
+  }
+  .app.skin-village .sidebar .live-card::before {
+    content: none;
+  }
+  .app.skin-village .sidebar .live-detail,
+  .app.skin-village .sidebar .live-facts { display: none; }
+  .app.skin-village .sidebar .mascot-stage { order: 0; width: 52px; height: 57px; }
+  .app.skin-village .sidebar .sprite-canvas { bottom: 0; }
+  .app.skin-village .sidebar .mascot-balloon { top: -2px; right: 0; width: 20px; height: 16px; }
+  .app.skin-village .sidebar .live-head { display: flex; order: 1; justify-content: center; margin: 0; padding: 3px 1px 0; background: transparent; text-align: center; }
+  .app.skin-village .sidebar .live-head .dot { display: none; }
+  .app.skin-village .sidebar .live-label { display: block; color: var(--skin-ink); font: 700 9px/13px HanlyUIBold, HanlyUI, monospace; overflow-wrap: anywhere; }
+  .app.skin-village .sidebar .btn-exit-quiet.sprite-button { width: 60px; min-width: 60px; height: auto; min-height: 34px; padding: 4px; font-size: 9px; }
+  .app.skin-village .sidebar .btn-exit-quiet .button-content { flex-direction: column; gap: 0; }
+  .app.skin-village .sidebar .btn-exit-quiet .action-icon { width: 14px; height: 14px; }
+  .app.skin-village .sidebar .btn-exit-quiet .button-label { white-space: normal; }
+  .app.skin-village .sidebar .quit-confirm { width: 60px; padding: 4px; gap: 5px; }
+  .app.skin-village .sidebar .quit-note { font-size: 9px; line-height: 13px; }
+  .app.skin-village .sidebar .quit-row { flex-direction: column; gap: 4px; }
+  .app.skin-village .sidebar .quit-row .sprite-button { width: 52px; min-width: 52px; min-height: 28px; padding: 4px; font-size: 8px; }
+  .app.skin-village .main { padding: 8px 4px 8px 0; }
+  .app.skin-village .page-head { padding: 18px 18px; gap: 12px; }
+  .app.skin-village .page-head > div:first-child { min-width: 100%; padding-left: 48px; }
+  .app.skin-village .logs-head { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app.skin-village .logs-head .logs-filters { grid-column: 1 / -1; }
+  .app.skin-village .page-icon { width: 36px; height: 36px; }
+  .app.skin-village .page-body { padding: 4px 18px 28px; }
+  .app.skin-village .capture-status { padding-inline: 20px; }
+  .app.skin-village .capture-hint { display: block; }
+  .app.skin-village .settings-row { grid-template-columns: minmax(90px, 1fr) minmax(0, 2fr); gap: 6px 10px; }
+  .app.skin-village .settings-help { grid-column: 1 / -1; }
+  .app.skin-village .capture-settings-summary { padding-inline: 20px; }
+  .app.skin-village .settings-summary-title { left: 20px; right: 20px; }
+  .app.skin-village .capture-settings-body { padding-inline: 20px; }
+  .app.skin-village .target-choices .option { min-height: 176px; padding-inline: 12px; }
+  .app.skin-village .capture-settings-body .settings-row { grid-template-columns: 114px minmax(0, 1fr); gap: 8px 12px; }
+}
+
+@media (max-width: 540px) {
+  .app.skin-village .page-head { padding-inline: 14px; }
+  .app.skin-village .page-body { padding-inline: 14px; }
+  .app.skin-village .logs-head { grid-template-columns: minmax(0, 1fr); }
+  .app.skin-village .logs-head .logs-filters,
+  .app.skin-village .logs-head > .pixel-select,
+  .app.skin-village .logs-head > .log-search { grid-column: 1; }
+  .app.skin-village .head-actions { gap: 8px; }
+  .app.skin-village .head-actions > .btn:not(.btn-capture) { width: 118px; min-width: 118px; }
+  .app.skin-village .btn-capture.sprite-button { width: 178px; min-width: 178px; }
+  .app.skin-village .target-choices { grid-template-columns: 1fr; }
+  .app.skin-village .target-choices .option { min-height: 160px; }
+  .app.skin-village .target-choices .option + .option { border-left: 0 !important; border-top: 1px solid var(--skin-line) !important; }
+  .app.skin-village .settings-row { grid-template-columns: 1fr; gap: 6px; }
+  .app.skin-village .settings-help { grid-column: 1; }
+  .app.skin-village .capture-settings-body .settings-row { grid-template-columns: 1fr; gap: 6px; }
+  .app.skin-village .panel-head,
+  .app.skin-village .panel-head:has(.panel-note) { padding-inline: 22px; }
+  .app.skin-village .update-busy-line { grid-template-columns: minmax(0, 1fr) auto; }
+  .app.skin-village .update-busy-line .update-strong { grid-column: 1 / -1; }
+}
+
+.app.skin-village[data-app-font="normal"] * {
+  font-family: var(--font-ui) !important;
+}
+
+.app.skin-village :is(.brand-name, .page-title, .panel-title, .settings-summary-title, .shortcut-name) {
+  font-weight: 700;
+}
+
+.app.skin-village[data-rendering-platform="windows"] :is(
+  .page-icon,
+  .action-icon,
+  .target-art[src$=".png"],
+  .capture-guidance img,
+  .nav-dot > img
+) {
+  image-rendering: auto;
+}
+
+/* Keep the custom pointer inside Hanly; text fields retain their editing cursor. */
+.app.skin-village { --pixel-cursor: url('/design/cursor-light.svg') 7 1, auto; cursor: var(--pixel-cursor); }
+html[data-mode="dark"] .app.skin-village { --pixel-cursor: url('/design/cursor-dark.svg') 7 1, auto; }
+.app.skin-village :is(button:not(:disabled), summary, input[type="range"]) { cursor: var(--pixel-cursor); }

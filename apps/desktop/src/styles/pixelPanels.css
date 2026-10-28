@@ -1,0 +1,391 @@
+/* Content area and headings */
+.app.skin-village .main {
+  color: var(--skin-ink);
+}
+.app.skin-village .page-head {
+  border: 0;
+}
+.app.skin-village .page-kicker { display: none; }
+.app.skin-village .page-icon {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.app.skin-village .page-icon[src$="/capture-plant.png"] { transform: translateY(-3px); }
+.app.skin-village .page-title {
+  margin: 0;
+  color: #493263;
+  font-family: HanlyUIBold, HanlyUI, monospace;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 32px;
+  letter-spacing: 0;
+}
+.app.skin-village .page-desc {
+  max-width: 370px;
+  margin: 6px 0 0;
+  color: #554260;
+  font-family: var(--reading-font);
+  font-size: 14px;
+  line-height: 22px;
+}
+html[data-mode="dark"] .app.skin-village .page-title { color: #f1e0fc; }
+html[data-mode="dark"] .app.skin-village .page-desc { color: #d4c7df; }
+.app.skin-village .head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+}
+.app.skin-village .page-body {
+  scrollbar-gutter: stable;
+}
+.app.skin-village .narrow { max-width: none; }
+.app.skin-village .page-body > .page { gap: 24px; }
+.app.skin-village .page-body > .stack { gap: 24px; }
+.app.skin-village .main [data-rise],
+.app.skin-village .main [data-anim] {
+  animation: none !important;
+  opacity: 1;
+  transform: none;
+}
+
+/* Supplied nine-slice panels keep their title strip outside the content box. */
+.app.skin-village .panel,
+.app.skin-village .settings-card {
+  box-sizing: border-box;
+  position: relative;
+  isolation: isolate;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--skin-ink);
+}
+.app.skin-village .panel::before,
+.app.skin-village .settings-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  image-rendering: pixelated;
+  background-image: var(--skin-panel-slices);
+  background-size:
+    16px 34px, calc(100% - 32px) 34px, 16px 34px,
+    16px calc(100% - 50px), calc(100% - 32px) calc(100% - 50px),
+    16px calc(100% - 50px), 16px 16px, calc(100% - 32px) 16px, 16px 16px;
+  background-position:
+    left top, center top, right top, left 34px, center 34px, right 34px,
+    left bottom, center bottom, right bottom;
+  background-repeat: no-repeat;
+  transition: filter 1.5s ease;
+  filter: var(--night-filter);
+}
+.app.skin-village .panel:not(:has(> .disclosure))::before,
+.app.skin-village .settings-card::before { image-rendering: auto; }
+.app.skin-village .panel-head:has(.panel-note) { padding-top: 50px; }
+.app.skin-village .panel-head > div:first-child { min-width: 0; }
+.app.skin-village .panel-title,
+.app.skin-village .settings-summary-title,
+.app.skin-village .shortcut-name {
+  position: absolute;
+  top: 0;
+  right: 22px;
+  left: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  margin: 0;
+  color: #493263;
+  font: 700 14px/20px HanlyUIBold, HanlyUI, monospace;
+  text-align: center;
+}
+html[data-mode="dark"] .app.skin-village .panel-title,
+html[data-mode="dark"] .app.skin-village .settings-summary-title,
+html[data-mode="dark"] .app.skin-village .shortcut-name { color: #f6eafb; }
+.app.skin-village .panel-note,
+.app.skin-village .settings-help,
+.app.skin-village .permission-why,
+.app.skin-village .shortcut-hint,
+.app.skin-village .option-desc,
+.app.skin-village .capture-where,
+.app.skin-village .capture-hint,
+.app.skin-village .update-sub,
+.app.skin-village .resource-detail,
+.app.skin-village .resource-foot,
+.app.skin-village .readiness-detail,
+.app.skin-village .logs-summary,
+.app.skin-village .log-message,
+.app.skin-village .log-empty {
+  color: #554260;
+  font-family: var(--reading-font);
+  font-size: 14px;
+  line-height: 21px;
+}
+html[data-mode="dark"] .app.skin-village :is(
+  .panel-note, .settings-help, .permission-why, .shortcut-hint, .option-desc,
+  .capture-where, .capture-hint, .update-sub, .resource-detail, .resource-foot,
+  .readiness-detail, .logs-summary, .log-message, .log-empty
+) { color: #c1b4cc; }
+.app.skin-village .panel-head .panel-note { margin: 0; }
+.app.skin-village .panel-rows { border: 0; }
+.app.skin-village .panel > .panel-note:last-child {
+  max-width: none;
+  margin: 0;
+  padding: 16px 26px 24px;
+}
+.app.skin-village .panel:has(> .disclosure)::before {
+  background-image: var(--skin-window-slices);
+  background-size:
+    20px 15px, calc(100% - 40px) 15px, 20px 15px,
+    20px calc(100% - 30px), calc(100% - 40px) calc(100% - 30px),
+    20px calc(100% - 30px), 20px 15px, calc(100% - 40px) 15px, 20px 15px;
+  background-position:
+    left top, center top, right top, left 15px, center 15px, right 15px,
+    left bottom, center bottom, right bottom;
+}
+.app.skin-village .panel:has(> .disclosure) > .disclosure { position: relative; z-index: 0; }
+.app.skin-village .disclosure {
+  position: relative;
+  z-index: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 66px;
+  padding: 20px 26px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--skin-ink);
+  font: 700 12px/20px HanlyUIBold, HanlyUI, monospace;
+  text-align: center;
+  cursor: pointer;
+}
+.app.skin-village .disclosure:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -5px; }
+.app.skin-village .disclosure-caret { justify-self: start; color: var(--skin-ink-muted); font: 12px/18px HanlyUI, monospace; }
+.app.skin-village .disclosure-summary { justify-self: end; color: var(--skin-ink-muted); font: 11px/17px HanlyUI, monospace; }
+.app.skin-village .panel[data-tone="bad"]::before { background-color: var(--skin-danger-paper); }
+
+/* Capture, permission, shortcut, appearance, update, and log rows */
+.app.skin-village .shortcut-name { color: #493263; font: 700 14px/20px HanlyUIBold, monospace; }
+.app.skin-village .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid #bd9cd4;
+  border-radius: 0;
+  background: #f0e5f8;
+  box-shadow: 2px 2px #d2b8e3;
+  color: #503563;
+  font: 11px/18px HanlyUI, monospace;
+}
+html[data-mode="dark"] .app.skin-village .key { border-color: #806a94; background: #40354b; box-shadow: 2px 2px #2c2137; color: #efe7f6; }
+.app.skin-village .shortcut-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 20px 16px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--skin-paper);
+  color: var(--skin-ink-soft);
+  font: 12px/19px var(--reading-font);
+}
+.app.skin-village .shortcut-note > .dot { display: none; }
+.app.skin-village :is(.banner, .shortcut-note)[data-tone]::before {
+  content: "";
+  flex: none;
+  width: 26px;
+  height: 26px;
+  background: url("/design/media/assets/icons/v2/icon-info.png") center / contain no-repeat;
+  image-rendering: pixelated;
+}
+.app.skin-village :is(.banner, .shortcut-note):is([data-tone="warn"], [data-tone="bad"])::before {
+  background-image: url("/design/media/assets/icons/v2/icon-warning.png");
+}
+.app.skin-village .banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border: 2px solid #d5b66e;
+  border-radius: 0;
+  background: var(--skin-warning-paper);
+  color: var(--skin-warning-ink);
+  font: 12px/19px HanlyUI, monospace;
+  animation: none;
+}
+.app.skin-village .banner[data-tone="bad"] {
+  border-color: #c87a75;
+  background: var(--skin-danger-paper);
+  color: var(--skin-danger-ink);
+}
+.app.skin-village .banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.app.skin-village .permission-name { color: var(--skin-ink); font: 700 14px/20px HanlyUIBold, monospace; }
+.app.skin-village .permission > .dot { margin-top: 7px; }
+.app.skin-village .permission-onboarding {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 26px 12px;
+  padding: 14px 20px 14px 62px;
+  border: 1px solid #d5b66e;
+  border-radius: 0;
+  background: var(--skin-warning-paper);
+  color: var(--skin-warning-ink);
+}
+.app.skin-village .permission-onboarding::before,
+.app.skin-village .update-confirmation::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  left: 20px;
+  width: 26px;
+  height: 26px;
+  background: url("/design/media/assets/icons/v2/icon-warning.png") center / contain no-repeat;
+  image-rendering: pixelated;
+}
+.app.skin-village .permission-onboarding > strong { color: #624720; font-family: HanlyUIBold, monospace; font-weight: 700; }
+.app.skin-village .permission-onboarding > span { color: #78613d; font: 12px/20px HanlyUI, monospace; }
+html[data-mode="dark"] .app.skin-village .permission-onboarding { border-color: #856b43; }
+html[data-mode="dark"] .app.skin-village .permission-onboarding > strong { color: #f2d69e; }
+html[data-mode="dark"] .app.skin-village .permission-onboarding > span { color: #d8c39e; }
+.app.skin-village .panel:has(.segmented) .panel-head { min-height: 126px; padding-top: 50px; padding-bottom: 20px; gap: 20px; }
+.app.skin-village .segmented { border: 0; border-radius: 0; background: transparent; }
+.app.skin-village .segment.sprite-button { min-width: 96px; height: 44px; min-height: 44px; font-size: 11px; }
+.app.skin-village .shortcut-edit.sprite-button { width: auto; min-width: 128px; gap: 8px; }
+.app.skin-village .action-icon[hidden] { display: none; }
+.app.skin-village .track {
+  position: relative;
+  display: block;
+  align-self: start;
+  height: 24px;
+  margin-top: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent url("/design/media/assets/sliders/filled/track.png") center / 100% 64px no-repeat;
+  image-rendering: pixelated;
+}
+.app.skin-village .track-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent url("/design/media/assets/sliders/filled/fill.png") left center / var(--track-pixels, 400px) 64px no-repeat;
+  image-rendering: pixelated;
+  transition: width 180ms linear;
+}
+.app.skin-village .progress-knob { display: none !important; }
+/* Reveal a band of the stationary fill artwork instead of moving its end caps. */
+.app.skin-village .track[data-indeterminate="true"] .track-fill {
+  width: 100%;
+  transition: none;
+  transform: none;
+  clip-path: inset(0 68% 0 8%);
+  animation: update-track-sweep 1.6s ease-in-out infinite alternate;
+}
+@keyframes update-track-sweep {
+  from { clip-path: inset(0 68% 0 8%); }
+  to { clip-path: inset(0 8% 0 68%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app.skin-village .track[data-indeterminate="true"] .track-fill {
+    animation: none;
+    clip-path: inset(0 38%);
+  }
+}
+.app.skin-village .update-busy-line,
+.app.skin-village .update-busy > .track,
+.app.skin-village .update-busy > .update-actions { grid-column: 1; }
+.app.skin-village .update-busy-line .update-strong { min-width: 0; font: 700 14px/22px HanlyUIBold, monospace; }
+.app.skin-village .update-detail { color: var(--skin-ink-muted); font: 11px/17px HanlyUI, monospace; }
+.app.skin-village .update-percent { color: var(--skin-ink-soft); font: 12px/18px HanlyUI, monospace; }
+.app.skin-village .update-line .update-strong,
+.app.skin-village .update-block > .update-strong { font: 700 16px/24px HanlyUIBold, monospace; }
+.app.skin-village .update-sub.update-failure { color: #a34843; overflow-wrap: anywhere; }
+.app.skin-village .logs-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 158px 180px;
+  align-items: center;
+  gap: 12px;
+}
+.app.skin-village .logs-head > .pixel-select,
+.app.skin-village .logs-head > .log-search { box-sizing: border-box; width: 100%; min-width: 0; }
+.app.skin-village .logs-head .logs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  justify-self: stretch;
+  min-width: 0;
+  margin: 0;
+  gap: 6px;
+}
+.app.skin-village .logs-head .logs-filters .chip.sprite-button {
+  min-width: 64px;
+  height: 40px;
+  min-height: 40px;
+  text-align: center;
+}
+.app.skin-village .logs-head .logs-filters .button-label {
+  width: 100%;
+  text-align: center;
+}
+.app.skin-village .logs-actions .btn.sprite-button { min-width: 78px; font-size: 10px; }
+.app.skin-village .log-list {
+  border: 0;
+  border-top: 1px solid var(--skin-line);
+  border-bottom: 1px solid var(--skin-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.app.skin-village .log-level::before {
+  content: "";
+  display: inline-block;
+  align-self: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: url("/design/media/assets/icons/v2/icon-info.png") center / contain no-repeat;
+  image-rendering: pixelated;
+}
+.app.skin-village .log-row:is([data-level="warning"], [data-level="error"]) .log-level::before {
+  background-image: url("/design/media/assets/icons/v2/icon-warning.png");
+}
+.app.skin-village .resource-row { border-bottom: 1px solid var(--skin-line); }
+.app.skin-village .resource-name { color: var(--skin-ink); font: 700 12px/18px HanlyUIBold, monospace; }
+.app.skin-village .resource-foot { color: var(--skin-ink-muted); font: 12px/19px var(--reading-font); }
+.app.skin-village .logs-foot { background: transparent; }
+.app.skin-village .chip { border-radius: 0; font: 700 11px/18px HanlyUIBold, HanlyUI, monospace; }
+.app.skin-village .logs-actions .btn:last-child { min-width: 149px; }
+.app.skin-village .choice-backdrop {
+  background: rgb(24 18 36 / 38%);
+  backdrop-filter: blur(2px);
+}
+.app.skin-village .choice-dialog.panel {
+  width: min(440px, 100%);
+  max-width: 100%;
+  max-height: calc(100vh - 28px);
+  overflow: auto;
+  padding: 50px 26px 26px;
+}
+.app.skin-village .quit-note { color: var(--skin-ink-soft); font: 11px/17px var(--reading-font); }

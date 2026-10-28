@@ -640,6 +640,23 @@ class ConfiguredCaptureService:
         enumerate_monitors = getattr(self._capture_service, "enumerate_monitors")
         return tuple(enumerate_monitors())
 
+    def contains_cursor(self, cursor: Point) -> bool:
+        """Whether the cursor lies in the configured capture scope."""
+
+        _validate_cursor(cursor)
+        region = self._region if self._capture_mode is CaptureMode.REGION else None
+        if self._monitor is None and region is None:
+            return True
+
+        selected = CaptureService._select_monitor(
+            self.enumerate_monitors(), cursor, self._monitor
+        )
+        if not selected.bounds.contains(cursor):
+            return False
+        if region is None:
+            return True
+        return region.contains(cursor) and _contains_rect(selected.bounds, region)
+
     def close(self) -> None:
         """Release the underlying capture backend."""
 

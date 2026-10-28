@@ -40,7 +40,19 @@ pub fn reset(presentation: &SharedPresentation) {
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
-        let window = tauri::WebviewWindowBuilder::from_config(app, config)?
+        let config = config.clone();
+        #[cfg(target_os = "windows")]
+        let config = windows_surface_config(config);
+        let builder = tauri::WebviewWindowBuilder::from_config(app, &config)?;
+        #[cfg(target_os = "macos")]
+        let builder = if config.label == "control-center" {
+            builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+        } else {
+            builder
+        };
+        let window = builder
             .incognito(
                 app.state::<crate::DesktopState>()
                     .options
@@ -64,6 +76,24 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_surface_config(
+    mut config: tauri::utils::config::WindowConfig,
+) -> tauri::utils::config::WindowConfig {
+    if config.label == "control-center" {
+        config.center = true;
+    }
+    if config.label == "popup" {
+        // Windows adds a white border to frameless windows with native shadows.
+        config.shadow = false;
+    }
+    if matches!(config.label.as_str(), "control-center" | "popup") {
+        config.transparent = true;
+        config.no_redirection_bitmap = true;
+    }
+    config
 }
 
 pub fn show_control_center(app: &AppHandle) {
@@ -605,6 +635,38 @@ fn window_error() -> BridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_popup_keeps_a_transparent_native_backing() {
+        let config = windows_surface_config(tauri::utils::config::WindowConfig {
+            label: "popup".to_owned(),
+            decorations: false,
+            ..Default::default()
+        });
+        assert!(config.transparent);
+        assert!(config.no_redirection_bitmap);
+        assert!(!config.decorations);
+        assert!(!config.center);
+        assert!(
+            !config.shadow,
+            "frameless Windows shadows add a white border"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_control_center_retains_native_controls_and_transparent_client() {
+        let config = windows_surface_config(tauri::utils::config::WindowConfig {
+            label: "control-center".to_owned(),
+            ..Default::default()
+        });
+        assert!(config.center);
+        assert!(config.transparent);
+        assert!(config.no_redirection_bitmap);
+        assert!(config.decorations);
+        assert!(config.shadow);
+    }
 
     #[test]
     fn measured_expansion_stays_on_its_negative_origin_display() {

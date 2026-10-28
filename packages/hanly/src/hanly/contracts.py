@@ -190,9 +190,12 @@ class OCRResult:
         return self.quad.bounding_box()
 
 
-#: Longest neighbouring word a selection carries. A real word is far shorter;
-#: the bound keeps context from becoming a channel for whole lines.
-MAX_CONTEXT_WORD = 32
+#: Character budget for each side of the bounded neighboring context.
+MAX_CONTEXT_CHARS = 32
+#: Kept as a compatibility alias for callers of the former one-word bound.
+MAX_CONTEXT_WORD = MAX_CONTEXT_CHARS
+#: At most two whitespace-delimited words on either side of the selection.
+MAX_CONTEXT_WORDS = 2
 
 
 @dataclass(frozen=True)
@@ -286,9 +289,9 @@ class TextSelection:
     text: str
     cursor_index: int = 0
     source: str | None = None
-    #: The whitespace-delimited word immediately before and after ``text``, as
-    #: acquisition saw them, or empty. One word each side at most: enough for
-    #: morphology to read ``먹고 있어요`` as one construction, never a sentence.
+    #: Up to two whitespace-delimited words before and after ``text``, as
+    #: acquisition saw them, or empty. Each side is bounded by the character
+    #: budget and must stop at a line or sentence boundary.
     context_before: str = ""
     context_after: str = ""
 
@@ -299,8 +302,10 @@ class TextSelection:
             value = getattr(self, name)
             if not isinstance(value, str):
                 raise TypeError(f"{name} must be a string")
-            if len(value) > MAX_CONTEXT_WORD:
-                raise ValueError(f"{name} is one neighbouring word, not a passage")
+            if len(value) > MAX_CONTEXT_CHARS:
+                raise ValueError(f"{name} exceeds the neighbouring context character limit")
+            if len(value.split()) > MAX_CONTEXT_WORDS:
+                raise ValueError(f"{name} may contain at most two neighbouring words")
         if isinstance(self.cursor_index, bool) or not isinstance(self.cursor_index, int):
             raise TypeError("cursor_index must be an integer")
         if self.cursor_index < 0:

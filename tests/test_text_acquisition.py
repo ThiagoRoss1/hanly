@@ -446,7 +446,7 @@ def test_emoji_prefixed_korean_is_retained_by_its_own_rectangle() -> None:
 
 
 def test_the_words_beside_the_pointer_travel_with_the_selection() -> None:
-    """Constructions such as 먹고 있어요 need the neighbouring word, nothing more."""
+    """Construction evidence stays bounded to two neighboring words per side."""
 
     result = _acquire(_reading(text="지금 먹고 있어요 정말", cursor_index=3))
 
@@ -454,5 +454,39 @@ def test_the_words_beside_the_pointer_travel_with_the_selection() -> None:
     assert result.selection.text == "먹고"
     assert (result.selection.context_before, result.selection.context_after) == (
         "지금",
-        "있어요",
+        "있어요 정말",
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "cursor", "word", "start"),
+    [
+        ("앞 (학교)에 가요.", 6, "(학교)에", 2),
+        ("😀 '사랑'이라는 말", 6, "'사랑'이라는", 2),
+        ("“사랑”이라는 말", 5, "“사랑”이라는", 0),
+        ("「학교」에 가요", 4, "「학교」에", 0),
+        ("학교/회사", 3, "학교/회사", 0),
+    ],
+)
+def test_korean_punctuation_preserves_the_surface_and_precise_cursor(
+    text: str, cursor: int, word: str, start: int
+) -> None:
+    provider = _Provider(_reading(text=text, cursor_index=cursor))
+
+    result = DirectTextCoordinator(provider).acquire(_INSIDE)
+
+    assert result.selection is not None
+    assert result.selection.text == word
+    assert result.selection.cursor_index == cursor - start
+    assert provider.spans == [(start, start + len(word))]
+
+
+@pytest.mark.parametrize("text,cursor", [("(학교)에", 0), ("'사랑'이라는", 3)])
+def test_punctuation_itself_does_not_select_nearby_hangul(text: str, cursor: int) -> None:
+    assert _acquire(_reading(text=text, cursor_index=cursor)).outcome is Outcome.NOT_KOREAN
+
+
+def test_punctuated_word_with_unproven_geometry_still_falls_back() -> None:
+    provider = _Provider(_reading(text="앞 (학교)에", cursor_index=6), span_bounds=None)
+
+    assert DirectTextCoordinator(provider).acquire(_INSIDE).outcome is Outcome.AMBIGUOUS

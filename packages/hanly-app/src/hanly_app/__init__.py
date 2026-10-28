@@ -73,12 +73,15 @@ if TYPE_CHECKING:
     )
     from .config import (
         AppConfig,
+        AppFont,
         CaptureMode,
         ConfigError,
         ConfigManager,
         HoverActivation,
         LookupPreload,
         PopupDefaultSize,
+        PopupFont,
+        SidebarLayout,
         TechnicalDetailLevel,
         Theme,
     )
@@ -112,6 +115,7 @@ if TYPE_CHECKING:
 
 #: Exported name -> the submodule that defines it.
 _EXPORTS: dict[str, str] = {
+    "AppFont": "config",
     "AppConfig": "config",
     "CaptureBackend": "acquisition.capture",
     "CaptureBackendError": "acquisition.capture",
@@ -156,6 +160,7 @@ _EXPORTS: dict[str, str] = {
     "PopupContent": "popup.presentation",
     "PopupController": "popup.presentation",
     "PopupDefaultSize": "config",
+    "PopupFont": "config",
     "PopupPosition": "popup.presentation",
     "PopupRuntime": "popup.presentation",
     "PopupSize": "popup.presentation",
@@ -174,6 +179,7 @@ _EXPORTS: dict[str, str] = {
     "RuntimeTraceSink": "runtime_trace",
     "ScreenGeometry": "popup.presentation",
     "ScreenRect": "acquisition.capture",
+    "SidebarLayout": "config",
     "TechnicalDetailLevel": "config",
     "Theme": "config",
     "Transport": "lookup.transport",
@@ -216,6 +222,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "AppFont",
     "AppConfig",
     "CaptureBackend",
     "CaptureBackendError",
@@ -252,6 +259,7 @@ __all__ = [
     "PopupContent",
     "PopupController",
     "PopupDefaultSize",
+    "PopupFont",
     "PopupPosition",
     "PopupRuntime",
     "PopupSize",
@@ -269,6 +277,7 @@ __all__ = [
     "ResourceUpdateError",
     "ScreenGeometry",
     "ScreenRect",
+    "SidebarLayout",
     "Theme",
     "TechnicalDetailLevel",
     "UpdateAvailability",

@@ -85,6 +85,30 @@ def test_configured_capture_service_applies_live_monitor_and_region_preferences(
     assert result.target == Point(15, 10)
 
 
+def test_configured_capture_scope_tracks_cursor_monitor_and_region_preferences() -> None:
+    backend = FakeBackend(
+        (
+            _monitor(name="Left", left=0, width=100, height=100),
+            _monitor(name="Right", left=100, width=100, height=100),
+        )
+    )
+    configured = ConfiguredCaptureService(_service(backend))
+
+    assert configured.contains_cursor(Point(150, 50))
+
+    configured.set_preferences(monitor=1)
+    assert configured.contains_cursor(Point(50, 50))
+    assert not configured.contains_cursor(Point(150, 50))
+
+    configured.set_preferences(
+        capture_mode=CaptureMode.REGION,
+        monitor=None,
+        region=ScreenRect(10, 10, 40, 40),
+    )
+    assert configured.contains_cursor(Point(20, 20))
+    assert not configured.contains_cursor(Point(50, 50))
+
+
 @pytest.mark.parametrize(
     ("cursor", "expected_region", "expected_target"),
     [

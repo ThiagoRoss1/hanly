@@ -5,14 +5,23 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ReactNode } from "react";
-import type {
-  DesktopPopupEvent,
-  PopupContent,
-  PopupEntry,
-  PopupPayload,
-  PopupSense,
-} from "../contracts/desktop.ts";
+import type { DesktopPopupEvent } from "../contracts/desktop.ts";
+import { PopupFooter } from "../components/popup/PopupFooter.tsx";
+import {
+  PopupNonSuccessContent,
+  PopupSuccessContent,
+} from "../components/popup/PopupContent.tsx";
+import {
+  COMPACT_POPUP_WIDTH,
+  EXPANDED_POPUP_WIDTH,
+  POPUP_MAX_HEIGHT,
+  initiallyExpanded,
+  maximumPopupWidth,
+  numberValue,
+  popupContent,
+  popupFont,
+  text,
+} from "../components/popup/popupModel.ts";
 import {
   desktopRequest,
   markFrontendReady,
@@ -20,32 +29,8 @@ import {
 import { listenToDesktopEvents } from "../services/desktopEvents.ts";
 import { normalizeDesktopError } from "../services/desktopBridgeCore.ts";
 
-function popupContent(payload: PopupPayload): PopupContent {
-  return payload.content ?? payload;
-}
-
-function initiallyExpanded(payload: PopupPayload): boolean {
-  if (typeof payload.expanded === "boolean") return payload.expanded;
-  return payload.config?.popup_default_size === "expanded";
-}
-
-function text(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function numberValue(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : fallback;
-}
-
-function entryGloss(entry: PopupEntry): string {
-  const sense = entry.senses?.find((item) => item.gloss || item.definition);
-  return text(sense?.gloss || sense?.definition || entry.definitions?.[0]);
-}
-
-/** The card's own ceiling, as `.popup-frame` declares it. */
-const POPUP_MAX_HEIGHT = 560;
+const POPUP_FRAME_CLASS =
+  "popup-frame relative isolate flex max-h-[560px] max-w-[460px] flex-col overflow-hidden border-0 rounded-none bg-transparent p-[5px] shadow-none [color:var(--popup-ink)]";
 
 export function PopupPage() {
   const [current, setCurrent] = useState<Extract<
@@ -160,20 +145,37 @@ export function PopupPage() {
   const detailLevel =
     payload?.technical_details ?? payload?.config?.technical_details ?? "off";
   const theme = payload?.theme ?? payload?.config?.theme ?? "system";
+  const font = popupFont(payload);
   const width = Math.min(
-    460,
-    Math.max(300, numberValue(payload?.size?.width, 340)),
+    EXPANDED_POPUP_WIDTH,
+    maximumPopupWidth(),
+    Math.max(
+      expanded ? EXPANDED_POPUP_WIDTH : COMPACT_POPUP_WIDTH,
+      numberValue(
+        payload?.size?.width,
+        expanded ? EXPANDED_POPUP_WIDTH : COMPACT_POPUP_WIDTH,
+      ),
+    ),
   );
   const success = text(content?.status).toLowerCase() === "success";
+  const hasAnalysis = Boolean(
+    content?.analysis?.length ||
+      content?.components?.length ||
+      content?.construction ||
+      content?.source ||
+      (content?.surface && content.lemma && content.surface !== content.lemma),
+  );
   const canExpand =
     success &&
     (expanded ||
       senses.length > 2 ||
       otherEntries.length > 0 ||
-      (content?.analysis?.length ?? 0) > 0);
+      hasAnalysis ||
+      Boolean(entry?.vocabulary_level));
 
   useLayoutEffect(() => {
     document.documentElement.dataset.popup = "true";
+    document.documentElement.dataset.popupFont = font;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       document.documentElement.dataset.mode =
@@ -182,7 +184,7 @@ export function PopupPage() {
     apply();
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
-  }, [theme]);
+  }, [font, theme]);
 
   useLayoutEffect(() => {
     if (sequence === undefined || !content) return;
@@ -200,6 +202,29 @@ export function PopupPage() {
     };
   }, [content, expanded, reportGeometry, room, sequence]);
 
+  useLayoutEffect(() => {
+    if (sequence === undefined || !content) return;
+    let active = true;
+    const fontsReady = document.fonts?.ready;
+
+    void fontsReady?.then(() => {
+      if (
+        !active ||
+        currentSequence.current !== sequence ||
+        roomRef.current?.sequence !== sequence
+      ) {
+        return;
+      }
+
+      geometrySent.current = "";
+      reportGeometry(sequence);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [content, font, reportGeometry, sequence]);
+
   async function closePopup() {
     if (sequence === undefined) return;
     await desktopRequest("popup_close", { sequence }).catch((reason: unknown) =>
@@ -212,7 +237,8 @@ export function PopupPage() {
     const next = !expanded;
     await desktopRequest("popup_expand", { sequence, expanded: next }).catch(
       (reason: unknown) => {
-        setBridgeError(normalizeDesktopError(reason).message);
+        if (currentSequence.current === sequence)
+          setBridgeError(normalizeDesktopError(reason).message);
       },
     );
   }
@@ -220,10 +246,14 @@ export function PopupPage() {
   if (!current || !content) {
     if (!bridgeError) return null;
     return (
-      <main className="popup-frame popup-connection-error" role="alert">
-        <div className="popup-content">
-          <h1 className="popup-title">Hanly</h1>
-          <p className="popup-secondary">{bridgeError}</p>
+      <main className={POPUP_FRAME_CLASS} role="alert">
+        <div className="px-[21px] pt-[22px] pb-[22px]">
+          <h1 className="popup-headword m-0 [color:var(--popup-ink)] [font-family:var(--popup-bold-font)]">
+            Hanly
+          </h1>
+          <p className="m-0 text-[14px] leading-[23px] [color:var(--popup-ink)] [font-family:var(--popup-reading-font)] [overflow-wrap:anywhere]">
+            {bridgeError}
+          </p>
         </div>
       </main>
     );
@@ -232,7 +262,9 @@ export function PopupPage() {
   return (
     <main
       aria-label="Hanly dictionary result"
-      className="popup-frame"
+      className={POPUP_FRAME_CLASS}
+      data-expanded={expanded}
+      data-success={success}
       ref={cardRef}
       style={{
         width: `${width}px`,
@@ -242,223 +274,51 @@ export function PopupPage() {
             : undefined,
       }}
     >
-      <div className="popup-scroll">
+      <div className="popup-scroll min-h-0 max-h-none flex-[1_1_auto] overflow-x-hidden overflow-y-auto scroll-p-4">
         {success && entry ? (
-          <SuccessContent content={content} entry={entry} expanded={expanded} />
+          <>
+            <PopupSuccessContent
+              content={content}
+              entry={entry}
+              expanded={expanded}
+            />
+            {detailLevel === "full" && technical.length > 0 && (
+              <section className="flex-none border-t px-[18px] pt-2 [border-color:var(--popup-line)]">
+                <h2 className="popup-section-title mb-1 mt-0 [color:var(--popup-muted)] [font-family:var(--popup-bold-font)]">
+                  Dictionary details
+                </h2>
+                <p className="m-0 text-[12px] leading-5 [color:var(--popup-muted)] [font-family:var(--popup-display-font)] [overflow-wrap:anywhere]">
+                  {technical.join(" · ")}
+                </p>
+              </section>
+            )}
+          </>
         ) : (
-          <NonSuccessContent content={content} />
+          <PopupNonSuccessContent content={content} />
         )}
       </div>
-      {detailLevel === "full" && technical.length > 0 && (
-        <section className="popup-details">
-          <div className="popup-section">Details</div>
-          <p className="popup-muted">{technical.join(" · ")}</p>
-        </section>
+      {(canExpand || (detailLevel === "basic" && technical.length > 0)) && (
+        <PopupFooter
+          content={content}
+          detailLevel={detailLevel}
+          expanded={expanded}
+          canExpand={canExpand}
+          senseCount={senses.length}
+          onToggleExpanded={() => void toggleExpanded()}
+        />
       )}
-      <footer className="popup-footer">
-        {detailLevel === "basic" && technical.length > 0 && (
-          <span className="popup-muted popup-footer-detail">
-            {technical.join(" · ")}
-          </span>
-        )}
-        <span className="popup-footer-spacer" />
-        {canExpand && (
-          <button
-            className="popup-button popup-size"
-            onClick={() => void toggleExpanded()}
-            type="button"
-          >
-            {expanded ? "Collapse" : "Expand"}
-          </button>
-        )}
-        <button
-          className="popup-button"
-          onClick={() => void closePopup()}
-          type="button"
-        >
-          Close
-        </button>
-      </footer>
+      <button
+        aria-label="Close dictionary"
+        className="popup-close absolute top-3 right-3 z-[2] grid h-7 w-7 place-items-center border-0 bg-transparent p-0 cursor-pointer hover:bg-[rgb(180_154_202_/_13%)]"
+        onClick={() => void closePopup()}
+        type="button"
+      >
+        <img
+          alt=""
+          className="block h-[22px] w-[22px] object-contain [image-rendering:pixelated] [filter:var(--popup-filter)]"
+          src="/design/media/assets/panels/controls/close.png"
+        />
+      </button>
     </main>
-  );
-}
-
-function SuccessContent({
-  content,
-  entry,
-  expanded,
-}: {
-  content: PopupContent;
-  entry: PopupEntry;
-  expanded: boolean;
-}) {
-  const senses = entry.senses ?? [];
-  const visibleSenses = expanded ? senses : senses.slice(0, 2);
-  const primarySense = visibleSenses[0];
-  const analysis = content.analysis ?? [];
-  const changed = Boolean(
-    content.surface && content.lemma && content.surface !== content.lemma,
-  );
-  const metadata = [content.source?.toUpperCase(), entry.vocabulary_level]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <div className="popup-content">
-      <header className="popup-entry-head">
-        <h1 className="popup-title">{entry.headword}</h1>
-        {entry.hanja && <span className="popup-hanja">{entry.hanja}</span>}
-      </header>
-      {(entry.part_of_speech || metadata) && (
-        <div className="popup-meta-row">
-          {entry.part_of_speech && (
-            <span className="popup-chip">{entry.part_of_speech}</span>
-          )}
-          {metadata && <span className="popup-meta">{metadata}</span>}
-        </div>
-      )}
-      {primarySense && (
-        <div className="popup-senses">
-          <PrimarySense sense={primarySense} />
-          {visibleSenses.slice(1).map((sense, index) => (
-            <div
-              className="popup-numbered-sense"
-              key={`${sense.definition ?? sense.gloss ?? "sense"}-${index}`}
-            >
-              <span className="popup-number">{index + 2}</span>
-              <div>
-                {sense.gloss && (
-                  <div className="popup-secondary">{sense.gloss}</div>
-                )}
-                {sense.definition && (
-                  <div className="popup-muted">{sense.definition}</div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {visibleSenses.length === 0 && entry.definitions?.[0] && (
-        <div className="popup-primary">{entry.definitions[0]}</div>
-      )}
-      {(analysis.length > 0 || changed) && (
-        <PopupSection title={expanded ? "Word analysis" : "Read as"}>
-          {changed && (
-            <p className="popup-part">
-              {content.surface} <span aria-hidden="true">→</span>{" "}
-              {content.lemma}
-            </p>
-          )}
-          {analysis.length > 0 && (
-            <p className="popup-secondary">
-              {analysis.map((piece) => piece.text).join("  +  ")}
-            </p>
-          )}
-          {analysis.some((piece) => piece.role) && (
-            <p className="popup-muted">
-              {analysis
-                .map((piece) => piece.role)
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          )}
-        </PopupSection>
-      )}
-      {(content.components ?? []).length > 0 && (
-        <PopupSection title="How this form is built">
-          {(content.components ?? []).map((component, index) => (
-            <div
-              className="popup-component"
-              key={`${component.surface}-${index}`}
-            >
-              <span
-                className={
-                  component.selected
-                    ? "popup-part popup-part-selected"
-                    : "popup-part"
-                }
-              >
-                {component.surface}
-              </span>
-              <span
-                className={
-                  component.grammatical ? "popup-muted" : "popup-secondary"
-                }
-              >
-                {component.gloss ??
-                  (component.grammatical
-                    ? "grammatical"
-                    : "no dictionary entry")}
-              </span>
-            </div>
-          ))}
-        </PopupSection>
-      )}
-      {content.construction && (
-        <PopupSection title="Grammar pattern">
-          <div className="popup-component">
-            <span className="popup-part">{content.construction.headword}</span>
-            <span className="popup-secondary">
-              {content.construction.gloss ??
-                content.construction.definition ??
-                "listed in the dictionary"}
-            </span>
-          </div>
-        </PopupSection>
-      )}
-      {expanded && (content.other_entries ?? []).length > 0 && (
-        <PopupSection title="Other entries">
-          {(content.other_entries ?? []).map((other, index) => (
-            <p className="popup-secondary" key={`${other.headword}-${index}`}>
-              {[other.headword, other.part_of_speech, entryGloss(other)]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          ))}
-        </PopupSection>
-      )}
-    </div>
-  );
-}
-
-function PrimarySense({ sense }: { sense: PopupSense }) {
-  const lead = sense.gloss || sense.definition || "";
-  return (
-    <div className="popup-primary-sense">
-      <div className="popup-primary">{lead}</div>
-      {sense.gloss && sense.definition && (
-        <div className="popup-primary-note">{sense.definition}</div>
-      )}
-    </div>
-  );
-}
-
-function PopupSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="popup-section-block">
-      <div className="popup-divider" />
-      <h2 className="popup-section">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function NonSuccessContent({ content }: { content: PopupContent }) {
-  return (
-    <div className="popup-content popup-non-success">
-      {content.surface && (
-        <h1 className="popup-title popup-surface">{content.surface}</h1>
-      )}
-      <h2 className="popup-sense-title">
-        {content.title || "Lookup unavailable"}
-      </h2>
-      {content.body && <p className="popup-secondary">{content.body}</p>}
-      {content.tip && <p className="popup-muted">{content.tip}</p>}
-    </div>
   );
 }

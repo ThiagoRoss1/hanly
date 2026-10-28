@@ -148,6 +148,9 @@ class HoverLookupRuntime:
         # Absent on a platform with no direct-text reader, which simply means
         # every hover captures and runs OCR exactly as before.
         self._acquisition = acquisition
+        set_cursor_scope = getattr(acquisition, "set_cursor_scope", None)
+        if callable(set_cursor_scope):
+            set_cursor_scope(self._capture_scope_contains)
         self._dispatcher = dispatch
         self._lock = RLock()
         self._running = False
@@ -922,7 +925,7 @@ class HoverLookupRuntime:
         """
 
         service = self._acquisition
-        if service is None:
+        if service is None or not self._capture_scope_contains(request.point):
             return False
 
         def deliver(acquired: Acquisition) -> None:
@@ -953,6 +956,13 @@ class HoverLookupRuntime:
     def _on_direct_text(self, request: HoverRequest, acquired: Acquisition) -> None:
         """Act on a completed native read, back on the caller's own thread."""
 
+        # A monitor or region preference can change while native accessibility
+        # is answering. Do not let that late answer bypass the new boundary.
+        if not self._capture_scope_contains(request.point):
+            if self._hover.is_current(request):
+                self._capture_and_submit(request)
+            return
+
         if self._submit_direct_text(request, acquired):
             return
         if acquired.outcome is Outcome.NOT_KOREAN:
@@ -963,6 +973,19 @@ class HoverLookupRuntime:
         # Every other refusal is ordinary: capture and OCR exactly as before.
         if self._hover.is_current(request):
             self._capture_and_submit(request)
+
+    def _capture_scope_contains(self, point: Point) -> bool:
+        """Check configured desktop scope when the capture seam can answer."""
+
+        contains_cursor = getattr(self._capture_service, "contains_cursor", None)
+        if not callable(contains_cursor):
+            return True
+        try:
+            return bool(contains_cursor(point))
+        except Exception:
+            # Let the capture path report its own monitor/backend error. A
+            # failed scope check must never authorize a direct native read.
+            return False
 
     def _submit_direct_text(
         self, request: HoverRequest, acquired: Acquisition

@@ -42,6 +42,7 @@ KINDS = (
     "check",
     "ocr_campaign",
     "ocr_differential",
+    "popup_content",
     "real_lookup",
     "real_hover",
     "live_hover",
@@ -56,6 +57,7 @@ _EVIDENCE = {
     "stress": ("campaign.json", "campaign.md", "replay", "replay.json"),
     "check": ("metadata.json", "measurements.jsonl", "summary.json", "report.html"),
     "ocr_campaign": ("metadata.json", "corpus-inventory.json", "samples.jsonl", "summary.json"),
+    "popup_content": ("metadata.json", "results.json", "summary.json", "summary.md"),
     "measurement": ("metadata.json", "summary.json"),
     "update_check": ("summary.json",),
 }
@@ -69,6 +71,7 @@ _SESSION_OPTIONS = (
     "per_family",
     "corpus",
     "repeats",
+    "trace_only",
 )
 #: Lines of ``events.jsonl`` worth decoding; the rest are skipped unparsed.
 _EVENT_MARKERS = (
@@ -79,6 +82,7 @@ _EVENT_MARKERS = (
     '"tour_aborted"',
     '"session_ended"',
     '"tour_result"',
+    '"tour_smoke_result"',
     '"stress_result"',
 )
 
@@ -285,6 +289,11 @@ def reproduction(identity: RunIdentity, metadata: Mapping[str, Any]) -> dict[str
         words += ["--words", str(options.get("words"))]
         words += ["--story-sizes", _sizes(options.get("story_sizes"))]
         words += ["--word-sizes", _sizes(options.get("word_sizes"))]
+        if options.get("trace_only"):
+            words.append("--trace-only")
+            missing.append("the exact selected desktop build and --desktop path must be supplied")
+            if options.get("inspect_last"):
+                words.append("--inspect-last")
     if options.get("per_family") is not None:
         words += ["--per-family", str(options["per_family"])]
     prerequisites = [
@@ -359,6 +368,8 @@ def _session(run_dir: Path, metadata: dict[str, Any], notes: list[str]) -> RunId
         for key in _SESSION_OPTIONS
         if mode != "run"
     }
+    if mode != "run":
+        options["trace_only"] = bool((metadata.get("options") or {}).get("trace_only", False))
     if mode == "stress":
         options["plan"] = metadata.get("plan") or UNKNOWN
     conflicts = _backend_conflicts(configured, observed)
@@ -423,7 +434,7 @@ def _session_events(path: Path) -> dict[str, Any]:
             backend = event.get("ocr_backend")
             if isinstance(backend, str) and backend:
                 found["backends"].add(backend)
-            if name in {"tour_result", "stress_result"}:
+            if name in {"tour_result", "stress_result", "tour_smoke_result"}:
                 found["results"] += 1
                 rule = event.get("rule")
                 # The first tours stored no rule; which one judged them is not on record.
@@ -481,7 +492,9 @@ def _campaign(
     unstated = UNKNOWN if kind == "ocr_campaign" else NOT_APPLICABLE
     configured = str(config.get("backend") or unstated)
     observed = _campaign_backends(run_dir) if kind == "ocr_campaign" else ()
-    evidence_key = kind if kind in {"check", "ocr_campaign"} else "measurement"
+    evidence_key = (
+        kind if kind in {"check", "ocr_campaign", "popup_content"} else "measurement"
+    )
     return RunIdentity(
         name=run_dir.name,
         path=run_dir,
@@ -522,6 +535,14 @@ def _campaign_kind(
             )
         }
         return "resource_attribution", str(config.get("ocr_backend") or UNKNOWN), options
+    if name == "popup_content_language_to_presentation":
+        options = {
+            "case_count": _normalized(scenario.get("case_count")),
+            "case_ids": _normalized(scenario.get("case_ids")),
+            "corpus_sha256": scenario.get("corpus_sha256"),
+            "endpoint": scenario.get("endpoint"),
+        }
+        return "popup_content", "language_to_presentation_model", options
     if name == "ocr_differential":
         options = {key: _normalized(config.get(key)) for key in ("backends", "warmup", "samples")}
         return "ocr_differential", "ocr-only", options

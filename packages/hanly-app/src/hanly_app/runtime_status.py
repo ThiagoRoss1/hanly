@@ -188,10 +188,12 @@ def _started_activity(
         return "error", engine_message or "The lookup engine stopped."
     if engine_state == ENGINE_PREPARING:
         return "preparing", engine_message or "Loading the lookup engine."
-    if engine_state == ENGINE_SLEEPING and wakes_on_demand:
-        return "armed", "Hanly loads the lookup engine on the first lookup."
     if hover_muted:
         return "running", "Hover paused."
+    if engine_state == ENGINE_SLEEPING:
+        if wakes_on_demand:
+            return "armed", "Hanly loads the lookup engine on the first lookup."
+        return "preparing", "Loading the lookup engine."
     return "running", hover_detail or "Hanly is watching the screen."
 
 

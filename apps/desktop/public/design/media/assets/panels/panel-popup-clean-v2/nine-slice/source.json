@@ -1,0 +1,22 @@
+{
+  "reference": "Hanly Design Lab V2.4.1 panel-popup-v1.svg",
+  "method": "Integer-grid redraw; mirrored contours; three one-pixel rim bands; flat interior; no cast shadow",
+  "palette": [
+    "#493263",
+    "#c1a7e9",
+    "#f0e6ff",
+    "#b5a9fb",
+    "#9474cc",
+    "#fffaf4"
+  ],
+  "columns": [
+    16,
+    32,
+    16
+  ],
+  "rows": [
+    34,
+    30,
+    16
+  ]
+}

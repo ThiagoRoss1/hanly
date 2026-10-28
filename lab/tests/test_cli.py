@@ -145,6 +145,14 @@ def test_package_parser_accepts_an_archive_to_measure_beside_the_tree() -> None:
     assert args.archive == Path("dist/app.zip")
 
 
+def test_popup_content_command_is_bounded_to_the_language_presentation_scope() -> None:
+    args = _parser().parse_args(["popup-content"])
+
+    assert args.dictionary == Path("data/generated/krdict.sqlite3")
+    assert args.output_root == Path("artifacts/lab/runs")
+    assert "popup-content" in _parser().format_help()
+
+
 @pytest.mark.parametrize("value", ["0", "65", "not-a-number"])
 def test_live_hover_parser_rejects_invalid_cpu_thread_limit(value: str) -> None:
     with pytest.raises(SystemExit):

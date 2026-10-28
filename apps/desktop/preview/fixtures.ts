@@ -2,6 +2,7 @@ import type {
   HanlyState,
   LogSnapshot,
   PopupPayload,
+  UpdateState,
 } from "../src/contracts/desktop.ts";
 
 /** A ready Mac profile with both grants, capture stopped. */
@@ -29,6 +30,9 @@ export function previewState(): HanlyState {
       lookup_preload: "when_capture_starts",
       ocr_backend: "auto",
       theme: "system",
+      popup_font: "pixel",
+      app_font: "pixel",
+      sidebar_layout: "normal",
       popup_default_size: "compact",
       technical_details: "off",
       capture_mode: "full_monitor",
@@ -79,6 +83,121 @@ export function previewState(): HanlyState {
       ],
     },
   };
+}
+
+/** Return the native-looking Windows profile used by the local browser preview. */
+export function previewWindowsState(): HanlyState {
+  const state = previewState();
+  const hotkeys = {
+    push_to_hover: "ctrl+alt+h",
+    toggle_hover: "ctrl+alt+p",
+    toggle_capture: "ctrl+alt+r",
+  };
+
+  return {
+    ...state,
+    app: {
+      ...state.app,
+      target: "monitor:2",
+      targets: [
+        {
+          index: 1,
+          name: "Built-in Display",
+          bounds: { left: 0, top: 0, width: 1920, height: 1080 },
+        },
+        {
+          index: 2,
+          name: "External Display",
+          bounds: { left: 1920, top: 0, width: 2560, height: 1440 },
+        },
+      ],
+    },
+    config: {
+      ...state.config,
+      capture_monitor: 2,
+      ocr_backend: "auto",
+      hotkey: hotkeys.push_to_hover,
+      hover_hotkey: hotkeys.toggle_hover,
+      capture_hotkey: hotkeys.toggle_capture,
+    },
+    runtime: {
+      ...state.runtime,
+      ocr_provider: "EasyOCR",
+      ocr_backends: ["auto", "easyocr"],
+      hotkeys,
+      log_path: "C:\\Users\\Preview\\AppData\\Local\\Hanly\\Logs\\hanly.log",
+    },
+  };
+}
+
+const previewApplicationUpdate: NonNullable<UpdateState["application"]> = {
+  current_version: "1.1.0",
+  latest_version: "1.2.0",
+  installable: true,
+  message: "A smaller update is ready to install.",
+};
+
+/** Return a local update state for the browser preview without contacting a release server. */
+export function previewUpdateState(stage: string): UpdateState {
+  const application = { ...previewApplicationUpdate };
+
+  if (stage === "checking") {
+    return { available: false, status: "checking", message: "Checking for updates", application };
+  }
+  if (stage === "available") {
+    return {
+      available: true,
+      status: "available",
+      message: "A Hanly update is available.",
+      application,
+      plan: { source: "delta", download_bytes: 4_200_000, replace_count: 8, add_count: 2 },
+    };
+  }
+  if (stage === "installing") {
+    return {
+      available: true,
+      status: "installing",
+      message: "Applying the verified update.",
+      application,
+      cancellable: true,
+      progress: { phase: "installing", fraction: 0.76 },
+    };
+  }
+  if (stage === "completed") {
+    return {
+      available: false,
+      status: "restart",
+      message: "Hanly 1.2.0 is staged. Restarting to finish the update.",
+      application,
+      restart_required: true,
+    };
+  }
+  if (stage === "cancelled") {
+    return {
+      available: true,
+      status: "cancelled",
+      message: "The update was not installed. Nothing was changed.",
+      application: {
+        ...application,
+        message: "The update was not installed. You can try again whenever you’re ready.",
+      },
+    };
+  }
+  if (stage === "downloading") {
+    return {
+      available: true,
+      status: "downloading",
+      message: "Downloading Hanly application files.",
+      application,
+      cancellable: true,
+      progress: { phase: "downloading", fraction: 0.42, completed: 4_200_000, total: 10_000_000 },
+    };
+  }
+  if (stage === "failed") {
+    return { available: false, status: "failed", message: "The download could not finish. Try again." };
+  }
+
+  return { available: false, status: "idle", message: "Hanly is up to date." };
 }
 
 export const previewLogs: LogSnapshot = {

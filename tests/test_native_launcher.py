@@ -14,6 +14,7 @@ from hanly_app.acquisition.selection import CaptureSelection
 from hanly_app.cli import (
     build_parser,
     launch_native_desktop,
+    main,
     parse_roi_size,
     run_hanly,
 )
@@ -144,6 +145,7 @@ def test_source_launcher_resolves_the_existing_tauri_debug_executable(
     source = tmp_path / "packages" / "hanly-app" / "src" / "hanly_app" / "cli.py"
     source.parent.mkdir(parents=True)
     source.write_text("", encoding="utf-8")
+    native_name = "hanly-desktop.exe" if cli.sys.platform == "win32" else "hanly-desktop"
     executable = (
         tmp_path
         / "apps"
@@ -151,7 +153,7 @@ def test_source_launcher_resolves_the_existing_tauri_debug_executable(
         / "src-tauri"
         / "target"
         / "debug"
-        / "hanly-desktop"
+        / native_name
     )
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"native binary")
@@ -204,6 +206,24 @@ def test_windows_launcher_waits_for_and_returns_native_exit_status(
 
     assert launch_native_desktop(executable, ["--self-check", "ui"]) == 9
     assert calls == [[str(executable), "--self-check", "ui"]]
+
+
+def test_ctrl_c_exits_without_printing_a_keyboard_interrupt_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import hanly_app.cli as cli
+
+    calls: list[str] = []
+
+    def interrupt(_argv: Sequence[str] | None = None) -> int:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.multiprocessing, "freeze_support", lambda: calls.append("freeze"))
+    monkeypatch.setattr(cli, "run_hanly", interrupt)
+
+    assert main([]) == 130
+    assert calls == ["freeze"]
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize("module", ["hanly_app", "hanly_app.cli"])

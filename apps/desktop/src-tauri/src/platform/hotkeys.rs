@@ -238,6 +238,18 @@ fn invalid() -> BridgeError {
 mod tests {
     use super::*;
     #[test]
+    fn accepts_single_keys_and_one_modifier_bindings() {
+        let list = bindings(&json!({
+            "hotkey": "f8", "hover_hotkey": "k", "capture_hotkey": "ctrl+j"
+        }))
+        .unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].shortcut, Shortcut::from_str("F8").unwrap());
+        assert_eq!(list[1].shortcut, Shortcut::from_str("K").unwrap());
+        assert_eq!(list[2].shortcut, Shortcut::from_str("Control+J").unwrap());
+    }
+
+    #[test]
     fn mac_letter_defaults_keep_control_and_command_as_distinct_modifiers() {
         let list = bindings(&json!({
             "hotkey":"ctrl+cmd+h", "hover_hotkey":"ctrl+cmd+p", "capture_hotkey":"ctrl+cmd+r"

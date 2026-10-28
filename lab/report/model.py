@@ -106,6 +106,7 @@ def build_model(run_dir: Path) -> dict[str, Any]:
         "moved_on": len(episodes) - len(fired),
         "lifecycle": lifecycle(events),
         "tour": tour_summary(tour, include_read=_retained(metadata)) if tour else None,
+        "smoke": smoke_summary(events) if metadata.get("options", {}).get("trace_only") else None,
         "diagnostics": [
             {
                 "t_ms": e.get("t_ms"),
@@ -125,6 +126,21 @@ def build_model(run_dir: Path) -> dict[str, Any]:
 
 
 # -- episodes ----------------------------------------------------------------------
+
+
+def smoke_summary(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Summarize native completion separately from linguistic correctness."""
+
+    results = [dict(e) for e in events if e.get("event") == "tour_smoke_result"]
+    planned = next((e.get("targets") for e in events if e.get("event") == "tour_planned"), None)
+    return {
+        "planned": planned,
+        "completed": len(results),
+        "passed": sum(e.get("passed") is True for e in results),
+        "failed": sum(e.get("passed") is not True for e in results),
+        "semantic_accuracy": None,
+        "results": results,
+    }
 
 
 def episodes_from(events: Sequence[Mapping[str, Any]]) -> list[Episode]:
@@ -178,7 +194,10 @@ def _interpret(episode: Episode) -> None:
             facts.setdefault("engine_at", t)
             facts["lookup_cache"] = "hit" if name == "lookup_cache_hit" else "miss"
         elif name == "lookup_acquisition":
-            facts["acquisition"] = fields.get("acquisition_source") or facts.get("acquisition")
+            source = fields.get("acquisition_source")
+            facts["acquisition"] = (
+                "direct_text" if source == "accessibility" else source or facts.get("acquisition")
+            )
         elif name == "ocr_sensitive_retry":
             facts["sensitive_retry"] = True
         elif name == "lookup_stage_completed" and duration is not None:

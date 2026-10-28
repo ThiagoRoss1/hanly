@@ -12,6 +12,7 @@ from hanly_app.config import (
     HOVER_HOTKEY_FALLBACKS,
     SETTABLE_FIELDS,
     AppConfig,
+    AppFont,
     CaptureMode,
     CaptureRegion,
     ConfigManager,
@@ -19,6 +20,8 @@ from hanly_app.config import (
     LookupPreload,
     OCRBackend,
     PopupDefaultSize,
+    PopupFont,
+    SidebarLayout,
     TechnicalDetailLevel,
     Theme,
 )
@@ -33,6 +36,9 @@ def test_default_config_is_valid_and_contains_only_desktop_preferences() -> None
     assert config.theme is Theme.SYSTEM
     assert config.popup_enabled is True
     assert config.popup_default_size is PopupDefaultSize.COMPACT
+    assert config.popup_font is PopupFont.NORMAL
+    assert config.app_font is AppFont.PIXEL
+    assert config.sidebar_layout is SidebarLayout.NORMAL
     assert config.technical_details is TechnicalDetailLevel.OFF
     assert config.update_checks_enabled is True
     assert "confidence_threshold" not in config.to_dict()
@@ -88,6 +94,9 @@ def test_update_validates_and_persists_a_new_config(tmp_path: Path) -> None:
         ("capture_mode", "continuous_ocr"),
         ("theme", "neon"),
         ("popup_default_size", "huge"),
+        ("popup_font", "serif"),
+        ("app_font", "serif"),
+        ("sidebar_layout", "wide"),
         ("technical_details", "everything"),
     ],
 )
@@ -139,6 +148,9 @@ def test_settings_written_before_capture_preferences_still_load(tmp_path: Path) 
     assert loaded.capture_monitor is None
     assert loaded.capture_region is None
     assert loaded.popup_default_size is PopupDefaultSize.COMPACT
+    assert loaded.popup_font is PopupFont.NORMAL
+    assert loaded.app_font is AppFont.PIXEL
+    assert loaded.sidebar_layout is SidebarLayout.NORMAL
     assert loaded.technical_details is TechnicalDetailLevel.OFF
 
 
@@ -147,11 +159,36 @@ def test_popup_preferences_update_and_round_trip(tmp_path: Path) -> None:
 
     updated = manager.update(
         popup_default_size="expanded",
+        popup_font="normal",
+        app_font="pixel",
+        sidebar_layout="compact",
         technical_details="basic",
     )
 
     assert updated.popup_default_size is PopupDefaultSize.EXPANDED
+    assert updated.popup_font is PopupFont.NORMAL
+    assert updated.app_font is AppFont.PIXEL
+    assert updated.sidebar_layout is SidebarLayout.COMPACT
     assert updated.technical_details is TechnicalDetailLevel.BASIC
+    assert ConfigManager(manager.path).load() == updated
+
+
+def test_explicit_pixel_popup_preference_survives_loading(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"popup_font": "pixel"}), encoding="utf-8")
+
+    loaded = ConfigManager(path).load()
+
+    assert loaded.popup_font is PopupFont.PIXEL
+
+
+def test_app_font_is_a_separate_persisted_preference(tmp_path: Path) -> None:
+    manager = ConfigManager(tmp_path / "settings.json")
+
+    updated = manager.update(app_font="normal")
+
+    assert updated.app_font is AppFont.NORMAL
+    assert updated.popup_font is PopupFont.NORMAL
     assert ConfigManager(manager.path).load() == updated
 
 
@@ -342,6 +379,9 @@ _SETTABLE_SAMPLES: dict[str, object] = {
     "theme": Theme.DARK,
     "popup_enabled": False,
     "popup_default_size": PopupDefaultSize.EXPANDED,
+    "popup_font": PopupFont.NORMAL,
+    "app_font": AppFont.NORMAL,
+    "sidebar_layout": SidebarLayout.COMPACT,
     "technical_details": TechnicalDetailLevel.FULL,
     "update_checks_enabled": False,
 }

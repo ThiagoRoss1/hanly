@@ -1,0 +1,85 @@
+/* The scene is a self-contained background layer for the Control Center sidebar. */
+.sidebar:has(> .village-scene) {
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+}
+
+.sidebar:has(> .village-scene) > :not(.village-scene) {
+  position: relative;
+  z-index: 1;
+}
+
+.village-scene__celestial:focus-visible {
+  outline: 2px solid #533474;
+  outline-offset: 3px;
+}
+
+.village-scene__celestial:disabled {
+  cursor: default;
+}
+
+.mascot-stage {
+  position: relative;
+  flex: none;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  width: 100px;
+  height: 88px;
+  margin: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.mascot-stage .sprite-canvas {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  display: block;
+  width: 100px;
+  height: 100px;
+  max-width: none;
+  transform: translateX(-50%);
+  image-rendering: pixelated;
+}
+
+.mascot-stage .mascot-balloon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: block;
+  width: 24px;
+  height: 20px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Match the gallery's compact plaque while keeping every pose inside its frame. */
+.app.skin-village .sidebar.is-compact .mascot-stage .sprite-canvas {
+  width: 48px;
+  height: 48px;
+  bottom: 0;
+}
+
+.app.skin-village .sidebar.is-compact .mascot-stage[data-pose="sleep"] .sprite-canvas {
+  width: 46px;
+  height: 46px;
+  bottom: 0;
+}
+
+@media (max-width: 760px) {
+  .app.skin-village .sidebar .mascot-stage .sprite-canvas {
+    width: 48px;
+    height: 48px;
+    bottom: 0;
+  }
+
+  .app.skin-village .sidebar .mascot-stage[data-pose="sleep"] .sprite-canvas {
+    width: 46px;
+    height: 46px;
+    bottom: 0;
+  }
+}

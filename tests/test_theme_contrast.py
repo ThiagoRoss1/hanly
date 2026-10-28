@@ -53,11 +53,34 @@ def test_react_text_tokens_meet_small_text_contrast(mode: str, ink: str, surface
     assert contrast(tokens[ink], tokens[surface]) >= SMALL_TEXT
 
 
-def test_popup_uses_the_shared_react_tokens_for_its_text_and_footer() -> None:
-    center = CONTROL_CENTER_CSS.read_text(encoding="utf-8")
-    popup = POPUP_CSS.read_text(encoding="utf-8")
 
-    for role in ("text-primary", "text-secondary", "text-muted"):
-        assert f"var(--{role})" in center
-        assert f"var(--{role})" in popup
-    assert "background: var(--surface-subtle)" in popup
+def _pixel_tokens(path: Path, selector: str, mode: str) -> dict[str, str]:
+    blocks = re.findall(selector + r"\s*\{([^{}]+)\}", path.read_text(encoding="utf-8"))
+    assert len(blocks) >= 2
+    block = blocks[0 if mode == "light" else 1]
+    return dict(re.findall(r"--([\w-]+):\s*(#[0-9A-Fa-f]{6});", block))
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+@pytest.mark.parametrize("ink", ["skin-ink", "skin-ink-soft", "skin-ink-muted"])
+@pytest.mark.parametrize("surface", ["skin-paper", "skin-paper-raised"])
+def test_pixel_control_center_contrast(mode: str, ink: str, surface: str) -> None:
+    tokens = _pixel_tokens(
+        ROOT / "apps/desktop/src/styles/pixelTheme.css",
+        r'(?:html\[data-mode="dark"\] )?\.app\.skin-village',
+        mode,
+    )
+
+    assert contrast(tokens[ink], tokens[surface]) >= SMALL_TEXT
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+@pytest.mark.parametrize("ink", ["popup-ink", "popup-muted", "popup-translation"])
+def test_pixel_popup_contrast(mode: str, ink: str) -> None:
+    tokens = _pixel_tokens(
+        POPUP_CSS,
+        r'html\[data-popup="true"\](?:\[data-mode="dark"\])?',
+        mode,
+    )
+
+    assert contrast(tokens[ink], tokens["popup-paper"]) >= SMALL_TEXT

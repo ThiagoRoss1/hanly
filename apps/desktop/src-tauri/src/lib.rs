@@ -118,7 +118,7 @@ pub fn run() {
                     }
                 } else if event == "native_action" {
                     if payload["action"] == "restart_required" {
-                        events_app.exit(0);
+                        request_exit(&events_app, 0);
                     }
                 } else if event == "trace" {
                     if trace {
@@ -156,7 +156,7 @@ pub fn run() {
             }
             platform::hotkeys::start_input(app.handle());
             let signal_app = app.handle().clone();
-            ctrlc::set_handler(move || signal_app.exit(0))?;
+            ctrlc::set_handler(move || request_exit(&signal_app, 0))?;
             let handle = app.handle().clone();
             let startup_options = setup_options.clone();
             tauri::async_runtime::spawn_blocking(move || start_service(&handle, &startup_options));
@@ -298,16 +298,30 @@ fn run_self_check(app: &tauri::AppHandle, service: &Service, mode: &str, options
         Ok(result) => {
             let ok = result["ok"].as_bool() == Some(true);
             println!("{result}");
-            app.exit(if ok { 0 } else { 2 });
+            request_exit(app, if ok { 0 } else { 2 });
         }
         Err(error) => {
             println!(
                 "{}",
                 json!({"ok":false,"mode":mode,"error":error.code,"message":error.message})
             );
-            app.exit(2);
+            request_exit(app, 2);
         }
     }
+}
+
+fn request_exit(app: &tauri::AppHandle, exit_code: i32) {
+    #[cfg(target_os = "windows")]
+    for window in app.webview_windows().into_values() {
+        if let Err(error) = window.destroy() {
+            eprintln!(
+                "Hanly: could not destroy native window '{}' before exit: {error}",
+                window.label()
+            );
+        }
+    }
+
+    app.exit(exit_code);
 }
 
 pub fn send_context(app: &tauri::AppHandle, service: &Service) -> Result<Value, BridgeError> {
