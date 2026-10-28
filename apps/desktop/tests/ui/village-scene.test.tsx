@@ -45,11 +45,15 @@ it("covers overflowing sidebar controls without measuring its own painted overfl
   const observer = observers.find(({ targets }) => targets.includes(content))!;
 
   observer.callback();
+  expect(scene.style.height).not.toBe("748px");
+  vi.advanceTimersToNextFrame();
   expect(scene.style.height).toBe("748px");
   controlsHeight = 840;
   observer.callback();
+  vi.advanceTimersToNextFrame();
   expect(scene.style.height).toBe("868px");
   controlsHeight = 100;
   observer.callback();
+  vi.advanceTimersToNextFrame();
   expect(scene.style.height).toBe("560px");
 });

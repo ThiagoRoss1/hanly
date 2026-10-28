@@ -6,6 +6,8 @@ import {
   popupSamples,
   previewLogs,
   previewState,
+  previewUpdateState,
+  previewWindowsState,
   type PopupSample,
 } from "./fixtures.ts";
 
@@ -19,10 +21,16 @@ const theme = query.get("theme") ?? "system";
 const requested = query.get("sample") ?? "school";
 const sample: PopupSample = requested in popupSamples ? (requested as PopupSample) : "school";
 
-let state: HanlyState = previewState();
+const windowsPreview = query.get("platform") === "windows";
+let state: HanlyState = windowsPreview ? previewWindowsState() : previewState();
 state.config.theme = theme;
-state.config.popup_font = query.get("font") === "normal" ? "normal" : "pixel";
+state.config.popup_font = query.get("font") === "pixel" ? "pixel" : "normal";
+state.config.app_font = query.get("app_font") === "normal" ? "normal" : "pixel";
 state.config.sidebar_layout = query.get("navigation") === "compact" ? "compact" : "normal";
+const requestedOcr = query.get("ocr");
+if (requestedOcr && state.runtime.ocr_backends.includes(requestedOcr)) {
+  state.config.ocr_backend = requestedOcr;
+}
 const activity = query.get("activity");
 if (activity && ["stopped", "armed", "running", "preparing", "error"].includes(activity)) {
   state.app.activity = activity;
@@ -32,9 +40,17 @@ if (activity && ["stopped", "armed", "running", "preparing", "error"].includes(a
 if (query.get("permissions") === "missing") {
   state.permissions.items = state.permissions.items.map(item => ({ ...item, granted: false, state: "required" }));
 }
+if (query.get("permissions") === "unsupported") {
+  state.permissions = {
+    supported: false,
+    available: true,
+    items: [],
+  };
+}
 const update = query.get("update");
-if (update === "downloading") state.updates = { ...state.updates, status: "downloading", message: "Downloading Hanly…", cancellable: true, progress: { fraction: 0.42, completed: 4200000, total: 10000000 } };
-if (update === "failed") state.updates = { ...state.updates, status: "failed", message: "The download could not finish. Try again." };
+if (update && ["checking", "available", "installing", "completed", "cancelled", "downloading", "failed"].includes(update)) {
+  state.updates = previewUpdateState(update);
+}
 let popupSequence = 0;
 
 type Params = Record<string, unknown>;
@@ -54,20 +70,34 @@ function setState(next: HanlyState): HanlyState {
   return state;
 }
 
+function advanceUpdatePreview(expectedStatus: string, nextStage: string, delayMs: number) {
+  window.setTimeout(() => {
+    if (state.updates.status !== expectedStatus) return;
+    setState({ ...state, updates: previewUpdateState(nextStage) });
+  }, delayMs);
+}
+
 function controlCenter(method: string, params: Params): unknown {
   switch (method) {
     case "get_state":
     case "refresh_permissions":
       return state;
     case "get_logs":
+      return { ...previewLogs, log_path: state.runtime.log_path };
     case "clear_logs":
-      return previewLogs;
+      return { ...previewLogs, records: [], log_path: state.runtime.log_path };
     case "start_capture":
     case "stop_capture": {
       const running = method === "start_capture";
       return setState({
         ...state,
-        app: { ...state.app, capture_running: running, state: running ? "running" : "stopped", activity: running ? "armed" : "stopped" },
+        app: {
+          ...state.app,
+          capture_running: running,
+          state: running ? "running" : "stopped",
+          activity: running ? "armed" : "stopped",
+          detail: running ? "Waiting for a Korean word under the cursor." : "Capture is stopped.",
+        },
       });
     }
     case "update_settings":
@@ -78,6 +108,19 @@ function controlCenter(method: string, params: Params): unknown {
       return setState({ ...state, config: { ...state.config, hotkey: String(params.hotkey) } });
     case "set_capture_mode":
       return setState({ ...state, config: { ...state.config, capture_mode: String(params.mode) } });
+    case "check_for_updates": {
+      const checking = setState({ ...state, updates: previewUpdateState("checking") });
+      advanceUpdatePreview("checking", "available", 1_200);
+      return checking;
+    }
+    case "install_application_update": {
+      const downloading = setState({ ...state, updates: previewUpdateState("downloading") });
+      advanceUpdatePreview("downloading", "installing", 3_000);
+      advanceUpdatePreview("installing", "completed", 6_000);
+      return downloading;
+    }
+    case "cancel_update":
+      return setState({ ...state, updates: previewUpdateState("cancelled") });
     case "export_diagnostics":
       return { path: "~/Library/Logs/Hanly/hanly-diagnostics-preview.json", records: previewLogs.records.length };
     default:
@@ -119,4 +162,25 @@ mockIPC(
 );
 
 if (view === "popup") document.documentElement.dataset.preview = "popup";
+if (query.get("platform") === "windows") {
+  const root = document.getElementById("root");
+
+  const markWindowsView = () => {
+    document
+      .querySelectorAll<HTMLElement>(".app.skin-village")
+      .forEach((app) => app.setAttribute("data-rendering-platform", "windows"));
+  };
+  const observer = new MutationObserver(() => {
+    if (document.querySelector(".app.skin-village")) {
+      markWindowsView();
+      observer.disconnect();
+    }
+  });
+  if (root) observer.observe(root, { childList: true, subtree: true });
+  markWindowsView();
+}
+if (view === "control_center" && query.get("platform") === "windows") {
+  const root = document.getElementById("root");
+  root?.classList.add("native-windows-chrome");
+}
 await import("../src/main.tsx");

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import "../../styles/villageScene.css";
+import "../../styles/mascotPolish.css";
 
 const ASSET_ROOT = "/design/media/assets/";
 const CANVAS_SIZE = 512;
@@ -216,6 +217,7 @@ export function Mascot({ activity }: MascotProps) {
     <div
       ref={stageRef}
       className="mascot-stage"
+      data-activity={activity}
       data-pose={pose}
       aria-hidden="true"
     >

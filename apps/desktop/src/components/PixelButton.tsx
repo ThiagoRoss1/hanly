@@ -2,7 +2,7 @@ import type { ComponentPropsWithoutRef } from "react";
 
 type PixelButtonProps = ComponentPropsWithoutRef<"button"> & { icon?: string };
 
-/** A semantic button whose artwork never owns its label or hit area. */
+/** A semantic button with centered content and a padded hit area. */
 export function PixelButton({ icon, children, className = "", type = "button", ...props }: PixelButtonProps) {
   if (!className.split(/\s+/).some((name) => ["btn", "nav-item", "segment"].includes(name))) {
     return <button {...props} type={type} className={className}>{children}</button>;

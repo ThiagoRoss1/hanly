@@ -290,6 +290,46 @@ def test_service_inventory_self_check_does_not_construct_runtime_providers(
     assert [stage["name"] for stage in stages] == ["inventory"]
 
 
+def test_source_inventory_resolves_easyocr_data_from_its_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from importlib.machinery import ModuleSpec
+
+    site_packages = tmp_path / "site-packages"
+    package_specs: dict[str, ModuleSpec] = {}
+    for name in ("certifi", "easyocr", "torch", "kiwipiepy", "kiwipiepy_model"):
+        package_root = site_packages / name
+        package_root.mkdir(parents=True, exist_ok=True)
+        spec = ModuleSpec(
+            name, loader=None, origin=str(package_root / "__init__.py"), is_package=True
+        )
+        spec.submodule_search_locations = [str(package_root)]
+        package_specs[name] = spec
+
+    easyocr_characters = site_packages / "easyocr" / "character"
+    easyocr_characters.mkdir(parents=True)
+    (easyocr_characters / "ko_char.txt").write_text("ko", encoding="utf-8")
+
+    app_root = tmp_path / "source" / "hanly_app"
+    app_root.mkdir(parents=True)
+    for relative in service_self_check._REQUIRED_DATA_FILES[1:]:
+        if relative.startswith("hanly_app/"):
+            resource = app_root / relative.removeprefix("hanly_app/")
+            resource.parent.mkdir(parents=True, exist_ok=True)
+            resource.write_bytes(b"present")
+
+    def fake_find_spec(name: str) -> ModuleSpec | None:
+        return package_specs.get(name)
+
+    monkeypatch.setattr(service_self_check, "__file__", str(app_root / "service" / "self_check.py"))
+    monkeypatch.setattr(service_self_check.sys, "frozen", False, raising=False)
+    monkeypatch.setattr("importlib.util.find_spec", fake_find_spec)
+
+    assert service_self_check._inventory() == (
+        "build identity and required service data are present"
+    )
+
+
 def test_service_worker_self_check_closes_providers_and_omits_lookup_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

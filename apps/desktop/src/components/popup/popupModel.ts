@@ -35,7 +35,7 @@ export function maximumPopupWidth(): number {
 }
 
 export function popupFont(payload: PopupPayload | undefined): PopupFont {
-  if (!payload) return "pixel";
+  if (!payload) return "normal";
 
   const withFont = payload as PopupPayload & {
     popup_font?: unknown;
@@ -43,7 +43,7 @@ export function popupFont(payload: PopupPayload | undefined): PopupFont {
   };
   const configured = withFont.config?.popup_font ?? withFont.popup_font;
 
-  return configured === "normal" ? "normal" : "pixel";
+  return configured === "pixel" ? "pixel" : "normal";
 }
 
 export function entryGloss(entry: PopupEntry): string {

@@ -10,7 +10,7 @@
   font-family: "HanlyPopupBold";
   src: url("/design/fonts/Galmuri11-Bold.woff2") format("woff2");
   font-style: normal;
-  font-weight: 400;
+  font-weight: 700;
   font-display: swap;
 }
 
@@ -101,7 +101,7 @@ html[data-popup="true"] .popup-frame::before {
   position: absolute;
   z-index: -1;
   inset: 0;
-  background-color: #fffaf3;
+  background-color: transparent;
   background-image:
     url("/design/media/assets/frames/frame-default/nine-slice/top-left.png"),
     url("/design/media/assets/frames/frame-default/nine-slice/top.png"),
@@ -139,6 +139,23 @@ html[data-popup="true"] .popup-frame::before {
   filter: var(--popup-filter);
 }
 
+/* Paper stays inside the artwork's transparent ornamental corners. */
+html[data-popup="true"] .popup-frame::after {
+  position: absolute;
+  z-index: -2;
+  inset: 2px;
+  background: var(--popup-paper);
+  clip-path: polygon(3px 0, calc(100% - 3px) 0, calc(100% - 3px) 1px,
+    calc(100% - 1px) 1px, calc(100% - 1px) 3px, 100% 3px,
+    100% calc(100% - 3px), calc(100% - 1px) calc(100% - 3px),
+    calc(100% - 1px) calc(100% - 1px), calc(100% - 3px) calc(100% - 1px),
+    calc(100% - 3px) 100%, 3px 100%, 3px calc(100% - 1px),
+    1px calc(100% - 1px), 1px calc(100% - 3px), 0 calc(100% - 3px),
+    0 3px, 1px 3px, 1px 1px, 3px 1px);
+  content: "";
+  pointer-events: none;
+}
+
 html[data-popup="true"] .popup-scroll {
   scrollbar-color: #b49aca transparent;
   scrollbar-width: thin;
@@ -170,4 +187,82 @@ html[data-popup="true"] .popup-button:hover::before {
 
 html[data-popup="true"] .popup-button:active::before {
   border-image-source: url("/design/media/assets/buttons/jewel/secondary-pressed.png");
+}
+
+html[data-popup="true"] .popup-button:active {
+  transform: translateY(1px);
+}
+
+html[data-popup="true"] .popup-button > * {
+  transform: translateY(-1px);
+}
+
+html[data-popup="true"] :is(
+  .popup-headword,
+  .popup-meaning,
+  .popup-secondary-meaning,
+  .popup-meaning-index,
+  .popup-section-title,
+  .popup-lookup-title,
+  .popup-button
+) {
+  font-weight: 700;
+}
+
+html[data-popup="true"] .popup-headword {
+  font-size: 44px;
+  line-height: 52px;
+}
+
+html[data-popup="true"][data-popup-font="normal"] .popup-headword {
+  font-size: 32px;
+  line-height: 40px;
+}
+
+html[data-popup="true"] .popup-meaning {
+  font-size: 22px;
+  line-height: 30px;
+}
+
+html[data-popup="true"][data-popup-font="normal"] .popup-meaning {
+  font-size: 20px;
+  line-height: 28px;
+}
+
+html[data-popup="true"] .popup-secondary-meaning {
+  font-size: 22px;
+  line-height: 30px;
+}
+
+html[data-popup="true"][data-popup-font="normal"] .popup-secondary-meaning {
+  font-size: 18px;
+  line-height: 26px;
+}
+
+html[data-popup="true"] .popup-meaning-index,
+html[data-popup="true"] .popup-section-title {
+  font-size: 11px;
+  line-height: 18px;
+}
+
+html[data-popup="true"][data-popup-font="normal"] .popup-meaning-index,
+html[data-popup="true"][data-popup-font="normal"] .popup-section-title {
+  font-size: 12px;
+  line-height: 20px;
+}
+
+html[data-popup="true"] .popup-copy {
+  line-height: 22px;
+}
+
+html[data-popup="true"][data-popup-font="normal"] .popup-copy {
+  font-size: 15px;
+  line-height: 24px;
+}
+
+@media (max-width: 361px) {
+  html[data-popup="true"][data-popup-font="normal"] .popup-headword {
+    font-size: 30px;
+    line-height: 38px;
+  }
 }

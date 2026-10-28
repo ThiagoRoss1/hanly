@@ -2,7 +2,11 @@ import { useEffect, useState, type MouseEventHandler } from "react";
 import type { HanlyState } from "../../contracts/desktop.ts";
 import type { DesktopMethod } from "../../services/desktopBridgeCore.ts";
 import { PixelButton } from "../../components/PixelButton.tsx";
-import { CaptureSetting, TargetOption } from "../../components/controlCenter/Controls.tsx";
+import {
+  CaptureSetting,
+  PixelSelect,
+  TargetOption,
+} from "../../components/controlCenter/Controls.tsx";
 import {
   formatHotkey,
   regionLabel,
@@ -38,6 +42,7 @@ export function CapturePage({
     width: "",
     height: "",
   });
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [regionError, setRegionError] = useState("");
   const region = app.region ?? config.capture_region ?? null;
@@ -55,6 +60,26 @@ export function CapturePage({
       ? "the display under the cursor"
       : (selectedMonitor?.name ??
         selectedTarget.replace("monitor:", "Monitor "));
+  const followsCursor = selectedTarget === "cursor";
+  const statusHeadline = captureHeadline(app.activity, app.capture_running);
+  const statusUsesActivityDetail =
+    app.activity === "preparing" ||
+    app.activity === "error" ||
+    app.activity === "stopping" ||
+    app.activity === "armed" ||
+    app.detail === "Hover paused.";
+  const targetDescription =
+    mode === "region"
+      ? region
+        ? `${targetLabel} · ${region.width} × ${region.height} at ${region.left}, ${region.top}`
+        : `${targetLabel} · no region saved, reading the whole monitor`
+      : `${targetLabel} · whole screen`;
+  const captureHint = captureStatusHint(
+    app.activity,
+    app.capture_running,
+    config.hover_activation,
+    config.hotkey,
+  );
 
   useEffect(() => {
     setDelayDraft(String(delay));
@@ -82,6 +107,11 @@ export function CapturePage({
   }
 
   async function applyRegion() {
+    if (Object.values(regionDraft).some((value) => value.trim() === "")) {
+      setRegionError("Enter whole numbers for each region coordinate.");
+      return;
+    }
+
     const values = Object.fromEntries(
       Object.entries(regionDraft).map(([key, value]) => [key, Number(value)]),
     );
@@ -117,36 +147,19 @@ export function CapturePage({
           data-tone={app.capture_running ? "ok" : undefined}
         />
         <span className="capture-headline text-sm font-semibold tracking-tight">
-          {app.activity === "preparing"
-            ? "Preparing capture"
-            : app.activity === "error"
-              ? "Capture needs attention"
-              : app.capture_running
-                ? "Reading now"
-                : "Not reading"}
+          {statusHeadline}
         </span>
         <span className="capture-where min-w-[180px] flex-1 text-[13px]">
-          {(app.activity === "preparing" || app.activity === "error") &&
-          app.detail
+          {statusUsesActivityDetail && app.detail
             ? app.detail
-            : mode === "region"
-              ? region
-                ? `${targetLabel} · ${region.width} × ${region.height} at ${region.left}, ${region.top}`
-                : `${targetLabel} · no region saved, reading the whole monitor`
-              : `${targetLabel} · whole screen`}
+            : targetDescription}
         </span>
         <span className="capture-hint ml-auto flex items-center gap-[7px] text-xs leading-[18px]">
-          {app.activity === "preparing"
-            ? "please wait"
-            : app.capture_running
-              ? config.hover_activation === "push_to_hover" && config.hotkey
-                ? `hold ${formatHotkey(config.hotkey).join(" ")}`
-                : "hover active"
-              : "press start to read"}
+          {captureHint}
         </span>
       </div>
 
-      <div className="capture-stage mt-6 w-full min-w-0 max-w-full">
+      <div className="capture-stage w-full min-w-0 max-w-full">
         <section
           aria-labelledby="target-heading"
           className="panel capture-target-panel relative min-w-0"
@@ -165,9 +178,13 @@ export function CapturePage({
             <TargetOption
               selected={mode !== "region"}
               disabled={isPending("set_capture_mode")}
-              label="Current monitor"
+              label={followsCursor ? "Current monitor" : "Selected monitor"}
               art="/design/media/assets/icons/custom/icon-monitor.svg"
-              detail="Follows the display the cursor is on."
+              detail={
+                followsCursor
+                  ? "Follows the display the cursor is on."
+                  : `Fixed to ${targetLabel}.`
+              }
               layout="target"
               onSelect={() => {
                 setRegionError("");
@@ -269,23 +286,25 @@ export function CapturePage({
           </div>
         </div>
 
-        <details
+        <section
           aria-labelledby="capture-settings-heading"
           className="settings-card capture-settings relative mt-6 p-0"
           data-rise="4"
         >
-          <summary className="capture-settings-summary relative flex min-h-[88px] cursor-pointer list-none items-center gap-3.5 px-6 pt-[47px] pb-[18px]" id="capture-settings-heading">
+          <button type="button" aria-expanded={settingsOpen} aria-controls="capture-settings-content" onClick={() => setSettingsOpen(!settingsOpen)} className="capture-settings-summary w-full border-0 bg-transparent relative flex min-h-[88px] cursor-pointer list-none items-center gap-3.5 px-6 pt-[47px] pb-[18px]" id="capture-settings-heading">
             <span className="settings-summary-title absolute inset-x-6 top-1 flex h-[34px] items-center justify-center text-center">Capture settings</span>
             <span className="settings-summary-note flex-1 text-center text-[13px] leading-5">Monitor · hover delay · engine</span>
-            <span aria-hidden="true" className="settings-chevron shrink-0 text-xl leading-5 transition-transform duration-200">⌄</span>
-          </summary>
+            <span aria-hidden="true" className="settings-chevron" data-open={settingsOpen} />
+          </button>
+          <div id="capture-settings-content" className="region-collapse" data-open={settingsOpen} aria-hidden={!settingsOpen} inert={!settingsOpen}>
+          <div className="collapse-inner">
           <div className="capture-settings-body divide-y divide-[var(--skin-line)] px-6 pb-5">
           <CaptureSetting
             label="Monitor"
             controlId="capture-target"
             help="Which display Hanly reads, in either target."
           >
-            <select
+            <PixelSelect
               aria-describedby="capture-target-help"
               className="select h-10 min-h-10 w-full min-w-0 px-3 py-[7px] text-xs leading-[18px]"
               id="capture-target"
@@ -301,7 +320,7 @@ export function CapturePage({
                   {monitor.name}
                 </option>
               ))}
-            </select>
+            </PixelSelect>
           </CaptureSetting>
           <CaptureSetting
             label="Hover delay"
@@ -354,7 +373,7 @@ export function CapturePage({
                   : "Loaded while watching the screen, retired on pause."
             }
           >
-            <select
+            <PixelSelect
               aria-describedby="lookup-preload-help"
               className="select h-10 min-h-10 w-full min-w-0 px-3 py-[7px] text-xs leading-[18px]"
               disabled={isPending(settingPendingKey("lookup_preload"))}
@@ -369,7 +388,7 @@ export function CapturePage({
               </option>
               <option value="always">Keep loaded</option>
               <option value="on_demand">Load only for a lookup</option>
-            </select>
+            </PixelSelect>
           </CaptureSetting>
           <CaptureSetting
             label="Text recognizer"
@@ -380,7 +399,7 @@ export function CapturePage({
                 : "Recognizer availability has not been reported."
             }
           >
-            <select
+            <PixelSelect
               aria-describedby="ocr-backend-help"
               className="select h-10 min-h-10 w-full min-w-0 px-3 py-[7px] text-xs leading-[18px]"
               disabled={
@@ -401,7 +420,7 @@ export function CapturePage({
                     {backend === "vision" ? "Apple Vision" : "EasyOCR"}
                   </option>
                 ))}
-            </select>
+            </PixelSelect>
           </CaptureSetting>
           {formError && (
             <div className="banner" data-tone="bad" role="alert">
@@ -409,8 +428,34 @@ export function CapturePage({
             </div>
           )}
           </div>
-        </details>
+          </div>
+          </div>
+        </section>
       </div>
     </section>
   );
+}
+
+function captureHeadline(activity: string, captureRunning: boolean): string {
+  if (activity === "preparing") return "Preparing capture";
+  if (activity === "error") return "Capture needs attention";
+  if (activity === "stopping") return "Stopping capture";
+  if (activity === "armed") return "Ready for a lookup";
+  if (activity === "running" || captureRunning) return "Capture active";
+  return "Capture stopped";
+}
+
+function captureStatusHint(
+  activity: string,
+  captureRunning: boolean,
+  hoverActivation: string,
+  hotkey: string,
+): string {
+  if (activity === "preparing" || activity === "stopping") return "please wait";
+  if (activity === "error") return "check runtime status";
+  if (!captureRunning) return "press start to look up";
+  if (hoverActivation === "push_to_hover" && hotkey) {
+    return `hold ${formatHotkey(hotkey).join(" ")} over text`;
+  }
+  return "hover over Korean text";
 }

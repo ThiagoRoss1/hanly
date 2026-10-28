@@ -19,6 +19,9 @@ import {
 import { errorText, settingPendingKey } from "./controlCenter/helpers.ts";
 import type { RunCommand } from "./controlCenter/types.ts";
 
+const windowsWebView =
+  typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+
 export function ControlCenterPage() {
   const {
     state,
@@ -112,7 +115,11 @@ export function ControlCenterPage() {
 
   if (!state) {
     return (
-      <div className="app skin-village flex h-full min-h-0">
+      <div
+        className="app skin-village flex h-full min-h-0"
+        data-app-font="pixel"
+        data-rendering-platform={windowsWebView ? "windows" : undefined}
+      >
         <SidebarShell
           dark={dark}
           disabled
@@ -207,7 +214,11 @@ export function ControlCenterPage() {
   }
 
   return (
-    <div className="app skin-village flex h-full min-h-0">
+    <div
+      className="app skin-village flex h-full min-h-0"
+      data-app-font={state.config.app_font ?? "pixel"}
+      data-rendering-platform={windowsWebView ? "windows" : undefined}
+    >
       <SidebarShell
         compact={state.config.sidebar_layout === "compact"}
         dark={dark}

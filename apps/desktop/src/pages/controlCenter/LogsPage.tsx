@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { HanlyState, LogRecord, LogSnapshot } from "../../contracts/desktop.ts";
-import { clearLogs, exportDiagnostics, getLogs } from "../../services/desktopBridge.ts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  DiagnosticsExport,
+  HanlyState,
+  LogRecord,
+  LogSnapshot,
+} from "../../contracts/desktop.ts";
+import { getLogs } from "../../services/desktopBridge.ts";
 import { PixelButton } from "../../components/PixelButton.tsx";
+import { PixelSelect } from "../../components/controlCenter/Controls.tsx";
 import { readinessRows, titleCase, errorText } from "./helpers.ts";
 import type { IsPending, RunCommand } from "./types.ts";
 
@@ -20,20 +26,54 @@ export function LogsPage({
   const [filter, setFilter] = useState("all");
   const [subsystem, setSubsystem] = useState("all");
   const [search, setSearch] = useState("");
+  const requestVersion = useRef(0);
 
   const refreshLogs = useCallback(async () => {
+    const version = ++requestVersion.current;
     setError("");
     setNotice("");
     try {
-      setSnapshot(await getLogs());
+      const next = await getLogs();
+      if (version === requestVersion.current) setSnapshot(next);
     } catch (reason) {
-      setError(errorText(reason));
+      if (version === requestVersion.current) setError(errorText(reason));
     }
   }, []);
 
   useEffect(() => {
     void refreshLogs();
   }, [refreshLogs]);
+
+  useEffect(() => {
+    let active = true;
+    let fetching = false;
+    async function refreshVisibleLogs() {
+      if (document.visibilityState === "hidden" || fetching) return;
+      fetching = true;
+      const version = ++requestVersion.current;
+      try {
+        const next = await getLogs();
+        if (active && version === requestVersion.current) {
+          setSnapshot(next);
+          setError("");
+        }
+      } catch (reason) {
+        if (active && version === requestVersion.current) setError(errorText(reason));
+      } finally {
+        fetching = false;
+      }
+    }
+
+    const timer = window.setInterval(() => void refreshVisibleLogs(), 2000);
+    window.addEventListener("focus", refreshVisibleLogs);
+    document.addEventListener("visibilitychange", refreshVisibleLogs);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisibleLogs);
+      document.removeEventListener("visibilitychange", refreshVisibleLogs);
+    };
+  }, []);
   const records = useMemo(
     () =>
       (snapshot?.records ?? []).filter(
@@ -61,9 +101,12 @@ export function LogsPage({
         ),
       )
       .join("\n");
+    setError("");
+    setNotice("");
     try {
-      await run("copy_text", { text });
-      setError("");
+      const result = await run("copy_text", { text });
+      // The shared action wrapper resolves undefined after recording a failure.
+      if (result === undefined) return;
       setNotice(
         `Copied ${records.length} visible ${records.length === 1 ? "record" : "records"}.`,
       );
@@ -73,9 +116,14 @@ export function LogsPage({
   }
 
   async function emptyLogs() {
+    ++requestVersion.current;
+    setError("");
+    setNotice("");
     try {
-      setSnapshot(await clearLogs());
-      setError("");
+      const cleared = await run("clear_logs");
+      if (cleared === undefined) return;
+      ++requestVersion.current;
+      setSnapshot(cleared as LogSnapshot);
       setNotice("Session log cleared.");
     } catch (reason) {
       setError(errorText(reason));
@@ -83,10 +131,13 @@ export function LogsPage({
   }
 
   async function saveDiagnostics() {
+    setError("");
+    setNotice("");
     try {
-      const saved = await exportDiagnostics();
-      setError("");
-      setNotice(`Saved ${saved.records} records to ${saved.path}`);
+      const saved = await run("export_diagnostics");
+      if (saved === undefined) return;
+      const result = saved as DiagnosticsExport;
+      setNotice(`Saved ${result.records} records to ${result.path}`);
     } catch (reason) {
       setError(errorText(reason));
     }
@@ -134,9 +185,9 @@ export function LogsPage({
         </div>
       </section>
       <section className="panel panel-quiet relative min-w-0" data-rise="2">
-        <div className="logs-head relative flex flex-wrap items-center gap-3 px-[26px] pt-[50px] pb-5">
+        <div className="logs-head relative items-center gap-3 px-[26px] pt-[50px] pb-5">
           <h2 className="panel-title absolute inset-x-[22px] top-0 m-0 flex h-[34px] items-center justify-center text-center">Recent records</h2>
-          <div aria-label="Filter by log level" className="logs-filters ml-auto flex flex-wrap gap-1.5">
+          <div aria-label="Filter by log level" className="logs-filters flex flex-wrap items-center justify-center gap-1.5">
             {levels.map((level) => (
               <PixelButton
                 aria-pressed={filter === level}
@@ -149,7 +200,7 @@ export function LogsPage({
               </PixelButton>
             ))}
           </div>
-          <select
+          <PixelSelect
             aria-label="Filter by subsystem"
             className="select h-10 min-h-10 w-[158px] min-w-0 px-3 py-[7px] text-xs leading-[18px]"
             onChange={(event) => setSubsystem(event.target.value)}
@@ -161,7 +212,7 @@ export function LogsPage({
                 {name}
               </option>
             ))}
-          </select>
+          </PixelSelect>
           <input
             aria-label="Search logs"
             className="log-search h-10 min-h-10 w-[180px] min-w-0 px-3 py-[7px] text-xs leading-[18px]"
@@ -204,7 +255,7 @@ export function LogsPage({
             </PixelButton>
             <PixelButton
               className="btn btn-sm btn-quiet"
-              disabled={!snapshot}
+              disabled={!snapshot || isPending("clear_logs")}
               onClick={() => void emptyLogs()}
               type="button"
             >
@@ -212,6 +263,7 @@ export function LogsPage({
             </PixelButton>
             <PixelButton
               className="btn btn-sm btn-quiet"
+              disabled={isPending("export_diagnostics")}
               onClick={() => void saveDiagnostics()}
               type="button"
             >

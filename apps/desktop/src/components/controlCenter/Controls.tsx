@@ -1,5 +1,19 @@
-import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { PixelButton } from "../PixelButton.tsx";
+
+export function PixelSelect({
+  children,
+  className = "",
+  ...props
+}: ComponentPropsWithoutRef<"select">) {
+  return (
+    <span className="pixel-select">
+      <select {...props} className={`select ${className}`}>
+        {children}
+      </select>
+    </span>
+  );
+}
 
 export function CaptureSetting({
   label,

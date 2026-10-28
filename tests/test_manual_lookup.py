@@ -15,6 +15,7 @@ from hanly import (
     ROIImage,
 )
 from hanly_app.acquisition.capture import CaptureResult, ScreenRect
+from hanly_app.config import AppConfig, CaptureMode, CaptureRegion
 from hanly_app.hotkeys import HotkeyAction
 from hanly_app.lookup.controller import LookupController, LookupRequest, ResultDispatcher
 from hanly_app.manual_lookup import (
@@ -204,6 +205,23 @@ def test_lookup_hotkey_posts_to_ui_captures_there_and_delivers_result_on_ui() ->
 
     assert popup.results == [_success()]
     assert popup.opened_on == [ui_thread]
+    composition.shutdown()
+
+
+def test_app_config_applies_monitor_and_region_to_manual_capture() -> None:
+    composition, _queue, _hotkeys, _capture, _popup, _worker = _composition()
+    configured_region = CaptureRegion(left=10, top=20, width=30, height=40)
+
+    composition.apply_config(
+        AppConfig(
+            capture_mode=CaptureMode.REGION,
+            capture_monitor=2,
+            capture_region=configured_region,
+        )
+    )
+
+    assert composition.capture_service.monitor == 2
+    assert composition.capture_service.region == ScreenRect(10, 20, 30, 40)
     composition.shutdown()
 
 

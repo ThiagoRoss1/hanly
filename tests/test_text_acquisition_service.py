@@ -217,6 +217,21 @@ def test_a_denied_permission_is_delivered_without_reading() -> None:
     assert reader.calls == 0
 
 
+def test_an_out_of_scope_cursor_never_reaches_the_native_reader() -> None:
+    reader = _Reader()
+    service = _service(reader)
+    service.set_cursor_scope(lambda _point: False)
+    collector = _collect()
+    try:
+        service.submit(_POINT, collector)
+        assert collector.done.wait(timeout=5.0)
+    finally:
+        service.close()
+
+    assert collector.outcomes[0].outcome is Outcome.OUT_OF_SCOPE
+    assert reader.calls == 0
+
+
 def test_submitting_after_close_is_refused() -> None:
     service = _service(_Reader())
     service.close()

@@ -186,6 +186,7 @@ html[data-mode="dark"] .app.skin-village::after {
   color: #352441;
   font-family: HanlyUIBold, HanlyUI, monospace;
   font-size: 24px;
+  font-weight: 700;
   line-height: 30px;
   letter-spacing: 0;
 }
@@ -234,7 +235,7 @@ html[data-mode="dark"] .app.skin-village .brand-sub { color: #e0d6ee; }
   min-width: 0;
   padding: 0;
   color: inherit;
-  font: 12px/18px HanlyUIBold, HanlyUI, monospace;
+  font: 700 12px/18px HanlyUIBold, HanlyUI, monospace;
   text-align: center;
   white-space: nowrap;
   transform: none;

@@ -1,5 +1,3 @@
-@layer components {
-/* Button artwork sits behind JSX content so labels and icons remain readable. */
 .app.skin-village {
   --sprite-normal: url("/design/media/assets/buttons/jewel/secondary-normal.png");
   --sprite-hover: url("/design/media/assets/buttons/jewel/secondary-hover.png");
@@ -68,35 +66,39 @@
 }
 
 .app.skin-village .sprite-button {
+  box-sizing: border-box;
   position: relative;
   isolation: isolate;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 91px;
   min-height: 40px;
-  padding: 0 !important;
+  padding: 10px 20px;
   overflow: visible;
-  border: solid transparent !important;
-  border-width: 10px 16px 12px !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: #47305d !important;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #47305d;
+  cursor: pointer;
   font-family: HanlyUIBold, HanlyUI, monospace;
   font-size: 11px;
+  font-weight: 700;
   line-height: 18px;
   text-align: center;
   text-decoration: none;
-  cursor: pointer;
-  transform: none !important;
+  transform: translateY(0);
+  transition: transform 100ms ease;
 }
+
 .app.skin-village .sprite-button::after {
   content: "";
   position: absolute;
   z-index: -1;
-  inset: -10px -16px -12px;
+  inset: 0;
+  box-sizing: border-box;
   pointer-events: none;
   border: solid transparent;
   border-width: 10px 16px 12px;
@@ -104,13 +106,17 @@
   border-image-width: 10px 16px 12px;
   border-image-repeat: stretch;
   border-image-source: var(--sprite-normal);
-  transition: filter 1.5s ease;
+  transition: filter 100ms ease;
   image-rendering: pixelated;
   filter: var(--night-filter);
 }
+
 .app.skin-village .sprite-button:hover:not(:disabled)::after {
   border-image-source: var(--sprite-hover);
   filter: var(--night-filter) brightness(1.075) saturate(1.08);
+}
+.app.skin-village .sprite-button:active:not(:disabled) {
+  transform: translateY(2px);
 }
 .app.skin-village .sprite-button:active:not(:disabled)::after {
   border-image-source: var(--sprite-pressed);
@@ -123,28 +129,35 @@
   border-image-source: var(--sprite-focus);
 }
 .app.skin-village .sprite-button:disabled {
-  color: #977fa5 !important;
+  color: #977fa5;
   cursor: default;
   opacity: 1;
 }
 .app.skin-village .sprite-button:disabled::after {
   border-image-source: var(--sprite-disabled);
 }
-html[data-mode="dark"] .app.skin-village .sprite-button { color: #f5edf9 !important; }
-html[data-mode="dark"] .app.skin-village .sprite-button:disabled { color: #8f839e !important; }
+html[data-mode="dark"] .app.skin-village .sprite-button { color: #f5edf9; }
+html[data-mode="dark"] .app.skin-village .sprite-button:disabled { color: #b8adc7; }
+
 .app.skin-village .button-content {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   pointer-events: none;
+  transform: translateY(-2px);
 }
 .app.skin-village .button-label {
   display: block;
   min-width: 0;
   color: inherit;
+  font-weight: inherit;
   line-height: 18px;
   text-align: center;
   white-space: nowrap;
@@ -157,6 +170,15 @@ html[data-mode="dark"] .app.skin-village .sprite-button:disabled { color: #8f839
   object-fit: contain;
   image-rendering: pixelated;
 }
+.app.skin-village .nav-item.sprite-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  height: 50px;
+  padding-block: 4px;
+  padding-inline: 16px;
+  font-size: 12px;
+}
 .app.skin-village .btn-capture.sprite-button {
   width: 196px;
   min-width: 196px;
@@ -165,7 +187,7 @@ html[data-mode="dark"] .app.skin-village .sprite-button:disabled { color: #8f839
   gap: 8px;
   font-size: 13px;
 }
-.app.skin-village .btn-capture .action-icon { width: 40px; height: 40px; transform: translateY(-3px); }
+.app.skin-village .btn-capture .action-icon { width: 40px; height: 40px; }
 .app.skin-village .head-actions > .btn:not(.btn-capture) {
   width: 140px;
   min-width: 140px;
@@ -174,5 +196,37 @@ html[data-mode="dark"] .app.skin-village .sprite-button:disabled { color: #8f839
 }
 .app.skin-village .btn-sm.sprite-button { min-height: 40px; }
 .app.skin-village .chip.sprite-button { min-width: 64px; min-height: 38px; height: 38px; }
+.app.skin-village .segment.sprite-button { min-width: 96px; height: 44px; min-height: 44px; font-size: 11px; }
 .app.skin-village .btn-exit-quiet.sprite-button { min-height: 40px; height: 40px; }
+
+.app.skin-village .button-busy-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.app.skin-village .button-busy-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 8px;
+}
+.app.skin-village .button-busy-dots > i {
+  width: 3px;
+  height: 3px;
+  background: currentColor;
+  opacity: .35;
+  animation: button-busy-dot 900ms steps(1, end) infinite;
+}
+.app.skin-village .button-busy-dots > i:nth-child(2) { animation-delay: 150ms; }
+.app.skin-village .button-busy-dots > i:nth-child(3) { animation-delay: 300ms; }
+@keyframes button-busy-dot {
+  0%, 80%, 100% { opacity: .35; }
+  40% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app.skin-village .button-busy-dots > i {
+    animation: none;
+    opacity: .75;
+  }
 }

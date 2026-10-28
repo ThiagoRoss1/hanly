@@ -29,27 +29,29 @@ export function PermissionsPage({
           <div className="min-w-0">
             <h2 className="panel-title absolute inset-x-[22px] top-0 m-0 flex h-[34px] items-center justify-center text-center">Desktop access</h2>
             <p className="panel-note m-0 max-w-[540px] text-[13px] leading-5">
-              Permission grants are checked by Hanly before capture begins.
+              Review the desktop access checks available on this platform.
             </p>
           </div>
-          <PixelButton
-            className="btn btn-sm ml-auto"
-            disabled={isPending("refresh_permissions") || !permissions.supported}
-            onClick={() => void run("refresh_permissions")}
-            type="button"
-          >
-            Recheck
-          </PixelButton>
+          {permissions.supported && (
+            <PixelButton
+              className="btn btn-sm ml-auto"
+              disabled={isPending("refresh_permissions")}
+              onClick={() => void run("refresh_permissions")}
+              type="button"
+            >
+              Recheck
+            </PixelButton>
+          )}
         </div>
         {!permissions.supported ? (
           <div className="panel-rows flex flex-col px-4 pb-4">
-            <div className="readiness-row flex min-h-11 flex-wrap items-center gap-3 py-3">
-              <span className="readiness-detail min-w-[110px] flex-1 text-[13px] leading-5">
+            <div className="permission-availability border border-[var(--skin-line)] px-4 py-4">
+              <p className="readiness-detail m-0 min-w-0 text-[13px] leading-5">
                 {permissions.available === false
                   ? permissions.message ||
                     "Permission checks are not connected in this build."
                   : "This platform does not require a separate permission check."}
-              </span>
+              </p>
             </div>
           </div>
         ) : (
@@ -86,9 +88,11 @@ export function PermissionsPage({
             </div>
           </>
         )}
-        <p className="panel-note m-0 px-4 pb-4 text-[13px] leading-5">
-          Granted permissions stay listed so you can see what Hanly is using.
-        </p>
+        {permissions.supported && (
+          <p className="panel-note m-0 px-4 pb-4 text-[13px] leading-5">
+            Granted permissions stay listed so you can see what Hanly is using.
+          </p>
+        )}
       </section>
     </div>
   );
@@ -105,7 +109,7 @@ export function PermissionCard({
 }) {
   const tone = item.granted ? "ok" : item.state === "unknown" ? "warn" : "bad";
   return (
-    <div className="permission flex items-center gap-3 border border-[var(--skin-line)] px-4 py-5" data-granted={item.granted}>
+    <div className="permission flex items-start gap-3 border border-[var(--skin-line)] px-4 py-5" data-granted={item.granted}>
       <span
         aria-hidden="true"
         className="dot h-2 w-2 shrink-0"

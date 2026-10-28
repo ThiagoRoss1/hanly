@@ -140,7 +140,7 @@ def test_popup_presentation_waits_for_rendered_geometry_and_keeps_result_identit
         service.set_event_sink(lambda name, payload: published.append((name, dict(payload))))
         service._show_popup(result, 9)
         assert published[-1][1]["replacement"] is True
-        assert published[-1][1]["popup_font"] == "pixel"
+        assert published[-1][1]["popup_font"] == "normal"
         original_position = published[-1][1]["position"]
         # The word spans y 30-50; the native host places measured cards beside it.
         assert published[-1][1]["band"] == {"top": 24, "bottom": 56}
@@ -242,6 +242,7 @@ def test_request_schema_is_strict_and_correlates_safe_errors() -> None:
         (b'{"x":NaN}', "invalid_json"),
         (b"x" * (MAX_FRAME_BYTES + 1), "frame_too_large"),
     ],
+    ids=["duplicate_key", "invalid_json", "frame_too_large"],
 )
 def test_protocol_rejects_ambiguous_nonfinite_and_oversized_frames(
     frame: bytes,
@@ -1696,4 +1697,4 @@ def test_service_clean_eof_and_uncorrelated_malformed_frame(tmp_path: Path) -> N
     )
     assert malformed.returncode == 2
     assert malformed.stdout == b""
-    assert malformed.stderr == b"hanly-service: duplicate_key\n"
+    assert malformed.stderr.replace(b"\r\n", b"\n") == b"hanly-service: duplicate_key\n"

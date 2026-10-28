@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     )
     from .config import (
         AppConfig,
+        AppFont,
         CaptureMode,
         ConfigError,
         ConfigManager,
@@ -114,6 +115,7 @@ if TYPE_CHECKING:
 
 #: Exported name -> the submodule that defines it.
 _EXPORTS: dict[str, str] = {
+    "AppFont": "config",
     "AppConfig": "config",
     "CaptureBackend": "acquisition.capture",
     "CaptureBackendError": "acquisition.capture",
@@ -220,6 +222,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "AppFont",
     "AppConfig",
     "CaptureBackend",
     "CaptureBackendError",

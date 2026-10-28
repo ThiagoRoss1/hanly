@@ -6,13 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HanlyState, LogSnapshot } from "../../src/contracts/desktop.ts";
 import { appRoutes } from "../../src/app/router.tsx";
 import { isHanlyState } from "../../src/features/desktopState.ts";
+import { previewUpdateState } from "../../preview/fixtures.ts";
 
-const { invokeMock, eventHandlers, deferredListeners, deferListen, deferredSettings } = vi.hoisted(() => ({
+const { invokeMock, eventHandlers, deferredListeners, deferListen, deferredSettings, deferredUpdateCheck } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   eventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   deferredListeners: new Map<string, () => void>(),
   deferListen: { value: false },
   deferredSettings: { enabled: false, resolvers: [] as Array<() => void> },
+  deferredUpdateCheck: { enabled: false, resolve: null as null | (() => void) },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -103,6 +105,8 @@ beforeEach(() => {
   deferListen.value = false;
   deferredSettings.enabled = false;
   deferredSettings.resolvers = [];
+  deferredUpdateCheck.enabled = false;
+  deferredUpdateCheck.resolve = null;
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
@@ -169,6 +173,11 @@ beforeEach(() => {
       state = { ...state, updates: { ...state.updates, awaiting_confirmation: false, status: "downloading", cancellable: true, progress: { phase: "downloading", completed: 50, total: 100, fraction: 0.5 } } };
       return state;
     }
+    if (method === "check_for_updates" && deferredUpdateCheck.enabled) {
+      return new Promise((resolve) => {
+        deferredUpdateCheck.resolve = () => resolve(state);
+      });
+    }
     if (method === "cancel_update") {
       state = { ...state, updates: { ...state.updates, awaiting_confirmation: false, status: "unavailable", cancellable: false, progress: null } };
       return state;
@@ -206,6 +215,113 @@ describe("desktop React routes", () => {
     expect(await screen.findByRole("navigation", { name: "Sections" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start capture" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Quit Hanly" })).toBeTruthy();
+  });
+
+  it("keeps the update-check busy indicator attached to its label until the check settles", async () => {
+    const user = userEvent.setup();
+    deferredUpdateCheck.enabled = true;
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Updates" }));
+
+    await user.click(screen.getByRole("button", { name: "Check now" }));
+
+    const checkingButton = screen.getByRole("button", { name: "Checking for updates" });
+    expect(checkingButton.hasAttribute("disabled")).toBe(true);
+    expect(checkingButton.getAttribute("aria-busy")).toBe("true");
+    const dots = checkingButton.querySelector(".button-busy-dots");
+    expect(dots?.closest(".button-label")).toBeTruthy();
+
+    await act(async () => deferredUpdateCheck.resolve?.());
+    expect(await screen.findByRole("button", { name: "Check now" })).toBeTruthy();
+  });
+
+  it("renders checking and available updates from local preview snapshots", async () => {
+    const user = userEvent.setup();
+    state = { ...state, updates: previewUpdateState("checking") };
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByText("Checking for updates")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Update progress" }).getAttribute("data-indeterminate")).toBe("true");
+
+    const available = { ...state, updates: previewUpdateState("available") };
+    state = available;
+    await act(async () => eventHandlers.get("desktop-state")?.({ payload: available }));
+
+    expect(await screen.findByRole("button", { name: "Install update" })).toBeTruthy();
+    expect(screen.getByText("1.2.0")).toBeTruthy();
+    expect(screen.getByText(/Differential update/)).toBeTruthy();
+  });
+
+  it("shows a local update install, cancel, and completed preview without a real download", async () => {
+    const user = userEvent.setup();
+    state = { ...state, updates: previewUpdateState("available") };
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Updates" }));
+    await user.click(screen.getByRole("button", { name: "Install update" }));
+
+    expect(await screen.findByRole("progressbar", { name: "Update progress" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "cancel_update",
+      params: {},
+    }));
+
+    const completed = { ...state, updates: previewUpdateState("completed") };
+    state = completed;
+    await act(async () => eventHandlers.get("desktop-state")?.({ payload: completed }));
+
+    expect(await screen.findByText("Ready to restart")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("describes an active session without saying it is reading before a lookup", async () => {
+    state = {
+      ...state,
+      app: {
+        ...state.app,
+        activity: "armed",
+        detail: "Hanly loads the lookup engine on the first lookup.",
+        capture_running: true,
+      },
+      config: {
+        ...state.config,
+        hover_activation: "push_to_hover",
+        lookup_preload: "on_demand",
+        hotkey: "ctrl+shift+f9",
+      },
+      runtime: {
+        ...state.runtime,
+        status: { phase: "ready", stage: "desktop service", message: "Hanly is ready." },
+        engine: { state: "sleeping", message: "Lookup providers are not loaded." },
+      },
+    };
+    renderRoute("/");
+
+    expect(await screen.findByText("Ready for a lookup")).toBeTruthy();
+    expect(screen.getAllByText("Hanly loads the lookup engine on the first lookup.")).toHaveLength(2);
+    expect(screen.getByText(/hold .* over text/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop capture" })).toBeTruthy();
+    expect(screen.queryByText("Reading now")).toBeNull();
+
+    const running = {
+      ...state,
+      app: { ...state.app, activity: "running", detail: "Hanly is watching the screen." },
+      runtime: {
+        ...state.runtime,
+        engine: { state: "ready", message: "Hanly is ready." },
+      },
+    };
+    state = running;
+    await act(async () => eventHandlers.get("desktop-state")?.({ payload: running }));
+
+    expect(await screen.findByText("Capture active")).toBeTruthy();
+    expect(screen.getByText(/hold .* over text/)).toBeTruthy();
+    expect(screen.queryByText("Reading now")).toBeNull();
   });
 
   it("persists an appearance setting and reflects the acknowledged state", async () => {
@@ -295,7 +411,7 @@ describe("desktop React routes", () => {
     }));
   });
 
-  it("persists navigation and popup typeface through the service and reflects both choices", async () => {
+  it("persists navigation and typeface preferences independently", async () => {
     const user = userEvent.setup();
     renderRoute("/");
     await screen.findByRole("button", { name: "Start capture" });
@@ -307,6 +423,11 @@ describe("desktop React routes", () => {
       method: "update_settings", params: { changes: { popup_font: "normal" } },
     }));
     expect(within(screen.getByRole("group", { name: "Popup typeface" })).getByRole("button", { name: "Normal" }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(within(screen.getByRole("group", { name: "Interface typeface" })).getByRole("button", { name: "Normal" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "update_settings", params: { changes: { app_font: "normal" } },
+    }));
+    expect(document.querySelector(".app")?.getAttribute("data-app-font")).toBe("normal");
     expect(screen.getByRole("button", { name: "Quit Hanly" })).toBeTruthy();
   });
 
@@ -378,7 +499,7 @@ describe("desktop React routes", () => {
       callbacks[0]!();
       await Promise.resolve();
     });
-    expect(await screen.findByText("Not reading")).toBeTruthy();
+    expect(await screen.findByText("Capture stopped")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start capture" }).hasAttribute("disabled")).toBe(false);
     await waitFor(() => expect(callbacks.length).toBe(2));
 
@@ -676,6 +797,35 @@ describe("desktop React routes", () => {
     }));
   });
 
+  it("identifies a fixed monitor instead of describing cursor-follow behavior", async () => {
+    state = {
+      ...state,
+      app: {
+        ...state.app,
+        target: "monitor:2",
+        targets: [
+          {
+            index: 1,
+            name: "Built-in Display",
+            bounds: { left: 0, top: 0, width: 1920, height: 1080 },
+          },
+          {
+            index: 2,
+            name: "External Display",
+            bounds: { left: 1920, top: 0, width: 2560, height: 1440 },
+          },
+        ],
+      },
+      config: { ...state.config, capture_monitor: 2 },
+    };
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+
+    expect(screen.getByRole("radio", { name: /Selected monitor/ })).toBeTruthy();
+    expect(screen.getByText("Fixed to External Display.")).toBeTruthy();
+    expect(screen.queryByText("Follows the display the cursor is on.")).toBeNull();
+  });
+
   it("shows region validation beside the region controls with settings collapsed", async () => {
     const user = userEvent.setup();
     renderRoute("/");
@@ -683,14 +833,17 @@ describe("desktop React routes", () => {
     await user.click(screen.getByRole("radio", { name: /Selected region/ }));
     await screen.findByRole("heading", { name: "Region" });
 
+    fireEvent.change(screen.getByRole("textbox", { name: "Region left" }), { target: { value: "0" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Region top" }), { target: { value: "0" } });
     const width = screen.getByRole("textbox", { name: "Region width" });
     fireEvent.change(width, { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Region height" }), { target: { value: "80" } });
     await user.click(screen.getByRole("button", { name: "Apply" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("at least 2 × 2 pixels");
     expect(alert.closest(".region-collapse")).toBeTruthy();
-    expect((screen.getByText("Capture settings").closest("details") as HTMLDetailsElement).open).toBe(false);
+    expect(screen.getByRole("button", { name: /Capture settings/ }).getAttribute("aria-expanded")).toBe("false");
     expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "set_region" }));
 
     fireEvent.change(width, { target: { value: "120" } });
@@ -701,6 +854,21 @@ describe("desktop React routes", () => {
     expect(await screen.findByRole("alert")).toBeTruthy();
     await user.click(screen.getByRole("radio", { name: /Current monitor/ }));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("rejects blank region coordinates instead of converting them to zero", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("radio", { name: /Selected region/ }));
+    await screen.findByRole("heading", { name: "Region" });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Region width" }), { target: { value: "120" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Region height" }), { target: { value: "80" } });
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("whole numbers for each region coordinate");
+    expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "set_region" }));
   });
 
   it("validates and persists the hover delay through its native service action", async () => {
@@ -775,7 +943,7 @@ describe("desktop React routes", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "set_hover_delay" }));
   });
 
-  it("captures only valid modified shortcut combinations and keeps Escape as cancel", async () => {
+  it("confirms shortcut combinations explicitly and keeps Escape as cancel", async () => {
     const user = userEvent.setup();
     renderRoute("/");
     await screen.findByRole("button", { name: "Start capture" });
@@ -791,9 +959,25 @@ describe("desktop React routes", () => {
 
     await user.click(within(shortcut as HTMLElement).getByRole("button", { name: /^Assign .* shortcut$/ }));
     fireEvent.keyDown(window, { key: "k", ctrlKey: true, shiftKey: true });
+    await user.click(within(shortcut as HTMLElement).getByRole("button", { name: /^Save .* shortcut$/ }));
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "set_hotkey",
       params: { hotkey: "ctrl+shift+k" },
+    }));
+  });
+
+  it("saves a single key only after explicit confirmation", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Shortcuts" }));
+    const section = screen.getByText("Push to Hover").closest("section") as HTMLElement;
+    await user.click(within(section).getByRole("button", { name: /^Assign .* shortcut$/ }));
+    fireEvent.keyDown(window, { key: "F8" });
+    expect(invokeMock).not.toHaveBeenCalledWith("desktop_request", expect.objectContaining({ method: "set_hotkey" }));
+    await user.click(within(section).getByRole("button", { name: /^Save .* shortcut$/ }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
+      method: "set_hotkey", params: { hotkey: "f8" },
     }));
   });
 
@@ -826,6 +1010,7 @@ describe("desktop React routes", () => {
     const pause = screen.getByText("Pause automatic hover").closest("section") as HTMLElement;
     await user.click(within(pause).getByRole("button", { name: /^Assign .* shortcut$/ }));
     fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true });
+    await user.click(within(pause).getByRole("button", { name: /^Save .* shortcut$/ }));
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "update_settings",
       params: { changes: { hover_hotkey: "ctrl+shift+p" } },
@@ -834,6 +1019,7 @@ describe("desktop React routes", () => {
     const capture = screen.getByText("Start / stop capture").closest("section") as HTMLElement;
     await user.click(within(capture).getByRole("button", { name: /^Assign .* shortcut$/ }));
     fireEvent.keyDown(window, { key: "f", ctrlKey: true, shiftKey: true });
+    await user.click(within(capture).getByRole("button", { name: /^Save .* shortcut$/ }));
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("desktop_request", {
       method: "update_settings",
       params: { changes: { capture_hotkey: "ctrl+shift+f" } },
@@ -901,8 +1087,29 @@ describe("desktop React routes", () => {
     await user.click(screen.getByRole("button", { name: "Permissions" }));
 
     expect(screen.getByText("This platform does not require a separate permission check.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Recheck" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Recheck" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Grant access" })).toBeNull();
+    expect(screen.queryByText("Granted permissions stay listed so you can see what Hanly is using.")).toBeNull();
+  });
+
+  it("shows unavailable permission-check details without implying grants are active", async () => {
+    const user = userEvent.setup();
+    state = {
+      ...state,
+      permissions: {
+        supported: false,
+        available: false,
+        message: "Permission checks are unavailable in this build.",
+        items: [],
+      },
+    };
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Permissions" }));
+
+    expect(screen.getByText("Permission checks are unavailable in this build.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Recheck" })).toBeNull();
+    expect(screen.queryByText("Granted permissions stay listed so you can see what Hanly is using.")).toBeNull();
   });
 
   it("confirms full application downloads, shows progress, and expands resource activity", async () => {
@@ -1070,6 +1277,46 @@ describe("desktop React routes", () => {
     expect(await screen.findByText("No records match.")).toBeTruthy();
   });
 
+  it("shows failures for copy, clear, and export without leaving stale success notices", async () => {
+    const user = userEvent.setup();
+    const fallback = invokeMock.getMockImplementation();
+    let failingMethod: string | null = null;
+    invokeMock.mockImplementation(async (
+      command: string,
+      args: { method?: string; params?: Record<string, unknown> },
+    ) => {
+      if (command === "desktop_request" && args.method === failingMethod) {
+        throw new Error(`${failingMethod} failed`);
+      }
+      return fallback?.(command, args);
+    });
+
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Logs" }));
+    await screen.findByText("Desktop service started.");
+
+    failingMethod = "copy_text";
+    await user.click(screen.getByRole("button", { name: "Copy visible" }));
+    expect(await screen.findByText("copy_text failed")).toBeTruthy();
+    expect(screen.queryByText("Copied 1 visible record.")).toBeNull();
+
+    failingMethod = null;
+    await user.click(screen.getByRole("button", { name: "Copy visible" }));
+    expect(await screen.findByText("Copied 1 visible record.")).toBeTruthy();
+
+    failingMethod = "clear_logs";
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(await screen.findByText("clear_logs failed")).toBeTruthy();
+    expect(screen.queryByText("Copied 1 visible record.")).toBeNull();
+    expect(screen.queryByText("Session log cleared.")).toBeNull();
+
+    failingMethod = "export_diagnostics";
+    await user.click(screen.getByRole("button", { name: "Export diagnostics" }));
+    expect(await screen.findByText("export_diagnostics failed")).toBeTruthy();
+    expect(screen.queryByText(/Saved \d+ records to/)).toBeNull();
+  });
+
   it("filters logs by level, subsystem, and search before copying visible records", async () => {
     const user = userEvent.setup();
     logSnapshot = {
@@ -1099,6 +1346,22 @@ describe("desktop React routes", () => {
       params: { text: "2026-10-13T03:02:00+00:00\terror\tLookup\tLookup engine crashed." },
     }));
     expect(await screen.findByText("Copied 1 visible record.")).toBeTruthy();
+  });
+
+  it("refreshes visible logs on focus without resetting the user's filter", async () => {
+    const user = userEvent.setup();
+    renderRoute("/");
+    await screen.findByRole("button", { name: "Start capture" });
+    await user.click(screen.getByRole("button", { name: "Logs" }));
+    await screen.findByRole("button", { name: "Info" });
+    await user.click(screen.getByRole("button", { name: "Info" }));
+    logSnapshot = {
+      records: [{ timestamp: "2026-10-28T03:00:00+00:00", level: "info", subsystem: "Capture", message: "Capture session stopped." }],
+      levels: ["info", "warning", "error"], subsystems: ["Capture"], log_path: null,
+    };
+    fireEvent(window, new Event("focus"));
+    expect(await screen.findByText("Capture session stopped.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Info" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("renders diagnostic messages as text rather than interpreting markup", async () => {

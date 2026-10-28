@@ -446,6 +446,7 @@ def _validate_param_values(
             "popup_enabled",
             "popup_default_size",
             "popup_font",
+            "app_font",
             "sidebar_layout",
             "technical_details",
             "update_checks_enabled",
@@ -465,6 +466,7 @@ def _validate_param_values(
             "theme",
             "popup_default_size",
             "popup_font",
+            "app_font",
             "sidebar_layout",
             "technical_details",
         }
@@ -600,6 +602,7 @@ def _validate_settings_changes(changes: dict[str, Any], fail: Any) -> None:
         "popup_enabled",
         "popup_default_size",
         "popup_font",
+        "app_font",
         "sidebar_layout",
         "technical_details",
         "update_checks_enabled",
@@ -617,6 +620,7 @@ def _validate_settings_changes(changes: dict[str, Any], fail: Any) -> None:
         "theme",
         "popup_default_size",
         "popup_font",
+        "app_font",
         "sidebar_layout",
         "technical_details",
     }

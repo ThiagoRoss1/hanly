@@ -43,6 +43,15 @@ export function AppearancePage({
       ],
     },
     {
+      key: "app_font",
+      label: "Interface typeface",
+      note: "Choose standard text or pixel lettering for the Control Center.",
+      options: [
+        ["pixel", "Pixel"],
+        ["normal", "Normal"],
+      ],
+    },
+    {
       key: "popup_default_size",
       label: "Default popup size",
       note: "How each new dictionary popup opens.",
@@ -82,7 +91,7 @@ export function AppearancePage({
             <div aria-label={group.label} className="segmented ml-auto inline-flex gap-[5px]" role="group">
               {group.options.map(([value, label]) => (
                 <PixelButton
-                  aria-pressed={(config[group.key] ?? (group.key === "popup_font" ? "pixel" : "normal")) === value}
+                  aria-pressed={(config[group.key] ?? (group.key === "app_font" ? "pixel" : "normal")) === value}
                   aria-disabled={isPending(settingPendingKey(group.key))}
                   className="segment min-w-24 h-11"
                   data-saving={isPending(settingPendingKey(group.key)) || undefined}

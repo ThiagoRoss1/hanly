@@ -151,19 +151,42 @@ def _source_inventory_gaps() -> list[str]:
     from importlib.util import find_spec
 
     gaps: list[str] = []
+    package_specs: dict[str, Any] = {}
     for name in ("certifi", "easyocr", "torch", "kiwipiepy", "kiwipiepy_model"):
         try:
-            if find_spec(name) is None:
+            spec = find_spec(name)
+            if spec is None:
                 gaps.append(name)
+            else:
+                package_specs[name] = spec
         except (ImportError, ValueError):
             gaps.append(name)
+
     app_root = Path(__file__).resolve().parents[1]
-    for relative in _REQUIRED_DATA_FILES[1:]:
-        if relative.startswith("hanly_app/"):
-            relative = relative.removeprefix("hanly_app/")
-        if not (app_root / relative).is_file():
-            gaps.append(relative)
+    for required_file in _REQUIRED_DATA_FILES[1:]:
+        package, _, relative = required_file.partition("/")
+        if package == "hanly_app":
+            if not (app_root / relative).is_file():
+                gaps.append(relative)
+            continue
+
+        roots = _package_data_roots(package_specs.get(package))
+        if not any((root / relative).is_file() for root in roots):
+            gaps.append(required_file)
     return gaps
+
+
+def _package_data_roots(spec: Any) -> tuple[Path, ...]:
+    """Return source-package directories from a module spec without importing it."""
+
+    locations = getattr(spec, "submodule_search_locations", None)
+    if locations:
+        return tuple(Path(location) for location in locations)
+
+    origin = getattr(spec, "origin", None)
+    if isinstance(origin, str) and origin not in {"built-in", "frozen"}:
+        return (Path(origin).parent,)
+    return ()
 
 
 def _runtime_root() -> Path:

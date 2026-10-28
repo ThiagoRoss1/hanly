@@ -25,6 +25,13 @@ export function UpdatesPage({
   const [activityOpen, setActivityOpen] = useState(false);
   const application = updates.application;
   const isBusy = UPDATE_BUSY.has(updates.status ?? "");
+  const checkPending = isPending("check_for_updates");
+  const updateBusyMessage =
+    updates.status === "checking"
+      ? (updates.message || "Checking for updates")
+          .replace(/(?:…|\.{3})$/, "")
+          .trimEnd()
+      : updates.message || titleCase(updates.status);
   const availableResources = new Map(
     (updates.resources ?? [])
       .filter((resource) => resource.available)
@@ -80,7 +87,7 @@ export function UpdatesPage({
           <div className="update-busy grid min-h-[170px] grid-cols-1 grid-rows-[auto_30px_auto] gap-3.5 px-[26px] pt-[22px] pb-[26px]">
             <div className="update-busy-line grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
               <span className="update-strong min-w-0 text-sm leading-[22px] font-bold">
-                {updates.message || titleCase(updates.status)}
+                {updateBusyMessage}
               </span>
               <span className="update-detail whitespace-nowrap font-mono text-[11px]">{bytesLine}</span>
               <span className="update-percent min-w-10 text-right font-mono text-xs">
@@ -192,11 +199,13 @@ export function UpdatesPage({
             </div>
             <PixelButton
               className="btn"
-              disabled={isPending("check_for_updates")}
+              aria-busy={checkPending || undefined}
+              aria-label={checkPending ? "Checking for updates" : undefined}
+              disabled={checkPending}
               onClick={() => void run("check_for_updates")}
               type="button"
             >
-              Try again
+              <CheckButtonLabel pending={checkPending} idleLabel="Try again" />
             </PixelButton>
           </div>
         ) : (
@@ -213,11 +222,13 @@ export function UpdatesPage({
             </div>
             <PixelButton
               className="btn"
-              disabled={isPending("check_for_updates")}
+              aria-busy={checkPending || undefined}
+              aria-label={checkPending ? "Checking for updates" : undefined}
+              disabled={checkPending}
               onClick={() => void run("check_for_updates")}
               type="button"
             >
-              Check now
+              <CheckButtonLabel pending={checkPending} idleLabel="Check now" />
             </PixelButton>
           </div>
         )}
@@ -321,6 +332,27 @@ export function UpdatesPage({
         </div>
       </section>
     </div>
+  );
+}
+
+function CheckButtonLabel({
+  pending,
+  idleLabel,
+}: {
+  pending: boolean;
+  idleLabel: string;
+}) {
+  if (!pending) return idleLabel;
+
+  return (
+    <span className="button-busy-label">
+      Checking
+      <span aria-hidden="true" className="button-busy-dots">
+        <i />
+        <i />
+        <i />
+      </span>
+    </span>
   );
 }
 

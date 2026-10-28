@@ -248,7 +248,7 @@ export function PopupPage() {
     return (
       <main className={POPUP_FRAME_CLASS} role="alert">
         <div className="px-[21px] pt-[22px] pb-[22px]">
-          <h1 className="m-0 text-[38px] leading-[46px] font-normal [color:var(--popup-ink)] [font-family:var(--popup-bold-font)] max-[361px]:text-[36px] max-[361px]:leading-[44px] [html[data-popup-font=normal]_&]:max-[361px]:text-[34px]">
+          <h1 className="popup-headword m-0 [color:var(--popup-ink)] [font-family:var(--popup-bold-font)]">
             Hanly
           </h1>
           <p className="m-0 text-[14px] leading-[23px] [color:var(--popup-ink)] [font-family:var(--popup-reading-font)] [overflow-wrap:anywhere]">
@@ -284,7 +284,7 @@ export function PopupPage() {
             />
             {detailLevel === "full" && technical.length > 0 && (
               <section className="flex-none border-t px-[18px] pt-2 [border-color:var(--popup-line)]">
-                <h2 className="mb-1 mt-0 text-[12px] leading-[18px] [color:var(--popup-muted)] [font-family:var(--popup-bold-font)]">
+                <h2 className="popup-section-title mb-1 mt-0 [color:var(--popup-muted)] [font-family:var(--popup-bold-font)]">
                   Dictionary details
                 </h2>
                 <p className="m-0 text-[12px] leading-5 [color:var(--popup-muted)] [font-family:var(--popup-display-font)] [overflow-wrap:anywhere]">

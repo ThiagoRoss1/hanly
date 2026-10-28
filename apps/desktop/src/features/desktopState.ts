@@ -144,6 +144,12 @@ export function isHanlyState(value: unknown): value is HanlyState {
   )
     return false;
   if (
+    config.app_font !== undefined &&
+    config.app_font !== "pixel" &&
+    config.app_font !== "normal"
+  )
+    return false;
+  if (
     config.sidebar_layout !== undefined &&
     config.sidebar_layout !== "normal" &&
     config.sidebar_layout !== "compact"

@@ -1,0 +1,15 @@
+.app.skin-village[data-rendering-platform="windows"]
+.nav-dot:has(> img[src$="/icon-shortcuts-pixel.png"]) {
+  width: 40px;
+  height: 40px;
+}
+.app.skin-village .nav-dot > img[src$="/icon-shortcuts-pixel.png"] {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.app.skin-village[data-rendering-platform="windows"]
+.nav-dot > img[src$="/icon-shortcuts-pixel.png"] {
+  image-rendering: pixelated;
+}

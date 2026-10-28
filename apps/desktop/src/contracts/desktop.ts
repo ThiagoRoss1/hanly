@@ -36,6 +36,7 @@ export interface StateRevision {
 }
 
 export type PopupFont = "pixel" | "normal";
+export type AppFont = "pixel" | "normal";
 export type SidebarLayout = "normal" | "compact";
 
 export interface HanlyState {
@@ -64,6 +65,7 @@ export interface HanlyState {
     popup_enabled: boolean;
     popup_default_size: string;
     popup_font?: PopupFont;
+    app_font?: AppFont;
     sidebar_layout?: SidebarLayout;
     technical_details: string;
     theme: string;

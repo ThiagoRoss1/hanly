@@ -57,14 +57,18 @@ local development server; it is not the product's user launch path.
 `npm run preview:mock` opens `preview.html`, which renders the React views in
 a browser against fixture state through Tauri's `mockIPC`. Choose a view with
 `?view=popup|region_selector`, a popup with `&sample=school|long|refusal` and
-`&theme=light|dark`; the popup's measured size appears in the tab title. Use
-Safari for WebKit-faithful metrics. It checks layout and content only: native
-frames, clipping, focus, shortcuts and permissions need the real desktop app.
-Vite builds only `index.html`, so the preview never ships.
+`&theme=light|dark`. Control Center styling can be inspected with
+`&platform=windows` and `&permissions=unsupported`; these only alter preview
+fixtures. The popup's measured size appears in the tab title. Use Safari for
+WebKit-faithful metrics. It checks layout and content only: native frames,
+clipping, focus, shortcuts and permissions need the real desktop app. Vite
+builds only `index.html`, so the preview never ships.
 
 The pixel interface uses the supplied artwork under `public/design/`. Appearance
-preferences are stored by the Python settings service: `popup_font` is `pixel`
-or `normal` (default `pixel`), and `sidebar_layout` is `normal` or `compact`
+preferences are stored by the Python settings service: `app_font` and `popup_font`
+independently select `pixel` or `normal` text (app default `pixel`, popup default
+`normal`), and
+`sidebar_layout` is `normal` or `compact`
 (default `normal`). Older settings files receive those defaults. Windows at
 760 logical pixels or narrower also use the compact rail. System theme follows
 the desktop; scene and mascot animation pause when hidden or reduced motion is
@@ -82,17 +86,21 @@ removed. Saving one preference keeps unrelated controls and the scene mounted.
 On macOS the Control Center reserves a 40px overlay titlebar above the pixel
 frame, retaining the native close, minimize and fullscreen controls with clear
 space around them. Its blank top strip after the controls drags only the
-Control Center window. Windows and Linux retain their
-native titlebars. Popup focus, native placement and measurement are independent
+Control Center window. Windows and Linux retain their native titlebars.
+The Windows client is transparent beneath the original ornamental frame. The Windows popup disables native shadows to avoid the extra white system border on a frameless window.
+Popup focus, native placement and measurement are independent
 of this Control Center decoration.
 
-Panels, the runtime cloud and the compact plaque use the editable clean SVG
-variants under `public/design/media/assets/panels/`. Their shared generator is
+Buttons retain their jewel artwork behind padded content, alongside the slider
+and popup frame artwork. The runtime panel, cloud and compact plaque use the
+editable clean SVG variants under
+`public/design/media/assets/panels/`. Their shared generator is
 `tools/design/build_clean_frames.mjs` at the repository root. Source changes
 require rebuilding the embedded frontend/native executable and restarting the
 app; an already-open debug app keeps displaying its previous frontend build.
 
-The development preview additionally accepts `font=normal`,
+The development preview additionally accepts `font=pixel|normal`,
+`app_font=pixel|normal`,
 `navigation=compact`, `activity=stopped|armed|running|preparing|error`,
 `permissions=missing`, and `update=downloading|failed`. These are fixture states,
 not native acceptance evidence. The popup preview implements the same

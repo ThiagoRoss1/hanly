@@ -127,6 +127,7 @@ describe("PopupPage", () => {
     const card = await screen.findByRole("main", {
       name: "Hanly dictionary result",
     });
+    expect(document.documentElement.dataset.popupFont).toBe("normal");
     expect(card.style.width).toBe("380px");
     expect(await screen.findByRole("heading", { name: "학교" })).toBeTruthy();
     expect(screen.getByText("學校")).toBeTruthy();

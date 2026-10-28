@@ -1,7 +1,8 @@
 # Clean panel v2
 
 Editable nine-slice SVG redraw of the supplied stepped panel from Hanly Design
-Lab V2.4.1. The original PNG assets remain unchanged.
+Lab V2.4.1. The original PNG slices are no longer shipped; their prior versions
+remain in repository history.
 
 The source's content slice included a lavender bottom band, stepped white
 patches and raster color variation. Those became visible interior stains under

@@ -1,10 +1,18 @@
 import { isTauri } from "@tauri-apps/api/core";
 import type { ReactNode } from "react";
+import "../styles/windowsNativeChrome.css";
 
-/** Reserve the macOS overlay titlebar while retaining the native window controls. */
+/** Clip the Windows client to its existing illustrated frame. */
+export function WindowsChrome({ children }: { children: ReactNode }) {
+  return <div className="native-windows-chrome">{children}</div>;
+}
+
+/** Reserve the macOS overlay titlebar while retaining the native controls. */
 export function NativeChrome({ children }: { children: ReactNode }) {
+  const windowsClient = isTauri() && /Windows/i.test(navigator.userAgent);
   const macOverlay = isTauri() && /Mac/.test(navigator.platform);
 
+  if (windowsClient) return <WindowsChrome>{children}</WindowsChrome>;
   if (!macOverlay) return children;
 
   return (

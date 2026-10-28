@@ -25,9 +25,13 @@ export function ShortcutsPage({
 }) {
   const [recording, setRecording] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [draft, setDraft] = useState("");
   useEffect(() => {
     if (!recording) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Tab" ||
+          (event.key === "Enter" && event.target instanceof HTMLButtonElement &&
+           event.target.getAttribute("aria-label")?.startsWith("Save "))) return;
       event.preventDefault();
       if (event.key === "Escape") {
         setRecording(null);
@@ -35,18 +39,24 @@ export function ShortcutsPage({
       }
       const binding = hotkeyFromKeyboardEvent(event);
       if (!binding) return;
-      const field = recording;
-      setRecording(null);
-      setError("");
-      const update =
-        field === "hotkey"
-          ? run("set_hotkey", { hotkey: binding })
-          : saveSettings({ [field]: binding });
-      void update.catch((reason: unknown) => setError(errorText(reason)));
+      setDraft(binding);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [recording, run, saveSettings]);
+  }, [recording]);
+
+  async function confirmShortcut() {
+    if (!recording || !draft) return;
+    setError("");
+    try {
+      const result = recording === "hotkey"
+        ? await run("set_hotkey", { hotkey: draft })
+        : await saveSettings({ [recording]: draft });
+      if (result !== undefined) setRecording(null);
+    } catch (reason) {
+      setError(errorText(reason));
+    }
+  }
 
   const registered = state.runtime.hotkeys ?? {};
   const prepared = (state.app.state ?? "new") !== "new";
@@ -101,7 +111,7 @@ export function ShortcutsPage({
               >
                 {isRecording ? (
                   <span className="key" data-kind="recording">
-                    Press keys… Esc cancels
+                    {draft ? formatHotkey(draft).join(" + ") : "Press keys… Esc cancels"}
                   </span>
                 ) : !stored ? (
                   <span className="key" data-kind="empty">
@@ -115,6 +125,11 @@ export function ShortcutsPage({
                   ))
                 )}
               </div>
+              {isRecording && (
+                <PixelButton className="btn btn-sm" aria-label={`Save ${item.name} shortcut`}
+                  disabled={!draft || isPending(item.id === "hotkey" ? "set_hotkey" : settingPendingKey(item.id))}
+                  onClick={() => void confirmShortcut()} type="button">Save</PixelButton>
+              )}
               <PixelButton
                 aria-label={`${isRecording ? "Cancel" : stored ? "Change" : "Assign"} ${item.name} shortcut`}
                 icon={!isRecording ? "/design/media/assets/icons/v2/icon-edit.png" : undefined}
@@ -122,7 +137,7 @@ export function ShortcutsPage({
                 disabled={isPending(
                   item.id === "hotkey" ? "set_hotkey" : settingPendingKey(item.id),
                 )}
-                onClick={() => setRecording(isRecording ? null : item.id)}
+                onClick={() => { setDraft(""); setError(""); setRecording(isRecording ? null : item.id); }}
                 type="button"
               >
 

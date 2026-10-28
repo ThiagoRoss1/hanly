@@ -293,10 +293,20 @@ class ManualLookupRuntime:
         self._apply_preload_change(config.lookup_preload)
 
         self._capture_mode = config.capture_mode
+        capture_region = config.capture_region
         self._capture_service.set_preferences(
             capture_mode=config.capture_mode,
-            monitor=self._capture_service.monitor,
-            region=self._capture_service.region,
+            monitor=config.capture_monitor,
+            region=(
+                None
+                if capture_region is None
+                else ScreenRect(
+                    capture_region.left,
+                    capture_region.top,
+                    capture_region.width,
+                    capture_region.height,
+                )
+            ),
         )
         if config.hover_activation is not self._activation:
             self._release_push()

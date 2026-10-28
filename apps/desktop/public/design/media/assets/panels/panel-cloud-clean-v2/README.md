@@ -3,8 +3,9 @@
 Integer-grid SVG redraw of the supplied Hanly Design Lab V2.4.1 scalloped cloud.
 The cloud silhouette retains stepped lobes, with mirrored horizontal/vertical
 contours, three one-pixel rim bands and a uniform cream interior. Texture noise,
-interior lavender patches and the pink offset shadow are removed. Original
-gallery files are preserved.
+interior lavender patches and the pink offset shadow are removed. The original
+PNG slices are no longer shipped; their prior versions remain in repository
+history.
 
 Corner slices render at their native 31x24 grid. Straight stretches carry solid
 colors, with no embedded raster, anti-aliasing gradients or cast shadows. Each

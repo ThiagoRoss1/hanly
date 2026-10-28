@@ -193,6 +193,18 @@ def test_an_armed_session_says_the_engine_wakes_on_the_first_lookup() -> None:
     assert "first lookup" in snapshot.detail
 
 
+def test_a_capture_start_waits_while_its_eager_engine_is_still_sleeping() -> None:
+    snapshot = derive_application_snapshot(
+        RuntimeStatus("ready"),
+        engine_state="sleeping",
+        capture_requested=True,
+    )
+
+    assert snapshot.activity == "preparing"
+    assert snapshot.detail == "Loading the lookup engine."
+    assert snapshot.busy is True
+
+
 def test_a_muted_session_keeps_running_and_says_hover_is_paused() -> None:
     snapshot = derive_application_snapshot(
         RuntimeStatus("ready"),

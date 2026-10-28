@@ -33,6 +33,7 @@ class Outcome(Enum):
     NOT_CONTAINING = "not_containing"
     AMBIGUOUS = "ambiguous"
     NOT_KOREAN = "not_korean"
+    OUT_OF_SCOPE = "out_of_scope"
     EMPTY = "empty"
     TIMED_OUT = "timed_out"
     FAILED = "failed"
@@ -443,6 +444,7 @@ class DirectTextService:
         self._active: _Job | None = None
         self._generation = 0
         self._closed = False
+        self._cursor_scope: Callable[[Point], bool] | None = None
         # Daemon threads cannot strand interpreter exit on an uninterruptible
         # native call; orderly close still joins them.
         self._worker = Thread(
@@ -457,6 +459,13 @@ class DirectTextService:
     @property
     def timeout_ms(self) -> int:
         return self._coordinator.timeout_ms
+
+    def set_cursor_scope(self, contains_cursor: Callable[[Point], bool]) -> None:
+        """Restrict native reads to the current desktop capture scope."""
+
+        if not callable(contains_cursor):
+            raise TypeError("contains_cursor must be callable")
+        self._cursor_scope = contains_cursor
 
     def submit(self, point: Point, deliver: Callable[[Acquisition], None]) -> int:
         """Schedule one acquisition, superseding any request not yet started.
@@ -536,6 +545,15 @@ class DirectTextService:
     def _run(self, job: _Job) -> Acquisition:
         if job.delivered.is_set() or self._clock() >= job.deadline_ns:
             return Acquisition(Outcome.TIMED_OUT)
+        scope = self._cursor_scope
+        if scope is not None:
+            try:
+                if not scope(job.point):
+                    return Acquisition(Outcome.OUT_OF_SCOPE)
+            except Exception:
+                return Acquisition(Outcome.OUT_OF_SCOPE)
+            if self._superseded(job):
+                return Acquisition(Outcome.SUPERSEDED)
         try:
             return self._coordinator.acquire(
                 job.point, cancelled=lambda: self._superseded(job)

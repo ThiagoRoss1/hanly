@@ -212,6 +212,11 @@ button, input, select { font-family: inherit; }
   pointer-events: auto;
 }
 
+/* Avoid filtered border-image compositing during WebView2 expansion. */
+.app[data-rendering-platform="windows"] .collapse-inner {
+  filter: none;
+}
+
 
 .dot { flex: none; width: 8px; height: 8px; background: var(--text-muted); border-radius: var(--radius-pill); }
 .dot[data-tone="ok"] { background: var(--success); }

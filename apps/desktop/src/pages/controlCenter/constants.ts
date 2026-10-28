@@ -16,6 +16,10 @@ export const SECTIONS: Array<{ id: Section; label: string }> = [
 ];
 
 export function sectionIcon(section: Section): string {
+  if (section === "shortcuts") {
+    return "/design/media/assets/icons/v2/icon-shortcuts-pixel.png";
+  }
+
   const name = section === "capture" ? "capture-plant" : `icon-${section}`;
   return `/design/media/assets/icons/v2/${name}.png`;
 }

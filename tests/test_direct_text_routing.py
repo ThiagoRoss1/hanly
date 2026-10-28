@@ -321,8 +321,11 @@ class _Service:
 
 
 def _hover_runtime(
-    service: Any, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Any, _Capture, list[Any], Any]:
+    service: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    capture_service: Any | None = None,
+) -> tuple[Any, Any, list[Any], Any]:
     from hanly_app.hover.lookup import HoverLookupRuntime
     from hanly_app.lookup.controller import LookupController
 
@@ -346,7 +349,7 @@ def _hover_runtime(
         return original(selection, target, **kwargs)
 
     monkeypatch.setattr(controller, "submit_selection", _spy)
-    capture = _Capture()
+    capture = capture_service or _Capture()
     runtime = HoverLookupRuntime(
         controller, capture, delay_ms=1, acquisition=service
     )
@@ -358,6 +361,110 @@ def _hover_request() -> Any:
     from hanly_app.hover.lookup import HoverRequest
 
     return HoverRequest(request_id=1, point=Point(20, 10))
+
+
+def _two_monitor_capture() -> tuple[Any, Any]:
+    from hanly_app.acquisition.capture import (
+        BackendCapture,
+        BackendMonitor,
+        CaptureService,
+        ConfiguredCaptureService,
+        ScreenRect,
+    )
+
+    class Backend:
+        def __init__(self) -> None:
+            self.grabbed: list[ScreenRect] = []
+
+        def enumerate_monitors(self) -> tuple[BackendMonitor, ...]:
+            return (
+                BackendMonitor("Monitor 1", ScreenRect(0, 0, 100, 100)),
+                BackendMonitor("Monitor 2", ScreenRect(100, 0, 100, 100)),
+            )
+
+        def grab(self, region: ScreenRect) -> BackendCapture:
+            self.grabbed.append(region)
+            return BackendCapture(
+                region.width,
+                region.height,
+                bytes(region.width * region.height * 3),
+            )
+
+    backend = Backend()
+    configured_capture = ConfiguredCaptureService(
+        CaptureService(backend=backend, roi_size=(40, 20))
+    )
+    return configured_capture, backend
+
+
+def test_direct_text_respects_the_selected_monitor_before_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
+    from hanly_app.config import CaptureMode
+
+    configured_capture, backend = _two_monitor_capture()
+    configured_capture.set_preferences(
+        capture_mode=CaptureMode.FULL_MONITOR, monitor=1
+    )
+    reader = _Service(Acquisition(Outcome.UNSUPPORTED))
+    runtime, _capture, _submitted, controller = _hover_runtime(
+        reader, monkeypatch, capture_service=configured_capture
+    )
+    from hanly_app.hover.lookup import HoverRequest
+
+    request = HoverRequest(request_id=1, point=Point(150, 50))
+    runtime._running = True
+    monkeypatch.setattr(runtime._hover, "is_current", lambda _request: True)
+
+    try:
+        runtime._on_stable(request)
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+        configured_capture.close()
+
+    assert reader.submissions == 0
+    assert backend.grabbed == []
+
+
+def test_direct_text_answer_is_rechecked_after_monitor_preferences_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hanly_app.acquisition.direct_text import Acquisition, Outcome
+    from hanly_app.config import CaptureMode
+    from hanly_app.hover.lookup import HoverRequest
+
+    configured_capture, backend = _two_monitor_capture()
+    reader = _Service(
+        Acquisition(
+            Outcome.DIRECT,
+            selection=TextSelection(
+                text=_KOREAN, cursor_index=0, source="accessibility"
+            ),
+            bounds=BoundingBox(110, 10, 170, 30),
+        )
+    )
+    runtime, _capture, submitted, controller = _hover_runtime(
+        reader, monkeypatch, capture_service=configured_capture
+    )
+    request = HoverRequest(request_id=1, point=Point(150, 50))
+    runtime._running = True
+    monkeypatch.setattr(runtime._hover, "is_current", lambda _request: True)
+
+    try:
+        assert runtime._start_direct_text(request)
+        configured_capture.set_preferences(
+            capture_mode=CaptureMode.FULL_MONITOR, monitor=1
+        )
+        reader.deliver_now()
+    finally:
+        runtime.shutdown()
+        controller.stop(wait=True)
+        configured_capture.close()
+
+    assert submitted == []
+    assert backend.grabbed == []
 
 
 def test_the_ui_thread_only_schedules_and_never_performs_the_read(

@@ -1,0 +1,47 @@
+/* Preserve the narrow-window rail's small sprite sizing as well as compact mode. */
+@media (min-width: 761px) {
+  .app.skin-village .sidebar:not(.is-compact) .live-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .app.skin-village .sidebar:not(.is-compact) .live-fact {
+    min-width: 0;
+    align-items: center;
+    gap: 2px;
+    text-align: center;
+  }
+
+  .app.skin-village .sidebar:not(.is-compact) .live-fact > span:first-child {
+    width: 100%;
+    min-width: 0;
+    color: var(--skin-ink-muted);
+    font: 11px/16px HanlyUI, monospace;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .app.skin-village .sidebar:not(.is-compact) .live-fact > span:last-child {
+    width: 100%;
+    min-width: 0;
+    font: 700 11px/16px HanlyUIBold, HanlyUI, monospace;
+    text-align: center;
+  }
+
+  .app.skin-village .sidebar:not(.is-compact) .mascot-stage[data-pose="sleep"] .sprite-canvas {
+    width: 112px;
+    height: 112px;
+  }
+
+  .app.skin-village .sidebar:not(.is-compact) .mascot-stage[data-activity="running"] .sprite-canvas {
+    width: 104px;
+    height: 104px;
+  }
+
+  .app.skin-village .sidebar:not(.is-compact) .mascot-stage[data-pose="sleep"] .mascot-balloon {
+    top: -2px;
+    right: -2px;
+    width: 32px;
+    height: 26px;
+  }
+}

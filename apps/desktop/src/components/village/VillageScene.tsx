@@ -103,6 +103,7 @@ function createScene(
   let transitionStarted = 0;
   let phase = 0;
   let raf = 0;
+  let resizeFrame = 0;
   let timer: number | undefined;
   let pausedAt: number | null = null;
   let inViewport = true;
@@ -253,11 +254,21 @@ function createScene(
     else resume();
   }
 
+  function queueResize(): void {
+    if (destroyed || resizeFrame) return;
+
+    // Resizing the observed viewport during delivery creates a resize loop.
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      if (!destroyed) resize();
+    });
+  }
+
   const resizeObserver =
-    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(queueResize);
   resizeObserver?.observe(viewport);
   if (content) resizeObserver?.observe(content);
-  if (!resizeObserver) window.addEventListener("resize", resize);
+  if (!resizeObserver) window.addEventListener("resize", queueResize);
 
   const intersectionObserver =
     typeof IntersectionObserver === "undefined"
@@ -296,8 +307,9 @@ function createScene(
     destroy: () => {
       destroyed = true;
       pause();
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
       resizeObserver?.disconnect();
-      if (!resizeObserver) window.removeEventListener("resize", resize);
+      if (!resizeObserver) window.removeEventListener("resize", queueResize);
       intersectionObserver?.disconnect();
       document.removeEventListener("visibilitychange", handleVisibility);
       motionPreference.removeEventListener("change", handleMotionPreference);

@@ -15,12 +15,12 @@ function inside(x, y, points) {
   return covered;
 }
 
-function borderLayers(width, height, points) {
+function borderLayers(width, height, points, palette = colors) {
   let mask = Array.from({ length: height }, (_, y) =>
     Array.from({ length: width }, (_, x) => inside(x + 0.5, y + 0.5, points)));
   const pixels = Array.from({ length: height }, () => Array(width).fill(null));
 
-  for (const color of colors) {
+  for (const color of palette) {
     const next = mask.map((row, y) => row.map((on, x) => {
       if (on) pixels[y][x] = color;
       // Erode a single square pixel to keep every rim the same thickness.
@@ -88,4 +88,5 @@ const cloudQuarter = [
 ];
 const cloudTop = [...cloudQuarter, ...cloudQuarter.slice(0, -1).reverse().map(([x, y]) => [124 - x, y])];
 const cloudOutline = [...cloudTop, ...cloudTop.slice().reverse().map(([x, y]) => [x, 96 - y])];
-await writeSlices("panel-cloud-clean-v2", borderLayers(124, 96, cloudOutline), [31, 62, 31], [24, 48, 24], "Hanly Design Lab V2.4.1 panel-cloud-v2.svg");
+const cloudColors = ["#3c2458", ...colors.slice(1)];
+await writeSlices("panel-cloud-clean-v2", borderLayers(124, 96, cloudOutline, cloudColors), [31, 62, 31], [24, 48, 24], "Hanly Design Lab V2.4.1 panel-cloud-v2.svg");
