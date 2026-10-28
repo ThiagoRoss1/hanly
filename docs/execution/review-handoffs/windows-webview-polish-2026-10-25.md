@@ -106,3 +106,8 @@ Human-selected Phase B only. Review against the final artwork-preserving impleme
 - The human rejected the global ornament cleanup in 7e05a84. Restored all five secondary sprites from its parent, retaining only the already-approved internal top-strip cleanup. Pixel comparison confirms exact original RGBA outside that strip and an unchanged full alpha channel.
 - Select area now has five dedicated area-* sprites and a btn-select-area class on the header and Region buttons. Its internal brackets can be cleaned without changing navigation, other buttons, popup controls or shared artwork. Preserved the shared frame/panel bottom-line fix.
 - Production frontend build passed; UI tests: 69 passed, 1 skipped. New native build is regenerated with the isolated assets. No push.
+
+## Restore button baseline only: 2026-10-28
+
+- At the human's request, abandoned the Select area-specific ornament attempt. Removed area-* sprites and their class/override. All buttons now use the original shared ornaments with only the previously accepted inner top-stripe cleanup. The frame-default straight-line repair, design cleanup, settings, shortcuts and other changes remain intact. No further ornament redesign attempted in this restoration.
+- Frontend production build passed. Native executable rebuilt for the restored baseline.
