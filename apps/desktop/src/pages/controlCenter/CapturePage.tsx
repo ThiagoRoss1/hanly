@@ -228,7 +228,7 @@ export function CapturePage({
                 </h2>
                 <span className="region-coords ml-auto font-mono text-[11px]">{regionLabel(region)}</span>
                 <PixelButton
-                  className="btn btn-sm btn-quiet"
+                  className="btn btn-sm btn-quiet btn-select-area"
                   disabled={isPending("select_region")}
                   onClick={onSelectArea}
                   type="button"

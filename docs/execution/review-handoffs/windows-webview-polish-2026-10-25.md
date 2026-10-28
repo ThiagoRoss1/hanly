@@ -100,3 +100,9 @@ Human-selected Phase B only. Review against the final artwork-preserving impleme
 - Evidence under artifacts/lab/checks/windows-polish-2026-10-27/: performance-precommit.json, ui-precommit-final.log, python-precommit-focused.log, portable-precommit.log, native-precommit.json. No push performed.
 - Focused changed-file Python run completed: 419 passed, 5 skipped, 1 failed. Failure was tests/test_packaging.py::test_a_timed_out_run_takes_the_processes_it_started_with_it: WinError 32 removing the test child's inherited stderr file after timeout. It is a process-tree cleanup test, not asset/UI rendering; repeated separately outside the sandbox before committing. No broad-suite pass claimed.
 - The isolated process-cleanup test passed outside the sandbox (1 passed, 5.54s). Final assessment: affected-file checks pass with that native rerun; broad portable run remains incomplete. Ready for the human's pre-push visual inspection; no promise of zero platform-specific bugs.
+
+## Correct shared-button regression: 2026-10-28
+
+- The human rejected the global ornament cleanup in 7e05a84. Restored all five secondary sprites from its parent, retaining only the already-approved internal top-strip cleanup. Pixel comparison confirms exact original RGBA outside that strip and an unchanged full alpha channel.
+- Select area now has five dedicated area-* sprites and a btn-select-area class on the header and Region buttons. Its internal brackets can be cleaned without changing navigation, other buttons, popup controls or shared artwork. Preserved the shared frame/panel bottom-line fix.
+- Production frontend build passed; UI tests: 69 passed, 1 skipped. New native build is regenerated with the isolated assets. No push.

@@ -316,7 +316,7 @@ export function ControlCenterPage() {
           {target && (
             <div className="head-actions flex flex-none items-center gap-3">
               <PixelButton
-                className="btn"
+                className="btn btn-select-area"
                 icon="/design/media/assets/icons/v2/capture-frame.png"
                 onClick={selectArea}
                 type="button"

@@ -13,6 +13,14 @@
   --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
   --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
 }
+
+.app.skin-village .sprite-button.btn-select-area {
+  --sprite-normal: url("/design/media/assets/buttons/jewel/area-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/area-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/area-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/area-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/area-disabled.png");
+}
 .app.skin-village .sprite-button[data-art-role="secondary"] {
   --sprite-normal: url("/design/media/assets/buttons/jewel/secondary-normal.png");
   --sprite-hover: url("/design/media/assets/buttons/jewel/secondary-hover.png");
