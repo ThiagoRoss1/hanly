@@ -101,9 +101,9 @@
   box-sizing: border-box;
   pointer-events: none;
   border: solid transparent;
-  border-width: 16px 20px 20px;
-  border-image-slice: 160 180 192 180 fill;
-  border-image-width: 16px 20px 20px;
+  border-width: 10px 16px 12px;
+  border-image-slice: 96 180 108 180 fill;
+  border-image-width: 10px 16px 12px;
   border-image-repeat: stretch;
   border-image-source: var(--sprite-normal);
   transition: filter 100ms ease;

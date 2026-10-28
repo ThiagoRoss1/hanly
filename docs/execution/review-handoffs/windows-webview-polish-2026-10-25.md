@@ -124,3 +124,8 @@ Human-selected Phase B only. Review against the final artwork-preserving impleme
 - Applied the generated angular motifs to primary as well as secondary normal/hover/pressed/focus states. Motifs now use 8px source-grid cells and an inset pale highlight for relief. Cleared the old noisy ornament region using the original row surface color, preserving the purple gradient/bevel, exterior contour and complete alpha. Disabled original sprites retained.
 - Inspected Capture and Appearance browser fixtures at actual sizes, including 40px controls. Evidence: button-runtime-refined.jpg in artifacts/lab/checks/windows-polish-2026-10-27/ (browser fixture, not native Windows screenshot). Frontend build passed; native build regenerated. No push.
 - Final UI tests passed: 69 passed, 1 skipped. The correction changes artwork/slicing only; no behavioral test changes.
+
+## Restore original small-button appearance: 2026-10-28
+
+- Human rejected the generated/enlarged ornament treatment and expanded corner slices as visually worse at small sizes. Restored all ten primary/secondary state PNGs plus pixelButtons.css byte-for-byte from 4d11d80, the baseline preceding imagegen and recut experiments. This retains the earlier accepted top-stripe cleanup, original bevel/highlights and old corner scaling. No new ornament redesign or illumination treatment in this pass. All other app updates remain.
+- Exact file-byte assertions passed against that baseline; production frontend build passed. Native build regenerated for the restored appearance. No push.
