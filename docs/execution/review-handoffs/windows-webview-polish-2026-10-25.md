@@ -111,3 +111,9 @@ Human-selected Phase B only. Review against the final artwork-preserving impleme
 
 - At the human's request, abandoned the Select area-specific ornament attempt. Removed area-* sprites and their class/override. All buttons now use the original shared ornaments with only the previously accepted inner top-stripe cleanup. The frame-default straight-line repair, design cleanup, settings, shortcuts and other changes remain intact. No further ornament redesign attempted in this restoration.
 - Frontend production build passed. Native executable rebuilt for the restored baseline.
+
+## Imagegen ornament refinement: 2026-10-28
+
+- Human explicitly requested imagegen refinement of the shared tiny angular bracket ornaments. Used the built-in image_gen tool with secondary-normal.png as the edit target; transparent output requested. Prompt: refine only the four corner angular bracket flourishes, mirror symmetry, crisp intentional pixels, no smudges/random white specks; preserve stepped purple silhouette, cream interior and pink shadow; no text/icons or new design.
+- The generated full sprite changed canvas/proportions, so it was not substituted wholesale. Integrated only the two generated ornamental motifs, sampled to integral 4x6/6x4 grids and reflected into four corners of each of the five existing secondary states. Original complete alpha channel retained; the connected outer purple rim is preserved. Only safe interior ornament regions were cleaned. Source generation: artifacts/lab/checks/windows-polish-2026-10-27/ornament-imagegen-source.png; final runtime assets: apps/desktop/public/design/media/assets/buttons/jewel/secondary-{normal,hover,pressed,focus,disabled}.png. Active primary jewel sprites remain their original assets.
+- Browser fixture inspected at actual button sizes in Capture and Appearance; saved ornaments-final.jpg. Frontend production build passed; native executable rebuilt. No structural/product behavior changes or push.
