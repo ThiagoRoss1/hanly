@@ -1,68 +1,69 @@
 .app.skin-village {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/secondary-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/secondary-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/secondary-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/secondary-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/secondary-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/secondary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/secondary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/secondary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/secondary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/secondary-disabled.png");
 }
 
 .app.skin-village .sprite-button[data-art-role="primary"] {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/primary-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/primary-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/primary-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/primary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/primary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/primary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/primary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/primary-disabled.png");
 }
+
 .app.skin-village .sprite-button[data-art-role="secondary"] {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/secondary-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/secondary-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/secondary-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/secondary-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/secondary-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/secondary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/secondary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/secondary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/secondary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/secondary-disabled.png");
 }
 .app.skin-village .sprite-button[data-art-role="mint"] {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/mint-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/mint-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/mint-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/mint-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/mint-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/mint-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/mint-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/mint-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/mint-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/mint-disabled.png");
 }
 .app.skin-village .sprite-button[data-art-role="danger"] {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/danger-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/danger-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/danger-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/danger-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/danger-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/danger-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/danger-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/danger-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/danger-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/danger-disabled.png");
 }
 .app.skin-village .sprite-button[data-art-role="confirm"] {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/confirm-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/confirm-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/confirm-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/confirm-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/confirm-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/confirm-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/confirm-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/confirm-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/confirm-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/confirm-disabled.png");
 }
 .app.skin-village .sprite-button.btn-primary:not([data-art-role]) {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/primary-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/primary-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/primary-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/primary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/primary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/primary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/primary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/primary-disabled.png");
 }
 .app.skin-village .sprite-button.btn-exit:not([data-art-role]) {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/danger-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/danger-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/danger-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/danger-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/danger-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/danger-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/danger-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/danger-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/danger-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/danger-disabled.png");
 }
 .app.skin-village .nav-item[aria-current="page"],
 .app.skin-village .segment[aria-pressed="true"],
 .app.skin-village .chip[aria-pressed="true"] {
-  --sprite-normal: url("/design/media/assets/buttons/jewel/primary-normal.png");
-  --sprite-hover: url("/design/media/assets/buttons/jewel/primary-hover.png");
-  --sprite-pressed: url("/design/media/assets/buttons/jewel/primary-pressed.png");
-  --sprite-focus: url("/design/media/assets/buttons/jewel/primary-focus.png");
-  --sprite-disabled: url("/design/media/assets/buttons/jewel/primary-disabled.png");
+  --sprite-normal: url("/design/media/assets/buttons/jewel/plain/primary-normal.png");
+  --sprite-hover: url("/design/media/assets/buttons/jewel/plain/primary-hover.png");
+  --sprite-pressed: url("/design/media/assets/buttons/jewel/plain/primary-pressed.png");
+  --sprite-focus: url("/design/media/assets/buttons/jewel/plain/primary-focus.png");
+  --sprite-disabled: url("/design/media/assets/buttons/jewel/plain/primary-disabled.png");
 }
 
 .app.skin-village .sprite-button {

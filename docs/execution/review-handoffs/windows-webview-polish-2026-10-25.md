@@ -129,3 +129,8 @@ Human-selected Phase B only. Review against the final artwork-preserving impleme
 
 - Human rejected the generated/enlarged ornament treatment and expanded corner slices as visually worse at small sizes. Restored all ten primary/secondary state PNGs plus pixelButtons.css byte-for-byte from 4d11d80, the baseline preceding imagegen and recut experiments. This retains the earlier accepted top-stripe cleanup, original bevel/highlights and old corner scaling. No new ornament redesign or illumination treatment in this pass. All other app updates remain.
 - Exact file-byte assertions passed against that baseline; production frontend build passed. Native build regenerated for the restored appearance. No push.
+
+## Human acceptance of ornament-free buttons: 2026-10-28
+
+- Human approved the global ornament-free visual trial and authorized its commit. Control Center navigation, action buttons, Logs filters/actions, appearance options, confirmation roles and popup buttons now use the 25 plain/ state variants. Existing outer borders, bevel, shadows, alpha and button interactions remain. Dropdowns already use plain themed CSS borders and require no artwork substitution. Original ornamented files remain available as source references.
+- Acceptance checks from the trial: frontend production build passed; 69 UI tests passed, 1 skipped; custom-protocol native build passed; UI self-check returned ok=true, frontend_ready=true, service=true. Final reference validation resolves every plain sprite URL and confirms all 25 variants exist. App was rebuilt/opened for human visual acceptance; screenshot all-buttons-plain-trial.jpg shows a browser fixture. No push.

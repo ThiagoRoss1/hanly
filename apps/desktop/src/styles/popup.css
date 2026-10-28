@@ -173,7 +173,7 @@ html[data-popup="true"] .popup-button::before {
   inset: 0;
   border: solid transparent;
   border-width: 7px 10px 8px;
-  border-image: url("/design/media/assets/buttons/jewel/secondary-normal.png")
+  border-image: url("/design/media/assets/buttons/jewel/plain/secondary-normal.png")
     96 180 108 180 fill / 7px 10px 8px stretch;
   content: "";
   image-rendering: pixelated;
@@ -182,11 +182,11 @@ html[data-popup="true"] .popup-button::before {
 }
 
 html[data-popup="true"] .popup-button:hover::before {
-  border-image-source: url("/design/media/assets/buttons/jewel/secondary-hover.png");
+  border-image-source: url("/design/media/assets/buttons/jewel/plain/secondary-hover.png");
 }
 
 html[data-popup="true"] .popup-button:active::before {
-  border-image-source: url("/design/media/assets/buttons/jewel/secondary-pressed.png");
+  border-image-source: url("/design/media/assets/buttons/jewel/plain/secondary-pressed.png");
 }
 
 html[data-popup="true"] .popup-button:active {
